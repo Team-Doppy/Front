@@ -294,6 +294,15 @@ class CommentService extends ChangeNotifier {
   // 🎯 댓글 페이지네이션 크기 (기본값)
   static const int defaultPageSize = 100;
 
+  // 🎯 양방향 페이지네이션 상태
+  // - page=0: 최신, page가 커질수록 과거 (서버 정렬: createdAt DESC, id DESC 기준)
+  final Set<int> _loadedPages = <int>{};
+  final Set<int> _loadingPages = <int>{};
+  int? _minLoadedPage; // 로드된 페이지 중 가장 "최신"(가장 작은 page)
+  int? _maxLoadedPage; // 로드된 페이지 중 가장 "과거"(가장 큰 page)
+  int? _totalPages; // 서버가 제공하면 사용 (없으면 null)
+  int _pageSize = defaultPageSize;
+
   // 타이밍 시어 관련
   bool _isTimingSheerActive = false;
   static const double _timingSheerThreshold = 200.0; // 200px 스크롤 시 댓글 로드
@@ -303,6 +312,14 @@ class CommentService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get hasMoreComments => _hasMoreComments;
   bool get isTimingSheerActive => _isTimingSheerActive;
+  String? get currentPostId => _currentPostId;
+  bool get hasNewerComments => (_minLoadedPage ?? 0) > 0;
+  bool get hasOlderComments {
+    final maxPage = _maxLoadedPage;
+    if (maxPage == null) return true; // 아직 아무 것도 안 로드했으면 true
+    if (_totalPages != null) return maxPage < (_totalPages! - 1);
+    return _hasMoreComments; // fallback
+  }
 
   /// 🎯 전체 댓글 수 반환 (서버 값과 로드된 댓글 수 중 큰 값 사용)
   int getTotalCommentCount() {
@@ -324,11 +341,20 @@ class CommentService extends ChangeNotifier {
       _currentPostId = postId;
       _comments.clear();
       _serverCommentCount = 0; // 🎯 서버 댓글 수도 초기화
+      _loadedPages.clear();
+      _loadingPages.clear();
+      _minLoadedPage = null;
+      _maxLoadedPage = null;
+      _totalPages = null;
+      _pageSize = defaultPageSize;
 
       // 초기 댓글 데이터가 있으면 사용 (page=0 재사용)
       if (initialComments != null && initialComments.isNotEmpty) {
         _comments.addAll(initialComments);
         _currentPage = 1; // 다음은 page=1부터 로드
+        _loadedPages.add(0);
+        _minLoadedPage = 0;
+        _maxLoadedPage = 0;
         debugPrint(
           '[CommentService] 초기 댓글 ${initialComments.length}개 로드 (page=0 재사용)',
         );
@@ -833,6 +859,19 @@ class CommentService extends ChangeNotifier {
           }
         }
 
+        List<Comment> flatten(Comment root) {
+          final out = <Comment>[];
+          void walk(Comment c) {
+            out.add(c);
+            for (final r in c.replies) {
+              walk(r);
+            }
+          }
+
+          walk(root);
+          return out;
+        }
+
         // 현재 페이지의 댓글 처리
         for (final commentJson in commentsData) {
           if (commentJson is! Map<String, dynamic>) continue;
@@ -840,16 +879,7 @@ class CommentService extends ChangeNotifier {
           try {
             final commentId = commentJson['id']?.toString() ?? '';
 
-            // 🎯 기존 캐시에 있는 댓글을 만나면 중단
-            if (existingIds.contains(commentId)) {
-              foundExistingComment = true;
-              debugPrint(
-                '[CommentService] 기존 캐시된 댓글 발견 (ID: $commentId), 새 댓글 확인 중단',
-              );
-              break;
-            }
-
-            // 새 댓글 파싱
+            // 새 댓글 파싱 (서버가 parent + replies 트리로 줄 수 있으므로 flat으로 펼침)
             final originalContent = commentJson['content']?.toString() ?? '';
             final commentContent = await _checkPrivateCommentAccess(
               commentJson,
@@ -926,7 +956,36 @@ class CommentService extends ChangeNotifier {
               'isRestricted': isPrivate,
               'visibleToUsername': null,
             };
-            newComments.add(Comment.fromJson(mappedComment));
+            final parsed = Comment.fromJson(mappedComment);
+            final flat = flatten(parsed);
+
+            // 🎯 flat 중에 기존 캐시된 댓글을 만나면 중단 (reply 포함)
+            final hit = flat.firstWhere(
+              (c) => existingIds.contains(c.id),
+              orElse:
+                  () => Comment(
+                    id: '',
+                    author: '',
+                    content: '',
+                    authorProfileImageUrl: '',
+                    postId: _currentPostId ?? '',
+                    createdAt: '',
+                    updatedAt: '',
+                  ),
+            );
+            if (hit.id.isNotEmpty) {
+              foundExistingComment = true;
+              debugPrint(
+                '[CommentService] 기존 캐시된 댓글 발견 (ID: ${hit.id}), 새 댓글 확인 중단',
+              );
+              break;
+            }
+
+            for (final c in flat) {
+              if (!existingIds.contains(c.id)) {
+                newComments.add(c);
+              }
+            }
           } catch (e) {
             debugPrint('[CommentService] 새 댓글 파싱 오류: $e');
           }
@@ -963,33 +1022,71 @@ class CommentService extends ChangeNotifier {
     int? size,
     int? targetPage,
   }) async {
-    if (_currentPostId == null || _currentPostId!.isEmpty || _isLoading) {
-      debugPrint(
-        '[CommentService] 댓글 로드 건너뜀: postId=$_currentPostId, loading=$_isLoading',
-      );
+    if (_currentPostId == null || _currentPostId!.isEmpty) {
+      debugPrint('[CommentService] 댓글 로드 건너뜀: postId=$_currentPostId');
       return;
     }
 
-    // 🎯 특정 페이지를 로드하는 경우 hasMoreComments 체크 스킵
-    if (targetPage == null && !refresh && !_hasMoreComments) {
-      debugPrint('[CommentService] 댓글 로드 건너뜀: hasMore=$_hasMoreComments');
-      return;
-    }
-
-    _isLoading = true;
-    notifyListeners();
-
+    int? pageToLoad;
     try {
+      List<dynamic> lastTopLevelCommentsData = const [];
+      final pageSize = size ?? _pageSize;
+      _pageSize = pageSize;
+
+      // refresh면 전체 상태를 초기화하고 최신(page=0)부터 다시 로드
+      if (refresh) {
+        _comments.clear();
+        _loadedPages.clear();
+        _loadingPages.clear();
+        _minLoadedPage = null;
+        _maxLoadedPage = null;
+        _totalPages = null;
+        _currentPage = 0;
+        _hasMoreComments = true;
+      }
+
+      // 어떤 page를 로드할지 결정
+      if (targetPage != null) {
+        pageToLoad = targetPage;
+      } else if (_maxLoadedPage != null) {
+        // 기본 호출(loadComments())은 "더 과거" 방향으로 진행
+        pageToLoad = _maxLoadedPage! + 1;
+      } else {
+        pageToLoad = _currentPage;
+      }
+
+      // 이미 로드한 페이지면 스킵
+      if (_loadedPages.contains(pageToLoad)) {
+        debugPrint('[CommentService] 이미 로드한 페이지 스킵: page=$pageToLoad');
+        return;
+      }
+
+      // 이미 로딩 중인 페이지면 스킵
+      if (_loadingPages.contains(pageToLoad) || _isLoading) {
+        debugPrint('[CommentService] 로딩 중 스킵: page=$pageToLoad');
+        return;
+      }
+
+      // older 방향(기본 호출)에서 더 이상 없으면 스킵 (totalPages가 없으면 기존 hasMore로 판단)
+      if (targetPage == null &&
+          !refresh &&
+          !_hasMoreComments &&
+          _totalPages == null) {
+        debugPrint('[CommentService] 댓글 로드 건너뜀: hasMore=$_hasMoreComments');
+        return;
+      }
+
+      _isLoading = true;
+      _loadingPages.add(pageToLoad);
+      notifyListeners();
+
       debugPrint('[CommentService] API 호출 시작');
       debugPrint('[CommentService] PostId: $_currentPostId');
-      debugPrint('[CommentService] 현재 페이지: $_currentPage (로드 전)');
+      debugPrint('[CommentService] 로드할 페이지: $pageToLoad, pageSize: $pageSize');
 
-      final pageSize = size ?? defaultPageSize;
-
-      // 🎯 댓글 API 사용: /api/comments/post/{postId}?page=0&size=100
       final response = await _dio.get(
         '/api/comments/post/$_currentPostId',
-        queryParameters: {'page': targetPage ?? _currentPage, 'size': pageSize},
+        queryParameters: {'page': pageToLoad, 'size': pageSize},
         options: Options(receiveTimeout: const Duration(seconds: 10)),
       );
 
@@ -1015,6 +1112,7 @@ class CommentService extends ChangeNotifier {
         } else if (responseData is List) {
           commentsData = responseData;
         }
+        lastTopLevelCommentsData = commentsData;
 
         debugPrint('[CommentService] 댓글 데이터: ${commentsData.length}개');
 
@@ -1022,6 +1120,19 @@ class CommentService extends ChangeNotifier {
         final currentUsername = await _getCurrentUsername();
 
         final newComments = <Comment>[];
+
+        List<Comment> flatten(Comment root) {
+          final out = <Comment>[];
+          void walk(Comment c) {
+            out.add(c);
+            for (final r in c.replies) {
+              walk(r);
+            }
+          }
+
+          walk(root);
+          return out;
+        }
 
         // 댓글 데이터를 Comment 형식으로 변환
         for (int i = 0; i < commentsData.length; i++) {
@@ -1121,18 +1232,14 @@ class CommentService extends ChangeNotifier {
             };
 
             final comment = Comment.fromJson(mappedComment);
-            newComments.add(comment);
+            // 🎯 서버가 parent + replies 트리로 줄 수 있으므로 flat으로 펼쳐서 chat UI에 맞춤
+            newComments.addAll(flatten(comment));
           } catch (e, stackTrace) {
             debugPrint('[CommentService] ⚠️ 댓글[$i] 파싱 오류: $e');
             debugPrint('[CommentService] 스택 트레이스: $stackTrace');
             debugPrint('[CommentService] 댓글 데이터: $commentData');
             continue; // 파싱 실패한 댓글은 건너뛰기
           }
-        }
-
-        if (refresh) {
-          _comments.clear();
-          _currentPage = 0;
         }
 
         // 중복 제거: 이미 있는 댓글은 추가하지 않음
@@ -1160,8 +1267,9 @@ class CommentService extends ChangeNotifier {
               '[CommentService] isLast 기반: isLast=$isLast, hasMore=$_hasMoreComments',
             );
           } else if (totalElements != null && totalPages != null) {
+            _totalPages = totalPages;
             // 🎯 totalPages 기반 계산: 현재 페이지가 마지막 페이지보다 작으면 더 있음
-            final currentPage = currentPageNum ?? _currentPage;
+            final currentPage = currentPageNum ?? pageToLoad;
             _hasMoreComments = currentPage < (totalPages - 1);
             debugPrint(
               '[CommentService] totalPages 기반: currentPage=$currentPage, totalPages=$totalPages, hasMore=$_hasMoreComments',
@@ -1169,26 +1277,32 @@ class CommentService extends ChangeNotifier {
           } else {
             // 🎯 기본값: 로드된 댓글이 size와 같거나 크면 더 있을 수 있음
             // 단, 정확하지 않으므로 서버 응답을 우선해야 함
-            _hasMoreComments = uniqueNewComments.length >= pageSize;
+            _hasMoreComments = lastTopLevelCommentsData.length >= pageSize;
             debugPrint(
               '[CommentService] 기본값 기반: loaded=${uniqueNewComments.length}, pageSize=$pageSize, hasMore=$_hasMoreComments',
             );
           }
         } else {
           // 기본값: 로드된 댓글이 size보다 적으면 더 이상 없음
-          _hasMoreComments = uniqueNewComments.length >= pageSize;
+          _hasMoreComments = lastTopLevelCommentsData.length >= pageSize;
           debugPrint(
             '[CommentService] responseMap 없음: loaded=${uniqueNewComments.length}, pageSize=$pageSize, hasMore=$_hasMoreComments',
           );
         }
 
-        // 다음 페이지를 위해 증가 (로드 성공 후)
-        // 🎯 특정 페이지를 로드한 경우 해당 페이지로 설정
-        if (targetPage != null) {
-          _currentPage = targetPage + 1;
-        } else if (!refresh) {
-          _currentPage++;
-        }
+        // 🎯 양방향 페이지네이션 상태 업데이트 (로드 성공 후)
+        _loadedPages.add(pageToLoad);
+        _minLoadedPage =
+            _minLoadedPage == null
+                ? pageToLoad
+                : (_minLoadedPage! < pageToLoad ? _minLoadedPage : pageToLoad);
+        _maxLoadedPage =
+            _maxLoadedPage == null
+                ? pageToLoad
+                : (_maxLoadedPage! > pageToLoad ? _maxLoadedPage : pageToLoad);
+
+        // 기본 호출은 과거 방향으로 진행하므로 currentPage는 "다음 과거 페이지"를 가리키게 유지
+        _currentPage = (_maxLoadedPage ?? pageToLoad) + 1;
 
         debugPrint(
           '[CommentService] 댓글 로드 완료: ${uniqueNewComments.length}개 추가',
@@ -1211,9 +1325,64 @@ class CommentService extends ChangeNotifier {
       // _loadFallbackComments();
     } finally {
       _isLoading = false;
-
+      if (pageToLoad != null) {
+        _loadingPages.remove(pageToLoad);
+      }
       notifyListeners();
     }
+  }
+
+  /// 🎯 더 과거(older) 페이지 로드
+  Future<void> loadOlderComments({int? size}) async {
+    if (!hasOlderComments) return;
+    await loadComments(size: size);
+  }
+
+  /// 🎯 더 최신(newer) 페이지 로드
+  /// - minLoadedPage가 0보다 클 때만 가능
+  Future<void> loadNewerComments({int? size}) async {
+    final minPage = _minLoadedPage;
+    if (minPage == null || minPage <= 0) return;
+    await loadComments(targetPage: minPage - 1, size: size ?? _pageSize);
+  }
+
+  /// 🎯 가장 최신(page=0)만 빠르게 확보
+  /// - 중간 페이지로 시작한 경우 "최신으로 이동" UX를 안정화하기 위함
+  Future<void> loadNewestComments({int? size}) async {
+    await loadComments(targetPage: 0, size: size ?? _pageSize);
+  }
+
+  /// 🎯 댓글 위치 찾기 (Comment Locate API)
+  ///
+  /// 딥링크/알림으로 들어온 commentId가 댓글 목록(page/size 기반, **부모 댓글 기준**)에서
+  /// 어느 page인지 서버에서 계산해서 반환한다.
+  ///
+  /// ⚠️ size는 댓글 목록 조회 API와 동일해야 한다. (프론트 기본: 100)
+  Future<CommentLocateResponse> locateCommentInPost({
+    required String postId,
+    required String commentId,
+    int size = defaultPageSize,
+  }) async {
+    if (postId.isEmpty || commentId.isEmpty) {
+      throw Exception('postId/commentId가 비어있습니다.');
+    }
+    if (size <= 0 || size > 200) {
+      throw Exception('size는 1~200 사이여야 합니다.');
+    }
+
+    final response = await _dio.get(
+      '/api/comments/post/$postId/locate',
+      queryParameters: {'commentId': commentId, 'size': size},
+      options: Options(receiveTimeout: const Duration(seconds: 10)),
+    );
+
+    if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+      return CommentLocateResponse.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
+      );
+    }
+
+    throw Exception('댓글 위치 찾기 실패: ${response.statusCode} - ${response.data}');
   }
 
   /// 최근 댓글 3개 가져오기 (최신순으로 아래에서 5개)
@@ -2488,5 +2657,52 @@ class CommentService extends ChangeNotifier {
     _hasMoreComments = true;
     _isTimingSheerActive = false;
     notifyListeners();
+  }
+}
+
+/// 🎯 Comment Locate API 응답 DTO
+class CommentLocateResponse {
+  final String commentId;
+  final String postId;
+  final String anchorParentCommentId;
+  final String? anchorParentCreatedAt;
+  final bool isReply;
+  final String? parentId;
+  final int rank;
+  final int page;
+  final int indexInPage;
+  final int size;
+  final String direction;
+
+  const CommentLocateResponse({
+    required this.commentId,
+    required this.postId,
+    required this.anchorParentCommentId,
+    required this.anchorParentCreatedAt,
+    required this.isReply,
+    required this.parentId,
+    required this.rank,
+    required this.page,
+    required this.indexInPage,
+    required this.size,
+    required this.direction,
+  });
+
+  factory CommentLocateResponse.fromJson(Map<String, dynamic> json) {
+    return CommentLocateResponse(
+      commentId: json['commentId']?.toString() ?? '',
+      postId: json['postId']?.toString() ?? '',
+      anchorParentCommentId: json['anchorParentCommentId']?.toString() ?? '',
+      anchorParentCreatedAt: json['anchorParentCreatedAt']?.toString(),
+      isReply: json['isReply'] == true,
+      parentId: json['parentId']?.toString(),
+      rank: int.tryParse(json['rank']?.toString() ?? '') ?? 0,
+      page: int.tryParse(json['page']?.toString() ?? '') ?? 0,
+      indexInPage: int.tryParse(json['indexInPage']?.toString() ?? '') ?? 0,
+      size:
+          int.tryParse(json['size']?.toString() ?? '') ??
+          CommentService.defaultPageSize,
+      direction: json['direction']?.toString() ?? 'DESC',
+    );
   }
 }

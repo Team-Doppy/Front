@@ -1198,12 +1198,9 @@ class _VisibilityAwareVideoPlayerState
     // 🎯 MediaQuery 호출 전 mounted 재확인
     if (!mounted || _isDisposed) return;
 
-    double screenHeight;
-    try {
-      screenHeight = MediaQuery.of(this.context).size.height;
-    } catch (e) {
-      return;
-    }
+    // ✅ MediaQuery.of는 viewInsets 변화(키보드)에도 rebuild를 트리거할 수 있음.
+    // sizeOf는 "size" aspect만 구독하므로, 키보드(viewInsets) 변화로 인한 불필요한 rebuild를 줄인다.
+    final screenHeight = MediaQuery.sizeOf(this.context).height;
 
     final viewportTop = 0.0;
     final viewportBottom = screenHeight;

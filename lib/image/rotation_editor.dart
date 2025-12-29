@@ -296,6 +296,7 @@ class _RotationEditorBottomSheetState extends State<RotationEditorBottomSheet>
             onDragStart: _onSliderDragStart,
             onDragEnd: _onSliderDragEnd,
             isDragging: _isDragging,
+            textColor: Theme.of(context).colorScheme.onSurface,
           ),
         ),
       ],

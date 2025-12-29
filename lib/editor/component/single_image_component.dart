@@ -823,7 +823,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     _sizeInitialized = true; // 실패해도 재시도 방지
 
     try {
+      // ignore: invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member
       final seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member
       final doc = seState?.editContext.editor.document;
       final node = doc?.getNodeById(widget.nodeId);
 
@@ -1060,7 +1062,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
     // 업로드 중이면 metadata.localPath로 미리보기
     try {
+      // ignore: invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member
       final seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member
       final doc = seState?.editContext.editor.document;
       final node = doc?.getNodeById(widget.nodeId);
       if (node is ImageNode) {
@@ -1116,10 +1120,15 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     } catch (_) {}
     if (_isLocalPath(url)) {
       final filePath = url.startsWith('file://') ? url.substring(7) : url;
+      final dpr = View.of(context).devicePixelRatio;
       return Image.file(
         File(filePath),
         key: ValueKey('single_${widget.nodeId}'),
         fit: BoxFit.contain,
+        // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
+        // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
+        cacheWidth:
+            widget.isEditing ? (widget.screenWidth * dpr).round() : null,
         errorBuilder:
             (context, error, stack) => ImageErrorPlaceholder(
               width: widget.screenWidth, // 🎯 성능 최적화: MediaQuery 제거
@@ -1127,10 +1136,14 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       );
     }
 
+    final dpr = View.of(context).devicePixelRatio;
     return Image.network(
       url,
       key: ValueKey('single_${widget.nodeId}'),
       fit: BoxFit.contain,
+      // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
+      // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
+      cacheWidth: widget.isEditing ? (widget.screenWidth * dpr).round() : null,
       frameBuilder: (context, child, frame, wasSyncLoaded) {
         // 프리로드(캐시 히트)된 경우 즉시 child 렌더 → 쉬머 미노출
         if (wasSyncLoaded || frame != null) {

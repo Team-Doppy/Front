@@ -1,19 +1,21 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
-import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/image/group_image_layout_selector.dart';
+import 'package:doppy/editor/postwrite_screen.dart' show NodeType;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 
@@ -24,6 +26,7 @@ bool _isSpecialNode(DocumentNode? node) {
       node is LinkNode ||
       node is ImageRowNode ||
       node is PageViewImageNode ||
+      node is DividerNode ||
       node is AppImageNode ||
       node is ImageNode;
 }
@@ -93,6 +96,141 @@ class EditorService extends ChangeNotifier {
   // 🎯 NodeComponentService 참조 (노드 선택 해제용)
   BuildContext? _context;
 
+  // ✅ 선택 범위 삭제(특수노드 포함) 처리 중에는 레지스트리 기반 자동 복원을 잠깐 막는다.
+  // (삭제 요청이 들어오는 타이밍/대상 계산이 흔들려도 "삭제된 특수노드가 다시 살아나는" 불안정 방지)
+  int _suppressSpecialNodeRestorationDepth = 0;
+  bool get _isSuppressingSpecialNodeRestoration =>
+      _suppressSpecialNodeRestorationDepth > 0;
+  void _beginSuppressSpecialNodeRestoration() {
+    _suppressSpecialNodeRestorationDepth++;
+  }
+
+  void _endSuppressSpecialNodeRestoration() {
+    if (_suppressSpecialNodeRestorationDepth <= 0) return;
+    _suppressSpecialNodeRestorationDepth--;
+  }
+
+  // ✅ 범위 삭제(여러 노드 삭제) 중에는 _trackChangeFromLog의 자동 스냅샷 저장을 막고,
+  // 커맨드 끝에서 한 번만 after-state를 저장해서 undo step 오염을 방지한다.
+  int _suppressHistoryTrackingDepth = 0;
+  bool get _isSuppressingHistoryTracking => _suppressHistoryTrackingDepth > 0;
+  void _beginSuppressHistoryTracking() {
+    _suppressHistoryTrackingDepth++;
+  }
+
+  void _endSuppressHistoryTracking() {
+    if (_suppressHistoryTrackingDepth <= 0) return;
+    _suppressHistoryTrackingDepth--;
+  }
+
+  void _finalizeBatchDeleteHistory() {
+    // saveHistoryBeforeDelete()가 세팅한 플래그가 남아있으면 다음 삭제에서 오동작할 수 있으므로 정리
+    _isDeletingNode = false;
+    _saveCurrentState(immediate: true);
+  }
+
+  void _ensureParagraphAlignmentForNodeId(String nodeId) {
+    final idx = document.getNodeIndexById(nodeId);
+    if (idx == -1) return;
+    _ensureParagraphAlignmentForIndex(idx);
+  }
+
+  void _logSelectionDeletionDebug(String message) {
+    if (!kDebugMode) return;
+    debugPrint(message);
+  }
+
+  ({DocumentSelection selection, Set<String> coveredSpecialNodeIds})?
+  _selectionAndSpecialNodesFromDocumentRange(
+    Document document,
+    DocumentRange range,
+  ) {
+    if (range.isCollapsed) return null;
+
+    final selection =
+        range is DocumentSelection
+            ? range
+            : DocumentSelection(base: range.start, extent: range.end);
+
+    final coveredSpecialNodeIds = _getSpecialNodeIdsCoveredBySelection(
+      document,
+      selection,
+    );
+    if (coveredSpecialNodeIds.isEmpty) return null;
+
+    return (selection: selection, coveredSpecialNodeIds: coveredSpecialNodeIds);
+  }
+
+  late final EditRequestHandler _deleteSelectionWithSpecialNodesHandler = (
+    ed,
+    request,
+  ) {
+    if (request is! DeleteSelectionRequest) return null;
+
+    final selection = ed.composer.selection;
+    if (selection == null || selection.isCollapsed) return null;
+
+    final coveredSpecialNodeIds = _getSpecialNodeIdsCoveredBySelection(
+      ed.document,
+      selection,
+    );
+    if (coveredSpecialNodeIds.isEmpty) return null;
+
+    _logSelectionDeletionDebug(
+      '[EditorService] 🧹 Intercept DeleteSelectionRequest: affinity=${request.affinity}, selection=$selection, coveredSpecialNodeIds=$coveredSpecialNodeIds',
+    );
+
+    return _DeleteSelectionAndSpecialNodesCommand(
+      affinity: request.affinity,
+      selectionForDeletion: selection,
+      coveredSpecialNodeIds: coveredSpecialNodeIds,
+      saveHistoryBeforeDelete: saveHistoryBeforeDelete,
+      beginSuppressRestoration: _beginSuppressSpecialNodeRestoration,
+      endSuppressRestoration: _endSuppressSpecialNodeRestoration,
+      beginSuppressHistoryTracking: _beginSuppressHistoryTracking,
+      endSuppressHistoryTracking: _endSuppressHistoryTracking,
+      finalizeBatchDeleteHistory: _finalizeBatchDeleteHistory,
+      ensureParagraphAlignmentForNodeId: _ensureParagraphAlignmentForNodeId,
+      markSpecialNodeExplicitlyDeleted:
+          (id) => removeSpecialNodeFromRegistry(id, explicitlyDeleted: true),
+    );
+  };
+
+  late final EditRequestHandler _deleteContentWithSpecialNodesHandler = (
+    ed,
+    request,
+  ) {
+    if (request is! DeleteContentRequest) return null;
+
+    // 🎯 DeleteContentRequest의 실제 삭제 범위를 기준으로 "보라색으로 포함된" 특수노드들을 계산한다.
+    // (IME/하드웨어 키보드 모두 DeleteContentRequest로 들어오므로 여기서 처리하면 플랫폼 무관)
+    final range = request.documentRange;
+    final parsed = _selectionAndSpecialNodesFromDocumentRange(
+      ed.document,
+      range,
+    );
+    if (parsed == null) return null;
+
+    _logSelectionDeletionDebug(
+      '[EditorService] 🧹 Intercept DeleteContentRequest: range=$range, selection=${parsed.selection}, coveredSpecialNodeIds=${parsed.coveredSpecialNodeIds}',
+    );
+
+    return _DeleteContentAndSpecialNodesCommand(
+      documentRange: request.documentRange,
+      selectionForCaretCalculation: parsed.selection,
+      coveredSpecialNodeIds: parsed.coveredSpecialNodeIds,
+      saveHistoryBeforeDelete: saveHistoryBeforeDelete,
+      beginSuppressRestoration: _beginSuppressSpecialNodeRestoration,
+      endSuppressRestoration: _endSuppressSpecialNodeRestoration,
+      beginSuppressHistoryTracking: _beginSuppressHistoryTracking,
+      endSuppressHistoryTracking: _endSuppressHistoryTracking,
+      finalizeBatchDeleteHistory: _finalizeBatchDeleteHistory,
+      ensureParagraphAlignmentForNodeId: _ensureParagraphAlignmentForNodeId,
+      markSpecialNodeExplicitlyDeleted:
+          (id) => removeSpecialNodeFromRegistry(id, explicitlyDeleted: true),
+    );
+  };
+
   EditorService({
     required this.editor,
     required this.document,
@@ -101,6 +239,20 @@ class EditorService extends ChangeNotifier {
   }) : _context = context {
     document.addListener(_onDocumentChanged);
     editor.composer.selectionNotifier.addListener(_onSelectionChanged);
+
+    // ✅ 범위 삭제(특수노드 혼합) 보완 핸들러 설치
+    // - 기본 DeleteContentRequest 처리 전에 가로채서, 누락된 특수노드까지 함께 삭제
+    // - 레지스트리 복원 로직과 충돌하지 않도록 명시적 삭제로 표시
+    if (!editor.requestHandlers.contains(
+      _deleteSelectionWithSpecialNodesHandler,
+    )) {
+      editor.requestHandlers.insert(0, _deleteSelectionWithSpecialNodesHandler);
+    }
+    if (!editor.requestHandlers.contains(
+      _deleteContentWithSpecialNodesHandler,
+    )) {
+      editor.requestHandlers.insert(0, _deleteContentWithSpecialNodesHandler);
+    }
 
     if (enableInitialStateSave) {
       // 초기 상태 저장 (여러 프레임 후 실행하여 UI 블로킹 방지)
@@ -341,6 +493,10 @@ class EditorService extends ChangeNotifier {
     if (_isRecoveryOperation) {
       return;
     }
+    // ✅ 범위 삭제(배치 삭제) 중에는 after-state를 커맨드 끝에서 한 번만 저장한다.
+    if (_isSuppressingHistoryTracking) {
+      return;
+    }
 
     try {
       // 🎯 히스토리가 비어있으면 현재 상태를 초기 상태로 저장 (임시저장 불러온 직후에도 동작)
@@ -421,28 +577,9 @@ class EditorService extends ChangeNotifier {
     if (node is ParagraphNode) {
       // metadata에는 textAlign, isTitle, fontFamily 등이 포함됨
       final copiedMetadata = Map<String, dynamic>.from(node.metadata);
-      final isMention = copiedMetadata['mention'] == true;
 
       // 🎯 AttributedText 전체 복사 (모든 스타일 유지: bold, italic, color, font, highlight, spoiler 등)
       final AttributedText attributed = node.text.copyText(0, node.text.length);
-
-      // 🎯 멘션 노드인데 볼드가 없으면 추가
-      if (isMention && node.text.text.isNotEmpty) {
-        final hasBold =
-            attributed
-                .getAttributionSpansInRange(
-                  attributionFilter: (attr) => attr == boldAttribution,
-                  range: SpanRange(0, node.text.text.length - 1),
-                )
-                .isNotEmpty;
-
-        if (!hasBold) {
-          attributed.addAttribution(
-            boldAttribution,
-            SpanRange(0, node.text.text.length - 1),
-          );
-        }
-      }
 
       return ParagraphNode(
         id: node.id,
@@ -568,6 +705,67 @@ class EditorService extends ChangeNotifier {
     }
   }
 
+  Set<String> _getSpecialNodeIdsCoveredBySelection(
+    Document doc,
+    DocumentSelection selection,
+  ) {
+    final baseIndex = doc.getNodeIndexById(selection.base.nodeId);
+    final extentIndex = doc.getNodeIndexById(selection.extent.nodeId);
+    if (baseIndex == -1 || extentIndex == -1) return <String>{};
+
+    final start = math.min(baseIndex, extentIndex);
+    final end = math.max(baseIndex, extentIndex);
+
+    final ids = <String>{};
+    for (int i = start; i <= end; i++) {
+      final node = doc.getNodeAt(i);
+      if (node == null) continue;
+      if (!_isSpecialNode(node)) continue;
+      if (_isNodeCoveredBySelection(doc, selection, node.id)) {
+        ids.add(node.id);
+      }
+    }
+    return ids;
+  }
+
+  // selection이 이 특수 노드를 포함하는지 계산. 경계가 특수노드인 경우 downstream일 때만 포함.
+  // (각 컴포넌트의 보라색 하이라이트 판정과 동일해야 한다)
+  bool _isNodeCoveredBySelection(
+    Document doc,
+    DocumentSelection selection,
+    String nodeId,
+  ) {
+    final baseIndex = doc.getNodeIndexById(selection.base.nodeId);
+    final extentIndex = doc.getNodeIndexById(selection.extent.nodeId);
+    final myIndex = doc.getNodeIndexById(nodeId);
+    if (baseIndex == -1 || extentIndex == -1 || myIndex == -1) return false;
+
+    final start = math.min(baseIndex, extentIndex);
+    final end = math.max(baseIndex, extentIndex);
+    if (myIndex < start || myIndex > end) return false;
+
+    // 시작 경계가 이 노드인 경우: base/extent 중 누가 start인지에 따라 affinity 체크
+    if (myIndex == start) {
+      final boundary = baseIndex == start ? selection.base : selection.extent;
+      final pos = boundary.nodePosition;
+      if (pos is UpstreamDownstreamNodePosition) {
+        return pos.affinity == TextAffinity.downstream;
+      }
+    }
+
+    // 끝 경계가 이 노드인 경우
+    if (myIndex == end) {
+      final boundary = extentIndex == end ? selection.extent : selection.base;
+      final pos = boundary.nodePosition;
+      if (pos is UpstreamDownstreamNodePosition) {
+        return pos.affinity == TextAffinity.downstream;
+      }
+    }
+
+    // 범위 내부에 완전히 포함
+    return true;
+  }
+
   // 🎯 Undo 가능 여부
   bool get canUndo => _undoStack.length > 1;
 
@@ -607,12 +805,6 @@ class EditorService extends ChangeNotifier {
         // 🎯 이전 상태로 복원
         final previousSnapshot = _undoStack.last;
         _restoreFromSnapshot(previousSnapshot);
-
-        // 🎯 초기 상태로 복원된 경우에만 redo 스택 비우기
-        // 🎯 _undoStack.length == 1이면 초기 상태만 남은 것이므로 초기 상태로 복원된 것
-        if (_undoStack.isNotEmpty && _undoStack.length == 1) {
-          _redoStack.clear();
-        }
       },
       onError: () {
         // 🎯 에러 발생 시 스택 복구 시도
@@ -852,107 +1044,8 @@ class EditorService extends ChangeNotifier {
       }
     }
 
-    // 🎯 멘션 노드에서 텍스트 입력 시, 멘션 부분만 볼드로 유지하고 나머지는 일반 텍스트로 처리
-    if (change is TextInsertionEvent) {
-      try {
-        String? targetNodeId;
-        try {
-          targetNodeId = (change as dynamic).nodeId as String?;
-        } catch (_) {}
-
-        if (targetNodeId == null) {
-          final selection = editor.composer.selectionNotifier.value;
-          if (selection != null && selection.extent.nodeId.isNotEmpty) {
-            targetNodeId = selection.extent.nodeId;
-          }
-        }
-
-        if (targetNodeId != null && targetNodeId.isNotEmpty) {
-          final node = document.getNodeById(targetNodeId);
-          if (node != null && node is ParagraphNode) {
-            final isMention = node.metadata['mention'] == true;
-            final List<dynamic> usernames =
-                (node.metadata['usernames'] as List?) ?? const [];
-
-            // 멘션 노드이고 usernames가 있으면 처리
-            if (isMention && usernames.isNotEmpty) {
-              // 멘션 텍스트 길이 계산 (@username)
-              final mentionText = '@${usernames.first}';
-              final mentionLength = mentionText.length;
-
-              // 현재 노드의 텍스트 길이 확인
-              final currentText = node.text.text;
-
-              // 멘션 텍스트 이후에 텍스트가 입력되었는지 확인
-              if (currentText.length > mentionLength) {
-                // 멘션 부분 이후의 텍스트에서 볼드 attribution 제거
-                final savedNodeId = targetNodeId; // null이 아님을 보장 (위에서 체크함)
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  try {
-                    final updatedNode = document.getNodeById(savedNodeId);
-                    if (updatedNode != null && updatedNode is ParagraphNode) {
-                      final text = updatedNode.text;
-                      final textLength = text.text.length;
-
-                      // 멘션 부분 이후의 텍스트에서만 볼드 제거
-                      if (textLength > mentionLength) {
-                        // 새로운 AttributedText 생성
-                        final newText = AttributedText(text.text);
-
-                        // 기존 attribution 복사 (멘션 부분만)
-                        for (
-                          int i = 0;
-                          i < mentionLength && i < textLength;
-                          i++
-                        ) {
-                          final attributions = text.getAllAttributionsAt(i);
-                          for (final attr in attributions) {
-                            newText.addAttribution(attr, SpanRange(i, i));
-                          }
-                        }
-
-                        // 멘션 부분 이후는 볼드를 제외한 다른 attribution만 복사
-                        for (int i = mentionLength; i < textLength; i++) {
-                          final attributions = text.getAllAttributionsAt(i);
-                          for (final attr in attributions) {
-                            // 볼드가 아닌 attribution만 추가
-                            if (attr != boldAttribution) {
-                              newText.addAttribution(attr, SpanRange(i, i));
-                            }
-                          }
-                        }
-
-                        // 노드 업데이트
-                        final newNode = ParagraphNode(
-                          id: updatedNode.id,
-                          text: newText,
-                          metadata: Map<String, dynamic>.from(
-                            updatedNode.metadata,
-                          ),
-                        );
-
-                        _runRecoveryOperation(() {
-                          editor.execute([
-                            ReplaceNodeRequest(
-                              existingNodeId: updatedNode.id,
-                              newNode: newNode,
-                            ),
-                          ]);
-                        });
-                      }
-                    }
-                  } catch (e) {
-                    debugPrint('[EditorService] 멘션 텍스트 스타일 조정 실패: $e');
-                  }
-                });
-              }
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('[EditorService] 멘션 텍스트 입력 처리 중 오류: $e');
-      }
-    }
+    // ✅ 멘션 스타일은 stylesheet에서 "본문 + bold"로 렌더링한다.
+    // 따라서 멘션 노드의 bold attribution을 강제/부분 제거하는 로직은 제거한다.
 
     // 🎯 멘션 문단(ParagraphNode with metadata.mention == true)에서 삭제가 발생하면
     // 노드를 한 번에 삭제하도록 처리
@@ -1524,127 +1617,137 @@ class EditorService extends ChangeNotifier {
       }
       // 🎯 레지스트리에 정보가 있는 경우만 복원 시도
       else {
-        final nodeInfo = _specialNodeRegistry[removedNodeId];
-        if (nodeInfo == null) {
-          // 🎯 노드가 실제로 존재하는지 확인 (교체 중일 수 있음)
-          final stillExists = document.getNodeById(removedNodeId) != null;
-          if (stillExists) {
-            // 노드가 여전히 존재하면 교체 중이므로 재빌드 불필요
-            return;
-          }
-
+        // ✅ 선택 범위 삭제(특수노드 포함) 처리 중에는 레지스트리 기반 복원을 무조건 막는다.
+        // - 커맨드에서 선마킹을 최대한 하지만, 계산 누락/타이밍 이슈가 있어도 "삭제→복원" 경쟁을 원천 차단.
+        if (_isSuppressingSpecialNodeRestoration) {
+          _specialNodeRegistry.remove(removedNodeId);
           shouldNotify = true;
         } else {
-          // 🎯 downstream 위치에서 삭제된 경우는 삭제 허용
-          final currentSelection = editor.composer.selectionNotifier.value;
-          final isDownstream =
-              currentSelection != null &&
-              currentSelection.extent.nodeId == removedNodeId &&
-              currentSelection.extent.nodePosition
-                  is UpstreamDownstreamNodePosition &&
-              currentSelection.extent.nodePosition ==
-                  const UpstreamDownstreamNodePosition.downstream();
+          final nodeInfo = _specialNodeRegistry[removedNodeId];
+          if (nodeInfo == null) {
+            // 🎯 노드가 실제로 존재하는지 확인 (교체 중일 수 있음)
+            final stillExists = document.getNodeById(removedNodeId) != null;
+            if (stillExists) {
+              // 노드가 여전히 존재하면 교체 중이므로 재빌드 불필요
+              return;
+            }
 
-          if (isDownstream) {
-            _specialNodeRegistry.remove(removedNodeId);
-            debugPrint(
-              '[EditorService] 🎯 downstream 위치에서 삭제됨 (백스페이스): nodeId=$removedNodeId',
-            );
             shouldNotify = true;
           } else {
-            // 🎯 복원 시도
-            try {
-              if (_explicitlyDeletedNodes.contains(removedNodeId)) {
-                debugPrint('[EditorService] ⚠️ 삭제 버튼으로 삭제됨 - 복원하지 않음');
+            // 🎯 downstream 위치에서 삭제된 경우는 삭제 허용
+            final currentSelection = editor.composer.selectionNotifier.value;
+            final isDownstream =
+                currentSelection != null &&
+                currentSelection.extent.nodeId == removedNodeId &&
+                currentSelection.extent.nodePosition
+                    is UpstreamDownstreamNodePosition &&
+                currentSelection.extent.nodePosition ==
+                    const UpstreamDownstreamNodePosition.downstream();
+
+            if (isDownstream) {
+              _specialNodeRegistry.remove(removedNodeId);
+              debugPrint(
+                '[EditorService] 🎯 downstream 위치에서 삭제됨 (백스페이스): nodeId=$removedNodeId',
+              );
+              shouldNotify = true;
+            } else {
+              // 🎯 복원 시도
+              try {
+                if (_explicitlyDeletedNodes.contains(removedNodeId)) {
+                  debugPrint('[EditorService] ⚠️ 삭제 버튼으로 삭제됨 - 복원하지 않음');
+                  _specialNodeRegistry.remove(removedNodeId);
+                  _explicitlyDeletedNodes.remove(removedNodeId);
+                  shouldNotify = true;
+                } else if (document.getNodeById(removedNodeId) != null) {
+                  _specialNodeRegistry.remove(removedNodeId);
+                  return; // 이미 존재하면 재빌드 불필요
+                } else {
+                  final restoredNode = _copyNode(nodeInfo.node);
+                  final insertIndex = nodeInfo.index.clamp(
+                    0,
+                    document.nodeCount,
+                  );
+
+                  // 🎯 복원 전 삼중 체크 (이중 복원 완전 방지)
+                  if (_explicitlyDeletedNodes.contains(removedNodeId)) {
+                    _specialNodeRegistry.remove(removedNodeId);
+                    debugPrint(
+                      '[EditorService] ❌ 명시적 삭제 - 복원 취소: $removedNodeId',
+                    );
+                    return;
+                  }
+
+                  if (_pendingDeletionNodeIds.contains(removedNodeId)) {
+                    _specialNodeRegistry.remove(removedNodeId);
+                    debugPrint(
+                      '[EditorService] ❌ 삭제 예약됨 - 복원 취소: $removedNodeId',
+                    );
+                    return;
+                  }
+
+                  if (document.getNodeById(restoredNode.id) != null) {
+                    _specialNodeRegistry.remove(removedNodeId);
+                    debugPrint(
+                      '[EditorService] ❌ 이미 존재함 - 복원 취소: $removedNodeId',
+                    );
+                    return;
+                  }
+
+                  // 노드 복원
+                  _runRecoveryOperation(() {
+                    document.insertNodeAt(insertIndex, restoredNode);
+                  });
+
+                  // 레지스트리 재등록
+                  if (_isSpecialNode(restoredNode)) {
+                    _specialNodeRegistry[restoredNode.id] = _SpecialNodeInfo(
+                      node: _copyNode(restoredNode),
+                      index: insertIndex,
+                      selection: null,
+                      isAtDownstream: false,
+                    );
+                    debugPrint(
+                      '[EditorService] ✅ 노드 복원 완료: nodeId=$removedNodeId',
+                    );
+                  } else {
+                    _specialNodeRegistry.remove(removedNodeId);
+                  }
+
+                  // 커서 이동 (비동기, 삼중 체크)
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    try {
+                      // 🎯 노드가 여전히 존재하고, 삭제 예약도 없고, 명시적 삭제도 아닌지 확인
+                      if (document.getNodeById(restoredNode.id) != null &&
+                          !_explicitlyDeletedNodes.contains(restoredNode.id) &&
+                          !_pendingDeletionNodeIds.contains(restoredNode.id)) {
+                        editor.composer.setSelectionWithReason(
+                          DocumentSelection.collapsed(
+                            position: DocumentPosition(
+                              nodeId: restoredNode.id,
+                              nodePosition:
+                                  const UpstreamDownstreamNodePosition.downstream(),
+                            ),
+                          ),
+                          SelectionReason.userInteraction,
+                        );
+                      } else {
+                        debugPrint(
+                          '[EditorService] ⚠️ 복원된 노드 커서 이동 취소: $removedNodeId (노드 삭제됨 또는 예약됨)',
+                        );
+                      }
+                    } catch (e) {
+                      debugPrint('[EditorService] 커서 이동 실패: $e');
+                    }
+                  });
+
+                  shouldNotify = true;
+                }
+              } catch (e) {
+                debugPrint('[EditorService] 복원 실패: $e');
                 _specialNodeRegistry.remove(removedNodeId);
                 _explicitlyDeletedNodes.remove(removedNodeId);
                 shouldNotify = true;
-              } else if (document.getNodeById(removedNodeId) != null) {
-                _specialNodeRegistry.remove(removedNodeId);
-                return; // 이미 존재하면 재빌드 불필요
-              } else {
-                final restoredNode = _copyNode(nodeInfo.node);
-                final insertIndex = nodeInfo.index.clamp(0, document.nodeCount);
-
-                // 🎯 복원 전 삼중 체크 (이중 복원 완전 방지)
-                if (_explicitlyDeletedNodes.contains(removedNodeId)) {
-                  _specialNodeRegistry.remove(removedNodeId);
-                  debugPrint(
-                    '[EditorService] ❌ 명시적 삭제 - 복원 취소: $removedNodeId',
-                  );
-                  return;
-                }
-
-                if (_pendingDeletionNodeIds.contains(removedNodeId)) {
-                  _specialNodeRegistry.remove(removedNodeId);
-                  debugPrint(
-                    '[EditorService] ❌ 삭제 예약됨 - 복원 취소: $removedNodeId',
-                  );
-                  return;
-                }
-
-                if (document.getNodeById(restoredNode.id) != null) {
-                  _specialNodeRegistry.remove(removedNodeId);
-                  debugPrint(
-                    '[EditorService] ❌ 이미 존재함 - 복원 취소: $removedNodeId',
-                  );
-                  return;
-                }
-
-                // 노드 복원
-                _runRecoveryOperation(() {
-                  document.insertNodeAt(insertIndex, restoredNode);
-                });
-
-                // 레지스트리 재등록
-                if (_isSpecialNode(restoredNode)) {
-                  _specialNodeRegistry[restoredNode.id] = _SpecialNodeInfo(
-                    node: _copyNode(restoredNode),
-                    index: insertIndex,
-                    selection: null,
-                    isAtDownstream: false,
-                  );
-                  debugPrint(
-                    '[EditorService] ✅ 노드 복원 완료: nodeId=$removedNodeId',
-                  );
-                } else {
-                  _specialNodeRegistry.remove(removedNodeId);
-                }
-
-                // 커서 이동 (비동기, 삼중 체크)
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  try {
-                    // 🎯 노드가 여전히 존재하고, 삭제 예약도 없고, 명시적 삭제도 아닌지 확인
-                    if (document.getNodeById(restoredNode.id) != null &&
-                        !_explicitlyDeletedNodes.contains(restoredNode.id) &&
-                        !_pendingDeletionNodeIds.contains(restoredNode.id)) {
-                      editor.composer.setSelectionWithReason(
-                        DocumentSelection.collapsed(
-                          position: DocumentPosition(
-                            nodeId: restoredNode.id,
-                            nodePosition:
-                                const UpstreamDownstreamNodePosition.downstream(),
-                          ),
-                        ),
-                        SelectionReason.userInteraction,
-                      );
-                    } else {
-                      debugPrint(
-                        '[EditorService] ⚠️ 복원된 노드 커서 이동 취소: $removedNodeId (노드 삭제됨 또는 예약됨)',
-                      );
-                    }
-                  } catch (e) {
-                    debugPrint('[EditorService] 커서 이동 실패: $e');
-                  }
-                });
-
-                shouldNotify = true;
               }
-            } catch (e) {
-              debugPrint('[EditorService] 복원 실패: $e');
-              _specialNodeRegistry.remove(removedNodeId);
-              _explicitlyDeletedNodes.remove(removedNodeId);
-              shouldNotify = true;
             }
           }
         }
@@ -2653,6 +2756,39 @@ class EditorService extends ChangeNotifier {
     }
   }
 
+  /// ✅ 문서가 "특수 노드"로 끝나면, 마지막에 trailing 빈 문단을 보장한다.
+  /// - 드래프트 로드 후 "맨 밑 여백 탭 → 빈 문단 생성" UX가 막히는 것을 방지
+  /// - 복구 작업으로 간주하여 히스토리/undo step에 포함하지 않는다.
+  void ensureTrailingParagraphAfterLastSpecialNode() {
+    _runRecoveryOperation(() {
+      final doc = editor.document;
+      if (doc.nodeCount == 0) return;
+
+      final last = doc.getNodeAt(doc.nodeCount - 1);
+      if (last == null) return;
+
+      // 이미 문단으로 끝나면 추가 불필요
+      if (last is ParagraphNode) return;
+
+      // 특수 노드로 끝날 때만 trailing paragraph 추가
+      final isSpecial =
+          _isSpecialNode(last) ||
+          (last is ParagraphNode && last.metadata['mention'] == true);
+      if (!isSpecial) return;
+
+      final paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
+      final inheritedAlign = _getPreviousParagraphAlign(doc.nodeCount);
+      final trailing = ParagraphNode(
+        id: paragraphId,
+        text: AttributedText(''),
+        metadata: {'textAlign': inheritedAlign},
+      );
+
+      doc.insertNodeAt(doc.nodeCount, trailing);
+      // selection/포커스는 사용자 탭으로 유도 (로드 직후 강제 포커스 방지)
+    });
+  }
+
   /// 언급 노드를 문단(Paragraph) 기반으로 삽입한다.
   /// - 전체 텍스트는 굵게(bold)
   /// - 메타데이터로 mention 플래그와 usernames를 보관
@@ -3319,13 +3455,18 @@ class EditorService extends ChangeNotifier {
   String addGroupImageNode({
     required List<String> localPaths,
     required GroupImageLayout layout,
+    Map<String, dynamic>? metadata,
   }) {
     final id = 'group_${DateTime.now().millisecondsSinceEpoch}';
     DocumentNode node;
     if (layout == GroupImageLayout.pageview) {
-      node = PageViewImageNode(id: id, imageUrls: localPaths);
+      node = PageViewImageNode(
+        id: id,
+        imageUrls: localPaths,
+        metadata: metadata,
+      );
     } else {
-      node = ImageRowNode(id: id, imageUrls: localPaths);
+      node = ImageRowNode(id: id, imageUrls: localPaths, metadata: metadata);
     }
     _insertComponentNodeAtNextLine(node);
     return id;
@@ -3808,4 +3949,205 @@ class _DocumentSnapshot {
 
   @override
   int get hashCode => _cachedHashCode;
+}
+
+/// DeleteContentRequest(범위 삭제)에서 특수노드가 누락되는 케이스를 보완하기 위한 커맨드.
+///
+/// - 기본 DeleteContentCommand를 먼저 실행하여 텍스트/일반 노드를 삭제한다.
+/// - 그 다음, "보라색 범위 선택에 포함된" 특수노드 중 남아있는 것들을 DeleteNodeCommand로 삭제한다.
+/// - 특수노드는 레지스트리 복원과 충돌하지 않도록 삭제 전에 `explicitlyDeleted`로 표시한다.
+class _DeleteContentAndSpecialNodesCommand extends EditCommand {
+  _DeleteContentAndSpecialNodesCommand({
+    required this.documentRange,
+    required this.selectionForCaretCalculation,
+    required this.coveredSpecialNodeIds,
+    required this.saveHistoryBeforeDelete,
+    required this.beginSuppressRestoration,
+    required this.endSuppressRestoration,
+    required this.beginSuppressHistoryTracking,
+    required this.endSuppressHistoryTracking,
+    required this.finalizeBatchDeleteHistory,
+    required this.ensureParagraphAlignmentForNodeId,
+    required this.markSpecialNodeExplicitlyDeleted,
+  });
+
+  final DocumentRange documentRange;
+  final DocumentSelection selectionForCaretCalculation;
+  final Set<String> coveredSpecialNodeIds;
+  final VoidCallback saveHistoryBeforeDelete;
+  final VoidCallback beginSuppressRestoration;
+  final VoidCallback endSuppressRestoration;
+  final VoidCallback beginSuppressHistoryTracking;
+  final VoidCallback endSuppressHistoryTracking;
+  final VoidCallback finalizeBatchDeleteHistory;
+  final void Function(String nodeId) ensureParagraphAlignmentForNodeId;
+  final void Function(String nodeId) markSpecialNodeExplicitlyDeleted;
+
+  @override
+  HistoryBehavior get historyBehavior => HistoryBehavior.undoable;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final doc = context.document;
+    assert(() {
+      debugPrint(
+        '[EditorService] 🧹 DeleteContent+SpecialNodes: range=$documentRange, coveredSpecialNodeIds=$coveredSpecialNodeIds',
+      );
+      return true;
+    }());
+
+    beginSuppressRestoration();
+    beginSuppressHistoryTracking();
+    try {
+      // 🎯 삭제 전 상태 저장 (EditorService 커스텀 undo 안정화)
+      saveHistoryBeforeDelete();
+
+      // 🎯 삭제 후 caret 위치 계산 (SuperEditor 기본 UX와 정렬)
+      final caretAfterDeletion =
+          CommonEditorOperations.getDocumentPositionAfterExpandedDeletion(
+            document: doc,
+            selection: selectionForCaretCalculation,
+          );
+
+      // 🎯 DeleteContentCommand로 삭제될 수 있는(=deletable) 특수노드는 미리 명시적 삭제 표시
+      // (NodeRemovedEvent에서 복원 로직이 먼저 실행되는 걸 방지)
+      for (final id in coveredSpecialNodeIds) {
+        final node = doc.getNodeById(id);
+        if (node != null && node.isDeletable) {
+          markSpecialNodeExplicitlyDeleted(id);
+        }
+      }
+
+      // 1) 기본 범위 삭제 (가능한 deletable 노드/텍스트 먼저)
+      final nodesInRange = doc.getNodesInside(
+        documentRange.start,
+        documentRange.end,
+      );
+      final hasAnyDeletable = nodesInRange.any((n) => n.isDeletable);
+      if (hasAnyDeletable) {
+        executor.executeCommand(
+          DeleteContentCommand(documentRange: documentRange),
+        );
+      }
+
+      // 2) 기본 삭제에서 누락된 특수노드 보완 삭제
+      for (final id in coveredSpecialNodeIds) {
+        final stillExists = doc.getNodeById(id) != null;
+        if (!stillExists) continue;
+        markSpecialNodeExplicitlyDeleted(id);
+        executor.executeCommand(DeleteNodeCommand(nodeId: id));
+      }
+
+      // 3) selection 정리
+      if (caretAfterDeletion != null) {
+        executor.executeCommand(
+          ChangeSelectionCommand(
+            DocumentSelection.collapsed(position: caretAfterDeletion),
+            SelectionChangeType.deleteContent,
+            SelectionReason.userInteraction,
+          ),
+        );
+
+        // ✅ 삭제 직후 커서가 앉는 문단의 정렬 메타데이터가 비어있으면 즉시 보정
+        // (입력 1글자 후에야 정렬이 "원래대로" 돌아오는 현상 방지)
+        ensureParagraphAlignmentForNodeId(caretAfterDeletion.nodeId);
+      } else {
+        executor.executeCommand(
+          const ChangeSelectionCommand(
+            null,
+            SelectionChangeType.clearSelection,
+            SelectionReason.contentChange,
+          ),
+        );
+      }
+    } finally {
+      finalizeBatchDeleteHistory();
+      endSuppressHistoryTracking();
+      endSuppressRestoration();
+    }
+  }
+}
+
+/// DeleteSelectionRequest(IME/선택 핸들 백스페이스)에서 특수노드가 누락되는 케이스를 보완.
+///
+/// - 기본 DeleteSelectionCommand를 먼저 실행해서 SuperEditor의 일반 삭제/affinity 정책을 유지한다.
+/// - 그 다음, "보라색 범위 선택에 포함된" 특수노드 중 남아있는 것들을 DeleteNodeCommand로 삭제한다.
+/// - 특수노드는 레지스트리 복원과 충돌하지 않도록 삭제 전에 `explicitlyDeleted`로 표시한다.
+class _DeleteSelectionAndSpecialNodesCommand extends EditCommand {
+  _DeleteSelectionAndSpecialNodesCommand({
+    required this.affinity,
+    required this.selectionForDeletion,
+    required this.coveredSpecialNodeIds,
+    required this.saveHistoryBeforeDelete,
+    required this.beginSuppressRestoration,
+    required this.endSuppressRestoration,
+    required this.beginSuppressHistoryTracking,
+    required this.endSuppressHistoryTracking,
+    required this.finalizeBatchDeleteHistory,
+    required this.ensureParagraphAlignmentForNodeId,
+    required this.markSpecialNodeExplicitlyDeleted,
+  });
+
+  final TextAffinity affinity;
+  final DocumentSelection selectionForDeletion;
+  final Set<String> coveredSpecialNodeIds;
+  final VoidCallback saveHistoryBeforeDelete;
+  final VoidCallback beginSuppressRestoration;
+  final VoidCallback endSuppressRestoration;
+  final VoidCallback beginSuppressHistoryTracking;
+  final VoidCallback endSuppressHistoryTracking;
+  final VoidCallback finalizeBatchDeleteHistory;
+  final void Function(String nodeId) ensureParagraphAlignmentForNodeId;
+  final void Function(String nodeId) markSpecialNodeExplicitlyDeleted;
+
+  @override
+  HistoryBehavior get historyBehavior => HistoryBehavior.undoable;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final doc = context.document;
+    assert(() {
+      debugPrint(
+        '[EditorService] 🧹 DeleteSelection+SpecialNodes: affinity=$affinity, selection=$selectionForDeletion, coveredSpecialNodeIds=$coveredSpecialNodeIds',
+      );
+      return true;
+    }());
+
+    beginSuppressRestoration();
+    beginSuppressHistoryTracking();
+    try {
+      // 🎯 삭제 전 상태 저장 (EditorService 커스텀 undo 안정화)
+      saveHistoryBeforeDelete();
+
+      // ✅ 중요: DeleteSelectionCommand가 내부에서 특수노드를 삭제할 수 있으므로,
+      // 삭제 전에 "명시적 삭제"로 마킹해서 NodeRemovedEvent 복원 로직과 충돌을 막는다.
+      for (final id in coveredSpecialNodeIds) {
+        final node = doc.getNodeById(id);
+        if (node != null && node.isDeletable) {
+          markSpecialNodeExplicitlyDeleted(id);
+        }
+      }
+
+      // 1) 기본 selection 삭제 (SuperEditor 기본 정책 유지)
+      executor.executeCommand(DeleteSelectionCommand(affinity: affinity));
+
+      // ✅ 삭제 직후 최종 selection(extent) 위치의 문단 정렬을 즉시 보정
+      final selAfter = context.composer.selection;
+      if (selAfter != null) {
+        ensureParagraphAlignmentForNodeId(selAfter.extent.nodeId);
+      }
+
+      // 2) 기본 삭제에서 누락된 특수노드 보완 삭제
+      for (final id in coveredSpecialNodeIds) {
+        final stillExists = doc.getNodeById(id) != null;
+        if (!stillExists) continue;
+        markSpecialNodeExplicitlyDeleted(id);
+        executor.executeCommand(DeleteNodeCommand(nodeId: id));
+      }
+    } finally {
+      finalizeBatchDeleteHistory();
+      endSuppressHistoryTracking();
+      endSuppressRestoration();
+    }
+  }
 }

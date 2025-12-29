@@ -36,6 +36,7 @@ import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/overlay/draft_list_overlay.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
+import 'package:doppy/utils/mentioned_usernames_extractor.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
@@ -452,7 +453,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         dragService.invalidateNodeRectCache();
         // 🎯 드래그 중이 아닐 때 선택 해제 확인
         if (dragService.draggingNodeId == null) {
-          final keyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+          final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
           final hasFocus = _editorFocusNode.hasFocus;
           // 텍스트 입력 중이 아니면 선택 해제
           if (!keyboardVisible && !hasFocus) {
@@ -874,7 +875,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   @override
   Widget build(BuildContext context) {
     // 🎯 성능 최적화: 키보드 상태는 MediaQuery에서 직접 읽기 (변수 저장 제거)
-    final isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+    final isKeyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
 
     // 🎯 keyboardVisibleNotifier 값 갱신 (매 build마다 생성하지 않고 값만 변경)
     if (_keyboardVisibleNotifier.value != isKeyboardVisible) {
@@ -984,7 +985,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                     child: Builder(
                                       builder: (context) {
                                         final screenWidth =
-                                            MediaQuery.of(context).size.width;
+                                            MediaQuery.sizeOf(context).width;
                                         final isDarkMode =
                                             context
                                                 .read<ThemeProvider>()
@@ -1171,7 +1172,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     top: 0,
                     left: 0,
                     right: 0,
-                    height: MediaQuery.of(context).padding.top,
+                    height: MediaQuery.paddingOf(context).top,
                     child: TopPadding(),
                   ),
                 ],
@@ -1183,7 +1184,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         // 🎯 성능 최적화: 키보드 높이를 상위에서 한 번만 계산하여 전달
         // bottomNavigationBar 내부의 MediaQuery 접근 최소화
         bottomNavigationBar: _BottomBar(
-          keyboardHeight: MediaQuery.of(context).viewInsets.bottom,
+          keyboardHeight: MediaQuery.viewInsetsOf(context).bottom,
           keyboardVisibleNotifier: _keyboardVisibleNotifier,
           textStylingService: textStylingService,
           editorService: editorService,
@@ -1550,10 +1551,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // 7. 사용된 이미지/비디오 URL 수집
       final usedImageUrls = _collectUsedMediaUrls(exported);
+      // 7-1. mentionedUsernames 수집 (멘션 메타 노드 우선)
+      final mentionedUsernames = MentionedUsernamesExtractor.extractFromContent(
+        content,
+      );
 
       debugPrint('[PostwriteScreen] Export 완료');
       debugPrint('  - 제목: $title');
       debugPrint('  - 사용된 미디어: ${usedImageUrls.length}개');
+      debugPrint('  - 멘션: ${mentionedUsernames.length}명');
 
       // 8. 제목 변경 체크 및 서버 저장 (스마트 동기화)
       if (title != _lastTitleText && _lastTitleText != null) {
@@ -1581,6 +1587,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         content: content,
         title: title,
         usedImageUrls: usedImageUrls,
+        mentionedUsernames: mentionedUsernames,
       );
 
       debugPrint('[PostwriteScreen] ✅ 본문 수정 완료');
@@ -1830,7 +1837,13 @@ class _BottomBar extends StatelessWidget {
             }
 
             // 🎯 키보드 높이를 파라미터로 받아 MediaQuery 접근 제거
-            final bottomPadding = keyboardHeight <= 30 ? 20.0 : keyboardHeight;
+            // ✅ 키보드가 내려가는 애니메이션 중(viewInsets가 감소),
+            // safe-area(bottom padding)보다 더 아래로 내려갔다가 다시 올라오는 "튐"이 생길 수 있음.
+            // 그래서 "키보드 높이 vs safe-area" 중 더 큰 값을 사용해,
+            // safe-area 위치에 도달하면 더 이상 내려가지 않게 만든다.
+            final safeBottom = MediaQuery.paddingOf(context).bottom;
+            final bottomPadding =
+                keyboardHeight > safeBottom ? keyboardHeight : safeBottom;
             final theme = Theme.of(context);
 
             return Container(

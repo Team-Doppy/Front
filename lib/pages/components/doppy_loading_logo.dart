@@ -7,6 +7,8 @@ class DoppyLoadingLogo extends StatelessWidget {
   const DoppyLoadingLogo({
     super.key,
     this.opacity = 1.0,
+    this.opacityDuration = const Duration(milliseconds: 100),
+    this.opacityCurve = Curves.easeIn,
     this.showBackButton = false,
     this.onBack,
     this.spinnerColor,
@@ -18,6 +20,13 @@ class DoppyLoadingLogo extends StatelessWidget {
 
   /// 로고 투명도 (0.0 ~ 1.0)
   final double opacity;
+
+  /// opacity 변경 애니메이션 duration
+  /// - 스플래시처럼 외부에서 애니메이션을 이미 제어하는 경우 `Duration.zero` 권장
+  final Duration opacityDuration;
+
+  /// opacity 변경 애니메이션 curve
+  final Curve opacityCurve;
 
   /// 뒤로가기 버튼 표시 여부
   final bool showBackButton;
@@ -44,8 +53,8 @@ class DoppyLoadingLogo extends StatelessWidget {
         Center(
           child: AnimatedOpacity(
             opacity: opacity,
-            duration: const Duration(milliseconds: 400),
-            curve: Curves.easeIn,
+            duration: opacityDuration,
+            curve: opacityCurve,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [

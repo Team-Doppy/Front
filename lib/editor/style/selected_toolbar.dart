@@ -4,6 +4,7 @@ import 'package:flutter_svg/svg.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/component/app_image_node.dart';
@@ -179,19 +180,23 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
               },
             ),
             SizedBox(width: 16),
-            if (widget.node is! ClipNode) ...[
-              Padding(
-                padding: const EdgeInsets.only(top: 3),
-                child: _buildMainSvgIcon(
-                  size: 28,
-                  context: context,
-                  svgPath: 'assets/icons/crop.svg',
-                  isActive: false,
-                  onTap: widget.onEdit,
-                ),
+          ],
+
+          // ✅ 수정(크롭/편집) 버튼: 싱글/로우/페이지뷰 모두 활성화
+          if (widget.node is ImageNode ||
+              widget.node is ImageRowNode ||
+              widget.node is PageViewImageNode) ...[
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: _buildMainSvgIcon(
+                size: 28,
+                context: context,
+                svgPath: 'assets/icons/crop.svg',
+                isActive: false,
+                onTap: widget.onEdit,
               ),
-              SizedBox(width: 8),
-            ],
+            ),
+            const SizedBox(width: 8),
           ],
 
           _buildMainSvgIcon(

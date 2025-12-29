@@ -1,0 +1,3 @@
+/* Notification permission usage description */
+"NSUserNotificationsUsageDescription" = "To receive important notifications such as new posts, comments, likes, and friend requests, this permission is required. Without notifications, you cannot check real-time activities in the app.";
+

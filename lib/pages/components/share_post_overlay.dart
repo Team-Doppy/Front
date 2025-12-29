@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'dart:io';
 
+import 'package:doppy/main.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/theme/app_colors.dart';
@@ -127,13 +128,13 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
     return raw.replaceAll(RegExp(r'\s+'), '-');
   }
 
-  /// 🎯 공유용 URL (https://doppy.app/{postId}/{slug})
+  /// 🎯 공유용 URL
   String get _shareUrl {
     final slug = _slug;
     if (slug.isEmpty) {
-      return 'https://doppy.app/${widget.postId}';
+      return '${AppConstants.webBaseUrl}/${widget.postId}';
     }
-    return 'https://doppy.app/${widget.postId}/$slug';
+    return '${AppConstants.webBaseUrl}/${widget.postId}/$slug';
   }
 
   @override

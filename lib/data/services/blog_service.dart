@@ -715,6 +715,7 @@ class BlogService {
     required Map<String, dynamic> content,
     String? title,
     required List<String> usedImageUrls,
+    required List<String> mentionedUsernames,
   }) async {
     debugPrint('[BlogService] 본문/타이틀 수정 요청: $postId');
 
@@ -722,6 +723,8 @@ class BlogService {
       final requestBody = <String, dynamic>{
         'content': content,
         'usedImageUrls': usedImageUrls,
+        // ✅ 항상 포함 (서버 스펙: [] 또는 null 허용)
+        'mentionedUsernames': mentionedUsernames,
       };
 
       if (title != null && title.isNotEmpty) {
@@ -799,6 +802,11 @@ class BlogService {
 
       if (postData['usedImageUrls'] != null)
         'usedImageUrls': List<String>.from(postData['usedImageUrls'] as List),
+      // ✅ mentionedUsernames는 항상 포함 (없으면 빈 배열)
+      'mentionedUsernames':
+          (postData['mentionedUsernames'] is List)
+              ? List<String>.from(postData['mentionedUsernames'] as List)
+              : <String>[],
       // GROUPS인 경우에만 sharedGroupIds 추가
       if (accessLevel == 'GROUPS' &&
           sharedGroupIds != null &&

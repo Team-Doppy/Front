@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:http/http.dart' as http;
 
 /// 네트워크/로컬(파일 경로 or file://) 이미지 소스로부터 bytes를 가져오는 공용 유틸.
@@ -47,6 +48,16 @@ class ImageBytesResolver {
     }
 
     if (isNetwork(s)) {
+      // ✅ 우선 디스크 캐시를 조회해서(이미 화면에 떠있던 이미지면 히트 가능) 다운로드 대기 시간을 줄인다.
+      try {
+        final cachedFile = await DefaultCacheManager().getSingleFile(s);
+        if (await cachedFile.exists()) {
+          return await cachedFile.readAsBytes();
+        }
+      } catch (_) {
+        // 캐시 실패 시 네트워크로 폴백
+      }
+
       final uri = Uri.parse(s);
       final resp = await http.get(uri, headers: headers).timeout(timeout);
       if (resp.statusCode != 200) {
@@ -72,10 +83,11 @@ class ImageBytesResolver {
     Map<String, String>? headers,
   }) async {
     if (sources.isEmpty) return <Uint8List>[];
-    final out = <Uint8List>[];
-    for (final s in sources) {
-      out.add(await resolveOne(s, timeout: timeoutPerItem, headers: headers));
-    }
-    return out;
+    // ✅ 병렬로 처리해서 체감 시간을 줄인다(특히 Row/PageView 다중 이미지 편집 진입)
+    return await Future.wait(
+      sources.map(
+        (s) => resolveOne(s, timeout: timeoutPerItem, headers: headers),
+      ),
+    );
   }
 }

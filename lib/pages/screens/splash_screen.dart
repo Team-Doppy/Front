@@ -8,6 +8,8 @@ import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -62,7 +64,7 @@ class _SplashScreenState extends State<SplashScreen>
 
     _fadeOutController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 300),
     );
 
     _fadeOutOpacity = Tween<double>(begin: 1.0, end: 0.0).animate(
@@ -262,9 +264,13 @@ class _SplashScreenState extends State<SplashScreen>
 
     if (!mounted) return;
 
-    // 🎯 로딩 완료 후 dopp 로고 페이드아웃 애니메이션 시작
+    // 🎯 로딩 완료 후 doppy 로고 페이드아웃 애니메이션 완료까지 대기
     await _fadeOutController.forward();
 
+    if (!mounted) return;
+
+    // 마지막 프레임이 그려질 시간을 아주 조금 보장 (체감상 "완전히 사라진 후" 전환)
+    await Future.delayed(const Duration(milliseconds: 16));
     if (!mounted) return;
 
     // 부트스트랩 결과에 따라 네비게이션
@@ -272,7 +278,9 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
 
     if (result.loggedIn) {
-      Navigator.of(context).pushReplacement(
+      // ✅ 딥링크가 스플래시 중 push될 수 있으므로, 스택을 완전히 초기화해서
+      // "뒤로가기 시 이상한 화면(빈 All Posts/스플래시 잔존)"이 나오지 않게 한다.
+      Navigator.of(context).pushAndRemoveUntil(
         PageRouteBuilder(
           pageBuilder:
               (_, __, ___) => RootShell(
@@ -283,9 +291,10 @@ class _SplashScreenState extends State<SplashScreen>
           transitionsBuilder:
               (_, a, __, child) => FadeTransition(opacity: a, child: child),
         ),
+        (route) => false,
       );
     } else {
-      Navigator.of(context).pushReplacementNamed('/login');
+      Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
     }
   }
 
@@ -321,6 +330,9 @@ class _SplashScreenState extends State<SplashScreen>
                   children: [
                     DoppyLoadingLogo(
                       opacity: currentOpacity,
+                      // Splash에서는 외부 애니메이션 컨트롤러가 opacity를 이미 제어하므로
+                      // 내부 AnimatedOpacity 지연(400ms)을 제거해서 "완전히 사라진 뒤" 전환되게 함
+                      opacityDuration: Duration.zero,
                       dTextSize: 40,
                       ppyTextSize: 40,
                       spinnerStrokeWidth: 4.5,

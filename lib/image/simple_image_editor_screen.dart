@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/image/group_image_layout_selector.dart';
 import 'package:flutter_svg/svg.dart';
+import 'package:image/image.dart' as img;
 import 'crop_editor.dart'
     show
         CropState,
@@ -32,6 +33,7 @@ class SimpleImageEditorScreen extends StatefulWidget {
     this.isExistingNodeEdit = false,
     this.enableLayoutSelectionForMultiImage = true,
     this.doneLabelOverride,
+    this.onDone,
   }) : assert(
          imageBytes != null || imageBytesList != null,
          'imageBytes 또는 imageBytesList 중 하나는 필수입니다.',
@@ -51,6 +53,11 @@ class SimpleImageEditorScreen extends StatefulWidget {
 
   /// 상단 완료 버튼 텍스트 강제 오버라이드 (필요 시).
   final String? doneLabelOverride;
+
+  /// ✅ 완료 시 결과를 "Navigator.pop(result)"로 반환하지 않고, 호출자에게 위임하고 싶을 때 사용.
+  /// (예: MediaPicker가 에디터/피커를 동시에 닫아야 하는 경우)
+  final Future<void> Function(BuildContext editorContext, dynamic result)?
+  onDone;
 
   @override
   State<SimpleImageEditorScreen> createState() =>
@@ -201,6 +208,33 @@ class _EditSnapshot {
         selectedFilter == other.selectedFilter &&
         filterIntensity == other.filterIntensity;
   }
+}
+
+// ===== isolate helpers (encode) =====
+Future<Uint8List> _encodeJpegFromRgba(_EncodeJpegArgs args) async {
+  final image = img.Image.fromBytes(
+    width: args.width,
+    height: args.height,
+    bytes: args.rgba.buffer,
+    bytesOffset: args.rgba.offsetInBytes,
+    numChannels: 4,
+  );
+  final encoded = img.encodeJpg(image, quality: args.quality);
+  return Uint8List.fromList(encoded);
+}
+
+class _EncodeJpegArgs {
+  const _EncodeJpegArgs({
+    required this.width,
+    required this.height,
+    required this.rgba,
+    required this.quality,
+  });
+
+  final int width;
+  final int height;
+  final Uint8List rgba;
+  final int quality;
 }
 
 enum FilterType { none, clear, lucent, bright, tender }
@@ -591,6 +625,9 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   }) {
     final curr = _uiImageCache[index];
     final v = _applyAnimVersion[index] ?? 0;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final fgColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
 
     // 최초 로딩(캐시에 아무것도 없을 때만) — 적용 순간엔 여기에 잘 안 들어오게 만드는 게 목표
     if (curr == null) {
@@ -599,12 +636,17 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           future: _loadImage(bytesForFallbackLoad),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
+              // ✅ 기존 노드 편집 진입(isExistingNodeEdit)에서는 진입 전에 이미 로딩을 보여줬으므로
+              // 여기서 초기 로딩 UI를 다시 띄우지 않는다.
+              if (widget.isExistingNodeEdit) {
+                return const SizedBox.shrink();
+              }
               return SizedBox(
                 width: 24,
                 height: 24,
                 child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Theme.of(context).colorScheme.onSurface,
+                  strokeWidth: 4,
+                  color: fgColor,
                 ),
               );
             }
@@ -762,6 +804,10 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         if (!allowLayoutSelection) {
           final bakedImages = await _bakeAllFinalBytes();
           if (!mounted) return;
+          if (widget.onDone != null) {
+            await widget.onDone!(context, bakedImages);
+            return;
+          }
           Navigator.pop(context, bakedImages);
           return;
         }
@@ -805,13 +851,22 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         final bakedImages = await bakeFuture;
 
         if (!mounted) return;
-        Navigator.pop(context, {'images': bakedImages, 'layout': layout});
+        final payload = {'images': bakedImages, 'layout': layout};
+        if (widget.onDone != null) {
+          await widget.onDone!(context, payload);
+          return;
+        }
+        Navigator.pop(context, payload);
         return;
       }
 
       // ✅ 2) 단일 이미지는 레이아웃 선택 없이 바로 1장만 굽고 반환
       final baked = await _exportFinalBytes(0);
       if (!mounted) return;
+      if (widget.onDone != null) {
+        await widget.onDone!(context, baked);
+        return;
+      }
       Navigator.pop(context, baked);
       return;
     } finally {
@@ -826,6 +881,16 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   Future<List<Uint8List>> _bakeAllFinalBytes() async {
     final out = <Uint8List>[];
     for (int i = 0; i < _images.length; i++) {
+      // ✅ 변경 없는 이미지는 굽지 않고 원본 bytes 그대로 반환 (속도 최적화)
+      final initial =
+          _history[i]?.isNotEmpty == true ? _history[i]!.first : null;
+      if (initial != null) {
+        final current = _snapshotOf(i);
+        if (current.sameAs(initial)) {
+          out.add(_images[i]);
+          continue;
+        }
+      }
       // UI에 프레임을 양보해서(특히 레이아웃 선택 중) 덜 끊기게
       await Future.delayed(Duration.zero);
       out.add(await _exportFinalBytes(i));
@@ -922,11 +987,23 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
     final picture = recorder.endRecording();
     final out = await picture.toImage(src.width, src.height);
-    final bd = await out.toByteData(format: ui.ImageByteFormat.png);
-    if (bd == null) {
-      throw StateError('toByteData returned null');
-    }
-    return bd.buffer.asUint8List();
+
+    // ✅ PNG 인코딩은 매우 느리고(특히 고해상도) 결과 bytes도 커짐 → JPEG로 변경
+    // - rawRgba는 빠르게 뽑고, JPEG 인코딩은 isolate(compute)에서 수행
+    final bd = await out.toByteData(format: ui.ImageByteFormat.rawRgba);
+    if (bd == null) throw StateError('toByteData returned null');
+
+    // 기본 품질: 92 (용량/속도/품질 밸런스)
+    const quality = 92;
+    return await compute(
+      _encodeJpegFromRgba,
+      _EncodeJpegArgs(
+        width: out.width,
+        height: out.height,
+        rgba: bd.buffer.asUint8List(),
+        quality: quality,
+      ),
+    );
   }
 
   @override
@@ -1003,7 +1080,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                           _isBottomSheetOpen
                                               ? Icons.arrow_back
                                               : Icons.close,
-                                          color: Colors.white,
+                                          color: fgColor,
                                         ),
                                       ),
                                       if (!_isBottomSheetOpen) ...[
@@ -1026,10 +1103,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                                               ?.length ??
                                                           0) >
                                                       1)
-                                                  ? Colors.white
-                                                  : Colors.white.withOpacity(
-                                                    0.3,
-                                                  ),
+                                                  ? fgColor
+                                                  : fgColor.withOpacity(0.3),
                                               BlendMode.srcIn,
                                             ),
                                           ),
@@ -1051,10 +1126,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                               (_redoStack[_currentIndex]
                                                           ?.isNotEmpty ??
                                                       false)
-                                                  ? Colors.white
-                                                  : Colors.white.withOpacity(
-                                                    0.3,
-                                                  ),
+                                                  ? fgColor
+                                                  : fgColor.withOpacity(0.3),
                                               BlendMode.srcIn,
                                             ),
                                           ),
@@ -1100,7 +1173,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                                                     '${_images.length}',
                                                                   )),
                                                       style: TextStyle(
-                                                        color: Colors.white,
+                                                        color: fgColor,
                                                         fontSize: 17,
                                                         fontWeight:
                                                             FontWeight.w600,
@@ -1206,9 +1279,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                             child: Text(
                                               '${_currentIndex + 1}/${_images.length}',
                                               style: TextStyle(
-                                                color: Colors.white.withOpacity(
-                                                  0.9,
-                                                ),
+                                                color: fgColor.withOpacity(0.9),
                                                 fontSize: 14,
                                                 fontWeight: FontWeight.w600,
                                               ),
@@ -1339,12 +1410,15 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
             Positioned.fill(
               child: IgnorePointer(
                 child: Container(
-                  color: Colors.black.withOpacity(0.25),
-                  child: const Center(
+                  color: bgColor.withOpacity(0.25),
+                  child: Center(
                     child: SizedBox(
                       width: 28,
                       height: 28,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 4,
+                        color: fgColor,
+                      ),
                     ),
                   ),
                 ),
@@ -1357,6 +1431,9 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   Widget _buildMainToolbar() {
     final l10n = AppLocalizations.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final fgColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
     return GestureDetector(
       // ✅ 툴바 영역 터치 이벤트 차단 (배경 GestureDetector와 충돌 방지)
       onTap: () {}, // 빈 핸들러로 터치 이벤트 소비
@@ -1382,28 +1459,31 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                       label: l10n.t('adjust'),
                       onTap: _toggleAdjustment,
                       isActive: _editMode == _EditMode.adjust,
+                      textColor: fgColor,
                     ),
                     Container(
                       width: 1,
                       height: 40,
-                      color: Colors.white.withOpacity(0.2),
+                      color: fgColor.withOpacity(0.2),
                     ),
                     _GlassToolButton(
                       icon: Icons.crop,
                       label: l10n.t('crop'),
                       onTap: _openCropPanel,
                       isActive: _editMode == _EditMode.crop,
+                      textColor: fgColor,
                     ),
                     Container(
                       width: 1,
                       height: 40,
-                      color: Colors.white.withOpacity(0.2),
+                      color: fgColor.withOpacity(0.2),
                     ),
                     _GlassToolButton(
                       icon: Icons.color_lens,
                       label: l10n.t('filter'),
                       onTap: _toggleFilter,
                       isActive: _editMode == _EditMode.filter,
+                      textColor: fgColor,
                     ),
                   ],
                 ),
@@ -1485,6 +1565,11 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     // (현재 페이지 state(_currentIndex)를 쓰면 페이지 넘길 때마다 "편집이 풀리거나 섞이는" 현상이 발생)
     final state = _imageEditStates.putIfAbsent(index, () => _ImageEditState());
     final currentImageBytes = imageBytes; // ✅ 이미 _images[index]가 전달됨
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor =
+        isDark ? AppColors.darkBackground : AppColors.lightBackground;
+    final fgColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1641,6 +1726,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                     painter: CropOverlayPainter(
                       cropRectScreen: cropRectScreen,
                       imageRect: imageRectForCrop,
+                      overlayColor: bgColor.withOpacity(0.8),
+                      borderColor: fgColor,
                     ),
                     size: Size.infinite,
                   ),
@@ -1666,6 +1753,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                   onUpdate: () {
                     setState(() {});
                   },
+                  handleColor: fgColor,
                   onResize: (handle, delta) {
                     // 🎯 기본 리사이즈 로직 사용 (각 핸들 방향으로만 움직임, center 고정 안 함)
                     debugPrint('🔵 [리사이즈 중] handle: $handle, delta: $delta');
@@ -2252,6 +2340,9 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   Widget _buildFilterBottomSheet() {
     final state = _getCurrentEditState();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final fgColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
     final filters = [
       {'name': '원본', 'filter': FilterType.none},
       {'name': 'Clear', 'filter': FilterType.clear},
@@ -2291,7 +2382,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                               color:
                                   isSelected
                                       ? Theme.of(context).colorScheme.primary
-                                      : Colors.white.withOpacity(0.2),
+                                      : fgColor.withOpacity(0.2),
                               width: isSelected ? 3 : 1,
                             ),
                           ),
@@ -2337,14 +2428,19 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                     ),
                                   );
                                 }
+                                // ✅ 기존 노드 편집 진입에서는 "초기 로딩" UI를 숨김
+                                if (widget.isExistingNodeEdit) {
+                                  return const SizedBox.shrink();
+                                }
                                 return Container(
-                                  color: Colors.white.withOpacity(0.1),
-                                  child: const Center(
+                                  color: fgColor.withOpacity(0.1),
+                                  child: Center(
                                     child: SizedBox(
                                       width: 24,
                                       height: 24,
                                       child: CircularProgressIndicator(
-                                        strokeWidth: 2,
+                                        strokeWidth: 4,
+                                        color: fgColor,
                                       ),
                                     ),
                                   ),
@@ -2361,7 +2457,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                           color:
                               isSelected
                                   ? Theme.of(context).colorScheme.primary
-                                  : Colors.white,
+                                  : fgColor,
                           fontSize: 11,
                           fontWeight:
                               isSelected ? FontWeight.w600 : FontWeight.w400,
@@ -2378,6 +2474,9 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   Widget _buildAdjustmentBottomSheet() {
     final state = _getCurrentEditState();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final fgColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
     final adjustments = [
       {'label': '밝기', 'type': 'brightness', 'icon': Icons.brightness_6},
       {'label': '대비', 'type': 'contrast', 'icon': Icons.contrast},
@@ -2402,16 +2501,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                   children: [
                     Row(
                       children: [
-                        Icon(
-                          adj['icon'] as IconData,
-                          color: Colors.white,
-                          size: 20,
-                        ),
+                        Icon(adj['icon'] as IconData, color: fgColor, size: 20),
                         const SizedBox(width: 8),
                         Text(
                           adj['label'] as String,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: fgColor,
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
                           ),
@@ -2419,10 +2514,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                         const Spacer(),
                         Text(
                           value.toStringAsFixed(0),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                          ),
+                          style: TextStyle(color: fgColor, fontSize: 14),
                         ),
                       ],
                     ),
@@ -2453,14 +2545,15 @@ class _GlassToolButton extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.isActive = false,
+    required this.textColor,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
   final bool isActive;
+  final Color textColor;
 
-  @override
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -2469,12 +2562,12 @@ class _GlassToolButton extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: Colors.white, size: 28),
+          Icon(icon, color: textColor, size: 28),
           const SizedBox(height: 4),
           Text(
             label,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: textColor,
               fontSize: 12,
               fontWeight: FontWeight.w500,
             ),

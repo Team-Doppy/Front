@@ -15,6 +15,7 @@ import 'package:doppy/editor/style/defualt_toolbar.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'dart:convert';
+import 'package:doppy/utils/mentioned_usernames_extractor.dart';
 
 /// 간단 JSON 인코더 유틸리티
 /// - 앱 내에서 공통으로 JSON 문자열을 뽑을 때만 사용
@@ -1347,6 +1348,37 @@ class PostExporter {
     }
     debugPrint('Thumbnail: ${result['thumbnailImageUrl'] ?? 'none'}');
     debugPrint('UsedImageUrls: ${result['usedImageUrls'] ?? 'none'}');
+
+    // 10. mentionedUsernames
+    // ✅ 멘션은 "텍스트 @파싱"이 아니라 에디터 메타(mention 노드)를 1순위로 사용해야 누락/오판이 적다.
+    // - 서버 스펙: null 또는 [] 모두 허용
+    // - 요구사항: 발행 시 항상 필드 자체는 포함
+    try {
+      if (base['mentionedUsernames'] is List) {
+        final existing = List<String>.from(base['mentionedUsernames'] as List);
+        result['mentionedUsernames'] = existing;
+        debugPrint(
+          '[PostExporter] 📌 base에서 기존 mentionedUsernames 사용: ${existing.length}개',
+        );
+      } else {
+        final contentMap =
+            (base['content'] is Map)
+                ? (base['content'] as Map).cast<String, dynamic>()
+                : null;
+        final mentions = MentionedUsernamesExtractor.extractFromContent(
+          contentMap,
+        );
+        result['mentionedUsernames'] = mentions; // 빈 배열도 포함
+        debugPrint(
+          '[PostExporter] ✅ mentionedUsernames 수집: ${mentions.length}개',
+        );
+      }
+    } catch (e) {
+      // 실패해도 발행은 막지 않되, 필드는 포함
+      result['mentionedUsernames'] = <String>[];
+      debugPrint('[PostExporter] ❌ mentionedUsernames 수집 실패: $e');
+    }
+
     debugPrint(JsonExport.encode(result, pretty: true));
 
     return result;

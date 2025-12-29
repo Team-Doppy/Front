@@ -75,7 +75,9 @@ class MediaUploadHandler {
   Future<void> handleImageUpload() async {
     if (!context.mounted) return;
 
-    final result = await Navigator.of(context).push<MediaPickerResult>(
+    final upload = context.read<UploadService>();
+
+    await Navigator.of(context).push<MediaPickerResult>(
       CupertinoPageRoute(
         fullscreenDialog: true,
         builder:
@@ -85,29 +87,29 @@ class MediaUploadHandler {
               enableToggle: true,
               onMediaSelected: (file) {},
               onCancel: () {},
+              // ✅ "노드 먼저 추가 → 잠깐 여유 → pop" 방식으로 UX 안정화
+              onBeforePop: (result) async {
+                if (!this.context.mounted) return;
+                // 영상으로 전환된 경우
+                if (result.selectedMediaType == MediaType.video) {
+                  await _handleVideoFromImagePicker(result, upload);
+                  return;
+                }
+                // 이미지 업로드
+                await _handleImageFiles(result, upload);
+              },
             ),
       ),
     );
-
-    if (!context.mounted || result == null || result.files.isEmpty) return;
-
-    final upload = context.read<UploadService>();
-
-    // 🎯 영상으로 전환된 경우
-    if (result.selectedMediaType == MediaType.video) {
-      await _handleVideoFromImagePicker(result, upload);
-      return;
-    }
-
-    // 🎯 이미지 업로드
-    await _handleImageFiles(result, upload);
   }
 
   /// 영상 업로드 처리
   Future<void> handleVideoUpload() async {
     if (!context.mounted) return;
 
-    final result = await Navigator.of(context).push<MediaPickerResult>(
+    final upload = context.read<UploadService>();
+
+    await Navigator.of(context).push<MediaPickerResult>(
       CupertinoPageRoute(
         fullscreenDialog: true,
         builder:
@@ -117,22 +119,24 @@ class MediaUploadHandler {
               enableToggle: true,
               onMediaSelected: (file) {},
               onCancel: () {},
+              // ✅ "노드 먼저 추가 → 잠깐 여유 → pop" 방식으로 UX 안정화
+              onBeforePop: (result) async {
+                if (!this.context.mounted) return;
+                // 이미지로 전환된 경우
+                if (result.selectedMediaType == MediaType.image) {
+                  await _handleImageFromVideoPicker(result, upload);
+                  return;
+                }
+                // 영상 업로드
+                await _uploadVideo(
+                  result.files.first,
+                  result.thumbnailPath,
+                  upload,
+                );
+              },
             ),
       ),
     );
-
-    if (!context.mounted || result == null || result.files.isEmpty) return;
-
-    final upload = context.read<UploadService>();
-
-    // 🎯 이미지로 전환된 경우
-    if (result.selectedMediaType == MediaType.image) {
-      await _handleImageFromVideoPicker(result, upload);
-      return;
-    }
-
-    // 🎯 영상 업로드
-    await _uploadVideo(result.files.first, result.thumbnailPath, upload);
   }
 
   /// 이미지 파일 처리 (그룹 레이아웃 포함)

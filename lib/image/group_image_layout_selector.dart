@@ -13,9 +13,17 @@ enum GroupImageLayout {
 
 /// 그룹 이미지 레이아웃 선택 화면 (모달 바텀시트)
 class GroupImageLayoutSelector extends StatelessWidget {
-  const GroupImageLayoutSelector({super.key, this.previewImages});
+  const GroupImageLayoutSelector({
+    super.key,
+    this.previewImages,
+    this.onSelected,
+  });
 
   final List<File>? previewImages;
+
+  /// 선택 시 부모에서 원하는 타이밍/처리를 제어할 수 있도록 훅 제공.
+  /// - null이면 기존처럼 `Navigator.pop(layout)`로 결과 반환
+  final Future<void> Function(GroupImageLayout layout)? onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -90,11 +98,14 @@ class GroupImageLayoutSelector extends StatelessWidget {
                     icon: Icons.image,
                     previewImages: previewImages,
                     previewLayout: GroupImageLayout.individual,
-                    onTap: () {
-                      // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
-                      if (context.mounted) {
-                        Navigator.of(context).pop(GroupImageLayout.individual);
+                    onTap: () async {
+                      if (!context.mounted) return;
+                      if (onSelected != null) {
+                        await onSelected!(GroupImageLayout.individual);
+                        return;
                       }
+                      // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
+                      Navigator.of(context).pop(GroupImageLayout.individual);
                     },
                   ),
                   const SizedBox(height: 16),
@@ -107,11 +118,14 @@ class GroupImageLayoutSelector extends StatelessWidget {
                       icon: Icons.grid_view,
                       previewImages: previewImages,
                       previewLayout: GroupImageLayout.grid2,
-                      onTap: () {
-                        // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
-                        if (context.mounted) {
-                          Navigator.of(context).pop(GroupImageLayout.grid2);
+                      onTap: () async {
+                        if (!context.mounted) return;
+                        if (onSelected != null) {
+                          await onSelected!(GroupImageLayout.grid2);
+                          return;
                         }
+                        // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
+                        Navigator.of(context).pop(GroupImageLayout.grid2);
                       },
                     ),
                     const SizedBox(height: 16),
@@ -125,11 +139,14 @@ class GroupImageLayoutSelector extends StatelessWidget {
                       icon: Icons.grid_on,
                       previewImages: previewImages,
                       previewLayout: GroupImageLayout.grid3,
-                      onTap: () {
-                        // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
-                        if (context.mounted) {
-                          Navigator.of(context).pop(GroupImageLayout.grid3);
+                      onTap: () async {
+                        if (!context.mounted) return;
+                        if (onSelected != null) {
+                          await onSelected!(GroupImageLayout.grid3);
+                          return;
                         }
+                        // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
+                        Navigator.of(context).pop(GroupImageLayout.grid3);
                       },
                     ),
                     const SizedBox(height: 16),
@@ -143,11 +160,14 @@ class GroupImageLayoutSelector extends StatelessWidget {
                       icon: Icons.swipe,
                       previewImages: previewImages,
                       previewLayout: GroupImageLayout.pageview,
-                      onTap: () {
-                        // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
-                        if (context.mounted) {
-                          Navigator.of(context).pop(GroupImageLayout.pageview);
+                      onTap: () async {
+                        if (!context.mounted) return;
+                        if (onSelected != null) {
+                          await onSelected!(GroupImageLayout.pageview);
+                          return;
                         }
+                        // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
+                        Navigator.of(context).pop(GroupImageLayout.pageview);
                       },
                     ),
                   ],

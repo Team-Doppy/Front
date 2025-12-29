@@ -1210,12 +1210,6 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
   void _onSelectionChanged() {
     if (!mounted) return;
 
-    // 🎯 collapsed selection이면 스타일 재계산/디바운스 생략
-    final selection = widget.stylingService.composer.selection;
-    if (selection == null || selection.isCollapsed) {
-      return;
-    }
-
     // 🎯 Debounce: 50ms 후 실행 (드래그 중 과도한 호출 방지)
     _selectionDebounceTimer?.cancel();
     _selectionDebounceTimer = Timer(const Duration(milliseconds: 50), () {
@@ -1276,6 +1270,13 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     // 🎯 collapsed selection일 때는 스타일 재계산 스킵 (preferences 기반으로 충분)
     if (isCollapsed) {
       _stylesDebounceTimer?.cancel();
+      // ✅ 커서만 있는 상태에서도 폰트사이즈/색상 UI는 preferences 기반으로 즉시 갱신돼야 한다.
+      // (캐시만 비우고 setState로 리빌드 트리거)
+      setState(() {
+        _cachedTextColor = null;
+        _cachedFontSize = null;
+        _cachedTextColors = null;
+      });
       return;
     }
 
@@ -1286,10 +1287,13 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         _updateStyles(
           updateAlignment: false,
         ); // 🎯 selection 변경 시에는 styles만 업데이트
-        // 🎯 색상/폰트 크기 캐시도 업데이트
-        _cachedTextColor = null;
-        _cachedFontSize = null;
-        _cachedTextColors = null;
+        // ✅ selection이 바뀌어도 bold/italic 등이 같으면 _updateStyles가 setState를 안 할 수 있음.
+        // 폰트 사이즈/색상은 styles 맵에 포함되지 않으므로, 캐시를 setState로 비우며 리빌드를 보장한다.
+        setState(() {
+          _cachedTextColor = null;
+          _cachedFontSize = null;
+          _cachedTextColors = null;
+        });
       }
     });
   }

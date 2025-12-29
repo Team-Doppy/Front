@@ -15,9 +15,9 @@ import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/image/simple_image_editor_screen.dart';
 import 'package:doppy/image/group_image_layout_selector.dart';
 import 'package:doppy/image/utils/image_bytes_resolver.dart';
+import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/l10n/app_localizations.dart';
-import 'package:uuid/uuid.dart';
 
 /// 에디터 내 특수 노드(이미지/이미지행/링크/멘션 등)의 선택/하이라이트 상태를 관리하는 서비스
 class NodeComponentService extends ChangeNotifier {
@@ -346,322 +346,52 @@ class NodeComponentService extends ChangeNotifier {
       }
 
       // 3) SimpleImageEditorScreen 열기
-      final dynamic result = await Navigator.push(
+      await Navigator.push<void>(
         context,
         PageRouteBuilder(
           fullscreenDialog: true,
           barrierColor: Theme.of(context).colorScheme.background,
           opaque: false,
           barrierDismissible: true,
-          pageBuilder:
-              (context, _, __) =>
-                  imageBytesList.length <= 1
-                      ? SimpleImageEditorScreen(
-                        imageBytes: imageBytesList.first,
-                        isExistingNodeEdit: true,
-                        enableLayoutSelectionForMultiImage: false,
-                      )
-                      : SimpleImageEditorScreen(
-                        imageBytesList: imageBytesList,
-                        isExistingNodeEdit: true,
-                        enableLayoutSelectionForMultiImage: false,
-                      ),
+          pageBuilder: (editorContext, _, __) {
+            return imageBytesList.length <= 1
+                ? SimpleImageEditorScreen(
+                  imageBytes: imageBytesList.first,
+                  isExistingNodeEdit: true,
+                  enableLayoutSelectionForMultiImage: false,
+                  onDone: (editorContext, result) async {
+                    await _applyEditedImagesToNode(
+                      context: context,
+                      editorContext: editorContext,
+                      imageId: imageId,
+                      node: node,
+                      editorService: editorService,
+                      document: document,
+                      result: result,
+                    );
+                  },
+                )
+                : SimpleImageEditorScreen(
+                  imageBytesList: imageBytesList,
+                  isExistingNodeEdit: true,
+                  enableLayoutSelectionForMultiImage: false,
+                  onDone: (editorContext, result) async {
+                    await _applyEditedImagesToNode(
+                      context: context,
+                      editorContext: editorContext,
+                      imageId: imageId,
+                      node: node,
+                      editorService: editorService,
+                      document: document,
+                      result: result,
+                    );
+                  },
+                );
+          },
         ),
       );
-
-      // 편집 취소
-      if (result == null || !context.mounted) {
-        return;
-      }
-
-      // ✅ 결과 파싱 (단일/다중 + layout)
-      List<Uint8List> editedImages;
-      GroupImageLayout? selectedLayout;
-      if (result is Uint8List) {
-        editedImages = [result];
-      } else if (result is List<Uint8List>) {
-        editedImages = result;
-      } else if (result is Map) {
-        final imgs = result['images'];
-        final layout = result['layout'];
-        if (imgs is List<Uint8List>) {
-          editedImages = imgs;
-        } else {
-          editedImages = <Uint8List>[];
-        }
-        if (layout is GroupImageLayout) {
-          selectedLayout = layout;
-        }
-      } else {
-        // 예상치 못한 반환 타입
-        return;
-      }
-
-      if (editedImages.isEmpty) return;
-
-      // ✅ 업로드/리플레이스 중 로딩 표시 (에디터 pop 이후라 사용자 입장에서 중요)
-      BuildContext? uploadDialogContext;
-      bool uploadDialogClosed = false;
-      void closeUploadDialogSafely() {
-        if (uploadDialogClosed) return;
-        uploadDialogClosed = true;
-        if (!context.mounted || uploadDialogContext == null) return;
-        if (!uploadDialogContext!.mounted) return;
-        try {
-          Navigator.pop(uploadDialogContext!);
-        } catch (_) {}
-      }
-
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogCtx) {
-          uploadDialogContext = dialogCtx;
-          return PopScope(
-            canPop: false,
-            child: Material(
-              type: MaterialType.transparency,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(
-                      width: 80,
-                      height: 80,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          strokeWidth: 4,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      context.tr('applying_changes'),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      );
-
-      // ✅ 업로드 진행: 임시 파일 생성 → 배치 업로드 → URL 수집
-      final upload = context.read<UploadService>();
-      final tempDir = await getTemporaryDirectory();
-      final tempFiles = <File>[];
-      final ts = DateTime.now().millisecondsSinceEpoch;
-      for (int i = 0; i < editedImages.length; i++) {
-        final f = File('${tempDir.path}/edited_${ts}_$i.jpg');
-        await f.writeAsBytes(editedImages[i]);
-        tempFiles.add(f);
-      }
-
-      List<UploadTask> tasks = [];
-      try {
-        // ✅ 업로드는 굽기 이후에 수행. 타임아웃 시 리플레이스 금지.
-        tasks = await upload
-            .uploadFilesViaServerBatches(
-              tempFiles,
-              kind: UploadKind.editorImage,
-            )
-            .timeout(
-              const Duration(seconds: 45),
-              onTimeout: () {
-                throw TimeoutException(
-                  '이미지 업로드 시간이 초과되었습니다.',
-                  const Duration(seconds: 45),
-                );
-              },
-            );
-      } on TimeoutException catch (e) {
-        debugPrint('[NodeComponentService] 이미지 업로드 타임아웃: $e');
-        closeUploadDialogSafely();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, context.tr('image_upload_failed'));
-        }
-        return;
-      } finally {
-        for (final f in tempFiles) {
-          try {
-            await f.delete();
-          } catch (_) {}
-        }
-      }
-
-      if (tasks.isEmpty || tasks.any((t) => t.state != UploadState.success)) {
-        closeUploadDialogSafely();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, context.tr('image_upload_failed'));
-        }
-        return;
-      }
-
-      final urls =
-          tasks
-              .map((t) => t.url)
-              .whereType<String>()
-              .where((u) => u.isNotEmpty)
-              .toList();
-      if (urls.length != editedImages.length) {
-        closeUploadDialogSafely();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, context.tr('image_url_failed'));
-        }
-        return;
-      }
-
-      // ✅ 문서 노드 교체 (ImageNode / ImageRowNode / PageViewImageNode)
-      final nodeIndex = document.getNodeIndexById(imageId);
-      if (nodeIndex == -1) {
-        closeUploadDialogSafely();
-        return;
-      }
-
-      // 메타데이터 보존
-      Map<String, dynamic> meta = <String, dynamic>{};
-      String altText = '';
-      double rowSpacing = 0.0;
-      if (node is ImageNode) {
-        altText = node.altText;
-        try {
-          meta = Map<String, dynamic>.from(
-            (node as dynamic).metadata as Map<String, dynamic>? ?? {},
-          );
-        } catch (_) {
-          meta = Map<String, dynamic>.from(node.metadata);
-        }
-      } else if (node is ImageRowNode) {
-        meta = Map<String, dynamic>.from(node.metadata);
-        rowSpacing = node.spacing;
-      } else if (node is PageViewImageNode) {
-        meta = Map<String, dynamic>.from(node.metadata);
-      }
-
-      final uuid = const Uuid();
-
-      // 레이아웃이 없으면 "원래 노드 타입 유지"가 기본
-      final effectiveLayout =
-          selectedLayout ??
-          (node is PageViewImageNode
-              ? GroupImageLayout.pageview
-              : (node is ImageRowNode
-                  ? GroupImageLayout.grid2
-                  : GroupImageLayout.individual));
-
-      // 1) 단일 이미지 노드는 항상 단일로 교체(레이아웃 무시)
-      if (node is ImageNode) {
-        final newNode = AppImageNode(
-          id: imageId,
-          imageUrl: urls.first,
-          altText: altText,
-          metadata: Map<String, dynamic>.from(meta),
-        );
-        document.deleteNode(imageId);
-        document.insertNodeAt(nodeIndex, newNode);
-        closeUploadDialogSafely();
-        editorService.saveHistoryNow();
-        return;
-      }
-
-      // 2) ✅ 기존 문서 노드 편집에서는 "원래 노드 타입/구조"를 유지한다.
-      // - 레이아웃 선택 UI가 없으므로, 여기서 구조가 바뀌면 UX가 깨진다.
-      // - ImageRowNode는 (2~3장) row 형태 유지
-      // - PageViewImageNode는 pageview 형태 유지
-      if (node is ImageRowNode) {
-        final newNode = ImageRowNode(
-          id: imageId,
-          imageUrls: urls,
-          spacing: rowSpacing,
-          metadata: Map<String, dynamic>.from(meta),
-        );
-        document.deleteNode(imageId);
-        document.insertNodeAt(nodeIndex, newNode);
-        closeUploadDialogSafely();
-        editorService.saveHistoryNow();
-        return;
-      }
-
-      if (node is PageViewImageNode) {
-        final newNode = PageViewImageNode(
-          id: imageId,
-          imageUrls: urls,
-          metadata: Map<String, dynamic>.from(meta),
-        );
-        document.deleteNode(imageId);
-        document.insertNodeAt(nodeIndex, newNode);
-        closeUploadDialogSafely();
-        editorService.saveHistoryNow();
-        return;
-      }
-
-      // (안전장치) 여기로 오면 이미 위에서 return 되어야 함.
-      // 그래도 혹시 모를 확장 대비로 기존 변환 로직을 남겨둔다.
-      List<DocumentNode> replacementNodes = [];
-
-      if (effectiveLayout == GroupImageLayout.pageview) {
-        // PageView(최대 6)
-        final keptId = imageId;
-        replacementNodes = [
-          PageViewImageNode(
-            id: keptId,
-            imageUrls: urls,
-            metadata: Map<String, dynamic>.from(meta),
-          ),
-        ];
-      } else if (effectiveLayout == GroupImageLayout.individual) {
-        // 개별 이미지 노드로 분해
-        for (int i = 0; i < urls.length; i++) {
-          final id = (i == 0) ? imageId : 'img_${uuid.v4()}';
-          replacementNodes.add(
-            AppImageNode(
-              id: id,
-              imageUrl: urls[i],
-              altText: '',
-              metadata: Map<String, dynamic>.from(meta),
-            ),
-          );
-        }
-      } else {
-        // grid2/grid3 → ImageRowNode로 분해 (2개/3개씩)
-        final perRow = effectiveLayout == GroupImageLayout.grid3 ? 3 : 2;
-        int cursor = 0;
-        int rowIdx = 0;
-        while (cursor < urls.length) {
-          final end =
-              (cursor + perRow < urls.length) ? cursor + perRow : urls.length;
-          final chunk = urls.sublist(cursor, end);
-          final id = (rowIdx == 0) ? imageId : 'row_${uuid.v4()}';
-          replacementNodes.add(
-            ImageRowNode(
-              id: id,
-              imageUrls: chunk,
-              spacing: rowSpacing,
-              metadata: Map<String, dynamic>.from(meta),
-            ),
-          );
-          cursor = end;
-          rowIdx++;
-        }
-      }
-
-      // 실제 교체 적용
-      document.deleteNode(imageId);
-      for (int i = 0; i < replacementNodes.length; i++) {
-        document.insertNodeAt(nodeIndex + i, replacementNodes[i]);
-      }
-
-      closeUploadDialogSafely();
-      editorService.saveHistoryNow();
+      // ✅ onDone에서 업로드/리플레이스까지 끝내고 editor를 닫는다.
+      return;
     } catch (e) {
       debugPrint('[NodeComponentService] 이미지 편집 중 오류: $e');
       // 로딩 다이얼로그가 열려있을 수 있으므로 닫기 시도 (에디터는 유지)
@@ -682,6 +412,217 @@ class NodeComponentService extends ChangeNotifier {
         _closeLoadingDialogSafely(context, dialogContext);
       }
       _isEditingImage = false;
+    }
+  }
+
+  Future<void> _applyEditedImagesToNode({
+    required BuildContext context,
+    required BuildContext editorContext,
+    required String imageId,
+    required DocumentNode node,
+    required EditorService editorService,
+    required MutableDocument document,
+    required dynamic result,
+  }) async {
+    if (!context.mounted) return;
+
+    // ✅ 결과 파싱 (단일/다중 + layout)
+    List<Uint8List> editedImages;
+    GroupImageLayout? selectedLayout;
+    if (result is Uint8List) {
+      editedImages = [result];
+    } else if (result is List<Uint8List>) {
+      editedImages = result;
+    } else if (result is Map) {
+      final imgs = result['images'];
+      final layout = result['layout'];
+      if (imgs is List<Uint8List>) {
+        editedImages = imgs;
+      } else {
+        editedImages = <Uint8List>[];
+      }
+      if (layout is GroupImageLayout) {
+        selectedLayout = layout;
+      }
+    } else {
+      return;
+    }
+
+    if (editedImages.isEmpty) return;
+
+    // ✅ (닫히기 전에) 사이즈 미리 측정
+    final sizes = await Future.wait(
+      List.generate(editedImages.length, (i) async {
+        try {
+          return await ImageSizeUtils.extractSizeFromBytes(
+            editedImages[i],
+            'edited_$i.jpg',
+          );
+        } catch (_) {
+          return null;
+        }
+      }),
+    );
+
+    // ✅ 업로드 진행: 임시 파일 생성 → 배치 업로드 → URL 수집
+    final upload = context.read<UploadService>();
+    final tempDir = await getTemporaryDirectory();
+    final tempFiles = <File>[];
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    for (int i = 0; i < editedImages.length; i++) {
+      final f = File('${tempDir.path}/edited_${ts}_$i.jpg');
+      await f.writeAsBytes(editedImages[i]);
+      tempFiles.add(f);
+    }
+
+    List<UploadTask> tasks = [];
+    try {
+      tasks = await upload
+          .uploadFilesViaServerBatches(tempFiles, kind: UploadKind.editorImage)
+          .timeout(
+            const Duration(seconds: 45),
+            onTimeout: () {
+              throw TimeoutException(
+                '이미지 업로드 시간이 초과되었습니다.',
+                const Duration(seconds: 45),
+              );
+            },
+          );
+    } on TimeoutException catch (e) {
+      debugPrint('[NodeComponentService] 이미지 업로드 타임아웃: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ErrorHandler.showError(context, context.tr('image_upload_failed'));
+      }
+      return;
+    } finally {
+      for (final f in tempFiles) {
+        try {
+          await f.delete();
+        } catch (_) {}
+      }
+    }
+
+    if (tasks.isEmpty || tasks.any((t) => t.state != UploadState.success)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ErrorHandler.showError(context, context.tr('image_upload_failed'));
+      }
+      return;
+    }
+
+    final urls =
+        tasks
+            .map((t) => t.url)
+            .whereType<String>()
+            .where((u) => u.isNotEmpty)
+            .toList();
+    if (urls.length != editedImages.length) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ErrorHandler.showError(context, context.tr('image_url_failed'));
+      }
+      return;
+    }
+
+    // ✅ 문서 노드 교체 (ImageNode / ImageRowNode / PageViewImageNode)
+    final nodeIndex = document.getNodeIndexById(imageId);
+    if (nodeIndex == -1) return;
+
+    // 메타데이터 보존 + imageDimensions 업데이트
+    Map<String, dynamic> meta = <String, dynamic>{};
+    String altText = '';
+    double rowSpacing = 0.0;
+    if (node is ImageNode) {
+      altText = node.altText;
+      try {
+        meta = Map<String, dynamic>.from(
+          (node as dynamic).metadata as Map<String, dynamic>? ?? {},
+        );
+      } catch (_) {
+        meta = Map<String, dynamic>.from(node.metadata);
+      }
+    } else if (node is ImageRowNode) {
+      meta = Map<String, dynamic>.from(node.metadata);
+      rowSpacing = node.spacing;
+    } else if (node is PageViewImageNode) {
+      meta = Map<String, dynamic>.from(node.metadata);
+    }
+
+    final imageDimensions = Map<String, dynamic>.from(
+      (meta['imageDimensions'] as Map<String, dynamic>?) ?? {},
+    );
+    for (int i = 0; i < urls.length; i++) {
+      final s = (i < sizes.length) ? sizes[i] : null;
+      if (s == null) continue;
+      imageDimensions[urls[i]] = {
+        'width': s.width.toInt(),
+        'height': s.height.toInt(),
+      };
+    }
+    meta['imageDimensions'] = imageDimensions;
+
+    // 레이아웃이 없으면 "원래 노드 타입 유지"가 기본
+    final effectiveLayout =
+        selectedLayout ??
+        (node is PageViewImageNode
+            ? GroupImageLayout.pageview
+            : (node is ImageRowNode
+                ? GroupImageLayout.grid2
+                : GroupImageLayout.individual));
+
+    // ✅ 기존 노드 편집에서는 구조 유지(기본)
+    if (node is ImageNode) {
+      final newNode = AppImageNode(
+        id: imageId,
+        imageUrl: urls.first,
+        altText: altText,
+        metadata: Map<String, dynamic>.from(meta),
+      );
+      editorService.editor.execute([
+        ReplaceNodeRequest(existingNodeId: imageId, newNode: newNode),
+      ]);
+      editorService.saveHistoryNow();
+      if (editorContext.mounted) Navigator.of(editorContext).pop();
+      return;
+    }
+
+    if (node is ImageRowNode) {
+      final newNode = ImageRowNode(
+        id: imageId,
+        imageUrls: urls,
+        spacing: rowSpacing,
+        metadata: Map<String, dynamic>.from(meta),
+      );
+      editorService.editor.execute([
+        ReplaceNodeRequest(existingNodeId: imageId, newNode: newNode),
+      ]);
+      editorService.saveHistoryNow();
+      if (editorContext.mounted) Navigator.of(editorContext).pop();
+      return;
+    }
+
+    if (node is PageViewImageNode) {
+      final newNode = PageViewImageNode(
+        id: imageId,
+        imageUrls: urls,
+        metadata: Map<String, dynamic>.from(meta),
+      );
+      editorService.editor.execute([
+        ReplaceNodeRequest(existingNodeId: imageId, newNode: newNode),
+      ]);
+      editorService.saveHistoryNow();
+      if (editorContext.mounted) Navigator.of(editorContext).pop();
+      return;
+    }
+
+    // (안전장치) 여기로 오면 일반적으로 도달하지 않음.
+    if (effectiveLayout == GroupImageLayout.pageview ||
+        effectiveLayout == GroupImageLayout.individual ||
+        effectiveLayout == GroupImageLayout.grid2 ||
+        effectiveLayout == GroupImageLayout.grid3) {
+      // 기존 로직은 editImage 내부에 남아있으므로, 예상치 못한 타입은 스킵
+      return;
     }
   }
 

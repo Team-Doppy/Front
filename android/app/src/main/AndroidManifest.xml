@@ -9,7 +9,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 🎯 Firebase Cloud Messaging 알림 권한 (Android 13+)
          새 글, 댓글, 좋아요, 친구 요청 등 중요한 알림을 받기 위해 필요합니다.
-         알림을 받지 않으면 앱에서 실시간으로 활동을 확인할 수 없습니다. -->
+         알림을 받지 않으면 앱에서 실시간으로 활동을 확인할 수 없습니다.
+         (참고: Android 13+에서는 시스템이 자동으로 권한 다이얼로그를 표시합니다) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
     <application
@@ -39,6 +40,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
             <!-- 🎯 딥링크: App Links 설정 -->
+            <!-- doppy.app (리다이렉트됨) -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -47,14 +49,23 @@
                     android:scheme="https"
                     android:host="doppy.app" />
             </intent-filter>
+            <!-- www.doppy.app (실제 파일 위치) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="www.doppy.app" />
+            </intent-filter>
             <!-- 🎯 딥링크: URL 스킴 (fallback) -->
+            <!-- doppy://post/{postId}, doppy://profile/{username} 등 모든 경로 처리 -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="doppy"
-                    android:host="app" />
+                    android:scheme="doppy" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

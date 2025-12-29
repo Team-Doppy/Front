@@ -39,7 +39,7 @@ import 'firebase_options.dart';
 import 'theme/theme.dart';
 import 'utils/route_observer.dart';
 import 'data/services/deep_link_service.dart';
-import 'utils/deep_link_handler.dart';
+import 'utils/deep_link_coordinator.dart';
 
 // Global NavigatorKey for accessing context from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -116,15 +116,10 @@ class _DismissibleNotificationState extends State<_DismissibleNotification> {
 
 /// 🎯 FCM 딥링크 처리
 void _handleDeepLinkFromFcm(String deepLinkUrl) {
-  final context = navigatorKey.currentContext;
-  if (context == null) {
-    debugPrint('[FCM] Navigator context가 없습니다 - 딥링크 처리를 건너뜁니다');
-    return;
-  }
-
   final result = DeepLinkService.parseDeepLink(deepLinkUrl);
   if (result != null && result.type != DeepLinkType.unknown) {
-    DeepLinkHandler.handleDeepLink(context, result);
+    // 스플래시 부트스트랩/루트 전환 중에는 큐잉 후, RootShell 준비 완료 시 처리
+    DeepLinkCoordinator().handle(result, source: 'fcm');
   }
 }
 
@@ -143,6 +138,10 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 // 앱 버전 및 상수
 class AppConstants {
   static const String appVersion = '1.0.0';
+
+  // 🎯 웹 도메인 (Universal Links/App Links용)
+  static const String webDomain = 'www.doppy.app';
+  static const String webBaseUrl = 'https://www.doppy.app';
 
   // 🎯 이용약관 및 개인정보 처리방침 URL
   static const String termsOfServiceUrl =
@@ -442,7 +441,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
       final context = navigatorKey.currentContext;
       if (context != null) {
         debugPrint('[RootShell] 웹 링크에서 딥링크 수신: type=${result.type}');
-        DeepLinkHandler.handleDeepLink(context, result);
+        DeepLinkCoordinator().handle(result, source: 'app_links');
       } else {
         debugPrint('[RootShell] Navigator context가 없습니다 - 딥링크 처리를 건너뜁니다');
       }
@@ -450,6 +449,8 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
 
     // 🎯 앱 진입 시 받은 요청 확인 및 바텀시트 표시
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // RootShell이 실제로 렌더된 이후부터 딥링크 네비게이션을 허용
+      DeepLinkCoordinator().markReady();
       _checkAndShowReceivedRequests();
     });
   }

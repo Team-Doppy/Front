@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
+import 'package:doppy/theme/app_colors.dart';
 
 /// 크롭 바텀시트 패널 타입(대표 버튼 → 펼침 패널)
 enum CropEditorPanel { aspect, flip }
@@ -632,6 +633,7 @@ class RotationRulerSlider extends StatefulWidget {
     required this.onDragStart,
     required this.onDragEnd,
     required this.isDragging,
+    required this.textColor,
   });
 
   final int value; // 0-360
@@ -639,6 +641,7 @@ class RotationRulerSlider extends StatefulWidget {
   final VoidCallback onDragStart;
   final VoidCallback onDragEnd;
   final bool isDragging;
+  final Color textColor;
 
   @override
   State<RotationRulerSlider> createState() => _RotationRulerSliderState();
@@ -684,7 +687,10 @@ class _RotationRulerSliderState extends State<RotationRulerSlider> {
           child: SizedBox(
             height: 40,
             child: CustomPaint(
-              painter: _RotationRulerPainter(currentValue: widget.value),
+              painter: _RotationRulerPainter(
+                currentValue: widget.value,
+                textColor: widget.textColor,
+              ),
               size: Size(constraints.maxWidth, 40),
             ),
           ),
@@ -696,26 +702,27 @@ class _RotationRulerSliderState extends State<RotationRulerSlider> {
 
 class _RotationRulerPainter extends CustomPainter {
   final int currentValue;
+  final Color textColor;
 
-  _RotationRulerPainter({required this.currentValue});
+  _RotationRulerPainter({required this.currentValue, required this.textColor});
 
   @override
   void paint(Canvas canvas, Size size) {
     final tickPaint =
         Paint()
-          ..color = Colors.white.withOpacity(0.5)
+          ..color = textColor.withOpacity(0.5)
           ..strokeWidth = 1.5
           ..strokeCap = StrokeCap.round;
 
     final majorTickPaint =
         Paint()
-          ..color = Colors.white.withOpacity(0.7)
+          ..color = textColor.withOpacity(0.7)
           ..strokeWidth = 2.0
           ..strokeCap = StrokeCap.round;
 
     final centerPaint =
         Paint()
-          ..color = Colors.white
+          ..color = textColor
           ..strokeWidth = 3.0
           ..strokeCap = StrokeCap.round;
 
@@ -761,7 +768,7 @@ class _RotationRulerPainter extends CustomPainter {
     }
 
     // 중앙 아래 삼각형 포인터
-    final trianglePaint = Paint()..color = Colors.white;
+    final trianglePaint = Paint()..color = textColor;
     final path = Path();
     path.moveTo(centerX, size.height);
     path.lineTo(centerX - 6, size.height - 8);
@@ -772,7 +779,8 @@ class _RotationRulerPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_RotationRulerPainter oldDelegate) {
-    return oldDelegate.currentValue != currentValue;
+    return oldDelegate.currentValue != currentValue ||
+        oldDelegate.textColor != textColor;
   }
 }
 
@@ -823,6 +831,7 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
     required bool selected,
     required VoidCallback onTap,
     BuildContext? context,
+    required Color borderColor,
   }) {
     final cs = context != null ? Theme.of(context).colorScheme : null;
     return GestureDetector(
@@ -836,7 +845,7 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
             color:
                 selected && cs != null
                     ? cs.primary
-                    : Colors.white.withOpacity(0.3),
+                    : borderColor.withOpacity(0.3),
             width: selected && cs != null ? 2.5 : 1.5,
           ),
         ),
@@ -845,20 +854,25 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
     );
   }
 
-  Widget rotationBubble() {
+  Widget rotationBubble(BuildContext context) {
     // 0-360 범위를 -180~180 범위로 변환 (359도 → -1도)
     final displayRotation =
         widget.rotation > 180 ? widget.rotation - 360 : widget.rotation;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor =
+        isDark ? AppColors.darkBackground : AppColors.lightBackground;
+    final fgColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
     return Container(
       width: 56,
       height: 56,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: Colors.black.withOpacity(0.85),
-        border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+        color: bgColor.withOpacity(0.85),
+        border: Border.all(color: fgColor.withOpacity(0.3), width: 2),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.3),
+            color: bgColor.withOpacity(0.3),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -867,8 +881,8 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
       child: Center(
         child: Text(
           '$displayRotation',
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: fgColor,
             fontSize: 18,
             fontWeight: FontWeight.w700,
           ),
@@ -880,6 +894,9 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final fgColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
 
     final aspectRatioOptions = [
       {'label': '자유', 'ratio': null},
@@ -903,7 +920,7 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
                   _isRotateDragging
                       ? Center(
                         key: const ValueKey('rotation_bubble'),
-                        child: rotationBubble(),
+                        child: rotationBubble(context),
                       )
                       : Row(
                         key: const ValueKey('top_row'),
@@ -913,9 +930,10 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
                             context: context,
                             selected: false,
                             onTap: widget.onResetAll,
-                            child: const Icon(
+                            borderColor: fgColor,
+                            child: Icon(
                               Icons.refresh,
-                              color: Colors.white,
+                              color: fgColor,
                               size: 26,
                             ),
                           ),
@@ -924,16 +942,17 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
                             width: 1,
                             height: 40,
                             margin: const EdgeInsets.symmetric(horizontal: 12),
-                            color: Colors.white.withOpacity(0.2),
+                            color: fgColor.withOpacity(0.2),
                           ),
                           // 90도 회전 버튼
                           circleButton(
                             context: context,
                             selected: false,
                             onTap: widget.onRotate90,
-                            child: const Icon(
+                            borderColor: fgColor,
+                            child: Icon(
                               Icons.rotate_right,
-                              color: Colors.white,
+                              color: fgColor,
                               size: 26,
                             ),
                           ),
@@ -942,7 +961,7 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
                             width: 1,
                             height: 40,
                             margin: const EdgeInsets.symmetric(horizontal: 12),
-                            color: Colors.white.withOpacity(0.2),
+                            color: fgColor.withOpacity(0.2),
                           ),
                           // 비율 버튼들 (가로 스크롤)
                           Expanded(
@@ -969,7 +988,7 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
                                         color:
                                             isSelected
                                                 ? cs.primary
-                                                : Colors.white.withOpacity(0.3),
+                                                : fgColor.withOpacity(0.3),
                                         width: isSelected ? 2.5 : 1.5,
                                       ),
                                     ),
@@ -978,9 +997,7 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
                                         option['label'] as String,
                                         style: TextStyle(
                                           color:
-                                              isSelected
-                                                  ? cs.primary
-                                                  : Colors.white,
+                                              isSelected ? cs.primary : fgColor,
                                           fontSize: 12,
                                           fontWeight: FontWeight.w600,
                                         ),
@@ -1008,6 +1025,7 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
             onDragStart: () => setState(() => _isRotateDragging = true),
             onDragEnd: () => setState(() => _isRotateDragging = false),
             isDragging: _isRotateDragging,
+            textColor: fgColor,
           ),
         ),
       ],
@@ -1057,13 +1075,20 @@ class ImagePainter extends CustomPainter {
 class CropOverlayPainter extends CustomPainter {
   final Rect cropRectScreen;
   final Rect imageRect;
+  final Color overlayColor;
+  final Color borderColor;
 
-  CropOverlayPainter({required this.cropRectScreen, required this.imageRect});
+  CropOverlayPainter({
+    required this.cropRectScreen,
+    required this.imageRect,
+    required this.overlayColor,
+    required this.borderColor,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     // 어두운 배경 (크롭 영역 외부만) - 크롭 박스 안은 제외
-    final darkPaint = Paint()..color = Colors.black.withOpacity(0.8);
+    final darkPaint = Paint()..color = overlayColor;
 
     // 크롭 영역을 제외한 4개의 사각형 영역에 어두운 필터 적용
     // 위쪽 영역
@@ -1116,7 +1141,7 @@ class CropOverlayPainter extends CustomPainter {
     // 크롭 박스 테두리
     final borderPaint =
         Paint()
-          ..color = Colors.white
+          ..color = borderColor
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.0;
 
@@ -1125,7 +1150,7 @@ class CropOverlayPainter extends CustomPainter {
     // 3x3 그리드
     final gridPaint =
         Paint()
-          ..color = Colors.white.withOpacity(0.5)
+          ..color = borderColor.withOpacity(0.5)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.0;
 
@@ -1156,7 +1181,9 @@ class CropOverlayPainter extends CustomPainter {
   @override
   bool shouldRepaint(CropOverlayPainter oldDelegate) {
     return oldDelegate.cropRectScreen != cropRectScreen ||
-        oldDelegate.imageRect != imageRect;
+        oldDelegate.imageRect != imageRect ||
+        oldDelegate.overlayColor != overlayColor ||
+        oldDelegate.borderColor != borderColor;
   }
 }
 
@@ -1647,6 +1674,7 @@ class CropHandleBuilder {
     required Rect screenImageRect,
     required Size imageSize,
     Rect? cropRectScreen, // ✅ 옵셔널: 드래그 중 고정된 크롭박스 위치
+    required Color handleColor,
   }) {
     if (cropState.cropRectImage == null) {
       return const SizedBox.shrink();
@@ -1677,6 +1705,7 @@ class CropHandleBuilder {
           onResizeEnd: onResizeEnd,
           screenImageRect: screenImageRect,
           imageSize: imageSize,
+          handleColor: handleColor,
         ),
         _CropHandleWidget(
           position: finalCropRectScreen.topRight,
@@ -1689,6 +1718,7 @@ class CropHandleBuilder {
           onResizeEnd: onResizeEnd,
           screenImageRect: screenImageRect,
           imageSize: imageSize,
+          handleColor: handleColor,
         ),
         _CropHandleWidget(
           position: finalCropRectScreen.bottomLeft,
@@ -1701,6 +1731,7 @@ class CropHandleBuilder {
           onResizeEnd: onResizeEnd,
           screenImageRect: screenImageRect,
           imageSize: imageSize,
+          handleColor: handleColor,
         ),
         _CropHandleWidget(
           position: finalCropRectScreen.bottomRight,
@@ -1713,6 +1744,7 @@ class CropHandleBuilder {
           onResizeEnd: onResizeEnd,
           screenImageRect: screenImageRect,
           imageSize: imageSize,
+          handleColor: handleColor,
         ),
         _CropHandleWidget(
           position: Offset(
@@ -1728,6 +1760,7 @@ class CropHandleBuilder {
           onResizeEnd: onResizeEnd,
           screenImageRect: screenImageRect,
           imageSize: imageSize,
+          handleColor: handleColor,
         ),
         _CropHandleWidget(
           position: Offset(
@@ -1743,6 +1776,7 @@ class CropHandleBuilder {
           onResizeEnd: onResizeEnd,
           screenImageRect: screenImageRect,
           imageSize: imageSize,
+          handleColor: handleColor,
         ),
         _CropHandleWidget(
           position: Offset(
@@ -1758,6 +1792,7 @@ class CropHandleBuilder {
           onResizeEnd: onResizeEnd,
           screenImageRect: screenImageRect,
           imageSize: imageSize,
+          handleColor: handleColor,
         ),
         _CropHandleWidget(
           position: Offset(
@@ -1773,6 +1808,7 @@ class CropHandleBuilder {
           onResizeEnd: onResizeEnd,
           screenImageRect: screenImageRect,
           imageSize: imageSize,
+          handleColor: handleColor,
         ),
       ],
     );
@@ -1791,6 +1827,7 @@ class _CropHandleWidget extends StatefulWidget {
   final VoidCallback? onResizeEnd;
   final Rect screenImageRect;
   final Size imageSize;
+  final Color handleColor;
 
   const _CropHandleWidget({
     required this.position,
@@ -1803,6 +1840,7 @@ class _CropHandleWidget extends StatefulWidget {
     this.onResizeEnd,
     required this.screenImageRect,
     required this.imageSize,
+    required this.handleColor,
   });
 
   @override
@@ -1889,7 +1927,7 @@ class _CropHandleWidgetState extends State<_CropHandleWidget> {
           type: type,
           handleLength: handleLength,
           handleThickness: handleThickness,
-          handleColor: Colors.white,
+          handleColor: widget.handleColor,
         ),
       ),
     );

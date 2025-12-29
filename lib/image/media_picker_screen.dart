@@ -17,6 +17,10 @@ class MediaPickerScreen extends StatefulWidget {
   final MediaType initialMediaType; // 초기 미디어 타입
   final int maxSelectionCount; // 최대 선택 개수
   final bool enableToggle; // 토글 가능 여부
+  // ✅ "팝(pop) 전에" 상위 화면(에디터 등)에서 노드 삽입/프리캐시 같은 작업을 수행할 수 있도록 훅 제공
+  final Future<void> Function(MediaPickerResult result)? onBeforePop;
+  // ✅ onBeforePop 이후, 짧은 여유 시간(디코드/캐시/프레임 안정화)을 주기 위한 딜레이
+  final Duration beforePopDelay;
 
   const MediaPickerScreen({
     super.key,
@@ -25,6 +29,8 @@ class MediaPickerScreen extends StatefulWidget {
     this.initialMediaType = MediaType.video,
     this.maxSelectionCount = 1,
     this.enableToggle = true,
+    this.onBeforePop,
+    this.beforePopDelay = const Duration(milliseconds: 180),
   });
 
   @override
@@ -65,6 +71,26 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   bool _hasMoreMedia = true;
   bool _isLoadingMore = false;
   final ScrollController _scrollController = ScrollController();
+  bool _isSubmitting = false;
+  Future<void> _popWithResult(MediaPickerResult result) async {
+    if (!mounted) return;
+    if (_isSubmitting) return;
+    _isSubmitting = true;
+
+    try {
+      if (widget.onBeforePop != null) {
+        await widget.onBeforePop!(result);
+        if (widget.beforePopDelay > Duration.zero) {
+          await Future.delayed(widget.beforePopDelay);
+        }
+      }
+    } catch (e) {
+      debugPrint('[MediaPicker] onBeforePop 실패: $e');
+    }
+
+    if (!mounted) return;
+    Navigator.of(context).pop(result);
+  }
 
   // 🎯 All 앨범 캐시 (미디어 목록은 캐시하지 않음)
   AssetPathEntity? _cachedAllAlbum;
@@ -399,77 +425,99 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       if (imageBytesList.isEmpty || !mounted) return;
 
       // 이미지 편집 화면으로 이동
-      final result = await Navigator.push<dynamic>(
+      await Navigator.push<void>(
         context,
         MaterialPageRoute(
-          builder:
-              (context) =>
-                  SimpleImageEditorScreen(imageBytesList: imageBytesList),
+          builder: (editorContext) {
+            return SimpleImageEditorScreen(
+              imageBytesList: imageBytesList,
+              onDone: (editorContext, result) async {
+                if (_isSubmitting) return;
+                if (!mounted) return;
+                _isSubmitting = true;
+
+                // ✅ SimpleImageEditorScreen 반환값 호환:
+                // - 단일: Uint8List
+                // - 다중(구형): List<Uint8List>
+                // - 다중(신규): { 'images': List<Uint8List>, 'layout': GroupImageLayout }
+                List<Uint8List>? editedImages;
+                GroupImageLayout? selectedLayout;
+
+                if (result is Uint8List) {
+                  editedImages = [result];
+                  selectedLayout = null;
+                } else if (result is List<Uint8List>) {
+                  if (result.isEmpty) return;
+                  editedImages = result;
+                  // 구형 반환(레이아웃 없음)은 개별 이미지로 간주
+                  selectedLayout = GroupImageLayout.individual;
+                } else if (result is Map) {
+                  final dynamic imagesAny = result['images'];
+                  final dynamic layoutAny = result['layout'];
+
+                  if (imagesAny is List<Uint8List> && imagesAny.isNotEmpty) {
+                    editedImages = imagesAny;
+                  } else {
+                    return;
+                  }
+
+                  if (layoutAny is GroupImageLayout) {
+                    selectedLayout = layoutAny;
+                  } else {
+                    // 레이아웃이 없으면 개별 이미지로 간주
+                    selectedLayout = GroupImageLayout.individual;
+                  }
+                } else {
+                  return;
+                }
+
+                // ✅ 업로드/에디터 삽입을 위해 임시 파일로 저장 (삭제하지 않음)
+                final tempDir = await Directory.systemTemp.createTemp();
+                final timestamp = DateTime.now().millisecondsSinceEpoch;
+                final List<File> files = [];
+
+                for (int i = 0; i < editedImages.length; i++) {
+                  final tempFile = File(
+                    '${tempDir.path}/edited_${timestamp}_$i.jpg',
+                  );
+                  await tempFile.writeAsBytes(editedImages[i]);
+                  files.add(tempFile);
+                }
+
+                if (!mounted) return;
+
+                // 기존 콜백 유지
+                for (final f in files) {
+                  widget.onMediaSelected(f);
+                }
+
+                final pickerResult = MediaPickerResult(
+                  files: files,
+                  selectedMediaType: MediaType.image,
+                  groupLayout: selectedLayout,
+                );
+
+                // ✅ onBeforePop + 딜레이를 먼저 수행한 뒤, "에디터 + 피커"를 연속으로 pop
+                try {
+                  if (widget.onBeforePop != null) {
+                    await widget.onBeforePop!(pickerResult);
+                    if (widget.beforePopDelay > Duration.zero) {
+                      await Future.delayed(widget.beforePopDelay);
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('[MediaPicker] onBeforePop 실패: $e');
+                }
+
+                if (!mounted) return;
+
+                final nav = Navigator.of(editorContext);
+                nav.pop(); // 에디터 닫기
+                nav.pop(pickerResult); // 피커 닫기 (같은 타이밍)
+              },
+            );
+          },
           fullscreenDialog: true,
-        ),
-      );
-
-      if (result == null || !mounted) return;
-
-      // ✅ SimpleImageEditorScreen 반환값 호환:
-      // - 단일: Uint8List
-      // - 다중(구형): List<Uint8List>
-      // - 다중(신규): { 'images': List<Uint8List>, 'layout': GroupImageLayout }
-      List<Uint8List>? editedImages;
-      GroupImageLayout? selectedLayout;
-
-      if (result is Uint8List) {
-        editedImages = [result];
-        selectedLayout = null;
-      } else if (result is List<Uint8List>) {
-        if (result.isEmpty) return;
-        editedImages = result;
-        // 구형 반환(레이아웃 없음)은 개별 이미지로 간주
-        selectedLayout = GroupImageLayout.individual;
-      } else if (result is Map) {
-        final dynamic imagesAny = result['images'];
-        final dynamic layoutAny = result['layout'];
-
-        if (imagesAny is List<Uint8List> && imagesAny.isNotEmpty) {
-          editedImages = imagesAny;
-        } else {
-          return;
-        }
-
-        if (layoutAny is GroupImageLayout) {
-          selectedLayout = layoutAny;
-        } else {
-          // 레이아웃이 없으면 개별 이미지로 간주
-          selectedLayout = GroupImageLayout.individual;
-        }
-      } else {
-        return;
-      }
-
-      // ✅ 업로드/에디터 삽입을 위해 임시 파일로 저장 (삭제하지 않음)
-      final tempDir = await Directory.systemTemp.createTemp();
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final List<File> files = [];
-
-      for (int i = 0; i < editedImages.length; i++) {
-        final tempFile = File('${tempDir.path}/edited_${timestamp}_$i.jpg');
-        await tempFile.writeAsBytes(editedImages[i]);
-        files.add(tempFile);
-      }
-
-      if (!mounted) return;
-
-      // 기존 콜백 유지
-      for (final f in files) {
-        widget.onMediaSelected(f);
-      }
-
-      // ✅ 핵심: 피커 화면도 닫아서 상위(에디터)로 "진짜 추가"가 되게 함
-      Navigator.of(context).pop(
-        MediaPickerResult(
-          files: files,
-          selectedMediaType: MediaType.image,
-          groupLayout: selectedLayout,
         ),
       );
     } catch (e) {
@@ -501,44 +549,59 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       debugPrint('그룹이미지: ${imageFiles.length}개 이미지 변환 완료');
 
       // 🎯 레이아웃 선택 화면을 모달 바텀시트로 표시 (일관된 UX)
-      final layout = await showModalBottomSheet<GroupImageLayout>(
+      bool didSelectLayout = false;
+
+      await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
         isDismissible: true,
         enableDrag: true,
         builder:
-            (context) => GroupImageLayoutSelector(previewImages: imageFiles),
+            (sheetContext) => GroupImageLayoutSelector(
+              previewImages: imageFiles,
+              onSelected: (layout) async {
+                if (didSelectLayout) return;
+                if (!mounted) return;
+                if (_isSubmitting) return;
+
+                didSelectLayout = true;
+                _isSubmitting = true;
+
+                debugPrint(
+                  '[MediaPicker] ✅ 그룹이미지 선택 완료: ${imageFiles.length}개, 레이아웃: $layout',
+                );
+
+                final result = MediaPickerResult(
+                  files: imageFiles,
+                  selectedMediaType: MediaType.image,
+                  groupLayout: layout,
+                );
+
+                // ✅ 여기서는 "시트 + 피커"를 마지막에 함께 닫기 위해,
+                // onBeforePop/딜레이를 먼저 수행한 뒤 pop을 연속 호출한다.
+                try {
+                  if (widget.onBeforePop != null) {
+                    await widget.onBeforePop!(result);
+                    if (widget.beforePopDelay > Duration.zero) {
+                      await Future.delayed(widget.beforePopDelay);
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('[MediaPicker] onBeforePop 실패: $e');
+                }
+
+                if (!mounted) return;
+
+                // 🎯 같은 타이밍에 닫히도록 pop을 연속 호출
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).pop(result);
+              },
+            ),
       );
 
-      if (layout == null) {
+      if (!didSelectLayout) {
         debugPrint('[MediaPicker] ⚠️ 레이아웃 선택 취소됨');
-        return;
-      }
-
-      if (!mounted) return;
-      if (imageFiles.isEmpty) return;
-
-      debugPrint(
-        '[MediaPicker] ✅ 그룹이미지 선택 완료: ${imageFiles.length}개, 레이아웃: $layout',
-      );
-      debugPrint('[MediaPicker] 📦 반환할 파일 경로들:');
-      for (int i = 0; i < imageFiles.length; i++) {
-        debugPrint('[MediaPicker]   [$i] ${imageFiles[i].path}');
-      }
-
-      // 선택된 레이아웃과 이미지 파일들을 반환
-      final result = MediaPickerResult(
-        files: imageFiles,
-        selectedMediaType: MediaType.image,
-        groupLayout: layout, // 🎯 레이아웃 정보 추가
-      );
-
-      debugPrint('[MediaPicker] 🚀 결과 반환: groupLayout=${result.groupLayout}');
-
-      // 🎯 즉시 결과 반환 (딜레이 없음)
-      if (mounted) {
-        Navigator.of(context).pop(result);
       }
     } catch (e) {
       debugPrint('그룹이미지 오류: $e');
@@ -630,9 +693,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
             widget.onMediaSelected(file);
           }
           // 🎯 실제로 선택된 미디어 타입과 함께 반환
-          Navigator.of(
-            context,
-          ).pop(MediaPickerResult(files: files, selectedMediaType: _mediaType));
+          await _popWithResult(
+            MediaPickerResult(files: files, selectedMediaType: _mediaType),
+          );
         }
       }
     } catch (e) {
@@ -928,27 +991,17 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
     if (_media.isEmpty) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              _mediaType == MediaType.video
-                  ? CupertinoIcons.videocam
-                  : CupertinoIcons.photo,
-              size: 64,
+        child: Material(
+          color: Colors.transparent,
+          child: Text(
+            _mediaType == MediaType.video
+                ? AppLocalizations.of(context).t('no_videos')
+                : AppLocalizations.of(context).t('no_images'),
+            style: const TextStyle(
+              fontSize: 17,
               color: CupertinoColors.systemGrey,
             ),
-            const SizedBox(height: 16),
-            Text(
-              _mediaType == MediaType.video
-                  ? AppLocalizations.of(context).t('no_videos')
-                  : AppLocalizations.of(context).t('no_images'),
-              style: const TextStyle(
-                fontSize: 17,
-                color: CupertinoColors.systemGrey,
-              ),
-            ),
-          ],
+          ),
         ),
       );
     }
@@ -997,7 +1050,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
             },
             child: GridView.builder(
               controller: _scrollController, // 🎯 스크롤 컨트롤러 연결
-              key: ValueKey('${_crossAxisCount}_${_mediaType}'),
+              key: ValueKey('${_crossAxisCount}_$_mediaType'),
               padding: const EdgeInsets.all(2),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: _crossAxisCount,

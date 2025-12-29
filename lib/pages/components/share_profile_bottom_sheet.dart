@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:doppy/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -48,7 +49,7 @@ class ShareProfileBottomSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final shareUrl = 'https://doppy.app/profile/$username';
+    final shareUrl = '${AppConstants.webBaseUrl}/profile/$username';
     // 🎯 Instagram용 전체 텍스트 (이미지와 함께 공유)
     final shareText =
         '${context.tr('share_profile_message').replaceAll('{username}', username)}\n$shareUrl';
@@ -91,12 +92,10 @@ class ShareProfileBottomSheet extends StatelessWidget {
                 width: double.infinity,
                 height: 400,
                 fit: BoxFit.cover,
-                fadeInDuration: const Duration(
-                  milliseconds: 0,
-                ), // 🎯 이미 로드된 이미지는 페이드인 없이 즉시 표시
+                fadeInDuration: const Duration(milliseconds: 0),
                 fadeOutDuration: const Duration(milliseconds: 0),
-                memCacheWidth: 800, // 메모리 캐시 크기 지정
-                maxWidthDiskCache: 800, // 디스크 캐시 크기
+                memCacheWidth: 800,
+                maxWidthDiskCache: 800,
                 placeholder:
                     (context, url) => Container(
                       width: double.infinity,

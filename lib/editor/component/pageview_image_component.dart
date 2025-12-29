@@ -838,6 +838,7 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
       // 로컬 이미지
       final filePath =
           imageUrl.startsWith('file://') ? imageUrl.substring(7) : imageUrl;
+      final dpr = View.of(context).devicePixelRatio;
 
       return Image.file(
         File(filePath),
@@ -845,6 +846,10 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
+        // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
+        // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
+        cacheWidth:
+            widget.isEditing ? (widget.screenWidth * dpr).round() : null,
         frameBuilder: (context, child, frame, wasSyncLoaded) {
           if (wasSyncLoaded || frame != null) {
             return child;
@@ -862,12 +867,17 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
       );
     } else {
       // 🎯 네트워크 이미지 (프리로드된 경우 즉시 표시)
+      final dpr = View.of(context).devicePixelRatio;
       return Image.network(
         imageUrl,
         key: ValueKey('$imageUrl-${Theme.of(context).brightness}'),
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
+        // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
+        // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
+        cacheWidth:
+            widget.isEditing ? (widget.screenWidth * dpr).round() : null,
         frameBuilder: (context, child, frame, wasSyncLoaded) {
           // 🎯 프리로드되었거나 캐시에 있으면 즉시 표시
           if (wasSyncLoaded || frame != null) {

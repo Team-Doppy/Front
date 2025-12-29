@@ -13,6 +13,7 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 
 /// 🎯 딥링크 처리 헬퍼
 class DeepLinkHandler {
@@ -37,7 +38,7 @@ class DeepLinkHandler {
 
         case DeepLinkType.profile:
           if (result.username != null && result.username!.isNotEmpty) {
-            _handleProfileDeepLink(context, result.username!);
+            await _handleProfileDeepLink(context, result.username!);
           } else {
             debugPrint('[DeepLinkHandler] username이 없습니다');
             ErrorHandler.showError(context, '프로필을 찾을 수 없습니다.');
@@ -134,9 +135,35 @@ class DeepLinkHandler {
       );
 
       // 3️⃣ 댓글/좋아요 미리 로드 (병렬)
+      // 🎯 comment 딥링크면 locate로 타겟 page만 로드해서 "찾을 때까지 페이지네이션"을 피함
       debugPrint('[DeepLinkHandler] 3/5 댓글/좋아요 미리 로드 중...');
+      CommentLocateResponse? locate;
+      final isCommentDeepLink =
+          result.type == DeepLinkType.postWithComment &&
+          result.commentId != null &&
+          result.commentId!.isNotEmpty;
+
+      if (isCommentDeepLink) {
+        try {
+          locate = await commentService.locateCommentInPost(
+            postId: postId,
+            commentId: result.commentId!,
+            size: CommentService.defaultPageSize,
+          );
+        } catch (e) {
+          // locate 실패 시에도 화면 진입은 가능해야 하므로, 기존 방식으로 폴백
+          debugPrint('[DeepLinkHandler] ⚠️ locate 실패 - 폴백 로드: $e');
+          locate = null;
+        }
+      }
+
       await Future.wait([
-        commentService.loadComments(), // 🎯 기본 크기(100개)로 로드
+        locate != null
+            ? commentService.loadComments(
+              targetPage: locate.page,
+              size: locate.size,
+            )
+            : commentService.loadComments(), // 🎯 기본 크기(100개)로 로드
         LikedUsersBottomSheet.preloadLikedUsers(postId).catchError((_) {}),
       ]);
 
@@ -160,7 +187,10 @@ class DeepLinkHandler {
       if (result.type == DeepLinkType.postWithComment &&
           result.commentId != null) {
         initialAction = PostReaderInitialAction.showComments;
-        scrollToCommentId = result.commentId;
+        // 🎯 안정성을 위해 (대댓글이면) 부모 댓글로 점프
+        // - 서버 locate가 성공하면 anchorParentCommentId 사용
+        // - 실패 시에는 기존 commentId를 전달 (기존 스캔 로직이 처리)
+        scrollToCommentId = locate?.anchorParentCommentId ?? result.commentId;
       } else if (result.type == DeepLinkType.postWithLikes) {
         initialAction = PostReaderInitialAction.showLikes;
       } else if (result.type == DeepLinkType.postWithChat) {
@@ -171,19 +201,15 @@ class DeepLinkHandler {
       // PostReaderScreen으로 네비게이션 (이미 로드된 content 전달)
       if (context.mounted) {
         Navigator.of(context).push(
-          PageRouteBuilder(
-            pageBuilder:
-                (context, animation, secondaryAnimation) => PostReaderScreen(
+          MaterialPageRoute(
+            builder:
+                (_) => PostReaderScreen(
                   exported: exported,
                   heroTag: 'deep-link-post-$postId',
                   initialAction: initialAction,
                   scrollToCommentId: scrollToCommentId,
                   preloadedContent: content, // 🎯 이미 로드된 content 전달
                 ),
-            transitionsBuilder:
-                (context, animation, secondaryAnimation, child) =>
-                    FadeTransition(opacity: animation, child: child),
-            transitionDuration: const Duration(milliseconds: 100),
           ),
         );
       }
@@ -196,7 +222,31 @@ class DeepLinkHandler {
   }
 
   /// 프로필 딥링크 처리
-  static void _handleProfileDeepLink(BuildContext context, String username) {
+  static Future<void> _handleProfileDeepLink(
+    BuildContext context,
+    String username,
+  ) async {
+    // ✅ 프로필 딥링크 안정화:
+    // - 전역 싱글톤 Provider 캐시 때문에 "이전 유저가 잠깐 보이는" 현상이 날 수 있어
+    //   진입 시점을 기준으로 데이터를 즉시 비우고, 목표 username으로 로딩을 트리거한다.
+    try {
+      final otherProvider = Provider.of<OtherProfileFeedProvider>(
+        context,
+        listen: false,
+      );
+      otherProvider.clearData();
+      // 화면 진입을 막지 않도록 비동기로 트리거 (UserProfileScreen 내부 로딩과도 호환)
+      Future.microtask(() async {
+        try {
+          await otherProvider.hardRefresh(username: username);
+        } catch (e) {
+          debugPrint('[DeepLinkHandler] 프로필 hardRefresh 실패(무시): $e');
+        }
+      });
+    } catch (e) {
+      debugPrint('[DeepLinkHandler] OtherProfileFeedProvider 준비 실패(무시): $e');
+    }
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => UserProfileScreen(otherUser: User(username: username)),

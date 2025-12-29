@@ -229,9 +229,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   Future<void> _handleRefresh() async {
     try {
       final bool isOther = !_isOwnProfile;
-      // 새로고침 시 프로바이더 캐시를 먼저 비운다 (강제 재로딩 보장)
+      // ✅ 새로고침 중 "시작 가이드(빈 상태)"가 잠깐 보이는 플리커 방지:
+      // - clearInMemory()는 데이터/로딩 플래그를 즉시 비워 UI가 빈 상태를 그릴 수 있음
+      // - 대신 캐시만 무효화하고(force=true로) 서버 재로딩한다. (기존 데이터는 유지)
       try {
-        _feedProvider.clearInMemory();
+        if (!isOther) {
+          final dyn = _feedProvider;
+          if (dyn is MyProfileFeedProvider) {
+            dyn.invalidateCache();
+          }
+        }
       } catch (_) {}
 
       // 🎯 내 프로필일 때 UserProvider도 새로고침
@@ -650,27 +657,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                         tag:
                                             'profile_image_${_displayUsername}',
                                         createRectTween: (begin, end) {
-                                          // 직선 경로 생성 (수직 이동만, X는 시작 위치의 중심 기준으로 고정)
-                                          if (begin == null || end == null) {
-                                            return RectTween(
-                                              begin: begin,
-                                              end: end,
-                                            );
-                                          }
-
-                                          // 시작 위치의 중심 X 좌표
-                                          final startCenterX =
-                                              begin.left + begin.width / 2;
-
+                                          // ✅ 직선 경로(나갈 때처럼 자연스럽게)
                                           return RectTween(
                                             begin: begin,
-                                            end: Rect.fromLTWH(
-                                              startCenterX -
-                                                  end.width / 2, // 중심 정렬
-                                              end.top,
-                                              end.width,
-                                              end.height,
-                                            ),
+                                            end: end,
                                           );
                                         },
                                         child: Material(
@@ -1888,7 +1878,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
-  /// 선택된 이미지 처리 (크롭된 이미지 바로 업로드)
+  /// 선택된 이미지 처리 (원형 크롭된 이미지 업로드)
   Future<void> _handleImageSelected(File file) async {
     try {
       setState(() {

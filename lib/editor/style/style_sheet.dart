@@ -77,44 +77,9 @@ Stylesheet buildCustomStylesheet(
             };
           }
 
-          // 멘션 노드 스타일 (metadata['mention'] == true)
+          // 멘션 노드는 "일반 텍스트와 동일"하게 렌더링하고, 차이는 bold만 추가한다.
+          // (폰트/사이즈/패딩은 본문과 동일하게 유지)
           final isMention = docNode.metadata['mention'] == true;
-          if (isMention) {
-            // 메타데이터에서 폰트 정보 읽기
-            final fontFamily = docNode.metadata['fontFamily'] as String?;
-
-            TextStyle mentionStyle = TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: bodyColor,
-              height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
-              leadingDistribution: TextLeadingDistribution.even,
-            );
-
-            // 구글 폰트 적용
-            // 폰트가 이미 로드되었는지 확인하고, 로드되지 않았으면 기본 폰트 사용
-            if (fontFamily != null && fontFamily.isNotEmpty) {
-              try {
-                mentionStyle = GoogleFonts.getFont(
-                  fontFamily,
-                  textStyle: mentionStyle,
-                );
-              } catch (e) {
-                // 폰트 로드 실패 시 기본 폰트 사용 (UI 블로킹 방지)
-                mentionStyle = mentionStyle.copyWith(fontFamily: fontFamily);
-              }
-            }
-
-            return {
-              Styles.textStyle: mentionStyle,
-              Styles.padding: CascadingPadding.only(
-                top: 5,
-                bottom: 0,
-                left: 20,
-                right: 20,
-              ),
-            };
-          }
 
           // 메타데이터에서 폰트 정보 읽기
           final fontFamily = docNode.metadata['fontFamily'] as String?;
@@ -137,7 +102,10 @@ Stylesheet buildCustomStylesheet(
           }
 
           return {
-            Styles.textStyle: bodyStyle,
+            Styles.textStyle:
+                isMention
+                    ? bodyStyle.copyWith(fontWeight: FontWeight.bold)
+                    : bodyStyle,
             Styles.padding: CascadingPadding.only(
               top: 0,
               bottom: 0,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
@@ -14,6 +15,8 @@ import 'package:doppy/image/media_picker_screen.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:io';
 
 class CommentBottomSheet extends StatefulWidget {
@@ -21,11 +24,15 @@ class CommentBottomSheet extends StatefulWidget {
     super.key,
     required this.title,
     required this.commentService,
+    this.postThumbnailUrl,
+    this.postSummary,
     this.scrollToCommentId, // 🎯 특정 댓글로 스크롤할 댓글 ID
     this.postAuthorUsername, // 🎯 블로그 작성자 username (비밀 메시지용)
   });
   final String title;
   final CommentService commentService;
+  final String? postThumbnailUrl; // 🎯 댓글 0개일 때 보여줄 포스트 썸네일
+  final String? postSummary; // 🎯 댓글 0개일 때 보여줄 포스트 요약(한 줄)
   final String? scrollToCommentId; // 🎯 특정 댓글로 스크롤할 댓글 ID
   final String? postAuthorUsername; // 🎯 블로그 작성자 username (비밀 메시지용)
 
@@ -38,7 +45,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   late final CommentService _commentService;
   final TextEditingController _textController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
-  final ScrollController _scrollController = ScrollController();
+  final ItemScrollController _itemScrollController = ItemScrollController();
+  final ItemPositionsListener _itemPositionsListener =
+      ItemPositionsListener.create();
   final Map<String, GlobalKey> _commentKeys = {}; // 높이 측정용 GlobalKey
 
   Comment? _replyTarget;
@@ -61,17 +70,84 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   bool _showNewMessageBadge = false; // 새 메시지 알림 표시 여부
   int _lastCommentCount = 0; // 마지막 댓글 수
   bool _isKeyboardActive = false; // 키보드 활성화 상태
-  bool _isInitialLoad = true; // 🎯 처음 열었을 때만 페이드인 적용
+  // NOTE: PostReader에서 댓글 화면 전환이 이미 Fade라,
+  // 댓글 아이템 개별 페이드(_isInitialLoad)로 인한 "2번 깜빡임"을 막기 위해 제거.
   bool _isLoadingTargetComment = false; // 타겟 댓글 로딩 중 표시 여부
   double _inputSectionHeight = 80.0; // 🎯 입력창 높이 (기본값, 실제 높이로 업데이트)
-  double? _lastLoadMoreOffset; // 🎯 마지막 로드 모어 트리거 offset (중복 방지)
   bool _isLoadingMore = false; // 🎯 로드 모어 로딩 중 표시 여부
 
   // 🎯 성능 최적화: 타겟 댓글 캐싱
   final Map<String, Comment?> _targetCommentCache = {};
 
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted) return;
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      setState(fn);
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(fn);
+      });
+    }
+  }
+
+  // ✅ 기존 pin/auto-position/scroll scheduling 로직 제거:
+  // 새 구조는 ScrollController + ListView(reverse:true)로 단순화하고,
+  // "맨 아래" 이동은 animateTo(0)으로 처리한다.
+
+  /// 🎯 타겟 댓글이 로컬에 없을 때, 서버 locate API로 "정확한 페이지"만 로드해서 가져오기
+  /// - 기존 _loadTargetPage는 스캔/반복 로드라 불안정/비효율일 수 있음
+  Future<bool> _loadTargetPageByLocate(String commentId) async {
+    final postId = _commentService.currentPostId;
+    if (postId == null || postId.isEmpty) return false;
+
+    try {
+      // 로딩 인디케이터 즉시 표시
+      if (mounted) {
+        _safeSetState(() {
+          _isLoadingTargetComment = true;
+        });
+      }
+
+      final locate = await _commentService.locateCommentInPost(
+        postId: postId,
+        commentId: commentId,
+        size: CommentService.defaultPageSize,
+      );
+
+      // locate가 준 page만 로드
+      await _commentService.loadComments(
+        targetPage: locate.page,
+        size: locate.size,
+      );
+
+      return _commentService.comments.any((c) => c.id == commentId) ||
+          _commentService.comments.any(
+            (c) => c.id == locate.anchorParentCommentId,
+          );
+    } catch (e) {
+      debugPrint('[CommentBottomSheet] ⚠️ locate 기반 로드 실패: $e');
+      return false;
+    } finally {
+      // 로딩 인디케이터 숨김
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _safeSetState(() {
+              _isLoadingTargetComment = false;
+            });
+          }
+        });
+      }
+    }
+  }
+
   // 🎯 드래그 상태 관리 (부모에서 관리)
   final Map<String, double> _dragOffsets = {};
+  // 🎯 성능: 드래그 중에는 해당 아이템만 리빌드되게 ValueNotifier 사용
+  final Map<String, ValueNotifier<double>> _dragOffsetNotifiers = {};
 
   @override
   void initState() {
@@ -82,25 +158,12 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       _commentService.setPostAuthorUsername(widget.postAuthorUsername);
     }
     _commentService.addListener(_onCommentsChanged);
-    _scrollController.addListener(_onScroll);
+    _itemPositionsListener.itemPositions.addListener(_onScroll);
 
     // 🎯 초기 댓글 수 확인 (프레임 렌더링 후 정확한 개수로 판단)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _lastCommentCount = _commentService.comments.length;
-
-        // 🎯 초기 댓글 수에 따라 스크롤 방향 결정
-        // 18개 미만: reverse=false (위에서부터, 페이지네이션 불필요)
-        // 18개 이상: reverse=true (아래에서부터, 채팅 앱 방식)
-
-        // 🎯 초기 로드 완료 후 페이드인 비활성화 (더 빠르게)
-        Future.delayed(const Duration(milliseconds: 200), () {
-          if (mounted) {
-            setState(() {
-              _isInitialLoad = false;
-            });
-          }
-        });
 
         // 🎯 딥링크로 특정 댓글로 스크롤 (초기 로드 완료 후)
         if (widget.scrollToCommentId != null &&
@@ -147,7 +210,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       // 🎯 키보드 상태 변경을 다음 프레임에 처리하여 블로킹 방지
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        setState(() {
+        _safeSetState(() {
           _isKeyboardActive = _focusNode.hasFocus;
           // 🎯 키보드가 내려가면 답글/수정 모드 취소
           if (!_focusNode.hasFocus) {
@@ -160,77 +223,48 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   }
 
   void _onScroll() {
-    if (!_scrollController.hasClients) return;
+    final positions = _itemPositionsListener.itemPositions.value;
+    if (positions.isEmpty) return;
 
-    final offset = _scrollController.offset;
-    final maxScroll = _scrollController.position.maxScrollExtent;
+    final minIndex = positions
+        .map((p) => p.index)
+        .reduce((a, b) => a < b ? a : b);
+    final maxIndex = positions
+        .map((p) => p.index)
+        .reduce((a, b) => a > b ? a : b);
 
-    // 🎯 맨 아래로 버튼 표시 여부 (스크롤 방향에 따라 다름)
-    final bool isAtBottom;
-
-    // reverse:true이면 offset < 100이면 아래
-    isAtBottom = offset < 100;
-
+    // reverse:true: builder index=0이 최신(맨 아래)
+    final isAtBottom = minIndex <= 0;
     if (_showScrollToBottomButton != !isAtBottom) {
-      setState(() {
-        _showScrollToBottomButton = !isAtBottom;
-      });
+      _safeSetState(() => _showScrollToBottomButton = !isAtBottom);
     }
 
-    // reverse:true: maxScroll 가까이 = 과거 댓글(상단)
-    // 🎯 reverse:true일 때는 offset이 maxScroll에 가까워질수록 상단(과거 댓글)에 접근
-    final threshold = 400.0; // 🎯 로드 모어 트리거 임계값
-    final distanceFromTop = maxScroll - offset; // 🎯 상단으로부터의 거리
-
-    if (maxScroll > 0 &&
-        distanceFromTop < threshold &&
+    // reverse:true: 과거(맨 위)로 갈수록 index가 커짐
+    final itemCount = _getSortedComments().length;
+    final nearTop = itemCount > 0 && maxIndex >= itemCount - 5;
+    if (nearTop &&
         !_commentService.isLoading &&
-        _commentService.hasMoreComments) {
-      // 🎯 중복 호출 방지: 이전 트리거와 최소 200px 이상 차이가 날 때만 호출
-      if (_lastLoadMoreOffset == null ||
-          (offset - (_lastLoadMoreOffset ?? 0)).abs() > 200) {
-        _lastLoadMoreOffset = offset;
-        // 🎯 로드 모어 시작
-        setState(() {
-          _isLoadingMore = true;
-        });
-        _loadMoreSpinnerController.repeat(); // 🎯 스피너 애니메이션 시작
-        // 🎯 기본 크기로 로드 모어 호출
-        _commentService
-            .loadComments()
-            .then((_) {
-              // 🎯 로드 완료 후 _lastLoadMoreOffset 초기화 및 로딩 상태 해제
-              if (mounted) {
-                _loadMoreSpinnerController.stop(); // 🎯 스피너 애니메이션 중지
-                setState(() {
-                  _isLoadingMore = false;
-                  _lastLoadMoreOffset = null;
-                });
-              }
-            })
-            .catchError((error) {
-              // 🎯 에러 발생 시에도 로딩 상태 해제
-              if (mounted) {
-                _loadMoreSpinnerController.stop(); // 🎯 스피너 애니메이션 중지
-                setState(() {
-                  _isLoadingMore = false;
-                  _lastLoadMoreOffset = null;
-                });
-              }
-            });
-      } else {
-        debugPrint(
-          '[CommentBottomSheet] ⏭️ 로드 모어 중복 호출 방지: offset=$offset, lastOffset=$_lastLoadMoreOffset',
-        );
-      }
+        _commentService.hasMoreComments &&
+        !_isLoadingMore) {
+      _safeSetState(() => _isLoadingMore = true);
+      _loadMoreSpinnerController.repeat();
+      _commentService
+          .loadComments()
+          .catchError((e) {
+            debugPrint('[CommentBottomSheet] ⚠️ 로드 모어 실패: $e');
+          })
+          .whenComplete(() {
+            if (!mounted) return;
+            _loadMoreSpinnerController.stop();
+            _safeSetState(() => _isLoadingMore = false);
+          });
     }
   }
 
   @override
   void dispose() {
     _commentService.removeListener(_onCommentsChanged);
-    _scrollController.removeListener(_onScroll);
-    _scrollController.dispose();
+    _itemPositionsListener.itemPositions.removeListener(_onScroll);
     _bounceController.dispose();
     // 🎯 로드 모어 스피너 컨트롤러가 초기화되었는지 확인 후 dispose
     try {
@@ -254,6 +288,14 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     _commentKeys.removeWhere((id, key) => !currentCommentIds.contains(id));
     // 삭제된 댓글의 드래그 오프셋 정리
     _dragOffsets.removeWhere((id, offset) => !currentCommentIds.contains(id));
+    // 삭제된 댓글의 notifier 정리
+    _dragOffsetNotifiers.removeWhere((id, notifier) {
+      final shouldRemove = !currentCommentIds.contains(id);
+      if (shouldRemove) {
+        notifier.dispose();
+      }
+      return shouldRemove;
+    });
 
     // 새 댓글이 추가되었는지 확인
     if (currentCount > _lastCommentCount && !_commentService.isLoading) {
@@ -276,9 +318,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
             if (isMyComment) {
               _scrollToBottom();
             } else if (_showScrollToBottomButton) {
-              setState(() => _showNewMessageBadge = true);
+              _safeSetState(() => _showNewMessageBadge = true);
               Future.delayed(const Duration(seconds: 5), () {
-                if (mounted) setState(() => _showNewMessageBadge = false);
+                if (mounted) _safeSetState(() => _showNewMessageBadge = false);
               });
             }
           }
@@ -291,7 +333,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     // 🎯 notifyListeners() 호출 시 다음 프레임에 setState 호출하여 블로킹 방지
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        setState(() {});
+        _safeSetState(() {});
       }
     });
   }
@@ -498,16 +540,25 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     DragUpdateDetails details,
     bool isMe,
   ) {
-    setState(() {
-      final delta = details.delta.dx;
-      final currentOffset = _dragOffsets[commentId] ?? 0.0;
-      // 타인 댓글: 오른쪽으로만 (왼쪽에서 오른쪽), 내 댓글: 왼쪽으로만 (오른쪽에서 왼쪽)
-      if (!isMe && delta > 0) {
-        _dragOffsets[commentId] = (currentOffset + delta).clamp(0.0, 80.0);
-      } else if (isMe && delta < 0) {
-        _dragOffsets[commentId] = (currentOffset + delta).clamp(-80.0, 0.0);
-      }
-    });
+    final notifier = _dragOffsetNotifiers.putIfAbsent(
+      commentId,
+      () => ValueNotifier(0.0),
+    );
+    final delta = details.delta.dx;
+    final currentOffset = notifier.value;
+
+    // 🎯 스트로크 길이(최대 이동거리) 줄임: 80 -> 56
+    const maxStroke = 56.0;
+
+    // 타인 댓글: 오른쪽으로만, 내 댓글: 왼쪽으로만
+    if (!isMe && delta > 0) {
+      notifier.value = (currentOffset + delta).clamp(0.0, maxStroke);
+    } else if (isMe && delta < 0) {
+      notifier.value = (currentOffset + delta).clamp(-maxStroke, 0.0);
+    }
+
+    // 기존 map도 유지(다른 로직 참조 대비)
+    _dragOffsets[commentId] = notifier.value;
   }
 
   void _handleHorizontalDragEnd(
@@ -515,8 +566,12 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     DragEndDetails details,
     VoidCallback onSwipeReply,
   ) {
-    final offset = _dragOffsets[commentId] ?? 0.0;
-    if (offset.abs() > 40.0) {
+    final notifier = _dragOffsetNotifiers[commentId];
+    final offset = notifier?.value ?? _dragOffsets[commentId] ?? 0.0;
+
+    // 🎯 답글 활성화 임계값 줄임: 40 -> 28
+    const activateThreshold = 28.0;
+    if (offset.abs() > activateThreshold) {
       // 임계값 초과 시 답글 실행
       HapticFeedback.mediumImpact();
       onSwipeReply();
@@ -524,16 +579,14 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       // 🎯 원위치로 복귀는 다음 프레임에 처리하여 블로킹 방지
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          setState(() {
-            _dragOffsets[commentId] = 0.0;
-          });
+          if (notifier != null) notifier.value = 0.0;
+          _dragOffsets[commentId] = 0.0;
         }
       });
     } else {
       // 원위치로 복귀 (애니메이션)
-      setState(() {
-        _dragOffsets[commentId] = 0.0;
-      });
+      if (notifier != null) notifier.value = 0.0;
+      _dragOffsets[commentId] = 0.0;
     }
   }
 
@@ -597,22 +650,12 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   }
 
   void _scrollToBottom() {
-    // 🎯 맨 아래(최신 댓글)로 스크롤
-    if (!_scrollController.hasClients) return;
-
-    final targetOffset = 0.0; // 0이 맨 아래
-
-    _scrollController.animateTo(
-      targetOffset,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOut,
-    );
-
-    // 새 메시지 배지 숨김
     if (_showNewMessageBadge) {
-      setState(() {
-        _showNewMessageBadge = false;
-      });
+      _safeSetState(() => _showNewMessageBadge = false);
+    }
+    if (_itemScrollController.isAttached) {
+      // reverse:true에서 builder index=0이 최신(맨 아래)
+      _itemScrollController.jumpTo(index: 0);
     }
   }
 
@@ -620,7 +663,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   Future<bool> _loadTargetPage(String commentId) async {
     // 로딩 인디케이터 즉시 표시
     if (mounted) {
-      setState(() {
+      _safeSetState(() {
         _isLoadingTargetComment = true;
       });
     }
@@ -738,7 +781,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       if (mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            setState(() {
+            _safeSetState(() {
               _isLoadingTargetComment = false;
             });
           }
@@ -749,222 +792,50 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
 
   /// 키 기반 정확한 스크롤: Scrollable.ensureVisible 사용
   void _scrollToTargetComment(String commentId) async {
-    if (!_scrollController.hasClients) {
-      // 스크롤 컨트롤러가 준비되지 않았으면 다음 프레임에서 재시도
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _scrollToTargetComment(commentId);
-        }
-      });
-      return;
-    }
+    _safeSetState(() => _isLoadingTargetComment = true);
 
-    // 1) 타겟 댓글이 로드되었는지 확인 (정렬 없이)
-    var comments = _commentService.comments;
+    // 1) 타겟 댓글이 로드되었는지 확인 (createdAt 기준 정렬)
+    var comments = _getSortedComments();
     var targetIndex = comments.indexWhere((c) => c.id == commentId);
 
-    // 2) 못 찾으면 → 타겟이 있을 법한 페이지를 한 번에 로드
+    // 2) 못 찾으면 → locate API로 정확한 page만 로드 (실패 시 기존 스캔 로직 폴백)
     if (targetIndex == -1) {
-      final found = await _loadTargetPage(commentId);
+      final found =
+          await _loadTargetPageByLocate(commentId) ||
+          await _loadTargetPage(commentId);
       if (!found || !mounted) {
-        if (mounted) {
-          setState(() {
-            _isLoadingTargetComment = false;
-          });
-        }
+        _safeSetState(() => _isLoadingTargetComment = false);
         return;
       }
 
-      // 다시 인덱스 찾기 (최신 상태로, 정렬 없이)
-      comments = _commentService.comments;
+      comments = _getSortedComments();
       targetIndex = comments.indexWhere((c) => c.id == commentId);
       if (targetIndex == -1) {
         debugPrint('[CommentBottomSheet] ❌ 타겟 댓글을 찾을 수 없음');
-        if (mounted) {
-          setState(() {
-            _isLoadingTargetComment = false;
-          });
-        }
+        _safeSetState(() => _isLoadingTargetComment = false);
         return;
       }
     }
 
-    // 3) 타겟 댓글의 GlobalKey 생성 (itemBuilder에서 생성되지만 미리 생성)
-    final targetKey = _commentKeys.putIfAbsent(commentId, () => GlobalKey());
-
-    // 4) 타겟 댓글로 대략적인 위치로 먼저 스크롤 (ListView 렌더링 범위 안으로 가져오기)
-    // reverse:true이므로 역순 인덱스 계산
-    final reversedIndex = comments.length - 1 - targetIndex;
-
-    // 🎯 대략적인 아이템 높이 추정 (평균 100px로 증가, 더 넓은 범위 고려)
-    const estimatedItemHeight = 100.0;
-    final estimatedOffset = reversedIndex * estimatedItemHeight;
-
-    // maxScrollExtent 확인 (NaN 체크)
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    if (!maxScroll.isFinite || maxScroll < 0) {
-      debugPrint('[CommentBottomSheet] ⚠️ 유효하지 않은 maxScrollExtent: $maxScroll');
-      if (mounted) {
-        setState(() {
-          _isLoadingTargetComment = false;
-        });
-      }
-      return;
-    }
-
-    if (!estimatedOffset.isFinite) {
-      debugPrint(
-        '[CommentBottomSheet] ⚠️ 유효하지 않은 estimatedOffset: $estimatedOffset',
-      );
-      if (mounted) {
-        setState(() {
-          _isLoadingTargetComment = false;
-        });
-      }
-      return;
-    }
-
-    // 🎯 더 넓은 범위로 스크롤 (타겟 위치의 앞뒤로 여유 공간 확보)
-    // 타겟 위치에서 약 3-4개 아이템 앞쪽으로 스크롤하여 타겟이 화면에 확실히 들어오도록
-    const bufferItems = 4; // 앞쪽으로 4개 아이템 여유
-    final bufferedOffset = (reversedIndex + bufferItems) * estimatedItemHeight;
-    final clampedOffset = bufferedOffset.clamp(0.0, maxScroll);
-
-    if (!clampedOffset.isFinite) {
-      debugPrint(
-        '[CommentBottomSheet] ⚠️ 유효하지 않은 clampedOffset: $clampedOffset',
-      );
-      if (mounted) {
-        setState(() {
-          _isLoadingTargetComment = false;
-        });
-      }
-      return;
-    }
-
-    debugPrint(
-      '[CommentBottomSheet] 📍 대략적 위치로 스크롤: index=$targetIndex, reversed=$reversedIndex, baseOffset=$estimatedOffset, bufferedOffset=$clampedOffset',
-    );
-
-    // 대략적인 위치로 jumpTo (타겟 댓글이 ListView 렌더링 범위 안에 들어오도록)
-    _scrollController.jumpTo(clampedOffset);
-
-    // 5) 스크롤 후 렌더링 완료 대기 (타겟 댓글이 ListView에 렌더링되도록)
-    await Future.delayed(
-      const Duration(milliseconds: 100),
-    ); // 🎯 대기 시간 감소 (300ms -> 100ms)
-    await WidgetsBinding.instance.endOfFrame;
-
-    // 6) setState로 리스트 업데이트 강제 (키가 생성되도록)
-    if (mounted) {
-      setState(() {});
-    }
-
-    // 7) 렌더링 완료 대기
-    await Future.delayed(
-      const Duration(milliseconds: 100),
-    ); // 🎯 대기 시간 감소 (300ms -> 100ms)
-    await WidgetsBinding.instance.endOfFrame;
-
-    // 8) 키의 context가 준비될 때까지 대기 (재시도 로직, 재시도 횟수 증가)
-    BuildContext? targetContext;
-    for (int retry = 0; retry < 25; retry++) {
-      // 🎯 재시도 횟수 20 -> 25로 증가
-      if (!mounted) return;
-
-      await WidgetsBinding.instance.endOfFrame;
-      targetContext = targetKey.currentContext;
-
-      if (targetContext != null) {
-        debugPrint(
-          '[CommentBottomSheet] ✅ 타겟 댓글 context 찾음 (시도: ${retry + 1})',
-        );
-        break;
-      }
-
-      // 🎯 타겟 댓글을 찾지 못한 경우, 주변 범위를 더 넓게 스캔
-      if (retry > 3 && retry % 2 == 0) {
-        // 🎯 3번 시도 후부터 2번마다 주변 범위로 스크롤 조정 (더 빠르게)
-        final currentOffset = _scrollController.offset;
-
-        // 타겟 위치 주변으로 스크롤 조정 (위아래로 더 넓게)
-        final adjustment =
-            (retry - 3) ~/ 2 * estimatedItemHeight * 2; // 점진적으로 범위 확대
-        final adjustedOffset = (estimatedOffset - adjustment).clamp(
-          0.0,
-          maxScroll,
-        );
-
-        if ((adjustedOffset - currentOffset).abs() > 50) {
-          // 50px 이상 차이날 때만 조정
-          debugPrint(
-            '[CommentBottomSheet] 🔍 타겟 찾기 실패, 주변 범위로 스크롤 조정: $currentOffset -> $adjustedOffset (시도: ${retry + 1})',
-          );
-          _scrollController.jumpTo(adjustedOffset);
-          await Future.delayed(
-            const Duration(milliseconds: 50),
-          ); // 🎯 대기 시간 감소 (200ms -> 50ms)
-          await WidgetsBinding.instance.endOfFrame;
-          if (mounted) {
-            setState(() {});
-          }
-        }
-      }
-
-      // context가 없으면 setState로 리빌드 강제 (매번 하지 않고 조건부로)
-      if (retry % 2 == 0 && mounted) {
-        setState(() {});
-      }
-
-      if (retry < 24) {
-        // 재시도 간격 감소 (더 빠르게)
-        await Future.delayed(
-          Duration(
-            milliseconds: 50 + (retry * 10),
-          ), // 🎯 대기 시간 감소 (150ms -> 50ms)
-        );
-      }
-    }
-
-    if (targetContext == null) {
-      debugPrint('[CommentBottomSheet] ❌ 타겟 댓글의 context를 찾을 수 없음 (최대 재시도 초과)');
-      if (mounted) {
-        setState(() {
-          _isLoadingTargetComment = false;
-        });
-      }
-      return;
-    }
-
-    // 8) Scrollable.ensureVisible로 정확한 위치로 스크롤
+    // 3) index 기반 즉시 점프 (서버 locate로 target page만 로드하므로 스캔/근처 이동 불필요)
     try {
-      await Scrollable.ensureVisible(
-        targetContext,
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeOut,
-        alignment: 0.5,
-        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
-      );
-
-      // 9) 바운싱 애니메이션
-      if (mounted) {
-        setState(() => _bouncingCommentId = commentId);
-        _bounceController.forward(from: 0.0).then((_) {
-          if (mounted) {
-            _bounceController.reset();
-            setState(() => _bouncingCommentId = null);
-          }
-        });
+      if (_itemScrollController.isAttached) {
+        // reverse:true이므로 builder index로 변환
+        final builderIndex = comments.length - 1 - targetIndex;
+        _itemScrollController.jumpTo(index: builderIndex, alignment: 0.5);
       }
+
+      // 바운스
+      _safeSetState(() => _bouncingCommentId = commentId);
+      _bounceController.forward(from: 0.0).then((_) {
+        if (!mounted) return;
+        _bounceController.reset();
+        _safeSetState(() => _bouncingCommentId = null);
+      });
     } catch (e) {
       debugPrint('[CommentBottomSheet] ❌ 스크롤 실패: $e');
-    }
-
-    // 10) 로딩 인디케이터 숨김
-    if (mounted) {
-      setState(() {
-        _isLoadingTargetComment = false;
-      });
+    } finally {
+      if (mounted) _safeSetState(() => _isLoadingTargetComment = false);
     }
   }
 
@@ -1000,6 +871,114 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     return sortedComments;
   }
 
+  Widget _buildEmptyState(BuildContext context) {
+    final title = (widget.title).trim();
+    final summary = (widget.postSummary ?? '').trim();
+    final thumbnailUrl = (widget.postThumbnailUrl ?? '').trim();
+
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 24,
+          bottom: _inputSectionHeight + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child:
+                  thumbnailUrl.isNotEmpty
+                      ? CachedNetworkImage(
+                        imageUrl: thumbnailUrl,
+                        width: 120,
+                        height: 120,
+                        fit: BoxFit.cover,
+                        fadeInDuration: const Duration(milliseconds: 160),
+                        fadeOutDuration: const Duration(milliseconds: 80),
+                        placeholder:
+                            (context, url) => Container(
+                              width: 120,
+                              height: 120,
+                              color:
+                                  Theme.of(context).colorScheme.surfaceVariant,
+                            ),
+                        errorWidget:
+                            (context, error, stackTrace) => Container(
+                              width: 120,
+                              height: 120,
+                              color:
+                                  Theme.of(context).colorScheme.surfaceVariant,
+                              child: Icon(
+                                Icons.image_outlined,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.45),
+                                size: 42,
+                              ),
+                            ),
+                        memCacheWidth: 360,
+                        maxWidthDiskCache: 360,
+                      )
+                      : Container(
+                        width: 120,
+                        height: 120,
+                        color: Theme.of(context).colorScheme.surfaceVariant,
+                        child: Icon(
+                          Icons.chat_bubble_outline,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.45),
+                          size: 42,
+                        ),
+                      ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title.isNotEmpty ? title : '이 게시물',
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onBackground,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (summary.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                summary,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onBackground.withOpacity(0.72),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+            const SizedBox(height: 18),
+            Text(
+              '첫 채팅을 시작해보세요',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onBackground,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // 🎯 성능 최적화: 정렬된 댓글 리스트 캐싱 사용
@@ -1016,25 +995,57 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
 
     return Stack(
       children: [
-        // 타겟 댓글 로딩 인디케이터
+        // 🎯 타겟 댓글 로딩 인디케이터 (페이지네이션 스피너처럼 상단에 잠깐 표시)
         if (_isLoadingTargetComment)
-          Positioned.fill(
-            child: Container(
-              color: Theme.of(context).colorScheme.background,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(
+          Positioned(
+            top: 8,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.surface.withOpacity(0.92),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow:
+                      Theme.of(context).brightness == Brightness.light
+                          ? [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.08),
+                              blurRadius: 10,
+                              offset: const Offset(0, 2),
+                            ),
+                          ]
+                          : null,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
                         valueColor: AlwaysStoppedAnimation<Color>(
-                          Theme.of(context).colorScheme.onBackground,
+                          Theme.of(context).colorScheme.onSurface,
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      '답글로 이동 중…',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1054,6 +1065,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                 color: Theme.of(context).colorScheme.background,
               ),
               child: Scaffold(
+                // ✅ 키보드(viewInsets)로 인해 body 전체가 리사이즈되면 입력바가 "내려갔다가 올라오는" 튐이 커질 수 있음.
+                // 입력바는 아래에서 viewInsets 만큼만 올려서 고정시키고, body는 리사이즈하지 않는다.
                 resizeToAvoidBottomInset: false,
                 backgroundColor: Colors.transparent,
                 appBar: AppBar(
@@ -1084,10 +1097,10 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                     ),
                   ),
                 ),
-                body: Stack(
+                body: Column(
                   children: [
-                    // 🎯 성능 최적화: ListView는 고정 높이 (키보드 높이 직접 반영 안 함)
-                    Positioned.fill(
+                    // 🎯 리스트 영역 (Expanded로 남은 공간 차지)
+                    Expanded(
                       child: GestureDetector(
                         behavior:
                             HitTestBehavior
@@ -1104,281 +1117,262 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                                     strokeWidth: 2,
                                   ),
                                 )
-                                : RawScrollbar(
-                                  controller: _scrollController,
-                                  thumbColor: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.3),
-                                  thickness: 4,
-                                  radius: const Radius.circular(2),
-                                  thumbVisibility: false,
-                                  child: Align(
-                                    alignment: Alignment.topCenter,
-                                    child: Stack(
-                                      children: [
-                                        ListView.builder(
-                                          shrinkWrap: true,
-                                          key: const PageStorageKey(
-                                            'comment_list',
-                                          ),
-                                          controller: _scrollController,
-                                          reverse: true, // 🎯 동적 스크롤 방향
-                                          padding: EdgeInsets.only(
-                                            top:
-                                                _isLoadingMore
-                                                    ? 60
-                                                    : 8, // 🎯 로드 모어 중일 때 상단 패딩 증가
-                                            bottom:
-                                                _inputSectionHeight +
-                                                8, // 🎯 입력창 높이만큼 padding 추가
-                                            left: 8,
-                                            right: 8,
-                                          ),
-                                          itemCount: comments.length,
-                                          cacheExtent: 500,
-                                          itemBuilder: (context, index) {
-                                            // 🎯 댓글 인덱스 계산
-                                            final commentIndex =
-                                                comments.length -
-                                                1 -
-                                                index; // reverse:true일 때 역순
+                                : comments.isEmpty
+                                ? _buildEmptyState(context)
+                                : Stack(
+                                  children: [
+                                    ScrollablePositionedList.builder(
+                                      key: const PageStorageKey('comment_list'),
+                                      itemScrollController:
+                                          _itemScrollController,
+                                      itemPositionsListener:
+                                          _itemPositionsListener,
+                                      reverse: true,
+                                      padding: EdgeInsets.only(
+                                        top:
+                                            _isLoadingMore
+                                                ? 60
+                                                : 8, // 🎯 로드 모어 중일 때 상단 패딩 증가
+                                        bottom: 8,
+                                        left: 8,
+                                        right: 8,
+                                      ),
+                                      itemCount: comments.length,
+                                      itemBuilder: (context, index) {
+                                        // 🎯 댓글 인덱스 계산
+                                        final commentIndex =
+                                            comments.length - 1 - index;
 
-                                            final comment =
-                                                comments[commentIndex];
+                                        final comment = comments[commentIndex];
 
-                                            // GlobalKey 생성 (높이 측정용, 지연 생성으로 최적화)
-                                            final commentKey = _commentKeys
-                                                .putIfAbsent(
-                                                  comment.id,
-                                                  () => GlobalKey(),
-                                                );
+                                        // GlobalKey 생성 (높이 측정용, 지연 생성으로 최적화)
+                                        final commentKey = _commentKeys
+                                            .putIfAbsent(
+                                              comment.id,
+                                              () => GlobalKey(),
+                                            );
 
-                                            // 🎯 성능 최적화: currentUser는 build에서 이미 읽음
-                                            final isMe =
-                                                currentUser != null &&
-                                                comment.author ==
-                                                    currentUser.username;
+                                        // 🎯 성능 최적화: currentUser는 build에서 이미 읽음
+                                        final isMe =
+                                            currentUser != null &&
+                                            comment.author ==
+                                                currentUser.username;
 
-                                            // 🎯 성능 최적화: 이전/다음 댓글 비교 최적화
-                                            final bool showProfile;
-                                            final bool showAuthorInfo;
+                                        // 🎯 성능 최적화: 이전/다음 댓글 비교 최적화
+                                        final bool showProfile;
+                                        final bool showAuthorInfo;
 
-                                            if (commentIndex > 0) {
-                                              final prevAuthor =
-                                                  comments[commentIndex - 1]
-                                                      .author;
-                                              showProfile =
-                                                  prevAuthor != comment.author;
-                                            } else {
-                                              showProfile =
-                                                  true; // 첫 번째 댓글은 항상 프로필 표시
-                                            }
+                                        // reverse:true: commentIndex는 (comments.length - 1 - index)
+                                        // - showProfile: 더 과거(chronological prev = commentIndex-1)와 비교
+                                        // - showAuthorInfo: 더 최신(chronological next = commentIndex+1)과 비교
+                                        if (commentIndex > 0) {
+                                          final prevAuthor =
+                                              comments[commentIndex - 1].author;
+                                          showProfile =
+                                              prevAuthor != comment.author;
+                                        } else {
+                                          showProfile = true;
+                                        }
 
-                                            if (commentIndex <
-                                                comments.length - 1) {
-                                              final nextAuthor =
-                                                  comments[commentIndex + 1]
-                                                      .author;
-                                              showAuthorInfo =
-                                                  nextAuthor != comment.author;
-                                            } else {
-                                              showAuthorInfo =
-                                                  true; // 마지막 댓글은 항상 작성자 정보 표시
-                                            }
+                                        if (commentIndex <
+                                            comments.length - 1) {
+                                          final nextAuthor =
+                                              comments[commentIndex + 1].author;
+                                          showAuthorInfo =
+                                              nextAuthor != comment.author;
+                                        } else {
+                                          showAuthorInfo = true;
+                                        }
 
-                                            final targetComment =
-                                                _findTargetComment(
-                                                  comment.parentId,
-                                                );
+                                        final targetComment =
+                                            _findTargetComment(
+                                              comment.parentId,
+                                            );
 
-                                            final isThisBouncing =
-                                                _bouncingCommentId ==
-                                                comment.id;
+                                        final isThisBouncing =
+                                            _bouncingCommentId == comment.id;
 
+                                        final dragNotifier =
+                                            _dragOffsetNotifiers.putIfAbsent(
+                                              comment.id,
+                                              () => ValueNotifier(0.0),
+                                            );
+
+                                        return ValueListenableBuilder<double>(
+                                          valueListenable: dragNotifier,
+                                          builder: (context, dragOffset, _) {
                                             return Padding(
                                               padding: const EdgeInsets.only(
                                                 bottom: 0,
                                               ),
-                                              child: AnimatedOpacity(
-                                                opacity:
-                                                    _isInitialLoad ? 0.0 : 1.0,
-                                                duration: const Duration(
-                                                  milliseconds:
-                                                      150, // 🎯 더 빠른 페이드인 (300ms → 150ms)
-                                                ),
-                                                curve: Curves.easeOut,
-                                                child: AnimatedBuilder(
-                                                  animation: _bounceAnimation,
-                                                  builder: (context, child) {
-                                                    return Transform.translate(
-                                                      offset:
-                                                          isThisBouncing
-                                                              ? Offset(
-                                                                0,
-                                                                -30 *
-                                                                    (_bounceAnimation
-                                                                            .value -
-                                                                        1.0),
-                                                              )
-                                                              : Offset.zero,
-                                                      child: child,
+                                              child: AnimatedBuilder(
+                                                animation: _bounceAnimation,
+                                                builder: (context, child) {
+                                                  return Transform.translate(
+                                                    offset:
+                                                        isThisBouncing
+                                                            ? Offset(
+                                                              0,
+                                                              -30 *
+                                                                  (_bounceAnimation
+                                                                          .value -
+                                                                      1.0),
+                                                            )
+                                                            : Offset.zero,
+                                                    child: child,
+                                                  );
+                                                },
+                                                child: CommentItem(
+                                                  key: ValueKey(comment.id),
+                                                  comment: comment,
+                                                  commentService:
+                                                      _commentService,
+                                                  currentUser: currentUser,
+                                                  isMe: isMe,
+                                                  showProfile: showProfile,
+                                                  showAuthorInfo:
+                                                      showAuthorInfo,
+                                                  onReactionToggle: (
+                                                    commentId,
+                                                    emoji,
+                                                  ) {
+                                                    _commentService
+                                                        .toggleReaction(
+                                                          commentId,
+                                                          emoji,
+                                                        );
+                                                  },
+                                                  onLongPress:
+                                                      (offset, comment) =>
+                                                          _onLongPress(
+                                                            offset,
+                                                            comment,
+                                                          ),
+                                                  onTapTargetComment:
+                                                      _scrollToTargetComment,
+                                                  targetComment: targetComment,
+                                                  globalKey: commentKey,
+                                                  bounceAnimationValue: 1.0,
+                                                  isAnimating: false,
+                                                  dragOffset: dragOffset,
+                                                  onHorizontalDragUpdate: (
+                                                    details,
+                                                  ) {
+                                                    _handleHorizontalDragUpdate(
+                                                      comment.id,
+                                                      details,
+                                                      isMe,
                                                     );
                                                   },
-                                                  child: CommentItem(
-                                                    key: ValueKey(comment.id),
-                                                    comment: comment,
-                                                    commentService:
-                                                        _commentService,
-                                                    currentUser: currentUser,
-                                                    isMe: isMe,
-                                                    showProfile: showProfile,
-                                                    showAuthorInfo:
-                                                        showAuthorInfo,
-                                                    onReactionToggle: (
-                                                      commentId,
-                                                      emoji,
-                                                    ) {
-                                                      _commentService
-                                                          .toggleReaction(
-                                                            commentId,
-                                                            emoji,
-                                                          );
-                                                    },
-                                                    onLongPress:
-                                                        (offset, comment) =>
-                                                            _onLongPress(
-                                                              offset,
-                                                              comment,
-                                                            ),
-                                                    onTapTargetComment:
-                                                        _scrollToTargetComment,
-                                                    targetComment:
-                                                        targetComment,
-                                                    globalKey: commentKey,
-                                                    bounceAnimationValue: 1.0,
-                                                    isAnimating: false,
-                                                    dragOffset:
-                                                        _dragOffsets[comment
-                                                            .id] ??
-                                                        0.0,
-                                                    onHorizontalDragUpdate: (
+                                                  onHorizontalDragEnd: (
+                                                    details,
+                                                  ) {
+                                                    _handleHorizontalDragEnd(
+                                                      comment.id,
                                                       details,
-                                                    ) {
-                                                      _handleHorizontalDragUpdate(
-                                                        comment.id,
-                                                        details,
-                                                        isMe,
-                                                      );
-                                                    },
-                                                    onHorizontalDragEnd: (
-                                                      details,
-                                                    ) {
-                                                      _handleHorizontalDragEnd(
-                                                        comment.id,
-                                                        details,
-                                                        () {
-                                                          // 🎯 setState와 requestFocus를 분리하여 블로킹 방지
-                                                          setState(() {
-                                                            _replyTarget =
-                                                                comment;
-                                                          });
-                                                          // 🎯 키보드 포커스는 다음 프레임에 처리
-                                                          WidgetsBinding
-                                                              .instance
-                                                              .addPostFrameCallback((
-                                                                _,
-                                                              ) {
-                                                                if (mounted) {
-                                                                  _focusNode
-                                                                      .requestFocus();
-                                                                }
-                                                              });
-                                                        },
-                                                      );
-                                                    },
-                                                    onSwipeReply: () {
-                                                      // 🎯 setState와 requestFocus를 분리하여 블로킹 방지
-                                                      setState(() {
-                                                        _replyTarget = comment;
-                                                      });
-                                                      // 🎯 키보드 포커스는 다음 프레임에 처리
-                                                      WidgetsBinding.instance
-                                                          .addPostFrameCallback((
-                                                            _,
-                                                          ) {
-                                                            if (mounted) {
-                                                              _focusNode
-                                                                  .requestFocus();
-                                                            }
-                                                          });
-                                                    },
-                                                    onProfileTap: (username) {
-                                                      // 🎯 프로필 화면으로 이동
-                                                      Navigator.of(
-                                                        context,
-                                                      ).push(
-                                                        MaterialPageRoute(
-                                                          builder:
-                                                              (
-                                                                context,
-                                                              ) => UserProfileScreen(
-                                                                otherUser: User(
-                                                                  username:
-                                                                      username,
-                                                                  profileImageUrl:
-                                                                      comment
-                                                                          .authorProfileImageUrl,
-                                                                ),
+                                                      () {
+                                                        // 🎯 setState와 requestFocus를 분리하여 블로킹 방지
+                                                        setState(() {
+                                                          _replyTarget =
+                                                              comment;
+                                                        });
+                                                        // 🎯 키보드 포커스는 다음 프레임에 처리
+                                                        WidgetsBinding.instance
+                                                            .addPostFrameCallback((
+                                                              _,
+                                                            ) {
+                                                              if (mounted) {
+                                                                _focusNode
+                                                                    .requestFocus();
+                                                              }
+                                                            });
+                                                      },
+                                                    );
+                                                  },
+                                                  onSwipeReply: () {
+                                                    // 🎯 setState와 requestFocus를 분리하여 블로킹 방지
+                                                    setState(() {
+                                                      _replyTarget = comment;
+                                                    });
+                                                    // 🎯 키보드 포커스는 다음 프레임에 처리
+                                                    WidgetsBinding.instance
+                                                        .addPostFrameCallback((
+                                                          _,
+                                                        ) {
+                                                          if (mounted) {
+                                                            _focusNode
+                                                                .requestFocus();
+                                                          }
+                                                        });
+                                                  },
+                                                  onProfileTap: (username) {
+                                                    // 🎯 프로필 화면으로 이동
+                                                    Navigator.of(context).push(
+                                                      MaterialPageRoute(
+                                                        builder:
+                                                            (
+                                                              context,
+                                                            ) => UserProfileScreen(
+                                                              otherUser: User(
+                                                                username:
+                                                                    username,
+                                                                profileImageUrl:
+                                                                    comment
+                                                                        .authorProfileImageUrl,
                                                               ),
-                                                        ),
-                                                      );
-                                                    },
-                                                    postAuthorUsername:
-                                                        widget
-                                                            .postAuthorUsername, // 🎯 포스트 작성자 전달
-                                                  ),
+                                                            ),
+                                                      ),
+                                                    );
+                                                  },
+                                                  postAuthorUsername:
+                                                      widget
+                                                          .postAuthorUsername, // 🎯 포스트 작성자 전달
                                                 ),
                                               ),
                                             );
                                           },
-                                        ),
-                                        // 🎯 로드 모어 스피너 (상단에 표시)
-                                        if (_isLoadingMore)
-                                          Positioned(
-                                            top: 8,
-                                            left: 0,
-                                            right: 0,
-                                            child: Center(
-                                              child: AnimatedBuilder(
-                                                animation:
-                                                    _loadMoreSpinnerRotation,
-                                                builder: (context, child) {
-                                                  return SizedBox(
-                                                    width: 32,
-                                                    height: 32,
-                                                    child: CustomSpinner(
-                                                      progress: 1.0,
-                                                      isAnimating: true,
-                                                      rotation:
-                                                          _loadMoreSpinnerRotation
-                                                              .value,
-                                                    ),
-                                                  );
-                                                },
-                                              ),
-                                            ),
-                                          ),
-                                      ],
+                                        );
+                                      },
                                     ),
-                                  ),
+                                    // 🎯 로드 모어 스피너 (상단에 표시)
+                                    if (_isLoadingMore)
+                                      Positioned(
+                                        top: 8,
+                                        left: 0,
+                                        right: 0,
+                                        child: Center(
+                                          child: AnimatedBuilder(
+                                            animation: _loadMoreSpinnerRotation,
+                                            builder: (context, child) {
+                                              return SizedBox(
+                                                width: 32,
+                                                height: 32,
+                                                child: CustomSpinner(
+                                                  progress: 1.0,
+                                                  isAnimating: true,
+                                                  rotation:
+                                                      _loadMoreSpinnerRotation
+                                                          .value,
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                       ),
                     ),
-                    // 🎯 성능 최적화: 입력창을 Positioned로 키보드 위에 고정 (카톡/인스타 구조)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: MediaQuery.of(context).viewInsets.bottom,
+                    // 🎯 입력 섹션 (키보드 위에 고정)
+                    // - viewInsets가 내려가는 중에 0까지 내려갔다가(safe-area) 다시 올라오는 튐 방지:
+                    //   "키보드 높이"가 safe-area보다 작아지면 더 이상 내려가지 않게 clamp
+                    // ✅ 키보드 위치 보정은 "여기(바깥)"에서만 담당하고,
+                    // `_buildInputSection()` 내부에서는 키보드 여부에 따른 SafeArea/패딩 토글을 제거해
+                    // 키보드 dismiss 중 "과하게 내려갔다가 다시 올라오는" 2단 보정을 없앤다.
+                    Container(
+                      padding: EdgeInsets.only(
+                        bottom: MediaQuery.viewInsetsOf(context).bottom,
+                      ),
                       child: _InputSectionWrapper(
                         onHeightChanged: (height) {
                           if (mounted && _inputSectionHeight != height) {
@@ -1459,23 +1453,13 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   }
 
   Widget _buildInputSection() {
-    // 🎯 성능 최적화: 입력창은 Positioned로 고정되므로 AnimatedPadding 제거
-    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-    final bottomInset = MediaQuery.of(context).padding.bottom;
-
     return Container(
-      padding: EdgeInsets.only(
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: keyboardHeight > 0 ? 0 : bottomInset / 2,
-      ),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.background,
       ),
       child: SafeArea(
         top: false, // 상단 SafeArea 비활성화
-        bottom: keyboardHeight == 0, // 키보드가 없을 때만 하단 SafeArea 활성화
+        bottom: true, // ✅ 항상 하단 SafeArea 유지 (키보드 보정은 바깥 AnimatedPadding에서 처리)
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

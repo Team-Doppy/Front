@@ -588,50 +588,14 @@ class _PostListState extends State<PostList> {
                       // 실제 포스트가 있을 때만 상세보기로 이동
                       setState(() => _suppressVisibility = true);
                       await Navigator.of(context).push(
-                        PageRouteBuilder(
-                          transitionDuration: const Duration(milliseconds: 340),
-                          reverseTransitionDuration: const Duration(
-                            milliseconds: 100,
-                          ),
-                          opaque: false,
-                          pageBuilder:
-                              (_, __, ___) => PostReaderScreen(
+                        MaterialPageRoute(
+                          builder:
+                              (_) => PostReaderScreen(
                                 exported:
                                     _items[_currentIndex].toExportedData(),
                                 heroTag:
                                     'post-hero-${widget.sectionLabel ?? "main"}-${_items[_currentIndex].id}-$_currentIndex-${widget.key?.hashCode ?? hashCode}',
                               ),
-                          transitionsBuilder: (
-                            context,
-                            animation,
-                            secondaryAnimation,
-                            child,
-                          ) {
-                            const begin = Offset(0.0, 0.1);
-                            const end = Offset.zero;
-                            const curve = Curves.easeOutCubic;
-                            var tween = Tween(
-                              begin: begin,
-                              end: end,
-                            ).chain(CurveTween(curve: curve));
-                            var offsetAnimation = animation.drive(tween);
-                            var fadeAnimation = Tween<double>(
-                              begin: 0.0,
-                              end: 1.0,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOut,
-                              ),
-                            );
-                            return FadeTransition(
-                              opacity: fadeAnimation,
-                              child: SlideTransition(
-                                position: offsetAnimation,
-                                child: child,
-                              ),
-                            );
-                          },
                         ),
                       );
 
@@ -792,44 +756,13 @@ class _PostListState extends State<PostList> {
             WidgetsBinding.instance.addPostFrameCallback((_) async {
               if (!mounted) return;
               await Navigator.of(context).push(
-                PageRouteBuilder(
-                  transitionDuration: const Duration(milliseconds: 340),
-                  reverseTransitionDuration: const Duration(milliseconds: 100),
-                  opaque: false,
-                  pageBuilder:
-                      (_, __, ___) => PostReaderScreen(
+                MaterialPageRoute(
+                  builder:
+                      (_) => PostReaderScreen(
                         exported: post.toExportedData(),
                         heroTag:
                             'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index-${widget.key?.hashCode ?? hashCode}',
                       ),
-                  transitionsBuilder: (
-                    context,
-                    animation,
-                    secondaryAnimation,
-                    child,
-                  ) {
-                    const begin = Offset(0.0, 0.1);
-                    const end = Offset.zero;
-                    const curve = Curves.easeOutCubic;
-                    var tween = Tween(
-                      begin: begin,
-                      end: end,
-                    ).chain(CurveTween(curve: curve));
-                    var offsetAnimation = animation.drive(tween);
-                    var fadeAnimation = Tween<double>(
-                      begin: 0.0,
-                      end: 1.0,
-                    ).animate(
-                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
-                    );
-                    return FadeTransition(
-                      opacity: fadeAnimation,
-                      child: SlideTransition(
-                        position: offsetAnimation,
-                        child: child,
-                      ),
-                    );
-                  },
                 ),
               );
 
@@ -1060,44 +993,13 @@ class _PostListState extends State<PostList> {
             WidgetsBinding.instance.addPostFrameCallback((_) async {
               if (!mounted) return;
               await Navigator.of(context).push(
-                PageRouteBuilder(
-                  transitionDuration: const Duration(milliseconds: 340),
-                  reverseTransitionDuration: const Duration(milliseconds: 100),
-                  opaque: false,
-                  pageBuilder:
-                      (_, __, ___) => PostReaderScreen(
+                MaterialPageRoute(
+                  builder:
+                      (_) => PostReaderScreen(
                         exported: post.toExportedData(),
                         heroTag:
                             'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$safeIndex-${widget.key?.hashCode ?? hashCode}',
                       ),
-                  transitionsBuilder: (
-                    context,
-                    animation,
-                    secondaryAnimation,
-                    child,
-                  ) {
-                    const begin = Offset(0.0, 0.1);
-                    const end = Offset.zero;
-                    const curve = Curves.easeOutCubic;
-                    var tween = Tween(
-                      begin: begin,
-                      end: end,
-                    ).chain(CurveTween(curve: curve));
-                    var offsetAnimation = animation.drive(tween);
-                    var fadeAnimation = Tween<double>(
-                      begin: 0.0,
-                      end: 1.0,
-                    ).animate(
-                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
-                    );
-                    return FadeTransition(
-                      opacity: fadeAnimation,
-                      child: SlideTransition(
-                        position: offsetAnimation,
-                        child: child,
-                      ),
-                    );
-                  },
                 ),
               );
 

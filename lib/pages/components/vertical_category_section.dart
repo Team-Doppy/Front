@@ -983,17 +983,13 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
 
   void _openPost(BuildContext context, PostData post) async {
     final result = await Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder:
-            (context, animation, secondaryAnimation) => PostReaderScreen(
+      MaterialPageRoute(
+        builder:
+            (_) => PostReaderScreen(
               exported: post.toExportedData(),
               heroTag: 'profile-post-${post.id}',
               fromProfile: true, // 프로필에서 들어옴
             ),
-        transitionsBuilder:
-            (context, animation, secondaryAnimation, child) =>
-                FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 200),
       ),
     );
 

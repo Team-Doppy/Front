@@ -40,13 +40,24 @@ class ProfileImageViewScreen extends StatefulWidget {
   State<ProfileImageViewScreen> createState() => _ProfileImageViewScreenState();
 }
 
-class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
+class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
+    with SingleTickerProviderStateMixin {
   bool _isDownloading = false;
 
   // 이미지 선택 관련
   File? _selectedImage;
   ui.Image? _uiImage;
   bool _isDefaultImageMode = false; // 기본이미지 모드
+
+  // 스와이프 제스처 관련
+  double _dragStartY = 0.0;
+  double _dragStartX = 0.0;
+  double _currentDragY = 0.0;
+  double _currentDragX = 0.0;
+  Offset _dragOffset = Offset.zero;
+  late final AnimationController _dragResetController;
+  late final Animation<double> _dragResetCurve;
+  Offset _dragResetBegin = Offset.zero;
 
   // 인라인 보정 모드
   bool _isAdjustMode = false;
@@ -62,14 +73,51 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
   Offset _imageOffset = Offset.zero;
   double _minScale = 1.0; // 원형 크롭박스를 덮는 최소 스케일
   double? _initialScale; // 핀치 시작 시 초기 scale
+  double _imageRotation = 0.0; // ✅ 두 손 회전(라디안)
+  double? _initialRotation; // 핀치 시작 시 초기 rotation
   Offset? _lastPanPosition;
 
   // 원형 크롭박스 크기 (고정)
   static const double _cropSize = 350.0;
 
   @override
+  void initState() {
+    super.initState();
+    _dragResetController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+    );
+    _dragResetCurve = CurvedAnimation(
+      parent: _dragResetController,
+      curve: Curves.easeOutCubic,
+    );
+    _dragResetController.addListener(() {
+      if (!mounted) return;
+      setState(() {
+        _dragOffset =
+            Offset.lerp(_dragResetBegin, Offset.zero, _dragResetCurve.value) ??
+            Offset.zero;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _dragResetController.dispose();
+    super.dispose();
+  }
+
+  void _animateDragBack() {
+    _dragResetBegin = _dragOffset;
+    _dragResetController.stop();
+    _dragResetController.forward(from: 0);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // ✅ 이미지 편집(추가/크롭/이동) 중에는 스와이프-닫기 제스처를 막아야 편집 제스처와 충돌하지 않음
+    final bool canSwipeDismiss = _selectedImage == null && !_isAdjustMode;
     // 기본이미지 모드일 때는 프로필 이미지를 표시하지 않음
     final hasProfileImage =
         !_isDefaultImageMode &&
@@ -78,316 +126,350 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
 
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
-      body: Stack(
-        children: [
-          // 중앙 프로필 이미지 (Hero 애니메이션)
-          Center(
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // 프로필 이미지 (원형) - Hero 위젯으로 감싸기 (선택된 이미지가 없을 때만 표시)
-                // 기본이미지 모드일 때는 프로필 이미지 URL을 null로 처리하여 플레이스홀더 표시
-                if (_selectedImage == null)
-                  Hero(
-                    tag: 'profile_image_${widget.username}',
-                    createRectTween: (begin, end) {
-                      // 직선 경로 생성 (수직 이동만, X는 시작 위치의 중앙 기준으로 유지)
-                      if (begin == null || end == null) {
-                        return RectTween(begin: begin, end: end);
-                      }
-
-                      // 시작 위치의 중앙 X 좌표 유지
-                      final startCenterX = begin.left + begin.width / 2;
-
-                      return RectTween(
-                        begin: begin,
-                        end: Rect.fromLTWH(
-                          startCenterX - end.width / 2, // 중앙 정렬을 위해 width 절반 빼기
-                          end.top,
-                          end.width,
-                          end.height,
-                        ),
-                      );
-                    },
-                    child: Material(
-                      color: Colors.transparent,
-                      child: Container(
-                        width: 350,
-                        height: 350,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: theme.colorScheme.surfaceVariant,
-                        ),
-                        child: ClipOval(
-                          child:
-                              hasProfileImage
-                                  ? CachedNetworkImage(
-                                    imageUrl: widget.profileImageUrl!,
-                                    fit: BoxFit.cover,
-                                    placeholder:
-                                        (context, url) => Container(
-                                          color:
-                                              theme.colorScheme.surfaceVariant,
-                                          child: Center(
-                                            child: Text(
-                                              widget.username.isNotEmpty
-                                                  ? widget.username[0]
-                                                      .toUpperCase()
-                                                  : '',
-                                              style: TextStyle(
-                                                color: theme
-                                                    .colorScheme
-                                                    .onSurface
-                                                    .withOpacity(0.3),
-                                                fontSize: 100,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                    errorWidget:
-                                        (context, url, error) =>
-                                            _buildPlaceholder(),
-                                  )
-                                  : _buildPlaceholder(),
+      body: GestureDetector(
+        onVerticalDragStart:
+            !canSwipeDismiss
+                ? null
+                : (details) {
+                  _dragStartY = details.globalPosition.dy;
+                  _currentDragY = 0.0;
+                  _dragOffset = Offset.zero;
+                  _dragResetController.stop();
+                },
+        onVerticalDragUpdate:
+            !canSwipeDismiss
+                ? null
+                : (details) {
+                  _currentDragY = details.globalPosition.dy - _dragStartY;
+                  // 아래로 스와이프만 감지 (위로는 무시)
+                  if (_currentDragY > 0) {
+                    setState(() {
+                      _dragOffset = Offset(0, _currentDragY);
+                    });
+                  }
+                },
+        onVerticalDragEnd:
+            !canSwipeDismiss
+                ? null
+                : (details) {
+                  // 아래로 100픽셀 이상 스와이프하면 닫기
+                  if (_currentDragY > 100) {
+                    Navigator.pop(context);
+                  } else {
+                    setState(() {
+                      _currentDragY = 0.0;
+                    });
+                    _animateDragBack();
+                  }
+                },
+        onHorizontalDragStart:
+            !canSwipeDismiss
+                ? null
+                : (details) {
+                  _dragStartX = details.globalPosition.dx;
+                  _currentDragX = 0.0;
+                  _dragOffset = Offset.zero;
+                  _dragResetController.stop();
+                },
+        onHorizontalDragUpdate:
+            !canSwipeDismiss
+                ? null
+                : (details) {
+                  _currentDragX = details.globalPosition.dx - _dragStartX;
+                  setState(() {
+                    _dragOffset = Offset(_currentDragX, 0);
+                  });
+                },
+        onHorizontalDragEnd:
+            !canSwipeDismiss
+                ? null
+                : (details) {
+                  // 좌/우 100픽셀 이상 스와이프하면 닫기
+                  if (_currentDragX.abs() > 100) {
+                    Navigator.pop(context);
+                  } else {
+                    setState(() {
+                      _currentDragX = 0.0;
+                    });
+                    _animateDragBack();
+                  }
+                },
+        child: Stack(
+          children: [
+            // 중앙 프로필 이미지 (Hero 애니메이션)
+            Center(
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // ✅ Hero는 고정 레이아웃(앵커)만 잡고, Transform은 child 내부에서만 적용해야 튐이 사라짐
+                  if (_selectedImage == null)
+                    Hero(
+                      tag: 'profile_image_${widget.username}',
+                      createRectTween:
+                          (begin, end) => RectTween(begin: begin, end: end),
+                      flightShuttleBuilder: (
+                        flightContext,
+                        animation,
+                        flightDirection,
+                        fromHeroContext,
+                        toHeroContext,
+                      ) {
+                        // ✅ 비행 중에는 Transform/Sliver/Scroll 영향을 끊기 위해 "순수 아바타"만 렌더
+                        return SizedBox(
+                          width: _cropSize,
+                          height: _cropSize,
+                          child: _buildHeroAvatar(
+                            enableTransform: false,
+                            dragOffset: Offset.zero,
+                          ),
+                        );
+                      },
+                      child: SizedBox(
+                        width: _cropSize,
+                        height: _cropSize,
+                        child: _buildHeroAvatar(
+                          enableTransform: canSwipeDismiss,
+                          dragOffset: _dragOffset,
                         ),
                       ),
                     ),
-                  ),
 
-                // 선택된 이미지가 있을 때 표시
-                if (_selectedImage != null &&
-                    _uiImage != null &&
-                    widget.isOwnProfile)
-                  _buildImageEditor(theme),
-              ],
-            ),
-          ),
-
-          // 상단 취소 버튼
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: GestureDetector(
-                  onTap: () => Navigator.pop(context),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    child: Text(
-                      AppLocalizations.of(context).translate('cancel'),
-                      style: TextStyle(
-                        color: theme.colorScheme.primary,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                  ),
-                ),
+                  // 선택된 이미지가 있을 때 표시
+                  if (_selectedImage != null &&
+                      _uiImage != null &&
+                      widget.isOwnProfile)
+                    _buildImageEditor(theme),
+                ],
               ),
             ),
-          ),
 
-          // 하단 버튼들
-          SafeArea(
-            child: Align(
-              alignment: Alignment.bottomCenter,
+            // 상단 취소 버튼
+            SafeArea(
               child: Padding(
-                padding: const EdgeInsets.only(
-                  bottom: 40.0,
-                  left: 24.0,
-                  right: 24.0,
-                ),
-                child:
-                    widget.isOwnProfile
-                        ? _selectedImage != null
-                            ? (_isAdjustMode
-                                ? _buildAdjustBottomSheet(theme)
-                                : Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    _buildCircleButton(
-                                      context: context,
-                                      icon: Icons.check,
-                                      label: '완료',
-                                      onTap: () async {
-                                        if (_selectedImage != null &&
-                                            _uiImage != null) {
-                                          final croppedFile =
-                                              await _cropImageToCircle();
-                                          if (croppedFile != null && mounted) {
-                                            widget.onGallerySelected(
-                                              croppedFile,
-                                            );
-                                            Navigator.pop(context);
-                                          }
-                                        }
-                                      },
-                                    ),
-                                    const SizedBox(width: 16),
-                                    _buildCircleButton(
-                                      context: context,
-                                      icon: Icons.tune,
-                                      label: '보정',
-                                      onTap: _enterAdjustMode,
-                                    ),
-                                    const SizedBox(width: 16),
-                                    _buildCircleButton(
-                                      context: context,
-                                      icon: Icons.close,
-                                      label: '취소',
-                                      onTap: () {
-                                        setState(() {
-                                          _selectedImage = null;
-                                          _uiImage = null;
-                                          _imageScale = 1.0;
-                                          _imageOffset = Offset.zero;
-                                          _minScale = 1.0;
-                                          _initialScale = null;
-                                          _lastPanPosition = null;
-                                          _isAdjustMode = false;
-                                          _adjustSnapshot = null;
-                                        });
-                                      },
-                                    ),
-                                  ],
-                                ))
-                            : _isDefaultImageMode
-                            ? // 기본이미지 모드: 확인, 취소 버튼 표시
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                _buildCircleButton(
-                                  context: context,
-                                  icon: Icons.check,
-                                  label: '확인',
-                                  onTap: () {
-                                    widget.onSetDefaultImage();
-                                    Navigator.pop(context);
-                                  },
-                                ),
-                                const SizedBox(width: 16),
-                                _buildCircleButton(
-                                  context: context,
-                                  icon: Icons.close,
-                                  label: '취소',
-                                  onTap: () {
-                                    setState(() {
-                                      _isDefaultImageMode = false;
-                                    });
-                                  },
-                                ),
-                              ],
-                            )
-                            : Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: [
-                                // 공유하기 버튼
-                                _buildCircleButton(
-                                  context: context,
-                                  icon: Icons.ios_share,
-                                  label: '공유하기',
-                                  onTap: widget.onShareProfile,
-                                ),
-
-                                // 갤러리선택 버튼
-                                _buildCircleButton(
-                                  context: context,
-                                  icon: Icons.photo_library,
-                                  label: '갤러리선택',
-                                  onTap: () {
-                                    _showMediaPicker();
-                                  },
-                                ),
-
-                                // 기본이미지 버튼
-                                _buildCircleButton(
-                                  context: context,
-                                  icon: Icons.person,
-                                  label: '기본이미지',
-                                  onTap: () {
-                                    // 기본이미지 모드로 전환 (확인/취소 버튼 표시)
-                                    setState(() {
-                                      _isDefaultImageMode = true;
-                                      _selectedImage = null;
-                                      _uiImage = null;
-                                      _isAdjustMode = false;
-                                      _adjustSnapshot = null;
-                                    });
-                                  },
-                                ),
-                              ],
-                            )
-                        : Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            // 팔로우/팔로잉 버튼
-                            Consumer<FriendProvider>(
-                              builder: (context, friendProvider, _) {
-                                final isFollowing =
-                                    friendProvider.friendStatus ==
-                                    FriendRequestStatus.accepted;
-                                final isRequested =
-                                    friendProvider.friendStatus ==
-                                    FriendRequestStatus.requested;
-
-                                return _buildCircleButton(
-                                  context: context,
-                                  icon:
-                                      isFollowing
-                                          ? Icons.check_circle
-                                          : Icons.person_add,
-                                  label:
-                                      isFollowing
-                                          ? '팔로잉'
-                                          : isRequested
-                                          ? '요청됨'
-                                          : '팔로우',
-                                  onTap: () async {
-                                    if (isFollowing) {
-                                      // 팔로우 해제
-                                      await _unfollow(context);
-                                    } else if (isRequested) {
-                                      // 요청 취소
-                                      await _cancelRequest(context);
-                                    } else {
-                                      // 팔로우 요청 보내기
-                                      await _follow(context);
-                                    }
-                                  },
-                                );
-                              },
-                            ),
-
-                            // 공유하기 버튼
-                            _buildCircleButton(
-                              context: context,
-                              icon: Icons.ios_share,
-                              label: '공유하기',
-                              onTap: widget.onShareProfile,
-                            ),
-
-                            // 다운로드 버튼
-                            hasProfileImage
-                                ? _buildCircleButton(
-                                  context: context,
-                                  icon:
-                                      _isDownloading
-                                          ? Icons.downloading
-                                          : Icons.download,
-                                  label: '다운로드',
-                                  onTap: () => _downloadImage(context),
-                                )
-                                : const SizedBox(),
-                          ],
+                padding: const EdgeInsets.all(16.0),
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      child: Text(
+                        AppLocalizations.of(context).translate('cancel'),
+                        style: TextStyle(
+                          color: theme.colorScheme.primary,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w400,
                         ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
-        ],
+
+            // 하단 버튼들
+            SafeArea(
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(
+                    bottom: 40.0,
+                    left: 24.0,
+                    right: 24.0,
+                  ),
+                  child:
+                      widget.isOwnProfile
+                          ? _selectedImage != null
+                              ? (_isAdjustMode
+                                  ? _buildAdjustBottomSheet(theme)
+                                  : Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      _buildCircleButton(
+                                        context: context,
+                                        icon: Icons.check,
+                                        label: '완료',
+                                        onTap: () async {
+                                          if (_selectedImage != null &&
+                                              _uiImage != null) {
+                                            final croppedFile =
+                                                await _cropImageToCircle();
+                                            if (croppedFile != null &&
+                                                mounted) {
+                                              widget.onGallerySelected(
+                                                croppedFile,
+                                              );
+                                              Navigator.pop(context);
+                                            }
+                                          }
+                                        },
+                                      ),
+                                      const SizedBox(width: 16),
+                                      _buildCircleButton(
+                                        context: context,
+                                        icon: Icons.tune,
+                                        label: '보정',
+                                        onTap: _enterAdjustMode,
+                                      ),
+                                      const SizedBox(width: 16),
+                                      _buildCircleButton(
+                                        context: context,
+                                        icon: Icons.close,
+                                        label: '취소',
+                                        onTap: () {
+                                          setState(() {
+                                            _selectedImage = null;
+                                            _uiImage = null;
+                                            _imageScale = 1.0;
+                                            _imageOffset = Offset.zero;
+                                            _minScale = 1.0;
+                                            _initialScale = null;
+                                            _lastPanPosition = null;
+                                            _isAdjustMode = false;
+                                            _adjustSnapshot = null;
+                                          });
+                                        },
+                                      ),
+                                    ],
+                                  ))
+                              : _isDefaultImageMode
+                              ? // 기본이미지 모드: 확인, 취소 버튼 표시
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  _buildCircleButton(
+                                    context: context,
+                                    icon: Icons.check,
+                                    label: '확인',
+                                    onTap: () {
+                                      widget.onSetDefaultImage();
+                                      Navigator.pop(context);
+                                    },
+                                  ),
+                                  const SizedBox(width: 16),
+                                  _buildCircleButton(
+                                    context: context,
+                                    icon: Icons.close,
+                                    label: '취소',
+                                    onTap: () {
+                                      setState(() {
+                                        _isDefaultImageMode = false;
+                                      });
+                                    },
+                                  ),
+                                ],
+                              )
+                              : Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  // 공유하기 버튼
+                                  _buildCircleButton(
+                                    context: context,
+                                    icon: Icons.ios_share,
+                                    label: '공유하기',
+                                    onTap: widget.onShareProfile,
+                                  ),
+
+                                  // 갤러리선택 버튼
+                                  _buildCircleButton(
+                                    context: context,
+                                    icon: Icons.photo_library,
+                                    label: '갤러리선택',
+                                    onTap: () {
+                                      _showMediaPicker();
+                                    },
+                                  ),
+
+                                  // 기본이미지 버튼
+                                  _buildCircleButton(
+                                    context: context,
+                                    icon: Icons.person,
+                                    label: '기본이미지',
+                                    onTap: () {
+                                      // 기본이미지 모드로 전환 (확인/취소 버튼 표시)
+                                      setState(() {
+                                        _isDefaultImageMode = true;
+                                        _selectedImage = null;
+                                        _uiImage = null;
+                                        _isAdjustMode = false;
+                                        _adjustSnapshot = null;
+                                      });
+                                    },
+                                  ),
+                                ],
+                              )
+                          : Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              // 팔로우/팔로잉 버튼
+                              Consumer<FriendProvider>(
+                                builder: (context, friendProvider, _) {
+                                  final isFollowing =
+                                      friendProvider.friendStatus ==
+                                      FriendRequestStatus.accepted;
+                                  final isRequested =
+                                      friendProvider.friendStatus ==
+                                      FriendRequestStatus.requested;
+
+                                  return _buildCircleButton(
+                                    context: context,
+                                    icon:
+                                        isFollowing
+                                            ? Icons.check_circle
+                                            : Icons.person_add,
+                                    label:
+                                        isFollowing
+                                            ? '팔로잉'
+                                            : isRequested
+                                            ? '요청됨'
+                                            : '팔로우',
+                                    onTap: () async {
+                                      if (isFollowing) {
+                                        // 팔로우 해제
+                                        await _unfollow(context);
+                                      } else if (isRequested) {
+                                        // 요청 취소
+                                        await _cancelRequest(context);
+                                      } else {
+                                        // 팔로우 요청 보내기
+                                        await _follow(context);
+                                      }
+                                    },
+                                  );
+                                },
+                              ),
+
+                              // 공유하기 버튼
+                              _buildCircleButton(
+                                context: context,
+                                icon: Icons.ios_share,
+                                label: '공유하기',
+                                onTap: widget.onShareProfile,
+                              ),
+
+                              // 다운로드 버튼
+                              hasProfileImage
+                                  ? _buildCircleButton(
+                                    context: context,
+                                    icon:
+                                        _isDownloading
+                                            ? Icons.downloading
+                                            : Icons.download,
+                                    label: '다운로드',
+                                    onTap: () => _downloadImage(context),
+                                  )
+                                  : const SizedBox(),
+                            ],
+                          ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -409,6 +491,54 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
             color: theme.colorScheme.onSurface.withOpacity(0.3),
             fontSize: 100,
             fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeroAvatar({
+    required bool enableTransform,
+    required Offset dragOffset,
+  }) {
+    final theme = Theme.of(context);
+    final bool hasProfileImage =
+        !_isDefaultImageMode &&
+        widget.profileImageUrl != null &&
+        widget.profileImageUrl!.isNotEmpty;
+
+    final Offset visualOffset =
+        enableTransform
+            ? Offset(
+              (dragOffset.dx * 0.18).clamp(-40.0, 40.0),
+              (dragOffset.dy * 0.18).clamp(-40.0, 40.0),
+            )
+            : Offset.zero;
+
+    return Material(
+      color: Colors.transparent,
+      child: RepaintBoundary(
+        child: Transform.translate(
+          offset: visualOffset,
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: theme.colorScheme.surfaceVariant,
+            ),
+            child: ClipOval(
+              child:
+                  hasProfileImage
+                      ? CachedNetworkImage(
+                        imageUrl: widget.profileImageUrl!,
+                        fit: BoxFit.cover,
+                        fadeInDuration: Duration.zero,
+                        fadeOutDuration: Duration.zero,
+                        placeholder: (context, url) => _buildPlaceholder(),
+                        errorWidget:
+                            (context, url, error) => _buildPlaceholder(),
+                      )
+                      : _buildPlaceholder(),
+            ),
           ),
         ),
       ),
@@ -849,7 +979,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
         _minScale = minScale;
         _imageScale = minScale;
         _imageOffset = Offset.zero;
+        _imageRotation = 0.0;
         _initialScale = null;
+        _initialRotation = null;
         _lastPanPosition = null;
       });
     } catch (e) {
@@ -860,6 +992,10 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
           _minScale = 1.0;
           _imageScale = 1.0;
           _imageOffset = Offset.zero;
+          _imageRotation = 0.0;
+          _initialScale = null;
+          _initialRotation = null;
+          _lastPanPosition = null;
         });
       }
     }
@@ -903,66 +1039,71 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
     return GestureDetector(
       onScaleStart: (details) {
         _initialScale = _imageScale;
+        _initialRotation = _imageRotation;
         _lastPanPosition = details.focalPoint;
       },
       onScaleUpdate: (details) {
         if (_uiImage == null) return;
 
-        // 핀치 줌 처리
-        if ((details.scale - 1.0).abs() >= 0.001) {
-          _initialScale ??= _imageScale;
-          final newScale = (_initialScale! * details.scale).clamp(
-            _minScale,
-            5.0,
-          );
+        final startScale = _initialScale ?? _imageScale;
+        final startRotation = _initialRotation ?? _imageRotation;
 
-          setState(() {
-            // scale 변경 시 offset을 중심 기준으로 비례 보정
-            final scaleRatio = newScale / _imageScale;
-            _imageScale = newScale;
-            _imageOffset = _imageOffset * scaleRatio;
-          });
-          return;
-        }
+        final newScale = (startScale * details.scale).clamp(_minScale, 5.0);
+        final newRotation = startRotation + details.rotation;
 
-        // 드래그 처리
+        // scale 변경 시 offset을 중심 기준으로 비례 보정
+        final scaleRatio = (newScale / _imageScale);
+        Offset newOffset = _imageOffset * scaleRatio;
+
+        // 드래그 처리 (scale/rotation과 함께 동시 적용)
         if (_lastPanPosition != null) {
           final delta = details.focalPoint - _lastPanPosition!;
 
           // 드래그 감도 조정: 기본 감도 + 스케일에 비례한 감도 증가
-          final baseSensitivity = 1.5; // 기본 감도
-          final scaleMultiplier = _imageScale / _minScale; // 스케일 비례 계수
+          final baseSensitivity = 1.5;
+          final scaleMultiplier = (newScale / _minScale).clamp(1.0, 5.0);
           final dragSensitivity = baseSensitivity * scaleMultiplier;
 
-          // 원형 크롭박스를 벗어나지 않도록 clamp
-          final newOffset = _clampOffset(
-            _imageOffset +
-                Offset(
-                  delta.dx / _imageScale * dragSensitivity,
-                  delta.dy / _imageScale * dragSensitivity,
-                ),
-            _imageScale,
-            imageSize,
-            containerSize,
-          );
-
-          setState(() {
-            _imageOffset = newOffset;
-            _lastPanPosition = details.focalPoint;
-          });
+          newOffset =
+              newOffset +
+              Offset(
+                delta.dx / newScale * dragSensitivity,
+                delta.dy / newScale * dragSensitivity,
+              );
+          _lastPanPosition = details.focalPoint;
         }
+
+        // ✅ 회전까지 고려해서 원형 크롭을 항상 덮도록 clamp
+        newOffset = _clampOffsetWithRotation(
+          offset: newOffset,
+          scale: newScale,
+          rotation: newRotation,
+          imageSize: imageSize,
+          containerSize: containerSize,
+        );
+
+        setState(() {
+          _imageScale = newScale;
+          _imageRotation = newRotation;
+          _imageOffset = newOffset;
+        });
       },
       onScaleEnd: (_) {
         setState(() {
           _lastPanPosition = null;
           _initialScale = null;
+          _initialRotation = null;
           // 최종 clamp
           if (_uiImage != null) {
-            _imageOffset = _clampOffset(
-              _imageOffset,
-              _imageScale,
-              Size(_uiImage!.width.toDouble(), _uiImage!.height.toDouble()),
-              Size(_cropSize, _cropSize),
+            _imageOffset = _clampOffsetWithRotation(
+              offset: _imageOffset,
+              scale: _imageScale,
+              rotation: _imageRotation,
+              imageSize: Size(
+                _uiImage!.width.toDouble(),
+                _uiImage!.height.toDouble(),
+              ),
+              containerSize: Size(_cropSize, _cropSize),
             );
           }
         });
@@ -975,19 +1116,22 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
           cropRect: cropRect,
           borderColor: theme.colorScheme.onSurface.withOpacity(0.3),
           adjustmentFilter: _buildAdjustmentColorFilter(),
+          rotation: _imageRotation,
         ),
       ),
     );
   }
 
-  /// 이동 한계 계산 (원형 크롭박스를 벗어나지 않도록)
-  /// crop_editor.dart의 clamp 로직 참고: 이미지가 크롭박스를 완전히 덮어야 함
-  Offset _clampOffset(
-    Offset offset,
-    double scale,
-    Size imageSize,
-    Size containerSize,
-  ) {
+  /// ✅ 이동 한계 계산 (회전 포함)
+  /// - 회전은 "크롭 원 중심"을 기준으로 적용되므로, 크롭 원 위의 점들을 역회전시킨 뒤
+  ///   axis-aligned 이미지 rect 안에 들어오도록 오프셋을 보정한다.
+  Offset _clampOffsetWithRotation({
+    required Offset offset,
+    required double scale,
+    required double rotation,
+    required Size imageSize,
+    required Size containerSize,
+  }) {
     final imageRect = ImageRectUtils.computeImageRect(
       containerSize: containerSize,
       imageSize: imageSize,
@@ -995,35 +1139,50 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
       offset: offset,
     );
 
-    // 원형 크롭박스 (정사각형으로 처리)
-    final cropRect = Rect.fromCenter(
-      center: Offset(containerSize.width / 2, containerSize.height / 2),
-      width: _cropSize,
-      height: _cropSize,
-    );
+    final center = Offset(containerSize.width / 2, containerSize.height / 2);
+    final radius = _cropSize / 2;
 
-    double dx = offset.dx;
-    double dy = offset.dy;
+    // 원형 크롭 경계의 샘플 포인트들을 "역회전"하여 이미지 rect가 커버해야 하는 범위 계산
+    double minX = double.infinity;
+    double maxX = -double.infinity;
+    double minY = double.infinity;
+    double maxY = -double.infinity;
 
-    // 이미지가 크롭박스를 완전히 덮어야 함
-    // 왼쪽 경계: 이미지가 크롭박스 왼쪽으로 벗어나면 안 됨
-    if (imageRect.left > cropRect.left) {
-      dx = offset.dx - (imageRect.left - cropRect.left);
-    }
-    // 오른쪽 경계: 이미지가 크롭박스 오른쪽으로 벗어나면 안 됨
-    if (imageRect.right < cropRect.right) {
-      dx = offset.dx + (cropRect.right - imageRect.right);
-    }
-    // 위쪽 경계: 이미지가 크롭박스 위로 벗어나면 안 됨
-    if (imageRect.top > cropRect.top) {
-      dy = offset.dy - (imageRect.top - cropRect.top);
-    }
-    // 아래쪽 경계: 이미지가 크롭박스 아래로 벗어나면 안 됨
-    if (imageRect.bottom < cropRect.bottom) {
-      dy = offset.dy + (cropRect.bottom - imageRect.bottom);
+    const sampleCount = 16;
+    for (int i = 0; i < sampleCount; i++) {
+      final a = (2 * math.pi) * (i / sampleCount);
+      final p = center + Offset(math.cos(a) * radius, math.sin(a) * radius);
+      final pr = _rotateAround(p, center, -rotation);
+      minX = math.min(minX, pr.dx);
+      maxX = math.max(maxX, pr.dx);
+      minY = math.min(minY, pr.dy);
+      maxY = math.max(maxY, pr.dy);
     }
 
-    return Offset(dx, dy);
+    double dx = 0.0;
+    double dy = 0.0;
+
+    if (imageRect.left > minX) {
+      dx -= (imageRect.left - minX);
+    }
+    if (imageRect.right < maxX) {
+      dx += (maxX - imageRect.right);
+    }
+    if (imageRect.top > minY) {
+      dy -= (imageRect.top - minY);
+    }
+    if (imageRect.bottom < maxY) {
+      dy += (maxY - imageRect.bottom);
+    }
+
+    return offset + Offset(dx, dy);
+  }
+
+  Offset _rotateAround(Offset p, Offset center, double angle) {
+    final v = p - center;
+    final c = math.cos(angle);
+    final s = math.sin(angle);
+    return Offset(v.dx * c - v.dy * s, v.dx * s + v.dy * c) + center;
   }
 
   /// 원형 크롭된 이미지 생성
@@ -1037,7 +1196,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
       );
       final containerSize = Size(_cropSize, _cropSize);
 
-      // 현재 이미지 rect 계산
+      // ✅ 화면에서 보던 것과 동일한 방식으로 렌더링해서 결과에도 회전/이동/확대/보정 반영
       final imageRect = ImageRectUtils.computeImageRect(
         containerSize: containerSize,
         imageSize: imageSize,
@@ -1045,72 +1204,34 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen> {
         offset: _imageOffset,
       );
 
-      // 원형 크롭 영역 (컨테이너 기준)
-      final cropRect = Rect.fromCenter(
-        center: Offset(containerSize.width / 2, containerSize.height / 2),
-        width: _cropSize,
-        height: _cropSize,
-      );
-
-      // 이미지 좌표계에서 크롭 영역 계산
-      // imageRect는 컨테이너 기준이므로, 이미지 원본 좌표계로 변환
-      final imageToContainerScaleX = imageRect.width / imageSize.width;
-      final imageToContainerScaleY = imageRect.height / imageSize.height;
-
-      // 크롭 영역의 중심을 이미지 좌표계로 변환
-      final cropCenterInImage = Offset(
-        (cropRect.center.dx - imageRect.left) / imageToContainerScaleX,
-        (cropRect.center.dy - imageRect.top) / imageToContainerScaleY,
-      );
-
-      // 원형 크롭 반지름 (이미지 좌표계)
-      final cropRadiusInImage = (_cropSize / 2) / imageToContainerScaleX;
-
-      // 원형 크롭 영역 (이미지 좌표계)
-      final cropRectInImage = Rect.fromCircle(
-        center: cropCenterInImage,
-        radius: cropRadiusInImage,
-      );
-
-      // 이미지 경계 내로 클램프
-      final clampedCropRect = Rect.fromLTWH(
-        cropRectInImage.left.clamp(0.0, imageSize.width),
-        cropRectInImage.top.clamp(0.0, imageSize.height),
-        cropRectInImage.width.clamp(
-          0.0,
-          imageSize.width - cropRectInImage.left,
-        ),
-        cropRectInImage.height.clamp(
-          0.0,
-          imageSize.height - cropRectInImage.top,
-        ),
-      );
-
-      // 원형 크롭된 이미지 생성 (PictureRecorder 사용)
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
       final size = Size(_cropSize, _cropSize);
 
-      // 원형 클립 경로
+      // 원형 클립
       final clipPath =
           Path()..addOval(Rect.fromLTWH(0, 0, size.width, size.height));
       canvas.clipPath(clipPath);
 
-      // 이미지의 크롭 영역을 원형 크롭박스에 맞춰 그리기
+      final center = Offset(size.width / 2, size.height / 2);
       final srcRect = Rect.fromLTWH(
-        clampedCropRect.left,
-        clampedCropRect.top,
-        clampedCropRect.width,
-        clampedCropRect.height,
+        0,
+        0,
+        _uiImage!.width.toDouble(),
+        _uiImage!.height.toDouble(),
       );
-      final dstRect = Rect.fromLTWH(0, 0, size.width, size.height);
 
+      canvas.save();
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(_imageRotation);
+      canvas.translate(-center.dx, -center.dy);
       canvas.drawImageRect(
         _uiImage!,
         srcRect,
-        dstRect,
+        imageRect,
         Paint()..colorFilter = _buildAdjustmentColorFilter(),
       );
+      canvas.restore();
 
       // Picture를 Image로 변환
       final picture = recorder.endRecording();
@@ -1148,6 +1269,7 @@ class _UnifiedImagePainter extends CustomPainter {
   final Rect cropRect; // 화면 좌표계의 크롭 영역
   final Color borderColor;
   final ColorFilter? adjustmentFilter;
+  final double rotation;
 
   _UnifiedImagePainter({
     required this.image,
@@ -1155,6 +1277,7 @@ class _UnifiedImagePainter extends CustomPainter {
     required this.cropRect,
     required this.borderColor,
     this.adjustmentFilter,
+    this.rotation = 0.0,
   });
 
   @override
@@ -1165,6 +1288,8 @@ class _UnifiedImagePainter extends CustomPainter {
       image.width.toDouble(),
       image.height.toDouble(),
     );
+
+    final center = cropRect.center;
 
     // 1. 배경: 원형 영역 밖에 반투명 이미지 그리기
     // 원형 영역을 제외한 나머지 영역에만 그리기
@@ -1182,7 +1307,12 @@ class _UnifiedImagePainter extends CustomPainter {
 
     canvas.save();
     canvas.clipPath(backgroundPath);
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(rotation);
+    canvas.translate(-center.dx, -center.dy);
     canvas.drawImageRect(image, srcRect, screenImageRect, backgroundPaint);
+    canvas.restore();
     canvas.restore();
 
     // 2. 중앙: 원형 클립된 이미지 그리기
@@ -1190,7 +1320,10 @@ class _UnifiedImagePainter extends CustomPainter {
     // 원형 클립 경로
     final cropPath = Path()..addOval(cropRect);
     canvas.clipPath(cropPath);
-    // 원형 영역 내부에 이미지 그리기
+    // 원형 영역 내부에 이미지 그리기 (회전 포함)
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(rotation);
+    canvas.translate(-center.dx, -center.dy);
     canvas.drawImageRect(
       image,
       srcRect,
@@ -1214,7 +1347,8 @@ class _UnifiedImagePainter extends CustomPainter {
         oldDelegate.cropRect != cropRect ||
         oldDelegate.image != image ||
         oldDelegate.borderColor != borderColor ||
-        oldDelegate.adjustmentFilter != adjustmentFilter;
+        oldDelegate.adjustmentFilter != adjustmentFilter ||
+        oldDelegate.rotation != rotation;
   }
 }
 

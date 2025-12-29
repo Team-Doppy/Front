@@ -256,6 +256,13 @@ class DraftService {
       // 🎯 특수 노드 레지스트리 재등록 (문서 교체 후)
       editorService.registerAllSpecialNodes();
 
+      // ✅ 드래프트 로드 후 문서가 특수노드로 끝나면 trailing 빈 문단 보장
+      // (맨 밑 여백 탭으로 입력을 시작할 수 있게)
+      editorService.ensureTrailingParagraphAfterLastSpecialNode();
+      if (dragService != null) {
+        (dragService as dynamic).invalidateNodeRectCache();
+      }
+
       // 🎯 새 문서의 초기 상태를 히스토리에 동기적으로 저장 (임시저장 불러온 상태를 기준으로)
       // 🎯 비동기로 실행되면 불러온 직후 노드 삭제 시 히스토리가 제대로 저장되지 않음
       // 🎯 동기적으로 저장하여 삭제 전에 초기 상태가 확실히 저장되도록 보장

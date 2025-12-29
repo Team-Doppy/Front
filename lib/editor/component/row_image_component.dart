@@ -435,14 +435,15 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   void initState() {
     super.initState();
 
-    // 메타데이터에서 미리 크기 로드, 없으면 바로 측정 시작
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadImageSizesFromMetadata();
+    // ✅ 첫 프레임 전에 메타데이터에서 크기를 즉시 로드해, 쉬머/점프를 최소화한다.
+    _loadImageSizesFromMetadata();
+    _applyUnifiedHeight(widget.screenWidth, setStateIfChanged: false);
 
-      // 🎯 읽기/편집 모드 모두: 메타데이터에 크기 정보가 없거나 일부만 있으면 측정 시작
+    // 메타데이터에 없는 것만 다음 프레임부터 측정 시작 (IO/디코드로 첫 프레임을 막지 않음)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final screenWidth = widget.screenWidth;
       for (final imageUrl in widget.imageUrls) {
-        // 🎯 성능 최적화: 이미 측정 완료했거나 측정 중이면 스킵
         if (!_imageSizes.containsKey(imageUrl) &&
             !_measuringUrls.contains(imageUrl)) {
           _measureImageRealtime(imageUrl, screenWidth);
@@ -474,19 +475,17 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     if (urlsChanged) {
       _measuringUrls.clear();
 
-      setState(() {
-        _imageSizes.clear();
-        _unifiedHeight = null;
-      });
+      // ✅ 먼저 메타데이터로 가능한 만큼 즉시 복원해서 UI 변화 최소화
+      _imageSizes.clear();
+      _unifiedHeight = null;
+      _loadImageSizesFromMetadata();
+      _applyUnifiedHeight(widget.screenWidth, setStateIfChanged: false);
 
-      // 🎯 병합 후 메타데이터에서 크기 정보 다시 로드
+      setState(() {});
+
+      // 메타데이터에 없는 이미지만 다음 프레임부터 측정
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-
-        // 🎯 메타데이터에서 크기 정보 로드 (병합 후 업데이트된 메타데이터 반영)
-        _loadImageSizesFromMetadata();
-
-        // 메타데이터에 없는 이미지는 측정 시작
         final screenWidth = widget.screenWidth;
         for (final imageUrl in widget.imageUrls) {
           if (!_imageSizes.containsKey(imageUrl) &&
@@ -517,7 +516,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
           // 새로운 크기 정보가 로드되었으면 높이 재계산
           if (hasNewSizes && _imageSizes.length == widget.imageUrls.length) {
-            _calculateUnifiedHeight(widget.screenWidth);
+            _applyUnifiedHeight(widget.screenWidth, setStateIfChanged: true);
           }
         }
       });
@@ -1234,9 +1233,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       }
     }
 
-    if (_imageSizes.length == widget.imageUrls.length) {
-      _calculateUnifiedHeight(widget.screenWidth);
-    }
+    // unifiedHeight 계산/적용은 호출부에서 결정 (initState에서는 setState 없이 즉시 적용하기 위함)
   }
 
   /// 개별 이미지 높이 측정
@@ -1354,7 +1351,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
         }
 
         if (_imageSizes.length == widget.imageUrls.length) {
-          _calculateUnifiedHeight(availableWidth);
+          _applyUnifiedHeight(availableWidth, setStateIfChanged: true);
         }
       } else {
         // 🎯 HEIC 파일 등은 ImageProvider로 재시도
@@ -1375,7 +1372,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
             }
 
             if (_imageSizes.length == widget.imageUrls.length) {
-              _calculateUnifiedHeight(availableWidth);
+              _applyUnifiedHeight(availableWidth, setStateIfChanged: true);
             }
           } else {
             _measuringUrls.remove(imageUrl);
@@ -1409,7 +1406,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
     // 모든 이미지 크기가 결정되면 높이 재계산
     if (_imageSizes.length == widget.imageUrls.length) {
-      _calculateUnifiedHeight(availableWidth);
+      _applyUnifiedHeight(availableWidth, setStateIfChanged: true);
     }
   }
 
@@ -1450,7 +1447,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
         }
 
         if (_imageSizes.length == widget.imageUrls.length) {
-          _calculateUnifiedHeight(availableWidth);
+          _applyUnifiedHeight(availableWidth, setStateIfChanged: true);
         }
       } else {
         _measuringUrls.remove(imageUrl);
@@ -1587,9 +1584,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     return eachWidth / (3 / 4); // 3:4 비율
   }
 
-  /// 통일된 높이 계산 (모든 이미지 측정 완료 후)
-  void _calculateUnifiedHeight(double availableWidth) {
-    if (!mounted || widget.imageUrls.isEmpty) return;
+  double? _computeUnifiedHeightValue(double availableWidth) {
+    if (!mounted || widget.imageUrls.isEmpty) return null;
 
     final count = widget.imageUrls.length;
     final spacingWidth = widget.spacing * (count - 1);
@@ -1607,15 +1603,28 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       }
     }
 
-    if (validCount == 0) return;
+    if (validCount == 0) return null;
 
     final avg = totalHeight / validCount;
     final unified = avg.clamp(150.0, 400.0);
 
-    if (_unifiedHeight != unified) {
-      setState(() {
-        _unifiedHeight = unified;
-      });
+    return unified;
+  }
+
+  /// 통일된 높이 계산/적용 (모든 이미지 측정 완료 후)
+  void _applyUnifiedHeight(
+    double availableWidth, {
+    required bool setStateIfChanged,
+  }) {
+    final unified = _computeUnifiedHeightValue(availableWidth);
+    if (unified == null) return;
+
+    if (_unifiedHeight == unified) return;
+
+    if (setStateIfChanged) {
+      setState(() => _unifiedHeight = unified);
+    } else {
+      _unifiedHeight = unified;
     }
   }
 
@@ -1773,11 +1782,15 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       // 로컬 이미지
       final filePath =
           imageUrl.startsWith('file://') ? imageUrl.substring(7) : imageUrl;
+      final dpr = View.of(context).devicePixelRatio;
 
       return Image.file(
         File(filePath),
         key: ValueKey('row_${widget.nodeId}_$index'),
         fit: BoxFit.cover,
+        // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
+        // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
+        cacheWidth: widget.isEditing ? (maxWidth * dpr).round() : null,
         frameBuilder: (context, child, frame, wasSyncLoaded) {
           if (wasSyncLoaded || frame != null) {
             // 🎯 성능 최적화: 이미 로드된 이미지에서 크기 추출 (중복 ImageStream 방지)
@@ -1811,10 +1824,14 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       );
     } else {
       // 네트워크 이미지
+      final dpr = View.of(context).devicePixelRatio;
       return Image.network(
         imageUrl,
         key: ValueKey('row_${widget.nodeId}_$index'),
         fit: BoxFit.cover,
+        // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
+        // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
+        cacheWidth: widget.isEditing ? (maxWidth * dpr).round() : null,
         frameBuilder: (context, child, frame, wasSyncLoaded) {
           // 🎯 프리로드되었거나 캐시에 있으면 즉시 표시
           if (wasSyncLoaded || frame != null) {

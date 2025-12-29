@@ -39,6 +39,7 @@ import 'package:doppy/pages/components/liked_users_bottom_sheet.dart';
 import 'package:doppy/pages/components/viewers_bottom_sheet.dart';
 import 'package:doppy/pages/components/post_action_bottom_sheet.dart';
 import 'package:doppy/utils/dialog_utils.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 
@@ -112,24 +113,19 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   // 스크롤 애니메이션을 위한 변수들
   static const double _appBarHeight = 52.0; // AppBar 높이
   double _lastScrollOffset = 0.0;
-  double _pullAccum = 0.0; // 상단에서 아래로 당겨 닫기 누적 거리
-  double _horizontalDragDistance = 0.0; // 오른쪽으로 밀어 닫기 누적 거리
   DateTime? _lastScrollUpdate; // 🎯 스크롤 업데이트 throttling용
 
   // 앱바 표시/숨김을 위한 변수들
   bool _showAppBar = true; // 상단 이미지 제거 → 기본 표시
   int _bottomBarAnimationDuration = 300; // 하단 바 애니메이션 속도 (ms)
-  bool _previousAppBarState = true; // 🎯 풀스크린/댓글 진입 전 앱바 상태 저장
+  bool _previousAppBarState = true; // 🎯 풀스크린/오버레이 진입 전 앱바 상태 저장
   double _currentScrollOffset = 0.0; // 🎯 현재 스크롤 위치 (타이틀 표시용)
   bool _showLoadingBackButton = true; // 🎯 로딩 화면 뒤로가기 버튼 표시 여부
   bool _showErrorBackButton = true; // 🎯 에러 화면 뒤로가기 버튼 표시 여부
 
   // 순차 애니메이션 제거
 
-  // 댓글 오버레이 상태/애니메이션
-  bool _showCommentsOverlay = false;
-  late final AnimationController _commentOverlayCtrl;
-  late final Animation<double> _commentFade;
+  // 댓글 화면은 Route(push)로 분리하여 표시 (오버레이 제거)
 
   // 좋아요 사용자 목록 오버레이 상태/애니메이션
   bool _showLikedUsersOverlay = false;
@@ -523,60 +519,31 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     }
   }
 
-  // 🎯 앱바를 먼저 숨기고 화면 닫기
   void _closeScreen() {
-    // 앱바가 보이는 상태면 먼저 숨기기
-    if (_showAppBar) {
-      setState(() {
-        _showAppBar = false;
-        _bottomBarAnimationDuration = 200; // 빠른 애니메이션
-      });
-      // 앱바 숨김 애니메이션 후 화면 닫기
-      Future.delayed(const Duration(milliseconds: 200), () {
-        if (mounted) {
-          Navigator.of(context).pop();
-        }
-      });
-    } else {
-      // 앱바가 이미 숨겨져 있으면 바로 닫기
-      Navigator.of(context).pop();
+    if (_showLikedUsersOverlay) {
+      _closeLikedUsersOverlay();
+      return;
     }
+
+    if (_accessLevelChanged) {
+      Navigator.of(context).pop({
+        'accessLevelChanged': true,
+        'postId': widget.exported['id']?.toString(),
+        'accessLevel': _accessLevel,
+        'sharedGroupIds': _sharedGroupIds,
+      });
+      return;
+    }
+
+    Navigator.of(context).pop();
   }
 
-  // 🎯 로딩 화면 닫기 (뒤로가기 버튼 먼저 숨기고 닫기)
   void _closeLoadingScreen() {
-    if (_showLoadingBackButton) {
-      setState(() {
-        _showLoadingBackButton = false;
-      });
-      // 뒤로가기 버튼 숨김 애니메이션 후 화면 닫기
-      Future.delayed(const Duration(milliseconds: 200), () {
-        if (mounted) {
-          Navigator.of(context).pop();
-        }
-      });
-    } else {
-      // 이미 숨겨져 있으면 바로 닫기
-      Navigator.of(context).pop();
-    }
+    Navigator.of(context).pop();
   }
 
-  // 🎯 에러 화면 닫기 (뒤로가기 버튼 먼저 숨기고 닫기)
   void _closeErrorScreen() {
-    if (_showErrorBackButton) {
-      setState(() {
-        _showErrorBackButton = false;
-      });
-      // 뒤로가기 버튼 숨김 애니메이션 후 화면 닫기
-      Future.delayed(const Duration(milliseconds: 200), () {
-        if (mounted) {
-          Navigator.of(context).pop();
-        }
-      });
-    } else {
-      // 이미 숨겨져 있으면 바로 닫기
-      Navigator.of(context).pop();
-    }
+    Navigator.of(context).pop();
   }
 
   void _toggleLike() async {
@@ -795,8 +762,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     );
   }
 
-  void _showCommentBottomSheet() {
-    // 오버레이 즉시 표시
+  Future<void> _showCommentBottomSheet() async {
     final id = widget.exported['id']?.toString() ?? '';
     final postAuthorUsername = widget.exported['author']?.toString();
 
@@ -805,17 +771,47 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     if (postAuthorUsername != null) {
       _commentService.setPostAuthorUsername(postAuthorUsername);
     }
-
-    setState(() {
-      _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
-      _showCommentsOverlay = true;
-      _showAppBar = false; // 하단 바 숨김
-      _bottomBarAnimationDuration = 50; // 빠르게 숨김
-    });
-    _commentOverlayCtrl.forward(from: 0.0);
-
-    // 🎯 첫 댓글은 비동기로 로드
+    // WebSocket 연결 + 초기 로드(비동기)
     _initCommentsAsync();
+
+    try {
+      final route =
+          Theme.of(context).platform == TargetPlatform.iOS
+              ? CupertinoPageRoute(
+                builder:
+                    (_) => CommentBottomSheet(
+                      title: widget.exported['title'] ?? '',
+                      commentService: _commentService,
+                      postThumbnailUrl:
+                          widget.exported['thumbnailImageUrl']?.toString(),
+                      postSummary: widget.exported['summary']?.toString(),
+                      scrollToCommentId: widget.scrollToCommentId,
+                      postAuthorUsername:
+                          widget.exported['author']
+                              ?.toString(), // 🎯 블로그 작성자 username
+                    ),
+              )
+              : MaterialPageRoute(
+                builder:
+                    (_) => CommentBottomSheet(
+                      title: widget.exported['title'] ?? '',
+                      commentService: _commentService,
+                      postThumbnailUrl:
+                          widget.exported['thumbnailImageUrl']?.toString(),
+                      postSummary: widget.exported['summary']?.toString(),
+                      scrollToCommentId: widget.scrollToCommentId,
+                      postAuthorUsername:
+                          widget.exported['author']
+                              ?.toString(), // 🎯 블로그 작성자 username
+                    ),
+              );
+
+      await Navigator.of(context).push(route);
+    } finally {
+      // Route가 닫히면 WebSocket 연결 해제
+      _commentService.disconnectWebSocket();
+      debugPrint('[PostReaderScreen] 댓글 화면 닫기 - WebSocket 연결 해제');
+    }
   }
 
   // 댓글 데이터 초기화 (비동기)
@@ -833,20 +829,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     }
   }
 
-  void _closeCommentsOverlay() {
-    _commentOverlayCtrl.reverse().whenComplete(() {
-      if (!mounted) return;
-      setState(() {
-        _showCommentsOverlay = false;
-        _showAppBar = _previousAppBarState; // 🎯 이전 상태로 복원
-        _bottomBarAnimationDuration =
-            _previousAppBarState ? 0 : 300; // 🎯 열려있었으면 즉시(0), 닫혀있었으면 일반 속도
-      });
-      // WebSocket 연결 해제
-      _commentService.disconnectWebSocket();
-      debugPrint('[PostReaderScreen] 댓글창 닫기 - WebSocket 연결 해제');
-    });
-  }
+  // NOTE: 댓글 오버레이(close) 로직은 Route(push) 방식으로 전환하면서 제거됨.
 
   // 🎯 좋아요 사용자 목록 오버레이 표시
   void _openLikedUsersOverlay() {
@@ -1212,15 +1195,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // PostReaderScreen은 StickerService를 사용하지 않고
     // widget.exported에서 stickers를 직접 읽어 PostReaderStickers에 전달
 
-    _commentOverlayCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 240),
-    );
-    _commentFade = CurvedAnimation(
-      parent: _commentOverlayCtrl,
-      curve: Curves.easeOutCubic,
-    );
-
     // 🎯 좋아요 사용자 목록 오버레이 애니메이션 초기화
     _likedUsersOverlayCtrl = AnimationController(
       vsync: this,
@@ -1409,7 +1383,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
     _readOnlyFocus.dispose();
     _scrollCtrl.removeListener(_onScroll);
-    _commentOverlayCtrl.dispose();
     _likedUsersOverlayCtrl.dispose();
     _imageViewerCtrl.dispose();
 
@@ -1524,66 +1497,39 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final isDarkMode =
         context.watch<ThemeProvider>().themeMode == ThemeMode.dark;
 
-    return WillPopScope(
-      onWillPop: () async {
-        if (_showCommentsOverlay) {
-          _closeCommentsOverlay();
-          return false;
-        }
+    // ✅ iOS "스와이프 백(오른쪽으로 밀어서 뒤로가기)"는 WillPopScope가 있으면 막히는 경우가 많아서,
+    // PopScope로 전환하고 필요한 경우에만 pop을 가로챈다.
+    final bool interceptPop = _showLikedUsersOverlay || _accessLevelChanged;
 
+    return PopScope(
+      canPop: !interceptPop,
+      onPopInvoked: (didPop) {
+        if (didPop) return;
+
+        // 1) 오버레이가 열려 있으면 먼저 닫기
         if (_showLikedUsersOverlay) {
           _closeLikedUsersOverlay();
-          return false;
+          return;
         }
 
-        // 🎯 공개 범위가 변경되었으면 결과 반환 (피드 선택적 업데이트를 위해)
+        // 2) 공개 범위 변경이 있으면 결과를 포함해서 pop
         if (_accessLevelChanged) {
-          // 앱바를 먼저 숨기고 닫기
-          if (_showAppBar) {
-            setState(() {
-              _showAppBar = false;
-              _bottomBarAnimationDuration = 200;
-            });
-            Future.delayed(const Duration(milliseconds: 200), () {
-              if (mounted) {
-                Navigator.of(context).pop({
-                  'accessLevelChanged': true,
-                  'postId': widget.exported['id']?.toString(),
-                  'accessLevel': _accessLevel,
-                  'sharedGroupIds': _sharedGroupIds,
-                });
-              }
-            });
-          } else {
-            if (mounted) {
-              Navigator.of(context).pop({
-                'accessLevelChanged': true,
-                'postId': widget.exported['id']?.toString(),
-                'accessLevel': _accessLevel,
-                'sharedGroupIds': _sharedGroupIds,
-              });
-            }
-          }
-          return false; // Navigator.pop을 호출했으므로 false 반환
+          Navigator.of(context).pop({
+            'accessLevelChanged': true,
+            'postId': widget.exported['id']?.toString(),
+            'accessLevel': _accessLevel,
+            'sharedGroupIds': _sharedGroupIds,
+          });
+          return;
         }
 
-        // 🎯 앱바를 먼저 숨기고 닫기
-        if (_showAppBar) {
-          setState(() {
-            _showAppBar = false;
-            _bottomBarAnimationDuration = 200;
-          });
-          Future.delayed(const Duration(milliseconds: 200), () {
-            if (mounted) {
-              Navigator.of(context).pop();
-            }
-          });
-          return false; // Navigator.pop을 호출했으므로 false 반환
-        }
-
-        return true;
+        // fallback (원칙상 여기로 오면 안 오지만, 안전하게)
+        Navigator.of(context).pop();
       },
       child: Scaffold(
+        // ✅ 댓글 오버레이에서 키보드를 사용해도, 본문(PostReader) 레이아웃이
+        // 키보드(viewInsets)로 인해 다시 레이아웃/리빌드되지 않도록 차단
+        resizeToAvoidBottomInset: false,
         backgroundColor: Theme.of(context).colorScheme.background,
         body: FutureBuilder<Map<String, dynamic>>(
           future: _contentFuture,
@@ -1594,19 +1540,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                 (snap.hasData && !_topMediaPreloaded);
 
             if (isLoading) {
-              return GestureDetector(
-                onHorizontalDragEnd: (details) {
-                  // 오른쪽으로 스와이프 (velocity.dx > 0)
-                  if (details.primaryVelocity != null &&
-                      details.primaryVelocity! > 300) {
-                    _closeLoadingScreen();
-                  }
-                },
-                child: DoppyLoadingLogo(
-                  opacity: _showLoadingLogo ? 1.0 : 0.0,
-                  showBackButton: _showLoadingBackButton,
-                  onBack: _closeLoadingScreen,
-                ),
+              return DoppyLoadingLogo(
+                opacity: _showLoadingLogo ? 1.0 : 0.0,
+                showBackButton: _showLoadingBackButton,
+                onBack: _closeLoadingScreen,
               );
             }
 
@@ -1618,91 +1555,55 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   setState(() => _isRenderReady = true);
                 }
               });
-              return GestureDetector(
-                onHorizontalDragEnd: (details) {
-                  // 오른쪽으로 스와이프 (velocity.dx > 0)
-                  if (details.primaryVelocity != null &&
-                      details.primaryVelocity! > 300) {
-                    _closeLoadingScreen();
-                  }
-                },
-                child: DoppyLoadingLogo(
-                  opacity: _showLoadingLogo ? 1.0 : 0.0,
-                  showBackButton: _showLoadingBackButton,
-                  onBack: _closeLoadingScreen,
-                ),
+              return DoppyLoadingLogo(
+                opacity: _showLoadingLogo ? 1.0 : 0.0,
+                showBackButton: _showLoadingBackButton,
+                onBack: _closeLoadingScreen,
               );
             }
             if (snap.hasError) {
-              return GestureDetector(
-                // 🎯 스와이프로 닫기 기능
-                onHorizontalDragStart: (details) {
-                  _horizontalDragDistance = 0.0;
-                },
-                onHorizontalDragUpdate: (details) {
-                  // 오른쪽으로 스와이프만 감지 (닫기)
-                  if (details.delta.dx > 0) {
-                    setState(() {
-                      _horizontalDragDistance += details.delta.dx;
-                    });
-                  }
-                },
-                onHorizontalDragEnd: (details) {
-                  final screenWidth = MediaQuery.of(context).size.width;
-                  final dragDistance = _horizontalDragDistance;
-                  final velocity = details.primaryVelocity ?? 0;
-
-                  // 🎯 스와이프 거리가 화면의 30% 이상이거나 빠른 속도로 스와이프하면 닫기
-                  if (dragDistance > screenWidth * 0.3 || velocity > 500) {
-                    _closeErrorScreen();
-                  } else {
-                    // 원래 위치로 복귀
-                    setState(() {
-                      _horizontalDragDistance = 0.0;
-                    });
-                  }
-                },
-                child: Scaffold(
-                  backgroundColor: Theme.of(context).colorScheme.background,
-                  appBar:
-                      _showErrorBackButton
-                          ? AppBar(
-                            backgroundColor: Colors.transparent,
-                            elevation: 0,
-                            leading: Padding(
-                              padding: const EdgeInsets.only(bottom: 4.0),
-                              child: IconButton(
-                                icon: Icon(
-                                  Icons.arrow_back_ios_new_rounded,
-                                  size: 24,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.75),
-                                ),
-                                onPressed: _closeErrorScreen,
+              return Scaffold(
+                // ✅ 에러 화면에서도 키보드(viewInsets)로 인한 불필요 레이아웃 변경 차단
+                resizeToAvoidBottomInset: false,
+                backgroundColor: Theme.of(context).colorScheme.background,
+                appBar:
+                    _showErrorBackButton
+                        ? AppBar(
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                          leading: Padding(
+                            padding: const EdgeInsets.only(bottom: 4.0),
+                            child: IconButton(
+                              icon: Icon(
+                                Icons.arrow_back_ios_new_rounded,
+                                size: 24,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.75),
                               ),
+                              onPressed: _closeErrorScreen,
                             ),
-                          )
-                          : AppBar(
-                            automaticallyImplyLeading: false,
-                            backgroundColor: Colors.transparent,
-                            elevation: 0,
                           ),
-                  body: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.warning_amber_rounded, size: 40),
-                          const SizedBox(height: 12),
-                          Text(
-                            '본문을 불러오지 못했어요',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                          const SizedBox(height: 15),
-                        ],
-                      ),
+                        )
+                        : AppBar(
+                          automaticallyImplyLeading: false,
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                        ),
+                body: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, size: 40),
+                        const SizedBox(height: 12),
+                        Text(
+                          '본문을 불러오지 못했어요',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        const SizedBox(height: 15),
+                      ],
                     ),
                   ),
                 ),
@@ -1773,803 +1674,859 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
             return Stack(
               children: [
-                // 전체 스크롤
-                NotificationListener<ScrollNotification>(
-                  onNotification: (n) {
-                    // 🎯 성능 최적화: ScrollEndNotification만 처리 (스크롤 중에는 처리 안 함)
-                    if (n is ScrollEndNotification) {
-                      // 상단에서 아래로 당긴 거리 확인
-                      if (_scrollCtrl.hasClients &&
-                          _scrollCtrl.offset <= 0.0 &&
-                          _pullAccum >= 100.0) {
-                        Navigator.of(context).maybePop();
-                      }
-                      _pullAccum = 0.0;
-                    } else if (n is OverscrollNotification &&
-                        n.overscroll < 0 &&
-                        _scrollCtrl.hasClients &&
-                        _scrollCtrl.offset <= 0.0) {
-                      // 상단에서 아래로 당길 때만 누적 (스크롤 중에는 처리 안 함)
-                      _pullAccum += (-n.overscroll);
-                    }
-                    return false;
-                  },
-                  child: GestureDetector(
-                    behavior:
-                        HitTestBehavior.translucent, // 🎯 자식이 터치를 소비해도 부모도 받음
-                    onTapUp: (details) {
-                      _lastTapPosition = details.globalPosition;
-                      debugPrint(
-                        '[PostReaderScreen] 🖱️ 탭 감지: ${details.globalPosition}',
-                      );
-                      _handleTap();
-                    },
-                    onHorizontalDragUpdate: (details) {
-                      // 오른쪽으로 스와이프 (positive delta)
-                      if (details.primaryDelta! > 0) {
-                        _horizontalDragDistance += details.primaryDelta!;
-                      }
-                    },
-                    onHorizontalDragEnd: (details) {
-                      if (_horizontalDragDistance > 100) {
-                        _closeScreen();
-                      }
-                      _horizontalDragDistance = 0.0;
-                    },
-                    child: RawScrollbar(
-                      controller: _scrollCtrl,
-                      thumbColor: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.3),
-                      thickness: 4,
-                      radius: const Radius.circular(12),
-                      child: CustomScrollView(
-                        controller: _scrollCtrl,
-                        physics: const ClampingScrollPhysics(),
-                        // 🎯 성능 최적화: cacheExtent 설정 (스크롤 성능 향상)
-                        cacheExtent: 1000,
-                        slivers: [
-                          SliverSafeArea(
-                            top: true,
-                            bottom: false,
-                            sliver: SliverToBoxAdapter(
-                              child: GestureDetector(
-                                onTap: () {
-                                  debugPrint('postAuthor: $postAuthor');
+                // ✅ 키보드(viewInsets) 변화가 본문(PostReader) 트리까지 전파되면
+                // 이미지/클립 같은 무거운 컴포넌트가 레이아웃/리빌드될 수 있음.
+                // 그래서 본문 트리는 viewInsets를 제거한 MediaQuery로 감싸고,
+                // 댓글 오버레이는 아래에서 별도로 렌더링하여 키보드에만 반응하게 한다.
+                MediaQuery.removeViewInsets(
+                  context: context,
+                  removeBottom: true,
+                  child: Stack(
+                    children: [
+                      // 전체 스크롤
+                      NotificationListener<ScrollNotification>(
+                        onNotification: (n) {
+                          return false;
+                        },
+                        child: GestureDetector(
+                          behavior:
+                              HitTestBehavior
+                                  .translucent, // 🎯 자식이 터치를 소비해도 부모도 받음
+                          onTapUp: (details) {
+                            _lastTapPosition = details.globalPosition;
+                            debugPrint(
+                              '[PostReaderScreen] 🖱️ 탭 감지: ${details.globalPosition}',
+                            );
+                            _handleTap();
+                          },
+                          child: RawScrollbar(
+                            controller: _scrollCtrl,
+                            thumbColor: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.3),
+                            thickness: 4,
+                            radius: const Radius.circular(12),
+                            child: CustomScrollView(
+                              controller: _scrollCtrl,
+                              physics: const ClampingScrollPhysics(),
+                              // 🎯 성능 최적화: cacheExtent 설정 (스크롤 성능 향상)
+                              cacheExtent: 1000,
+                              slivers: [
+                                SliverSafeArea(
+                                  top: true,
+                                  bottom: false,
+                                  sliver: SliverToBoxAdapter(
+                                    child: GestureDetector(
+                                      onTap: () {
+                                        debugPrint('postAuthor: $postAuthor');
 
-                                  if (postAuthor.isEmpty ||
-                                      postAuthor ==
-                                          AuthService().currentUsernameSync) {
-                                    return;
-                                  }
-
-                                  final authorProfileImageUrl =
-                                      widget.exported['authorProfileImageUrl']
-                                          as String?;
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder:
-                                          (_) => UserProfileScreen(
-                                            otherUser: User(
-                                              username: postAuthor,
-                                              profileImageUrl:
-                                                  authorProfileImageUrl,
-                                            ),
-                                          ),
-                                    ),
-                                  );
-                                },
-                                child: PostReaderHeader(
-                                  exportedRoot: widget.exported,
-                                  currentExportedData: _currentExportedData,
-                                  postAuthor: postAuthor,
-                                  authorProfileImageUrl:
-                                      widget.exported['authorProfileImageUrl']
-                                          as String?,
-                                  enableAuthorTap:
-                                      !isMyPost &&
-                                      widget.exported['authorId'] != null,
-                                  onAuthorTap: () {},
-                                  horizontalPadding: 20,
-                                  topSpacing: 90,
-                                  gapHeight: gapHeight,
-                                  isMyPost: isMyPost,
-                                  likeCount: _likeService.getPostLikeCount(
-                                    widget.exported['id']?.toString() ?? '',
-                                  ),
-                                  commentCount:
-                                      _commentService.getTotalCommentCount(),
-                                  onLikeTap: _toggleLike,
-                                  onCommentTap: _showCommentBottomSheet,
-                                  isLiked: _likeService.isPostLiked(
-                                    widget.exported['id']?.toString() ?? '',
-                                  ), // ← 추가
-                                ),
-                              ),
-                            ),
-                          ),
-                          // SuperEditor 슬리버
-                          Builder(
-                            builder: (context) {
-                              final screenWidth =
-                                  MediaQuery.of(
-                                    context,
-                                  ).size.width; // 🚀 최고 효율: 한 번만 계산
-                              return SuperEditor(
-                                editor: _editor,
-                                stylesheet: buildCustomStylesheet(
-                                  context,
-                                  isReadOnly:
-                                      true, // 🎯 읽기 모드: 전역 폰트 사용 안 함, 블록 metadata만 사용
-                                ),
-                                selectionStyle: SelectionStyles(
-                                  selectionColor: Colors.transparent,
-                                  highlightEmptyTextBlocks: false,
-                                ),
-                                componentBuilders: [
-                                  SingleImageComponentBuilder(
-                                    screenWidth: screenWidth, // 🚀 최고 효율: 전달
-                                    dragService: _dragService,
-                                    isEditing: false, // 읽기 모드
-                                    isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
-                                  ),
-                                  RowImageComponentBuilder(
-                                    screenWidth: screenWidth, // 🚀 최고 효율: 전달
-                                    dragService: _dragService,
-                                    isEditing: false, // 읽기 모드
-                                    isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
-                                  ),
-                                  PageViewImageComponentBuilder(
-                                    screenWidth: screenWidth, // 🚀 최고 효율: 전달
-                                    dragService: _dragService,
-                                    isEditing: false, // 읽기 모드
-                                    isDarkMode: isDarkMode,
-                                  ),
-                                  LinkComponentBuilder(
-                                    isEditing: false,
-                                    isDarkMode: isDarkMode, // 🎯 성능 최적화: 변수 사용
-                                  ),
-                                  DividerComponentBuilder(),
-                                  ClipComponentBuilder(
-                                    screenWidth: screenWidth, // 🚀 전달
-                                    dragService: _dragService,
-                                    isDarkMode: isDarkMode,
-                                  ),
-                                  CustomParagraphComponentBuilder(
-                                    dragService: _dragService,
-                                    editorService: _editorService,
-                                    isEditing: false, // 읽기 모드
-                                    onMentionTap: (names) {
-                                      if (names.isEmpty) return;
-                                      if (names.length == 1) {
-                                        _openUserProfile(names.first);
-                                        return;
-                                      }
-                                      showModalBottomSheet(
-                                        context: context,
-                                        backgroundColor: Colors.transparent,
-                                        builder: (_) {
-                                          return Container(
-                                            decoration: BoxDecoration(
-                                              color:
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.surface,
-                                              borderRadius:
-                                                  const BorderRadius.vertical(
-                                                    top: Radius.circular(16),
-                                                  ),
-                                            ),
-                                            child: SafeArea(
-                                              top: false,
-                                              child: Column(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  const SizedBox(height: 8),
-                                                  Container(
-                                                    width: 40,
-                                                    height: 4,
-                                                    decoration: BoxDecoration(
-                                                      color: Theme.of(context)
-                                                          .colorScheme
-                                                          .onSurface
-                                                          .withOpacity(0.2),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            2,
-                                                          ),
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 8),
-                                                  ...names.map(
-                                                    (u) => ListTile(
-                                                      title: Text(
-                                                        '@$u',
-                                                        style: TextStyle(
-                                                          color:
-                                                              Theme.of(context)
-                                                                  .colorScheme
-                                                                  .onSurface,
-                                                          fontWeight:
-                                                              FontWeight.w600,
-                                                        ),
-                                                      ),
-                                                      onTap: () {
-                                                        Navigator.of(
-                                                          context,
-                                                        ).pop();
-                                                        _openUserProfile(u);
-                                                      },
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 8),
-                                                ],
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      );
-                                    },
-                                  ),
-                                  ...defaultComponentBuilders,
-                                ],
-                                documentLayoutKey: _layoutKey,
-                                focusNode: _readOnlyFocus,
-                                gestureMode: DocumentGestureMode.mouse,
-                              );
-                            },
-                          ),
-                          SliverToBoxAdapter(child: SizedBox(height: 100)),
-
-                          // 댓글 미리보기 (추출된 위젯)
-                          SliverToBoxAdapter(
-                            child: CommentPreviewSection(
-                              commentService: _commentService,
-                              likeService: _likeService,
-                              postId: widget.exported['id']?.toString() ?? '',
-                              onToggleLike: _toggleLike,
-                              onShowComments: _showCommentBottomSheet,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                // 스티커 오버레이
-                Positioned.fill(
-                  child: IgnorePointer(
-                    ignoring: true,
-                    child: PostReaderStickers(
-                      stickers: stickers,
-                      layoutKey: _layoutKey,
-                      stackKey: _stackKey,
-                      scrollController: _scrollCtrl,
-
-                      topInset: (_appBarHeight + gapHeight),
-                    ),
-                  ),
-                ),
-
-                // 🎯 성능 최적화: BackdropFilter 제거 (스크롤 성능 향상)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    height: 35,
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.background.withOpacity(0.95),
-                      borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(20),
-                        topRight: Radius.circular(20),
-                      ),
-                    ),
-                  ),
-                ),
-
-                // 동적 AppBar 컴포넌트로 분리
-                Builder(
-                  builder: (context) {
-                    final double computedBarHeight =
-                        _appBarHeight + MediaQuery.of(context).padding.top;
-                    return PostReaderAppBar(
-                      showAppBar: _showAppBar,
-                      barHeight: computedBarHeight,
-                      isMyPost: isMyPost,
-                      onBack: _closeScreen,
-                      onEdit: () {
-                        final dataToEdit =
-                            _currentExportedData ?? widget.exported;
-                        final postId =
-                            dataToEdit['id']?.toString() ??
-                            widget.exported['id']?.toString();
-
-                        if (postId != null && postId.isNotEmpty) {
-                          Navigator.of(context).pushReplacement(
-                            PageRouteBuilder(
-                              pageBuilder:
-                                  (context, animation, secondaryAnimation) =>
-                                      PostwriteScreen(
-                                        isEditingMode: true,
-                                        exportedDataForEdit: dataToEdit,
-                                        postId: postId,
-                                      ),
-                              transitionDuration: const Duration(
-                                milliseconds: 200,
-                              ),
-                              reverseTransitionDuration: const Duration(
-                                milliseconds: 200,
-                              ),
-                              transitionsBuilder: (
-                                context,
-                                animation,
-                                secondaryAnimation,
-                                child,
-                              ) {
-                                return FadeTransition(
-                                  opacity: animation,
-                                  child: child,
-                                );
-                              },
-                            ),
-                          );
-                        } else {
-                          debugPrint('[PostReaderScreen] postId가 없습니다');
-                        }
-                      },
-                      onDelete: _deletePost,
-                      onShowComments: _showCommentBottomSheet,
-                      title: widget.exported['title'] ?? '',
-                      likeCount: _likeService.getPostLikeCount(
-                        widget.exported['id']?.toString() ?? '',
-                      ),
-                      commentCount: _commentService.getTotalCommentCount(),
-                      onLikeTap: _toggleLike,
-                      onCommentTap: _showCommentBottomSheet,
-                      isLiked: _likeService.isPostLiked(
-                        widget.exported['id']?.toString() ?? '',
-                      ),
-                      animationDuration:
-                          _bottomBarAnimationDuration, // 🎯 바텀바와 동일한 속도
-                      scrollOffset: _currentScrollOffset, // 🎯 현재 스크롤 위치 전달
-                      viewCount:
-                          int.tryParse(
-                            (_currentExportedData?['viewCount'] ??
-                                    widget.exported['viewCount'])
-                                .toString(),
-                          ) ??
-                          0,
-                      onViewCountTap: () {
-                        // 🎯 나만보기 포스트는 제외
-                        final accessLevelStr = _accessLevel ?? 'PUBLIC';
-                        if (accessLevelStr != 'PRIVATE') {
-                          _openViewersOverlay();
-                        }
-                      },
-                      isPrivate:
-                          (_accessLevel ?? 'PUBLIC') ==
-                          'PRIVATE', // 🎯 나만보기 포스트 여부
-                      onMoreTap:
-                          !isMyPost
-                              ? () {
-                                final postId =
-                                    widget.exported['id']?.toString() ?? '';
-                                final postTitle =
-                                    widget.exported['title']?.toString() ?? '';
-                                final authorUsername = postAuthor;
-                                final authorProfileImageUrl =
-                                    widget.exported['authorProfileImageUrl']
-                                        ?.toString();
-                                final authorAlias =
-                                    widget.exported['authorAlias']?.toString();
-                                final thumbnailImageUrl =
-                                    widget.exported['thumbnailImageUrl']
-                                        ?.toString();
-                                final likeCount = _likeService.getPostLikeCount(
-                                  postId,
-                                );
-
-                                PostActionBottomSheet.show(
-                                  context,
-                                  postId: postId,
-                                  postTitle: postTitle,
-                                  authorUsername: authorUsername,
-                                  authorAlias: authorAlias,
-                                  authorProfileImageUrl: authorProfileImageUrl,
-                                  thumbnailImageUrl: thumbnailImageUrl,
-                                  likeCount: likeCount,
-                                  onShowLikedUsers: _openLikedUsersOverlay,
-                                );
-                              }
-                              : null,
-                    );
-                  },
-                ),
-                // 댓글 Glass 카드 오버레이
-                if (_showCommentsOverlay)
-                  Positioned.fill(
-                    child: AnimatedBuilder(
-                      animation: _commentFade,
-                      builder: (context, _) {
-                        return CommentBottomSheet(
-                          title: widget.exported['title'] ?? '',
-                          commentService: _commentService,
-                          scrollToCommentId: widget.scrollToCommentId,
-                          postAuthorUsername:
-                              widget.exported['author']
-                                  ?.toString(), // 🎯 블로그 작성자 username
-                        );
-                      },
-                    ),
-                  ),
-                // 좋아요 사용자 목록 오버레이
-                if (_showLikedUsersOverlay)
-                  Positioned.fill(
-                    child: AnimatedBuilder(
-                      animation: _likedUsersFade,
-                      builder: (context, _) {
-                        return Opacity(
-                          opacity: _likedUsersFade.value,
-                          child: LikedUsersBottomSheet(
-                            postId: widget.exported['id']?.toString() ?? '',
-                            likeCount: _likeService.getPostLikeCount(
-                              widget.exported['id']?.toString() ?? '',
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                // 조회자 목록 오버레이
-                if (_showViewersOverlay)
-                  Positioned.fill(
-                    child: AnimatedBuilder(
-                      animation: _viewersFade,
-                      builder: (context, _) {
-                        return Opacity(
-                          opacity: _viewersFade.value,
-                          child: ViewersBottomSheet(
-                            postId: widget.exported['id']?.toString() ?? '',
-                            viewerCount: int.parse(
-                              (_currentExportedData?['viewCount'] ??
-                                      widget.exported['viewCount'])
-                                  .toString(),
-                            ),
-                            onClose: _closeViewersOverlay,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                // 전체화면 이미지/영상 뷰어 (페이드 애니메이션)
-                if (_showImageViewer && _currentImageUrl != null)
-                  Positioned.fill(
-                    child: FadeTransition(
-                      opacity: _imageViewerFade,
-                      child: FullscreenMediaViewer(
-                        imageUrl: _currentImageUrl!,
-                        allImageUrls: _allImageUrls,
-
-                        initialIndex:
-                            _currentImageUrl != null && _allImageUrls.isNotEmpty
-                                ? _allImageUrls.indexOf(_currentImageUrl!)
-                                : 0,
-                        isVideo: _isVideoViewer,
-                        preloadedController:
-                            _isVideoViewer && _currentImageUrl != null
-                                ? readerVideoControllers[_currentImageUrl!]
-                                : null, // 🎯 ClipComponent에서 생성한 컨트롤러 공유
-                        imageProvider:
-                            !_isVideoViewer && _currentImageUrl != null
-                                ? NetworkImage(_currentImageUrl!)
-                                : null, // 🎯 NetworkImage 인스턴스 직접 생성
-                        onClose: _closeImageViewer,
-                        postTitle: () {
-                          final title = widget.exported['title'] as String?;
-                          debugPrint('[PostReader] postTitle: $title');
-                          return title;
-                        }(),
-                        postAuthor: () {
-                          final author = widget.exported['author'] as String?;
-                          debugPrint('[PostReader] postAuthor: $author');
-                          return author;
-                        }(),
-                        postAuthorProfileUrl: () {
-                          final url =
-                              widget.exported['authorProfileImageUrl']
-                                  as String?;
-                          debugPrint('[PostReader] postAuthorProfileUrl: $url');
-                          return url;
-                        }(),
-                        commentCount: () {
-                          final count = widget.exported['commentCount'] as int?;
-                          debugPrint('[PostReader] commentCount: $count');
-                          debugPrint(
-                            '[PostReader] exported keys: ${widget.exported.keys.toList()}',
-                          );
-                          return count;
-                        }(),
-                      ),
-                    ),
-                  ),
-
-                // 하단 바 (Medium 스타일)
-                AnimatedPositioned(
-                  duration: Duration(milliseconds: _bottomBarAnimationDuration),
-                  curve: Curves.easeInOut,
-                  bottom: _showAppBar ? 0 : -100,
-                  left: 0,
-                  right: 0,
-                  child: AnimatedBuilder(
-                    animation: Listenable.merge([
-                      _likeService,
-                      _commentService,
-                    ]), // 🎯 두 서비스 모두 감지
-                    builder: (context, child) {
-                      final postId = widget.exported['id']?.toString() ?? '';
-                      final isLiked = _likeService.isPostLiked(postId);
-                      final likeCount = _likeService.getPostLikeCount(postId);
-                      final commentCount =
-                          _commentService.getTotalCommentCount();
-
-                      // isMyPost 확인
-                      final currentUser =
-                          context.read<UserProvider>().currentUser;
-                      final String postAuthor =
-                          (widget.exported['author'] ?? '').toString();
-                      final bool isMyPost =
-                          currentUser != null &&
-                          currentUser.username == postAuthor;
-
-                      // 🎯 나만보기 포스트 확인
-                      final accessLevelStr = _accessLevel ?? AccessLevel.public;
-                      final isPrivate = accessLevelStr == AccessLevel.private;
-
-                      return Container(
-                        height: 74,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.background,
-
-                          border: Border(
-                            top: BorderSide(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.1),
-                              width: 1,
-                            ),
-                          ),
-                        ),
-
-                        child: SafeArea(
-                          top: false,
-                          child: Padding(
-                            padding: const EdgeInsets.only(
-                              left: 20,
-                              right: 20,
-                              top: 15,
-                            ),
-                            child: Row(
-                              children: [
-                                // 공유 아이콘 또는 자물쇠 아이콘
-                                GestureDetector(
-                                  onTap:
-                                      isMyPost
-                                          ? _handleAccessLevelOrShare
-                                          : _showShareOverlay,
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(
-                                      left: 8.0,
-                                      top: 1,
-                                    ),
-                                    child: _buildAccessLevelIcon(context),
-                                  ),
-                                ),
-
-                                // 내 포스트이고 나만보기가 아닌 경우 lock_open.svg 추가
-                                if (isMyPost) ...[
-                                  Consumer<GroupProvider>(
-                                    builder: (context, groupProvider, _) {
-                                      // 🎯 서버에서 조회한 공개범위 데이터 사용
-                                      final accessLevelStr =
-                                          _accessLevel ?? 'PUBLIC';
-                                      final isPrivate =
-                                          accessLevelStr == 'PRIVATE';
-
-                                      // 🎯 GROUPS인 경우 실제 그룹 이름 가져오기
-                                      // 🎯 서버에서 제공하는 sharedGroupNames 우선 사용
-                                      String? groupName;
-                                      if (accessLevelStr == 'GROUPS') {
-                                        if (_sharedGroupNames != null &&
-                                            _sharedGroupNames!.isNotEmpty) {
-                                          // 🎯 서버에서 받은 그룹 이름 직접 사용
-                                          if (_sharedGroupNames!.length == 1) {
-                                            groupName =
-                                                _sharedGroupNames!.first;
-                                          } else {
-                                            groupName = context
-                                                .tr('groups_count')
-                                                .replaceAll(
-                                                  '{count}',
-                                                  '${_sharedGroupNames!.length}',
-                                                );
-                                          }
-                                        } else if (_sharedGroupIds != null &&
-                                            _sharedGroupIds!.isNotEmpty) {
-                                          // 🎯 sharedGroupNames가 없으면 GroupProvider에서 찾기 (fallback)
-                                          final groups = groupProvider.myGroups;
-                                          final matchingGroups =
-                                              groups
-                                                  .where(
-                                                    (g) => _sharedGroupIds!
-                                                        .contains(g.id),
-                                                  )
-                                                  .toList();
-
-                                          if (matchingGroups.isNotEmpty) {
-                                            if (matchingGroups.length == 1) {
-                                              final group =
-                                                  matchingGroups.first;
-                                              if (group.isSystem == true) {
-                                                groupName = context.tr(
-                                                  'all_friends',
-                                                );
-                                              } else {
-                                                groupName = group.name;
-                                              }
-                                            } else {
-                                              groupName = context
-                                                  .tr('groups_count')
-                                                  .replaceAll(
-                                                    '{count}',
-                                                    '${matchingGroups.length}',
-                                                  );
-                                            }
-                                          }
+                                        if (postAuthor.isEmpty ||
+                                            postAuthor ==
+                                                AuthService()
+                                                    .currentUsernameSync) {
+                                          return;
                                         }
-                                      }
 
-                                      // 나만보기가 아닌 경우에만 lock_open.svg 표시
-                                      if (!isPrivate) {
-                                        return GestureDetector(
-                                          onTap: _showAccessLevelBottomSheet,
-                                          child: Padding(
-                                            padding: const EdgeInsets.only(
-                                              left: 20.0,
-                                              top: 1,
+                                        final authorProfileImageUrl =
+                                            widget.exported['authorProfileImageUrl']
+                                                as String?;
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                            builder:
+                                                (_) => UserProfileScreen(
+                                                  otherUser: User(
+                                                    username: postAuthor,
+                                                    profileImageUrl:
+                                                        authorProfileImageUrl,
+                                                  ),
+                                                ),
+                                          ),
+                                        );
+                                      },
+                                      child: PostReaderHeader(
+                                        exportedRoot: widget.exported,
+                                        currentExportedData:
+                                            _currentExportedData,
+                                        postAuthor: postAuthor,
+                                        authorProfileImageUrl:
+                                            widget.exported['authorProfileImageUrl']
+                                                as String?,
+                                        enableAuthorTap:
+                                            !isMyPost &&
+                                            widget.exported['authorId'] != null,
+                                        onAuthorTap: () {},
+                                        horizontalPadding: 20,
+                                        topSpacing: 90,
+                                        gapHeight: gapHeight,
+                                        isMyPost: isMyPost,
+                                        likeCount: _likeService
+                                            .getPostLikeCount(
+                                              widget.exported['id']
+                                                      ?.toString() ??
+                                                  '',
                                             ),
-                                            child:
-                                                groupName != null
-                                                    ? Row(
+                                        commentCount:
+                                            _commentService
+                                                .getTotalCommentCount(),
+                                        onLikeTap: _toggleLike,
+                                        onCommentTap: _showCommentBottomSheet,
+                                        isLiked: _likeService.isPostLiked(
+                                          widget.exported['id']?.toString() ??
+                                              '',
+                                        ), // ← 추가
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                // SuperEditor 슬리버
+                                Builder(
+                                  builder: (context) {
+                                    // ✅ 키보드(viewInsets) 변화로 인한 불필요 리빌드를 막기 위해
+                                    // MediaQuery.of 대신 aspect 구독(sizeOf) 사용
+                                    final screenWidth =
+                                        MediaQuery.sizeOf(
+                                          context,
+                                        ).width; // 🚀 최고 효율: 한 번만 계산
+                                    return SuperEditor(
+                                      editor: _editor,
+                                      stylesheet: buildCustomStylesheet(
+                                        context,
+                                        isReadOnly:
+                                            true, // 🎯 읽기 모드: 전역 폰트 사용 안 함, 블록 metadata만 사용
+                                      ),
+                                      selectionStyle: SelectionStyles(
+                                        selectionColor: Colors.transparent,
+                                        highlightEmptyTextBlocks: false,
+                                      ),
+                                      componentBuilders: [
+                                        SingleImageComponentBuilder(
+                                          screenWidth:
+                                              screenWidth, // 🚀 최고 효율: 전달
+                                          dragService: _dragService,
+                                          isEditing: false, // 읽기 모드
+                                          isDarkMode:
+                                              isDarkMode, // 🎯 성능 최적화: 변수 사용
+                                        ),
+                                        RowImageComponentBuilder(
+                                          screenWidth:
+                                              screenWidth, // 🚀 최고 효율: 전달
+                                          dragService: _dragService,
+                                          isEditing: false, // 읽기 모드
+                                          isDarkMode:
+                                              isDarkMode, // 🎯 성능 최적화: 변수 사용
+                                        ),
+                                        PageViewImageComponentBuilder(
+                                          screenWidth:
+                                              screenWidth, // 🚀 최고 효율: 전달
+                                          dragService: _dragService,
+                                          isEditing: false, // 읽기 모드
+                                          isDarkMode: isDarkMode,
+                                        ),
+                                        LinkComponentBuilder(
+                                          isEditing: false,
+                                          isDarkMode:
+                                              isDarkMode, // 🎯 성능 최적화: 변수 사용
+                                        ),
+                                        DividerComponentBuilder(),
+                                        ClipComponentBuilder(
+                                          screenWidth: screenWidth, // 🚀 전달
+                                          dragService: _dragService,
+                                          isDarkMode: isDarkMode,
+                                        ),
+                                        CustomParagraphComponentBuilder(
+                                          dragService: _dragService,
+                                          editorService: _editorService,
+                                          isEditing: false, // 읽기 모드
+                                          onMentionTap: (names) {
+                                            if (names.isEmpty) return;
+                                            if (names.length == 1) {
+                                              _openUserProfile(names.first);
+                                              return;
+                                            }
+                                            showModalBottomSheet(
+                                              context: context,
+                                              backgroundColor:
+                                                  Colors.transparent,
+                                              builder: (_) {
+                                                return Container(
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        Theme.of(
+                                                          context,
+                                                        ).colorScheme.surface,
+                                                    borderRadius:
+                                                        const BorderRadius.vertical(
+                                                          top: Radius.circular(
+                                                            16,
+                                                          ),
+                                                        ),
+                                                  ),
+                                                  child: SafeArea(
+                                                    top: false,
+                                                    child: Column(
                                                       mainAxisSize:
                                                           MainAxisSize.min,
                                                       children: [
-                                                        SvgPicture.asset(
-                                                          'assets/icons/lock_open.svg',
-                                                          width: 23,
-                                                          height: 23,
-                                                          color: Theme.of(
+                                                        const SizedBox(
+                                                          height: 8,
+                                                        ),
+                                                        Container(
+                                                          width: 40,
+                                                          height: 4,
+                                                          decoration: BoxDecoration(
+                                                            color: Theme.of(
+                                                                  context,
+                                                                )
+                                                                .colorScheme
+                                                                .onSurface
+                                                                .withOpacity(
+                                                                  0.2,
+                                                                ),
+                                                            borderRadius:
+                                                                BorderRadius.circular(
+                                                                  2,
+                                                                ),
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                          height: 8,
+                                                        ),
+                                                        ...names.map(
+                                                          (u) => ListTile(
+                                                            title: Text(
+                                                              '@$u',
+                                                              style: TextStyle(
+                                                                color:
+                                                                    Theme.of(
+                                                                          context,
+                                                                        )
+                                                                        .colorScheme
+                                                                        .onSurface,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w600,
+                                                              ),
+                                                            ),
+                                                            onTap: () {
+                                                              Navigator.of(
                                                                 context,
-                                                              )
-                                                              .colorScheme
-                                                              .onSurface
-                                                              .withOpacity(0.7),
+                                                              ).pop();
+                                                              _openUserProfile(
+                                                                u,
+                                                              );
+                                                            },
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                          height: 8,
                                                         ),
                                                       ],
-                                                    )
-                                                    : SvgPicture.asset(
-                                                      'assets/icons/lock_open.svg',
-                                                      width: 23,
-                                                      height: 23,
-                                                      color: Theme.of(context)
-                                                          .colorScheme
-                                                          .onSurface
-                                                          .withOpacity(0.7),
                                                     ),
-                                          ),
-                                        );
-                                      }
-                                      return const SizedBox.shrink();
-                                    },
-                                  ),
-                                ],
-
-                                const Spacer(),
-                                // 우측: 좋아요 + 댓글 (나만보기 포스트 제외)
-                                if (!isPrivate) ...[
-                                  GestureDetector(
-                                    onTap: _toggleLike,
-                                    onLongPress: _openLikedUsersOverlay,
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        SvgPicture.asset(
-                                          'assets/icons/heart.svg',
-                                          width: 22,
-                                          height: 22,
-                                          color:
-                                              isLiked
-                                                  ? const ui.Color.fromARGB(
-                                                    255,
-                                                    255,
-                                                    89,
-                                                    89,
-                                                  )
-                                                  : Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurface
-                                                      .withOpacity(0.8),
+                                                  ),
+                                                );
+                                              },
+                                            );
+                                          },
                                         ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          formatCount(likeCount),
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w500,
-                                            color:
-                                                isLiked
-                                                    ? const ui.Color.fromARGB(
-                                                      255,
-                                                      255,
-                                                      89,
-                                                      89,
-                                                    )
-                                                    : Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurface
-                                                        .withOpacity(0.8),
-                                          ),
-                                        ),
+                                        ...defaultComponentBuilders,
                                       ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 20),
-                                ],
-                                GestureDetector(
-                                  onTap: _showCommentBottomSheet,
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          bottom: 0.8,
-                                        ),
-                                        child: SvgPicture.asset(
-                                          'assets/icons/comment.svg',
-                                          width: 24,
-                                          height: 24,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withOpacity(0.8),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        formatCount(commentCount),
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withOpacity(0.8),
-                                        ),
-                                      ),
-                                    ],
+                                      documentLayoutKey: _layoutKey,
+                                      focusNode: _readOnlyFocus,
+                                      gestureMode: DocumentGestureMode.mouse,
+                                    );
+                                  },
+                                ),
+                                SliverToBoxAdapter(
+                                  child: SizedBox(height: 100),
+                                ),
+
+                                // 댓글 미리보기 (추출된 위젯)
+                                SliverToBoxAdapter(
+                                  child: CommentPreviewSection(
+                                    commentService: _commentService,
+                                    likeService: _likeService,
+                                    postId:
+                                        widget.exported['id']?.toString() ?? '',
+                                    onToggleLike: _toggleLike,
+                                    onShowComments: _showCommentBottomSheet,
                                   ),
                                 ),
                               ],
                             ),
                           ),
                         ),
-                      );
-                    },
+                      ),
+
+                      // 스티커 오버레이
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          ignoring: true,
+                          child: PostReaderStickers(
+                            stickers: stickers,
+                            layoutKey: _layoutKey,
+                            stackKey: _stackKey,
+                            scrollController: _scrollCtrl,
+
+                            topInset: (_appBarHeight + gapHeight),
+                          ),
+                        ),
+                      ),
+
+                      // 🎯 성능 최적화: BackdropFilter 제거 (스크롤 성능 향상)
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          height: 35,
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.background.withOpacity(0.95),
+                            borderRadius: BorderRadius.only(
+                              topLeft: Radius.circular(20),
+                              topRight: Radius.circular(20),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // 동적 AppBar 컴포넌트로 분리
+                      Builder(
+                        builder: (context) {
+                          final double computedBarHeight =
+                              // ✅ 키보드(viewInsets) 변화로 인한 불필요 리빌드를 막기 위해
+                              // MediaQuery.of 대신 aspect 구독(paddingOf) 사용
+                              _appBarHeight + MediaQuery.paddingOf(context).top;
+                          return PostReaderAppBar(
+                            showAppBar: _showAppBar,
+                            barHeight: computedBarHeight,
+                            isMyPost: isMyPost,
+                            onBack: _closeScreen,
+                            onEdit: () {
+                              final dataToEdit =
+                                  _currentExportedData ?? widget.exported;
+                              final postId =
+                                  dataToEdit['id']?.toString() ??
+                                  widget.exported['id']?.toString();
+
+                              if (postId != null && postId.isNotEmpty) {
+                                Navigator.of(context).pushReplacement(
+                                  PageRouteBuilder(
+                                    pageBuilder:
+                                        (
+                                          context,
+                                          animation,
+                                          secondaryAnimation,
+                                        ) => PostwriteScreen(
+                                          isEditingMode: true,
+                                          exportedDataForEdit: dataToEdit,
+                                          postId: postId,
+                                        ),
+                                    transitionDuration: const Duration(
+                                      milliseconds: 200,
+                                    ),
+                                    reverseTransitionDuration: const Duration(
+                                      milliseconds: 200,
+                                    ),
+                                    transitionsBuilder: (
+                                      context,
+                                      animation,
+                                      secondaryAnimation,
+                                      child,
+                                    ) {
+                                      return FadeTransition(
+                                        opacity: animation,
+                                        child: child,
+                                      );
+                                    },
+                                  ),
+                                );
+                              } else {
+                                debugPrint('[PostReaderScreen] postId가 없습니다');
+                              }
+                            },
+                            onDelete: _deletePost,
+                            onShowComments: _showCommentBottomSheet,
+                            title: widget.exported['title'] ?? '',
+                            likeCount: _likeService.getPostLikeCount(
+                              widget.exported['id']?.toString() ?? '',
+                            ),
+                            commentCount:
+                                _commentService.getTotalCommentCount(),
+                            onLikeTap: _toggleLike,
+                            onCommentTap: _showCommentBottomSheet,
+                            isLiked: _likeService.isPostLiked(
+                              widget.exported['id']?.toString() ?? '',
+                            ),
+                            animationDuration:
+                                _bottomBarAnimationDuration, // 🎯 바텀바와 동일한 속도
+                            scrollOffset:
+                                _currentScrollOffset, // 🎯 현재 스크롤 위치 전달
+                            viewCount:
+                                int.tryParse(
+                                  (_currentExportedData?['viewCount'] ??
+                                          widget.exported['viewCount'])
+                                      .toString(),
+                                ) ??
+                                0,
+                            onViewCountTap: () {
+                              // 🎯 나만보기 포스트는 제외
+                              final accessLevelStr = _accessLevel ?? 'PUBLIC';
+                              if (accessLevelStr != 'PRIVATE') {
+                                _openViewersOverlay();
+                              }
+                            },
+                            isPrivate:
+                                (_accessLevel ?? 'PUBLIC') ==
+                                'PRIVATE', // 🎯 나만보기 포스트 여부
+                            onMoreTap:
+                                !isMyPost
+                                    ? () {
+                                      final postId =
+                                          widget.exported['id']?.toString() ??
+                                          '';
+                                      final postTitle =
+                                          widget.exported['title']
+                                              ?.toString() ??
+                                          '';
+                                      final authorUsername = postAuthor;
+                                      final authorProfileImageUrl =
+                                          widget
+                                              .exported['authorProfileImageUrl']
+                                              ?.toString();
+                                      final authorAlias =
+                                          widget.exported['authorAlias']
+                                              ?.toString();
+                                      final thumbnailImageUrl =
+                                          widget.exported['thumbnailImageUrl']
+                                              ?.toString();
+                                      final likeCount = _likeService
+                                          .getPostLikeCount(postId);
+
+                                      PostActionBottomSheet.show(
+                                        context,
+                                        postId: postId,
+                                        postTitle: postTitle,
+                                        authorUsername: authorUsername,
+                                        authorAlias: authorAlias,
+                                        authorProfileImageUrl:
+                                            authorProfileImageUrl,
+                                        thumbnailImageUrl: thumbnailImageUrl,
+                                        likeCount: likeCount,
+                                        onShowLikedUsers:
+                                            _openLikedUsersOverlay,
+                                      );
+                                    }
+                                    : null,
+                          );
+                        },
+                      ),
+                      // (댓글 오버레이는 viewInsets를 받아야 하므로 바깥 Stack에서 렌더링)
+                      // 좋아요 사용자 목록 오버레이
+                      if (_showLikedUsersOverlay)
+                        Positioned.fill(
+                          child: AnimatedBuilder(
+                            animation: _likedUsersFade,
+                            builder: (context, _) {
+                              return Opacity(
+                                opacity: _likedUsersFade.value,
+                                child: LikedUsersBottomSheet(
+                                  postId:
+                                      widget.exported['id']?.toString() ?? '',
+                                  likeCount: _likeService.getPostLikeCount(
+                                    widget.exported['id']?.toString() ?? '',
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      // 조회자 목록 오버레이
+                      if (_showViewersOverlay)
+                        Positioned.fill(
+                          child: AnimatedBuilder(
+                            animation: _viewersFade,
+                            builder: (context, _) {
+                              return Opacity(
+                                opacity: _viewersFade.value,
+                                child: ViewersBottomSheet(
+                                  postId:
+                                      widget.exported['id']?.toString() ?? '',
+                                  viewerCount: int.parse(
+                                    (_currentExportedData?['viewCount'] ??
+                                            widget.exported['viewCount'])
+                                        .toString(),
+                                  ),
+                                  onClose: _closeViewersOverlay,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      // 전체화면 이미지/영상 뷰어 (페이드 애니메이션)
+                      if (_showImageViewer && _currentImageUrl != null)
+                        Positioned.fill(
+                          child: FadeTransition(
+                            opacity: _imageViewerFade,
+                            child: FullscreenMediaViewer(
+                              imageUrl: _currentImageUrl!,
+                              allImageUrls: _allImageUrls,
+
+                              initialIndex:
+                                  _currentImageUrl != null &&
+                                          _allImageUrls.isNotEmpty
+                                      ? _allImageUrls.indexOf(_currentImageUrl!)
+                                      : 0,
+                              isVideo: _isVideoViewer,
+                              preloadedController:
+                                  _isVideoViewer && _currentImageUrl != null
+                                      ? readerVideoControllers[_currentImageUrl!]
+                                      : null, // 🎯 ClipComponent에서 생성한 컨트롤러 공유
+                              imageProvider:
+                                  !_isVideoViewer && _currentImageUrl != null
+                                      ? NetworkImage(_currentImageUrl!)
+                                      : null, // 🎯 NetworkImage 인스턴스 직접 생성
+                              onClose: _closeImageViewer,
+                              postTitle: () {
+                                final title =
+                                    widget.exported['title'] as String?;
+                                debugPrint('[PostReader] postTitle: $title');
+                                return title;
+                              }(),
+                              postAuthor: () {
+                                final author =
+                                    widget.exported['author'] as String?;
+                                debugPrint('[PostReader] postAuthor: $author');
+                                return author;
+                              }(),
+                              postAuthorProfileUrl: () {
+                                final url =
+                                    widget.exported['authorProfileImageUrl']
+                                        as String?;
+                                debugPrint(
+                                  '[PostReader] postAuthorProfileUrl: $url',
+                                );
+                                return url;
+                              }(),
+                              commentCount: () {
+                                final count =
+                                    widget.exported['commentCount'] as int?;
+                                debugPrint('[PostReader] commentCount: $count');
+                                debugPrint(
+                                  '[PostReader] exported keys: ${widget.exported.keys.toList()}',
+                                );
+                                return count;
+                              }(),
+                            ),
+                          ),
+                        ),
+
+                      // 하단 바 (Medium 스타일)
+                      AnimatedPositioned(
+                        duration: Duration(
+                          milliseconds: _bottomBarAnimationDuration,
+                        ),
+                        curve: Curves.easeInOut,
+                        bottom: _showAppBar ? 0 : -100,
+                        left: 0,
+                        right: 0,
+                        child: AnimatedBuilder(
+                          animation: Listenable.merge([
+                            _likeService,
+                            _commentService,
+                          ]), // 🎯 두 서비스 모두 감지
+                          builder: (context, child) {
+                            final postId =
+                                widget.exported['id']?.toString() ?? '';
+                            final isLiked = _likeService.isPostLiked(postId);
+                            final likeCount = _likeService.getPostLikeCount(
+                              postId,
+                            );
+                            final commentCount =
+                                _commentService.getTotalCommentCount();
+
+                            // isMyPost 확인
+                            final currentUser =
+                                context.read<UserProvider>().currentUser;
+                            final String postAuthor =
+                                (widget.exported['author'] ?? '').toString();
+                            final bool isMyPost =
+                                currentUser != null &&
+                                currentUser.username == postAuthor;
+
+                            // 🎯 나만보기 포스트 확인
+                            final accessLevelStr =
+                                _accessLevel ?? AccessLevel.public;
+                            final isPrivate =
+                                accessLevelStr == AccessLevel.private;
+
+                            return Container(
+                              height: 74,
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.background,
+
+                                border: Border(
+                                  top: BorderSide(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.1),
+                                    width: 1,
+                                  ),
+                                ),
+                              ),
+
+                              child: SafeArea(
+                                top: false,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(
+                                    left: 20,
+                                    right: 20,
+                                    top: 15,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      // 공유 아이콘 또는 자물쇠 아이콘
+                                      GestureDetector(
+                                        onTap:
+                                            isMyPost
+                                                ? _handleAccessLevelOrShare
+                                                : _showShareOverlay,
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(
+                                            left: 8.0,
+                                            top: 1,
+                                          ),
+                                          child: _buildAccessLevelIcon(context),
+                                        ),
+                                      ),
+
+                                      // 내 포스트이고 나만보기가 아닌 경우 lock_open.svg 추가
+                                      if (isMyPost) ...[
+                                        Consumer<GroupProvider>(
+                                          builder: (context, groupProvider, _) {
+                                            // 🎯 서버에서 조회한 공개범위 데이터 사용
+                                            final accessLevelStr =
+                                                _accessLevel ?? 'PUBLIC';
+                                            final isPrivate =
+                                                accessLevelStr == 'PRIVATE';
+
+                                            // 🎯 GROUPS인 경우 실제 그룹 이름 가져오기
+                                            // 🎯 서버에서 제공하는 sharedGroupNames 우선 사용
+                                            String? groupName;
+                                            if (accessLevelStr == 'GROUPS') {
+                                              if (_sharedGroupNames != null &&
+                                                  _sharedGroupNames!
+                                                      .isNotEmpty) {
+                                                // 🎯 서버에서 받은 그룹 이름 직접 사용
+                                                if (_sharedGroupNames!.length ==
+                                                    1) {
+                                                  groupName =
+                                                      _sharedGroupNames!.first;
+                                                } else {
+                                                  groupName = context
+                                                      .tr('groups_count')
+                                                      .replaceAll(
+                                                        '{count}',
+                                                        '${_sharedGroupNames!.length}',
+                                                      );
+                                                }
+                                              } else if (_sharedGroupIds !=
+                                                      null &&
+                                                  _sharedGroupIds!.isNotEmpty) {
+                                                // 🎯 sharedGroupNames가 없으면 GroupProvider에서 찾기 (fallback)
+                                                final groups =
+                                                    groupProvider.myGroups;
+                                                final matchingGroups =
+                                                    groups
+                                                        .where(
+                                                          (g) =>
+                                                              _sharedGroupIds!
+                                                                  .contains(
+                                                                    g.id,
+                                                                  ),
+                                                        )
+                                                        .toList();
+
+                                                if (matchingGroups.isNotEmpty) {
+                                                  if (matchingGroups.length ==
+                                                      1) {
+                                                    final group =
+                                                        matchingGroups.first;
+                                                    if (group.isSystem ==
+                                                        true) {
+                                                      groupName = context.tr(
+                                                        'all_friends',
+                                                      );
+                                                    } else {
+                                                      groupName = group.name;
+                                                    }
+                                                  } else {
+                                                    groupName = context
+                                                        .tr('groups_count')
+                                                        .replaceAll(
+                                                          '{count}',
+                                                          '${matchingGroups.length}',
+                                                        );
+                                                  }
+                                                }
+                                              }
+                                            }
+
+                                            // 나만보기가 아닌 경우에만 lock_open.svg 표시
+                                            if (!isPrivate) {
+                                              return GestureDetector(
+                                                onTap:
+                                                    _showAccessLevelBottomSheet,
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        left: 20.0,
+                                                        top: 1,
+                                                      ),
+                                                  child:
+                                                      groupName != null
+                                                          ? Row(
+                                                            mainAxisSize:
+                                                                MainAxisSize
+                                                                    .min,
+                                                            children: [
+                                                              SvgPicture.asset(
+                                                                'assets/icons/lock_open.svg',
+                                                                width: 23,
+                                                                height: 23,
+                                                                color: Theme.of(
+                                                                      context,
+                                                                    )
+                                                                    .colorScheme
+                                                                    .onSurface
+                                                                    .withOpacity(
+                                                                      0.7,
+                                                                    ),
+                                                              ),
+                                                            ],
+                                                          )
+                                                          : SvgPicture.asset(
+                                                            'assets/icons/lock_open.svg',
+                                                            width: 23,
+                                                            height: 23,
+                                                            color: Theme.of(
+                                                                  context,
+                                                                )
+                                                                .colorScheme
+                                                                .onSurface
+                                                                .withOpacity(
+                                                                  0.7,
+                                                                ),
+                                                          ),
+                                                ),
+                                              );
+                                            }
+                                            return const SizedBox.shrink();
+                                          },
+                                        ),
+                                      ],
+
+                                      const Spacer(),
+                                      // 우측: 좋아요 + 댓글 (나만보기 포스트 제외)
+                                      if (!isPrivate) ...[
+                                        GestureDetector(
+                                          onTap: _toggleLike,
+                                          onLongPress: _openLikedUsersOverlay,
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              SvgPicture.asset(
+                                                'assets/icons/heart.svg',
+                                                width: 22,
+                                                height: 22,
+                                                color:
+                                                    isLiked
+                                                        ? const ui.Color.fromARGB(
+                                                          255,
+                                                          255,
+                                                          89,
+                                                          89,
+                                                        )
+                                                        : Theme.of(context)
+                                                            .colorScheme
+                                                            .onSurface
+                                                            .withOpacity(0.8),
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                formatCount(likeCount),
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w500,
+                                                  color:
+                                                      isLiked
+                                                          ? const ui.Color.fromARGB(
+                                                            255,
+                                                            255,
+                                                            89,
+                                                            89,
+                                                          )
+                                                          : Theme.of(context)
+                                                              .colorScheme
+                                                              .onSurface
+                                                              .withOpacity(0.8),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 20),
+                                      ],
+                                      GestureDetector(
+                                        onTap: _showCommentBottomSheet,
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                bottom: 0.8,
+                                              ),
+                                              child: SvgPicture.asset(
+                                                'assets/icons/comment.svg',
+                                                width: 24,
+                                                height: 24,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withOpacity(0.8),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              formatCount(commentCount),
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w500,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withOpacity(0.8),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+
+                // ✅ 댓글 Glass 카드 오버레이: 키보드(viewInsets)에 반응해야 하므로
+                // removeViewInsets 래퍼 밖에서 렌더링한다.
+                // 댓글 화면은 Route(push)로 분리되어 오버레이로 렌더링하지 않음
               ],
             );
           },

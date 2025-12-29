@@ -585,17 +585,12 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
             );
 
             Navigator.of(context).push(
-              PageRouteBuilder(
-                pageBuilder:
-                    (context, animation, secondaryAnimation) =>
-                        PostReaderScreen(
-                          exported: postData.toExportedData(),
-                          heroTag: 'search-post-${post.id}',
-                        ),
-                transitionsBuilder:
-                    (context, animation, secondaryAnimation, child) =>
-                        FadeTransition(opacity: animation, child: child),
-                transitionDuration: const Duration(milliseconds: 200),
+              MaterialPageRoute(
+                builder:
+                    (_) => PostReaderScreen(
+                      exported: postData.toExportedData(),
+                      heroTag: 'search-post-${post.id}',
+                    ),
               ),
             );
           },
@@ -1166,50 +1161,14 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
                 } else {
                   setState(() => _suppressVisibility = true);
                   await Navigator.of(context).push(
-                    PageRouteBuilder(
-                      transitionDuration: const Duration(milliseconds: 340),
-                      reverseTransitionDuration: const Duration(
-                        milliseconds: 100,
-                      ),
-                      opaque: false,
-                      pageBuilder:
-                          (_, __, ___) => PostReaderScreen(
+                    MaterialPageRoute(
+                      builder:
+                          (_) => PostReaderScreen(
                             exported:
                                 widget.posts[_currentIndex].toExportedData(),
                             heroTag:
                                 'search-post-${widget.posts[_currentIndex].id}-$_currentIndex',
                           ),
-                      transitionsBuilder: (
-                        context,
-                        animation,
-                        secondaryAnimation,
-                        child,
-                      ) {
-                        const begin = Offset(0.0, 0.1);
-                        const end = Offset.zero;
-                        const curve = Curves.easeOutCubic;
-                        var tween = Tween(
-                          begin: begin,
-                          end: end,
-                        ).chain(CurveTween(curve: curve));
-                        var offsetAnimation = animation.drive(tween);
-                        var fadeAnimation = Tween<double>(
-                          begin: 0.0,
-                          end: 1.0,
-                        ).animate(
-                          CurvedAnimation(
-                            parent: animation,
-                            curve: Curves.easeOut,
-                          ),
-                        );
-                        return FadeTransition(
-                          opacity: fadeAnimation,
-                          child: SlideTransition(
-                            position: offsetAnimation,
-                            child: child,
-                          ),
-                        );
-                      },
                     ),
                   );
                   if (mounted) {
@@ -1257,43 +1216,12 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
           WidgetsBinding.instance.addPostFrameCallback((_) async {
             if (!mounted) return;
             await Navigator.of(context).push(
-              PageRouteBuilder(
-                transitionDuration: const Duration(milliseconds: 340),
-                reverseTransitionDuration: const Duration(milliseconds: 100),
-                opaque: false,
-                pageBuilder:
-                    (_, __, ___) => PostReaderScreen(
+              MaterialPageRoute(
+                builder:
+                    (_) => PostReaderScreen(
                       exported: post.toExportedData(),
                       heroTag: 'search-post-${post.id}-$index',
                     ),
-                transitionsBuilder: (
-                  context,
-                  animation,
-                  secondaryAnimation,
-                  child,
-                ) {
-                  const begin = Offset(0.0, 0.1);
-                  const end = Offset.zero;
-                  const curve = Curves.easeOutCubic;
-                  var tween = Tween(
-                    begin: begin,
-                    end: end,
-                  ).chain(CurveTween(curve: curve));
-                  var offsetAnimation = animation.drive(tween);
-                  var fadeAnimation = Tween<double>(
-                    begin: 0.0,
-                    end: 1.0,
-                  ).animate(
-                    CurvedAnimation(parent: animation, curve: Curves.easeOut),
-                  );
-                  return FadeTransition(
-                    opacity: fadeAnimation,
-                    child: SlideTransition(
-                      position: offsetAnimation,
-                      child: child,
-                    ),
-                  );
-                },
               ),
             );
             if (mounted) {

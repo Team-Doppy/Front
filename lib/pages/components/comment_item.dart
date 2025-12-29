@@ -1,5 +1,6 @@
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/comment_reaction_users_bottom_sheet.dart';
+import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/utils/time_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,7 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_gallery_saver/image_gallery_saver.dart';
+// NOTE: 댓글 이미지는 editor처럼 단순 NetworkImage + cacheWidth로만 처리 (CachedNetworkImage 사용 금지)
 import 'dart:io';
 import 'dart:ui';
 
@@ -36,6 +38,7 @@ class CommentItem extends StatelessWidget {
     this.onHorizontalDragUpdate,
     this.onHorizontalDragEnd,
     this.postAuthorUsername,
+    this.enableImageHero = true,
   });
 
   final Comment comment;
@@ -57,6 +60,7 @@ class CommentItem extends StatelessWidget {
   final Function(DragUpdateDetails)? onHorizontalDragUpdate; // 🎯 드래그 업데이트 핸들러
   final Function(DragEndDetails)? onHorizontalDragEnd; // 🎯 드래그 종료 핸들러
   final String? postAuthorUsername; // 🎯 포스트 작성자 username (비밀댓글 권한 체크용)
+  final bool enableImageHero; // ✅ 라우트 전환 시 Hero flight 방지용 (프리뷰에서는 false)
 
   /// 🎯 비밀댓글에 대한 권한 체크
   /// 작성자이거나 포스트 작성자인 경우에만 true 반환
@@ -221,9 +225,16 @@ class CommentItem extends StatelessWidget {
     );
   }
 
-  /// 🎯 이미지 URL 추출 (content에서 파싱) - 단일 이미지만 반환
+  /// 🎯 이미지 URL 추출 (content에서 파싱 또는 imageUrl 필드 사용) - 단일 이미지만 반환
   String? _extractImageUrl() {
-    // 🎯 [IMAGES:url1,url2,url3] 형식 파싱 (첫 번째만)
+    // 🎯 1순위: imageUrl 필드 사용 (서버에서 직접 제공)
+    if (comment.imageUrl != null &&
+        comment.imageUrl!.isNotEmpty &&
+        !comment.imageUrl!.startsWith('pending://')) {
+      return comment.imageUrl!;
+    }
+
+    // 🎯 2순위: [IMAGES:url1,url2,url3] 형식 파싱 (첫 번째만)
     if (comment.content.contains('[IMAGES:')) {
       final regex = RegExp(r'\[IMAGES:(.+?)\]');
       final match = regex.firstMatch(comment.content);
@@ -242,18 +253,12 @@ class CommentItem extends StatelessWidget {
         }
       }
     }
-    // 🎯 [IMAGE] url 형식 파싱
+    // 🎯 3순위: [IMAGE] url 형식 파싱
     else if (comment.content.contains('[IMAGE] ')) {
       final parts = comment.content.split('[IMAGE] ');
       if (parts.length > 1 && parts[1].trim().isNotEmpty) {
         return parts[1].trim();
       }
-    }
-    // 🎯 imageUrl 필드 사용 (하위 호환성)
-    else if (comment.imageUrl != null &&
-        comment.imageUrl!.isNotEmpty &&
-        !comment.imageUrl!.startsWith('pending://')) {
-      return comment.imageUrl!;
     }
 
     return null;
@@ -300,28 +305,53 @@ class CommentItem extends StatelessWidget {
               comment.localImagePath!,
             );
           },
-          child: Hero(
-            tag: 'comment_image_${comment.id}', // 🎯 Hero 태그
-            child: Image(
-              image: imageProvider,
-              width: 200,
-              height: 200,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  width: 200,
-                  height: 200,
-                  color: Theme.of(context).colorScheme.surface.withOpacity(0.5),
-                  child: Icon(
-                    Icons.broken_image,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.5),
+          child:
+              enableImageHero
+                  ? Hero(
+                    tag: 'comment_image_${comment.id}', // 🎯 Hero 태그
+                    child: Image(
+                      image: imageProvider,
+                      width: 200,
+                      height: 200,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          width: 200,
+                          height: 200,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surface.withOpacity(0.5),
+                          child: Icon(
+                            Icons.broken_image,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        );
+                      },
+                    ),
+                  )
+                  : Image(
+                    image: imageProvider,
+                    width: 200,
+                    height: 200,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        width: 200,
+                        height: 200,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surface.withOpacity(0.5),
+                        child: Icon(
+                          Icons.broken_image,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
-          ),
         ),
         // 🎯 실패 시에만 작은 X, 새로고침 버튼 표시 (하단)
         if (comment.isFailed)
@@ -371,13 +401,54 @@ class CommentItem extends StatelessWidget {
     return Stack(
       key: ValueKey('network_${comment.id}_$imageUrl'),
       children: [
-        _CachedNetworkImageWidget(
-          imageUrl: imageUrl,
-          commentId: comment.id,
-          onImageTap: (imageProvider) {
-            _showImageFullscreen(context, imageProvider, imageUrl, null);
-          },
-        ),
+        (enableImageHero
+            ? Hero(
+              tag: 'comment_image_${comment.id}', // 🎯 Hero 태그
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: GestureDetector(
+                  onTap: () {
+                    _showImageFullscreen(
+                      context,
+                      NetworkImage(imageUrl),
+                      imageUrl,
+                      null,
+                    );
+                  },
+                  child: RepaintBoundary(
+                    child: _CommentNetworkImageCore(
+                      imageUrl: imageUrl,
+                      width: 200,
+                      height: 200,
+                      fit: BoxFit.cover,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+            )
+            : ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: GestureDetector(
+                onTap: () {
+                  _showImageFullscreen(
+                    context,
+                    NetworkImage(imageUrl),
+                    imageUrl,
+                    null,
+                  );
+                },
+                child: RepaintBoundary(
+                  child: _CommentNetworkImageCore(
+                    imageUrl: imageUrl,
+                    width: 200,
+                    height: 200,
+                    fit: BoxFit.cover,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            )),
         // 🎯 실패 시에만 작은 X, 새로고침 버튼 표시 (하단)
         if (comment.isFailed)
           Positioned(
@@ -790,10 +861,13 @@ class CommentItem extends StatelessWidget {
     String? imageUrl, // 🎯 다운로드용 URL
     String? localImagePath, // 🎯 로컬 이미지 경로
   ) {
+    final bg = Colors.black; // ✅ 뷰어 배경색은 일관되게 유지
     Navigator.of(context).push(
       PageRouteBuilder(
-        opaque: false,
-        barrierColor: Colors.black87,
+        // ✅ opaque=false면 아래 화면이 비치면서 "깜빡임/배경색 변화"가 더 잘 보임
+        // 댓글 이미지 뷰어는 배경색을 안정적으로 유지하기 위해 opaque=true로 고정
+        opaque: true,
+        barrierColor: bg,
         barrierDismissible: true,
         pageBuilder: (context, animation, secondaryAnimation) {
           return _CommentImageFullscreenDialog(
@@ -801,6 +875,7 @@ class CommentItem extends StatelessWidget {
             imageUrl: imageUrl,
             localImagePath: localImagePath,
             heroTag: 'comment_image_${comment.id}', // 🎯 Hero 태그
+            comment: comment, // 🎯 댓글 정보 전달
           );
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -811,54 +886,77 @@ class CommentItem extends StatelessWidget {
   }
 }
 
-/// 🎯 캐시된 네트워크 이미지 위젯 (스크롤 시 Shimmer 재표시 방지)
-class _CachedNetworkImageWidget extends StatefulWidget {
-  final String imageUrl;
-  final String commentId;
-  final Function(ImageProvider) onImageTap; // 🎯 이미지 탭 콜백 (ImageProvider 전달)
-
-  const _CachedNetworkImageWidget({
+/// ✅ 완전 기본형(캐시/리사이즈/keepAlive 없이) 댓글 네트워크 이미지
+/// - Image.network만 사용
+/// - 쉬머는 frameBuilder로 "첫 프레임" 뜰 때까지 표시
+/// - 이미지가 한 번 로드되면 이후에는 쉬머가 뜨지 않음 (상태 유지)
+class _CommentNetworkImageCore extends StatefulWidget {
+  const _CommentNetworkImageCore({
     required this.imageUrl,
-    required this.commentId,
-    required this.onImageTap,
+    this.width,
+    this.height,
+    this.fit = BoxFit.cover,
+    this.borderRadius,
   });
 
+  final String imageUrl;
+  final double? width;
+  final double? height;
+  final BoxFit fit;
+  final BorderRadius? borderRadius;
+
   @override
-  State<_CachedNetworkImageWidget> createState() =>
-      _CachedNetworkImageWidgetState();
+  State<_CommentNetworkImageCore> createState() =>
+      _CommentNetworkImageCoreState();
 }
 
-class _CachedNetworkImageWidgetState extends State<_CachedNetworkImageWidget> {
-  // 🎯 Image 위젯에서 사용하는 NetworkImage (풀뷰와 동일한 인스턴스로 캐시 공유)
-  late final NetworkImage _imageProvider;
-
-  @override
-  void initState() {
-    super.initState();
-    // 🎯 NetworkImage 인스턴스 생성 (Image 위젯과 풀뷰에서 동일한 인스턴스 사용)
-    _imageProvider = NetworkImage(widget.imageUrl);
-  }
+class _CommentNetworkImageCoreState extends State<_CommentNetworkImageCore> {
+  bool _didLoadOnce = false; // 🎯 이미지가 한 번 로드되었는지 추적
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        // 🎯 이미지 위젯에서 사용하는 ImageProvider 전달 (캐시된 이미지 재사용)
-        widget.onImageTap(_imageProvider);
-      },
-      child: Hero(
-        tag: 'comment_image_${widget.commentId}', // 🎯 Hero 태그
-        child: Image(
-          image:
-              _imageProvider, // 🎯 Image.network 대신 Image 위젯에 직접 전달 (같은 인스턴스 사용)
-          key: ValueKey('network_image_${widget.commentId}_${widget.imageUrl}'),
-          width: 200,
-          height: 200,
-          fit: BoxFit.cover,
+    final br = widget.borderRadius ?? BorderRadius.zero;
+    return ClipRRect(
+      borderRadius: br,
+      child: SizedBox(
+        width: widget.width,
+        height: widget.height,
+        child: Image.network(
+          widget.imageUrl,
+          width: widget.width,
+          height: widget.height,
+          fit: widget.fit,
+          gaplessPlayback: true,
+          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+            // 🎯 이미지가 한 번 로드되었으면 쉬머 표시하지 않음
+            if (_didLoadOnce) {
+              return child;
+            }
+
+            // 🎯 첫 프레임이 로드되면 플래그 설정
+            if (wasSynchronouslyLoaded || frame != null) {
+              // 다음 프레임에 플래그 설정 (setState 최소화)
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && !_didLoadOnce) {
+                  setState(() {
+                    _didLoadOnce = true;
+                  });
+                }
+              });
+              return child;
+            }
+
+            // 🎯 첫 로드 시에만 쉬머 표시
+            return ShimmerBox(
+              width: widget.width ?? 200,
+              height: widget.height ?? 200,
+              borderRadius: br,
+            );
+          },
           errorBuilder: (context, error, stackTrace) {
             return Container(
-              width: 200,
-              height: 200,
+              width: widget.width ?? 200,
+              height: widget.height ?? 200,
               color: Theme.of(context).colorScheme.surface.withOpacity(0.5),
               child: Icon(
                 Icons.broken_image,
@@ -878,12 +976,14 @@ class _CommentImageFullscreenDialog extends StatefulWidget {
   final String? imageUrl; // 🎯 다운로드용 URL
   final String? localImagePath; // 🎯 로컬 이미지 경로
   final String heroTag; // 🎯 Hero 태그
+  final Comment comment; // 🎯 댓글 정보
 
   const _CommentImageFullscreenDialog({
     required this.imageProvider,
     required this.imageUrl,
     required this.localImagePath,
     required this.heroTag,
+    required this.comment,
   });
 
   @override
@@ -982,7 +1082,9 @@ class _CommentImageFullscreenDialogState
     final opacity = (1.0 - (dragDistance / 500)).clamp(0.0, 1.0);
 
     return Scaffold(
-      backgroundColor: Colors.black.withOpacity(0.9 * opacity),
+      backgroundColor: Theme.of(
+        context,
+      ).colorScheme.background.withOpacity(opacity),
       body: GestureDetector(
         onTap: () => Navigator.of(context).pop(),
         onVerticalDragUpdate: _onVerticalDragUpdate,
@@ -997,34 +1099,68 @@ class _CommentImageFullscreenDialogState
                   scale: scale,
                   child: Hero(
                     tag: widget.heroTag,
-                    child: Image(
-                      image: widget.imageProvider,
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          width: 200,
-                          height: 200,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surface.withOpacity(0.5),
-                          child: Icon(
-                            Icons.broken_image,
+                    flightShuttleBuilder: (
+                      BuildContext flightContext,
+                      Animation<double> animation,
+                      HeroFlightDirection flightDirection,
+                      BuildContext fromHeroContext,
+                      BuildContext toHeroContext,
+                    ) {
+                      // ✅ Hero flight 중 배경색이 어두워지지 않도록 Material 없이 반환
+                      return Image(
+                        image: widget.imageProvider,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            width: 200,
+                            height: 200,
                             color: Theme.of(
                               context,
-                            ).colorScheme.onSurface.withOpacity(0.5),
-                          ),
-                        );
-                      },
+                            ).colorScheme.surface.withOpacity(0.5),
+                            child: Icon(
+                              Icons.broken_image,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.5),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                    child: Material(
+                      color: Colors.transparent,
+                      elevation: 0,
+                      child: Image(
+                        image: widget.imageProvider,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            width: 200,
+                            height: 200,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.surface.withOpacity(0.5),
+                            child: Icon(
+                              Icons.broken_image,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.5),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
             // 🎯 우측 상단 버튼들
-            SafeArea(
-              child: Positioned(
-                top: 16,
-                right: 16,
+            Positioned(
+              top: 16,
+              right: 16,
+              child: SafeArea(
+                top: true,
+                bottom: false,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1091,10 +1227,128 @@ class _CommentImageFullscreenDialogState
                 ),
               ),
             ),
+            // 🎯 하단 정보 (보낸 사람, 날짜)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                top: false,
+                bottom: true,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    children: [
+                      // 🎯 프로필 이미지
+                      if (widget.comment.authorProfileImageUrl.isNotEmpty)
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: ClipOval(
+                            child: Image.network(
+                              widget.comment.authorProfileImageUrl,
+                              width: 32,
+                              height: 32,
+                              cacheWidth: 32,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Container(
+                                  width: 32,
+                                  height: 32,
+                                  color: Colors.white.withOpacity(0.2),
+                                  child: Icon(
+                                    Icons.person,
+                                    size: 18,
+                                    color: Colors.white.withOpacity(0.7),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      if (widget.comment.authorProfileImageUrl.isNotEmpty)
+                        const SizedBox(width: 12),
+                      // 🎯 작성자 이름과 날짜
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              widget.comment.author,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _formatDateString(widget.comment.createdAt),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.8),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  /// 🎯 날짜 포맷팅 (상대 시간)
+  String _formatDateString(String dateStr) {
+    try {
+      final date = TimeUtils.toLocalTime(dateStr);
+      final now = DateTime.now();
+      final difference = now.difference(date);
+
+      if (difference.inDays == 0) {
+        if (difference.inHours == 0) {
+          if (difference.inMinutes == 0) {
+            return '방금 전';
+          }
+          return '${difference.inMinutes}분 전';
+        }
+        return '${difference.inHours}시간 전';
+      } else if (difference.inDays == 1) {
+        return '어제';
+      } else if (difference.inDays < 7) {
+        return '${difference.inDays}일 전';
+      } else if (difference.inDays < 30) {
+        return '${difference.inDays ~/ 7}주 전';
+      } else if (difference.inDays < 365) {
+        return '${difference.inDays ~/ 30}개월 전';
+      } else {
+        return '${difference.inDays ~/ 365}년 전';
+      }
+    } catch (e) {
+      // 포맷팅 실패 시 ISO 날짜를 간단히 표시
+      try {
+        final date = TimeUtils.toLocalTime(dateStr);
+        return '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
+      } catch (_) {
+        return dateStr;
+      }
+    }
   }
 }
 
