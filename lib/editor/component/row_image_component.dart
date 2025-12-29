@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/data/services/upload_service.dart';
@@ -9,7 +8,9 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
+import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
@@ -170,6 +171,9 @@ class RowImageComponentBuilder implements ComponentBuilder {
     SingleColumnLayoutComponentViewModel componentViewModel,
   ) {
     if (componentViewModel is ImageRowComponentViewModel) {
+      // ✅ 중요: nodeId 기반 GlobalObjectKey로 컴포넌트 Key를 안정화해서
+      // 문서 구조 변경(삽입/삭제/이동/드래그)에도 이미지 State가 불필요하게 리셋되지 않게 한다.
+      // ✅ 중요: SuperEditor의 componentKey 추적을 깨면 드래그&드롭/삽입이 망가질 수 있으므로 유지한다.
       return ImageRowComponent(
         nodeId: componentViewModel.nodeId,
         imageUrls: componentViewModel.imageUrls,
@@ -238,6 +242,9 @@ class ImageRowComponent extends StatefulWidget {
 
 class _ImageRowComponentState extends State<ImageRowComponent>
     with DocumentComponent, TickerProviderStateMixin {
+  // ✅ 같은 URL 이미지가 리빌드/재해결 과정에서 잠깐 frame=null이 되어도
+  // 마지막으로 성공적으로 렌더된 child를 유지해서 "사라졌다가 다시 뜨는" 깜빡임을 줄인다.
+  final Map<String, Widget> _lastRenderedByUrl = <String, Widget>{};
   double? _unifiedHeight;
   final Map<String, Size> _imageSizes = {};
   late final AnimationController _controller;
@@ -253,6 +260,55 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
   // 🎯 성능 최적화: 이미지 측정 중복 방지
   final Set<String> _measuringUrls = {}; // 측정 중인 URL 추적
+
+  // ✅ CachedNetworkImage 로딩 중에도 이전 이미지를 유지(깜빡임 방지)
+  final Map<String, ImageProvider> _lastNetworkProviders = {};
+
+  // 로컬 경로 -> 업로드 URL 변환 과정에서도 "같은 이미지"로 취급할 수 있도록
+  // 업로드 매핑(uploadedUrls: {localPath: networkUrl})을 역으로 조회해서 canonical seed를 만든다.
+  // - localPath인 경우: 그대로 localPath
+  // - networkUrl인 경우: 매칭되는 localPath가 있으면 localPath를 반환
+  // - 없으면: imageUrl 그대로
+  String _canonicalSeedForImageUrl(String imageUrl) {
+    try {
+      final editorService = _getEditorService();
+      if (editorService == null) return imageUrl;
+      final node = editorService.document.getNodeById(widget.nodeId);
+      if (node is! ImageRowNode) return imageUrl;
+      final meta = node.metadata;
+      final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+      if (uploadedUrls == null || uploadedUrls.isEmpty) return imageUrl;
+
+      // localPath인 경우
+      if (uploadedUrls.containsKey(imageUrl)) return imageUrl;
+
+      // networkUrl인 경우: value==imageUrl인 localPath 찾기
+      for (final entry in uploadedUrls.entries) {
+        final v = entry.value?.toString() ?? '';
+        if (v == imageUrl) {
+          final k = entry.key.toString();
+          if (k.isNotEmpty) return k;
+        }
+      }
+    } catch (_) {}
+    return imageUrl;
+  }
+
+  // ✅ Row에서 이미지가 분리/병합되면 index가 변하면서 key가 바뀌어 "재로드"가 발생할 수 있음.
+  // 가능한 한 URL 기반으로 key를 안정화해서 기존 Element/State를 재사용하게 한다.
+  Key _rowImageKey(int index, String imageUrl) {
+    // 로컬→네트워크 URL 치환에도 동일 키가 유지되도록 canonical seed를 사용한다.
+    final seed = _canonicalSeedForImageUrl(imageUrl);
+    // 동일 seed가 한 row에 중복될 수 있으므로, 중복일 땐 index를 섞어서 충돌만 피한다.
+    final dupCount =
+        widget.imageUrls
+            .where((u) => _canonicalSeedForImageUrl(u) == seed)
+            .length;
+    if (dupCount <= 1) {
+      return ValueKey('row_${widget.nodeId}_$seed');
+    }
+    return ValueKey('row_${widget.nodeId}_$seed#$index');
+  }
 
   // DocumentComponent 필수 메서드들
   @override
@@ -434,6 +490,12 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   @override
   void initState() {
     super.initState();
+    assert(() {
+      debugPrint(
+        '[ImgLife][Row] init: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}, urls=${widget.imageUrls.length}',
+      );
+      return true;
+    }());
 
     // ✅ 첫 프레임 전에 메타데이터에서 크기를 즉시 로드해, 쉬머/점프를 최소화한다.
     _loadImageSizesFromMetadata();
@@ -471,8 +533,20 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
     // 🎯 이미지 URL이 변경되면 무조건 재측정 (병합 포함)
     final urlsChanged = !_areUrlsEqual(oldWidget.imageUrls, widget.imageUrls);
+    assert(() {
+      debugPrint(
+        '[ImgLife][Row] didUpdateWidget: nodeId=${widget.nodeId}, urlsChanged=$urlsChanged, oldCount=${oldWidget.imageUrls.length}, newCount=${widget.imageUrls.length}',
+      );
+      if (urlsChanged) {
+        debugPrint(
+          '[ImgLife][Row] urls(old)=${oldWidget.imageUrls}\n[ImgLife][Row] urls(new)=${widget.imageUrls}',
+        );
+      }
+      return true;
+    }());
 
     if (urlsChanged) {
+      _lastRenderedByUrl.clear();
       _measuringUrls.clear();
 
       // ✅ 먼저 메타데이터로 가능한 만큼 즉시 복원해서 UI 변화 최소화
@@ -533,6 +607,12 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
   @override
   void dispose() {
+    assert(() {
+      debugPrint(
+        '[ImgLife][Row] dispose: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}',
+      );
+      return true;
+    }());
     _controller.dispose();
     _scatterCtrl.dispose();
 
@@ -1342,9 +1422,12 @@ class _ImageRowComponentState extends State<ImageRowComponent>
         _imageSizes[imageUrl] = size;
         _measuringUrls.remove(imageUrl);
 
-        debugPrint(
-          '[RowImage] ✅ 이미지 크기 측정 완료: $imageUrl -> ${size.width.toInt()}x${size.height.toInt()}',
-        );
+        assert(() {
+          debugPrint(
+            '[RowImage] ✅ 이미지 크기 측정 완료: $imageUrl -> ${size.width.toInt()}x${size.height.toInt()}',
+          );
+          return true;
+        }());
 
         if (widget.isEditing) {
           _saveImageSizeToMetadata(imageUrl, size);
@@ -1363,9 +1446,12 @@ class _ImageRowComponentState extends State<ImageRowComponent>
             _imageSizes[imageUrl] = providerSize;
             _measuringUrls.remove(imageUrl);
 
-            debugPrint(
-              '[RowImage] ✅ ImageProvider에서 크기 추출: $imageUrl -> ${providerSize.width.toInt()}x${providerSize.height.toInt()}',
-            );
+            assert(() {
+              debugPrint(
+                '[RowImage] ✅ ImageProvider에서 크기 추출: $imageUrl -> ${providerSize.width.toInt()}x${providerSize.height.toInt()}',
+              );
+              return true;
+            }());
 
             if (widget.isEditing) {
               _saveImageSizeToMetadata(imageUrl, providerSize);
@@ -1438,9 +1524,12 @@ class _ImageRowComponentState extends State<ImageRowComponent>
         _imageSizes[imageUrl] = size;
         _measuringUrls.remove(imageUrl);
 
-        debugPrint(
-          '[RowImage] ✅ ImageInfo에서 크기 추출: $imageUrl -> ${size.width.toInt()}x${size.height.toInt()}',
-        );
+        assert(() {
+          debugPrint(
+            '[RowImage] ✅ ImageInfo에서 크기 추출: $imageUrl -> ${size.width.toInt()}x${size.height.toInt()}',
+          );
+          return true;
+        }());
 
         if (widget.isEditing) {
           _saveImageSizeToMetadata(imageUrl, size);
@@ -1554,9 +1643,12 @@ class _ImageRowComponentState extends State<ImageRowComponent>
         editorService.document.replaceNodeById(widget.nodeId, updatedNode);
 
         assert(() {
-          debugPrint(
-            '[RowImage] ✅ 이미지 크기 저장 완료: nodeId=${widget.nodeId}, url=$imageUrl, size=${size.width.toInt()}x${size.height.toInt()}',
-          );
+          assert(() {
+            debugPrint(
+              '[RowImage] ✅ 이미지 크기 저장 완료: nodeId=${widget.nodeId}, url=$imageUrl, size=${size.width.toInt()}x${size.height.toInt()}',
+            );
+            return true;
+          }());
           return true;
         }());
       } else {
@@ -1761,7 +1853,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       final boundary = baseIndex == start ? selection.base : selection.extent;
       final pos = boundary.nodePosition;
       if (pos is UpstreamDownstreamNodePosition) {
-        return pos.affinity == TextAffinity.downstream;
+        // ✅ start 경계는 upstream일 때 포함 (아래→위 드래그 대칭 보장)
+        return pos.affinity == TextAffinity.upstream;
       }
     }
     if (myIndex == end) {
@@ -1776,109 +1869,63 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
   /// 🎯 Row 이미지 위젯 빌드 (로컬/네트워크 자동 판단)
   Widget _buildRowImageWidget(int index, String imageUrl, double maxWidth) {
-    final isLocal = ImageSizeUtils.isLocalPath(imageUrl);
+    final decodeWidth =
+        widget.isEditing
+            ? EditorImageProvider.editingDecodeWidth(
+              context,
+              widget.screenWidth,
+            )
+            : null;
 
-    if (isLocal) {
-      // 로컬 이미지
-      final filePath =
-          imageUrl.startsWith('file://') ? imageUrl.substring(7) : imageUrl;
-      final dpr = View.of(context).devicePixelRatio;
+    final built = EditorImageProvider.build(
+      url: imageUrl,
+      isEditing: widget.isEditing,
+      decodeWidth: decodeWidth,
+    );
+    if (!built.isLocal) {
+      _lastNetworkProviders[imageUrl] = built.baseProvider;
+    }
 
-      return Image.file(
-        File(filePath),
-        key: ValueKey('row_${widget.nodeId}_$index'),
-        fit: BoxFit.cover,
-        // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
-        // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
-        cacheWidth: widget.isEditing ? (maxWidth * dpr).round() : null,
-        frameBuilder: (context, child, frame, wasSyncLoaded) {
-          if (wasSyncLoaded || frame != null) {
-            // 🎯 성능 최적화: 이미 로드된 이미지에서 크기 추출 (중복 ImageStream 방지)
-            // child는 Image 위젯이고, 내부에 ImageInfo가 있음
-            // 하지만 frameBuilder에서는 ImageInfo에 직접 접근할 수 없으므로
-            // 별도 측정은 유지하되, 이미 측정 중이면 스킵
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              // 이미 측정 완료했거나 측정 중이면 스킵 (중복 방지)
-              if (!_imageSizes.containsKey(imageUrl) &&
-                  !_measuringUrls.contains(imageUrl)) {
+    return Image(
+      key: _rowImageKey(index, imageUrl),
+      image: built.effectiveProvider,
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.low,
+      gaplessPlayback: true, // ✅ provider가 바뀌어도 기존 프레임 유지
+      frameBuilder: (context, child, frame, wasSyncLoaded) {
+        if (wasSyncLoaded || frame != null) {
+          _lastRenderedByUrl[imageUrl] = child;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!_imageSizes.containsKey(imageUrl) &&
+                !_measuringUrls.contains(imageUrl)) {
+              if (built.isLocal) {
                 _measureAndUnifyHeight(imageUrl, maxWidth);
-              }
-            });
-            return child;
-          }
-
-          // 로컬 이미지 첫 로드 중: 쉬머 표시 (기본 3:4 비율, 측정되면 실제 비율)
-          return Container(
-            width: double.infinity,
-            height: _unifiedHeight ?? _calculateDefaultShimmerHeight(maxWidth),
-            color:
-                widget.isDarkMode
-                    ? Colors.grey[900]?.withOpacity(0.1)
-                    : Colors.grey[200]?.withOpacity(0.5),
-          );
-        },
-        errorBuilder: (context, error, stack) {
-          debugPrint('[RowImage] 로컬 이미지 로드 실패: $imageUrl, $error');
-          return ImageErrorPlaceholder(width: 200);
-        },
-      );
-    } else {
-      // 네트워크 이미지
-      final dpr = View.of(context).devicePixelRatio;
-      return Image.network(
-        imageUrl,
-        key: ValueKey('row_${widget.nodeId}_$index'),
-        fit: BoxFit.cover,
-        // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
-        // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
-        cacheWidth: widget.isEditing ? (maxWidth * dpr).round() : null,
-        frameBuilder: (context, child, frame, wasSyncLoaded) {
-          // 🎯 프리로드되었거나 캐시에 있으면 즉시 표시
-          if (wasSyncLoaded || frame != null) {
-            // 🎯 이미지가 로드되면 실제 크기 추출
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!_imageSizes.containsKey(imageUrl) &&
-                  !_measuringUrls.contains(imageUrl)) {
-                // Image 위젯에서 실제 크기 추출 시도
+              } else {
                 _extractSizeFromImageWidget(imageUrl, maxWidth, child);
               }
-            });
-            return child;
-          }
+            }
+          });
+          return child;
+        }
+        // 로딩 중: 이전 프레임이 있으면 유지해서 "사라짐"을 방지한다.
+        final last = _lastRenderedByUrl[imageUrl];
+        if (last != null) return last;
 
-          // 🎯 네트워크 이미지 로드 중:
-          // - 높이가 이미 측정되어 있으면 투명 컨테이너 (로컬→네트워크 전환 시)
-          // - 높이가 없으면 쉬머 (첫 로딩)
-          if (_unifiedHeight != null) {
-            // 이미 로컬 이미지로 높이를 측정했으므로 투명 컨테이너만 표시
-            return SizedBox(
-              width: double.infinity,
-              height: _unifiedHeight,
-              child: Container(
-                color:
-                    widget.isDarkMode
-                        ? Colors.grey[900]?.withOpacity(0.1)
-                        : Colors.grey[200]?.withOpacity(0.3),
-              ),
-            );
-          } else {
-            // 첫 로딩이므로 쉬머 표시 (기본 3:4 비율)
-            return Container(
-              width: double.infinity,
-              height: _calculateDefaultShimmerHeight(maxWidth),
-              color:
-                  widget.isDarkMode
-                      ? Colors.grey[900]?.withOpacity(0.1)
-                      : Colors.grey[200]?.withOpacity(0.5),
-            );
-          }
-        },
-        errorBuilder: (context, error, stack) {
-          debugPrint('[RowImage] 네트워크 이미지 로드 실패: $imageUrl, $error');
-          return ImageErrorPlaceholder(width: 200);
-        },
-      );
-    }
+        // 첫 로딩: unifiedHeight 있으면 그 높이로, 없으면 기본 비율
+        return Container(
+          width: double.infinity,
+          height: _unifiedHeight ?? _calculateDefaultShimmerHeight(maxWidth),
+          color:
+              widget.isDarkMode
+                  ? Colors.grey[900]?.withOpacity(0.1)
+                  : Colors.grey[200]?.withOpacity(0.3),
+        );
+      },
+      errorBuilder: (context, error, stack) {
+        debugPrint('[RowImage] 이미지 로드 실패: $imageUrl, $error');
+        return ImageErrorPlaceholder(width: 200);
+      },
+    );
   }
 }
 

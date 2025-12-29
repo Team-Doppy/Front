@@ -104,11 +104,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   Future<Map<String, dynamic>>? _contentFuture;
   Map<String, dynamic>? _currentExportedData; // 최신 컨텐츠를 저장
   bool _showLoadingLogo = false; // 로딩 로고 표시 여부
-  bool _isRenderReady = false; // 스포일러 마스크 렌더링 완료 여부
   bool _accessLevelChanged = false; // 🎯 공개 범위 변경 여부
   bool _documentInitialized = false; // 🎯 문서 초기화 완료 플래그 (재생성 방지)
-  bool _topMediaPreloaded = false; // 🎯 상위 3개 노드 미디어 프리로드 완료 여부
-  DateTime? _preloadStartTime; // 🎯 프리로드 시작 시간 (최소 로딩 시간 보장용)
+  bool _didStartRemainingMediaPreload =
+      false; // ✅ 상위 3개 제외 나머지 미디어 백그라운드 프리로드 1회 보장
+  int _preloadOp = 0; // ✅ pop/dispose 시 프리로드 중단 토큰
 
   // 스크롤 애니메이션을 위한 변수들
   static const double _appBarHeight = 52.0; // AppBar 높이
@@ -478,6 +478,64 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       }
     }
     // default: 알 수 없는 노드 타입 (처리 안 함)
+  }
+
+  void _startRemainingMediaPreloadOnce(Map<String, dynamic> content) {
+    if (_didStartRemainingMediaPreload) return;
+    _didStartRemainingMediaPreload = true;
+    final int op = ++_preloadOp;
+
+    // UI를 막지 않도록 백그라운드에서만 실행
+    Future.microtask(() async {
+      try {
+        if (!mounted || op != _preloadOp) return;
+        if (content['nodes'] == null) return;
+
+        // ✅ 상위 3개 "미디어 노드"에 포함된 이미지/비디오는 이미 preloadTopMedia로 완료됨
+        final topImages = _postReaderService.extractTopImageUrls(
+          content,
+          mediaNodeCount: 3,
+        );
+        final topClips = _postReaderService.extractTopClipUrls(
+          content,
+          mediaNodeCount: 3,
+        );
+
+        final allImages = _postReaderService.extractImageUrls(content);
+        final remainingImages =
+            allImages.where((u) => !topImages.contains(u)).toList();
+
+        final allClips = _postReaderService.extractClipUrls(content);
+        final remainingClips =
+            allClips.where((u) => !topClips.contains(u)).toList();
+
+        // ✅ 나머지 이미지는 백그라운드로 프리캐시 (상한은 걸어두자)
+        if (remainingImages.isNotEmpty) {
+          final toPreload =
+              remainingImages.length > 30
+                  ? remainingImages.take(30).toList()
+                  : remainingImages;
+          await _postReaderService.preloadImages(
+            context,
+            toPreload,
+            maxCount: toPreload.length,
+            shouldContinue: () => mounted && op == _preloadOp,
+          );
+        }
+
+        // ✅ 나머지 비디오는 백그라운드로 프리로드
+        if (remainingClips.isNotEmpty) {
+          await Future.wait(
+            remainingClips.map(
+              (url) => PostReaderService.preloadVideoForReader(url),
+            ),
+            eagerError: false,
+          );
+        }
+      } catch (_) {
+        // best-effort
+      }
+    });
   }
 
   void _triggerClipNodeAction(String nodeId, String action) {
@@ -938,108 +996,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       // content 객체 추출
       final content = response['content'] as Map<String, dynamic>? ?? {};
 
-      // 🎯 모든 비디오 + 상위 3개 이미지 동기 프리로드 (shimmer 방지)
+      // ✅ 상위 3개 미디어 노드는 "화면이 뜨기 전에" 프리로드를 끝내야 캐시 hit(=sync decode)로 쉬머가 안 뜬다.
+      // (프리로드가 끝나기 전에 위젯이 먼저 빌드되면, 첫 프레임에서 이미 async로 로드가 시작되어 hit로 전환되지 않음)
       if (content.isNotEmpty && content['nodes'] != null && mounted) {
-        debugPrint('[PostReaderScreen] 🚀 서버 응답 후 미디어 프리로드 시작');
-        _preloadStartTime = DateTime.now();
-
         try {
-          // 🎯 첫 텍스트 제외 후, 첫 3개 미디어 노드 프리로드 (이미지 + 비디오)
           await _postReaderService.preloadTopMedia(
             context,
             content,
             mediaNodeCount: 3,
           );
-
-          // 🎯 나머지 비디오 프리로드 (첫 3개 미디어 노드 이후)
-          final allClipUrls = _postReaderService.extractClipUrls(content);
-          final topClipUrls = _postReaderService.extractTopClipUrls(
-            content,
-            mediaNodeCount: 3,
-          );
-          final remainingClips =
-              allClipUrls.where((url) => !topClipUrls.contains(url)).toList();
-
-          if (remainingClips.isNotEmpty) {
-            debugPrint(
-              '[PostReaderScreen] 🎬 나머지 비디오 프리로드 시작 (${remainingClips.length}개)',
-            );
-            final videoFutures = <Future>[];
-            for (final url in remainingClips) {
-              videoFutures.add(
-                PostReaderService.preloadVideoForReader(url).catchError((e) {
-                  debugPrint('[PostReaderScreen] 비디오 프리로드 실패: $url');
-                }),
-              );
-            }
-            await Future.wait(videoFutures, eagerError: false);
-          }
-
-          final elapsed = DateTime.now().difference(_preloadStartTime!);
-          debugPrint(
-            '[PostReaderScreen] ✅ 서버 응답 후 상위 미디어 프리로드 완료 (${elapsed.inMilliseconds}ms)',
-          );
-
-          // 🎯 최소 로딩 시간 보장 (600ms) - 프리로드 완료 체감
-          const minLoadingDuration = Duration(milliseconds: 600);
-          if (elapsed < minLoadingDuration) {
-            final remaining = minLoadingDuration - elapsed;
-            debugPrint(
-              '[PostReaderScreen] ⏳ 최소 로딩 대기: ${remaining.inMilliseconds}ms',
-            );
-            await Future.delayed(remaining);
-          }
-
-          if (mounted) {
-            setState(() {
-              _topMediaPreloaded = true;
-            });
-          }
-        } catch (e) {
-          debugPrint('[PostReaderScreen] ❌ 서버 응답 후 상위 미디어 프리로드 실패: $e');
-          // 실패해도 로딩 해제
-          if (mounted) {
-            setState(() {
-              _topMediaPreloaded = true;
-            });
-          }
-        }
-      } else {
-        // content가 없으면 바로 완료 처리
-        if (mounted) {
-          setState(() {
-            _topMediaPreloaded = true;
-          });
-        }
-      }
-
-      // 🎯 나머지 이미지 백그라운드 프리로드 (비디오는 이미 완료)
-      if (content.isNotEmpty && mounted) {
-        final imageUrls = _postReaderService.extractImageUrls(content);
-        if (imageUrls.isNotEmpty) {
-          // 첫 3개 미디어 노드 내 이미지는 이미 프리로드했으므로 나머지만
-          final topImageUrls = _postReaderService.extractTopImageUrls(
-            content,
-            mediaNodeCount: 3,
-          );
-          final remainingImages =
-              imageUrls.where((url) => !topImageUrls.contains(url)).toList();
-
-          if (remainingImages.isNotEmpty) {
-            Future.microtask(() async {
-              if (mounted) {
-                await _postReaderService.preloadImages(
-                  context,
-                  remainingImages,
-                  maxCount: remainingImages.length,
-                );
-                debugPrint(
-                  '[PostReaderScreen] ✅ 나머지 이미지 프리로드 완료 (${remainingImages.length}개)',
-                );
-              }
-            });
-          }
-        }
+        } catch (_) {}
       }
 
       // 🎯 서버에서 받은 content 데이터 로그
@@ -1119,79 +1085,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _readOnlyFocus = FocusNode(canRequestFocus: false);
     _scrollCtrl.addListener(_onScroll);
 
-    // 🎯 상위 3개 노드 미디어 프리로드 (로딩 로고 표시 중)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      // widget.exported['content'] 또는 widget.preloadedContent 사용
-      final content =
-          widget.preloadedContent ??
-          (widget.exported['content'] as Map<String, dynamic>?);
-
-      if (content != null && content['nodes'] != null) {
-        debugPrint('[PostReaderScreen] 🚀 미디어 프리로드 시작 (initState)');
-        _preloadStartTime = DateTime.now();
-
-        // 🎯 모든 비디오 + 첫 3개 미디어 노드 이미지 프리로드
-        Future(() async {
-          // 🎯 첫 텍스트 제외 후, 첫 3개 미디어 노드 프리로드 (이미지 + 비디오)
-          await _postReaderService.preloadTopMedia(
-            context,
-            content,
-            mediaNodeCount: 3,
-          );
-
-          // 🎯 나머지 비디오 프리로드 (첫 3개 미디어 노드 이후)
-          final allClipUrls = _postReaderService.extractClipUrls(content);
-          final topClipUrls = _postReaderService.extractTopClipUrls(
-            content,
-            mediaNodeCount: 3,
-          );
-          final remainingClips =
-              allClipUrls.where((url) => !topClipUrls.contains(url)).toList();
-
-          if (remainingClips.isNotEmpty) {
-            debugPrint(
-              '[PostReaderScreen] 🎬 나머지 비디오 프리로드 시작 (${remainingClips.length}개)',
-            );
-            final videoFutures = <Future>[];
-            for (final url in remainingClips) {
-              videoFutures.add(
-                PostReaderService.preloadVideoForReader(url).catchError((e) {
-                  debugPrint('[PostReaderScreen] 비디오 프리로드 실패: $url');
-                }),
-              );
-            }
-            await Future.wait(videoFutures, eagerError: false);
-          }
-
-          final elapsed = DateTime.now().difference(_preloadStartTime!);
-          debugPrint(
-            '[PostReaderScreen] ✅ 미디어 프리로드 완료 (initState, ${elapsed.inMilliseconds}ms)',
-          );
-
-          // 최소 로딩 시간 보장
-          const minLoadingDuration = Duration(milliseconds: 600);
-          if (elapsed < minLoadingDuration) {
-            await Future.delayed(minLoadingDuration - elapsed);
-          }
-
-          if (mounted) {
-            setState(() => _topMediaPreloaded = true);
-          }
-        }).catchError((e) {
-          debugPrint('[PostReaderScreen] ❌ 미디어 프리로드 실패 (initState): $e');
-          if (mounted) {
-            setState(() => _topMediaPreloaded = true);
-          }
-        });
-      } else {
-        debugPrint(
-          '[PostReaderScreen] ⚠️ initState에서 content 없음 - 서버 응답 후 프리로드',
-        );
-      }
-    });
-
     // PostReaderScreen은 StickerService를 사용하지 않고
     // widget.exported에서 stickers를 직접 읽어 PostReaderStickers에 전달
 
@@ -1233,8 +1126,20 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       if (widget.preloadedContent != null) {
         debugPrint('[PostReaderScreen] 딥링크로 들어옴 - 이미 로드된 데이터 사용');
 
-        // 이미 로드된 content를 Future로 감싸서 반환
-        _contentFuture = Future.value(widget.preloadedContent);
+        // ✅ 딥링크 진입에서도 상위 3개는 "화면 뜨기 전에" 프리로드를 끝낸다 (캐시 hit 보장)
+        _contentFuture = Future(() async {
+          final content = widget.preloadedContent;
+          if (content != null && content['nodes'] != null && mounted) {
+            try {
+              await _postReaderService.preloadTopMedia(
+                context,
+                content,
+                mediaNodeCount: 3,
+              );
+            } catch (_) {}
+          }
+          return content ?? <String, dynamic>{};
+        });
 
         // 좋아요/댓글 데이터는 이미 딥링크 핸들러에서 초기화됨
         // 공개범위 정보만 업데이트
@@ -1250,42 +1155,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             _sharedGroupIds = parsed['sharedGroupIds'] as List<int>?;
             _sharedGroupNames = parsed['sharedGroupNames'] as List<String>?;
           });
-        }
-
-        // 🎯 첫 10개 이미지 빠르게 병렬 프리로드 (딥링크 진입 시)
-        if (mounted && widget.preloadedContent != null) {
-          final imageUrls = _postReaderService.extractImageUrls(
-            widget.preloadedContent!,
-          );
-          if (imageUrls.isNotEmpty) {
-            // 첫 10개 이미지를 빠르게 병렬 프리로드
-            final first10Images = imageUrls.take(10).toList();
-            Future.microtask(() async {
-              if (mounted) {
-                await _postReaderService.preloadImages(
-                  context,
-                  first10Images,
-                  maxCount: 10,
-                );
-                debugPrint('[PostReaderScreen] ✅ 첫 10개 이미지 프리로드 완료 (딥링크)');
-              }
-            });
-
-            // 나머지 이미지도 백그라운드에서 계속 로드
-            if (imageUrls.length > 10) {
-              final remainingImages = imageUrls.skip(10).toList();
-              Future.microtask(() async {
-                if (mounted) {
-                  await _postReaderService.preloadImages(
-                    context,
-                    remainingImages,
-                    maxCount: remainingImages.length,
-                  );
-                  debugPrint('[PostReaderScreen] ✅ 나머지 이미지 프리로드 완료 (딥링크)');
-                }
-              });
-            }
-          }
         }
       } else {
         // 일반 진입: 서버에서 데이터 로드
@@ -1375,6 +1244,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
   @override
   void dispose() {
+    _preloadOp++; // ✅ 남아있는 프리로드 작업 중단
     _commentService.removeListener(_onCommentServiceChanged);
     _likeService.removeListener(_onLikeServiceChanged);
 
@@ -1386,9 +1256,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     _likedUsersOverlayCtrl.dispose();
     _imageViewerCtrl.dispose();
 
-    // 프리로드된 비디오 컨트롤러 정리 (구버전 호환)
-    PostReaderService.disposeAllPreloaded();
-    debugPrint('[PostReaderScreen] 프리로드 컨트롤러 모두 정리');
+    // ✅ 주의: PostReaderService의 프리로드 캐시는 앱 전역(shared) 캐시다.
+    // 여기서 전부 dispose/clear 하면, 홈으로 돌아갔을 때 비디오/썸네일이 다시 로드되며
+    // "캐시가 날아간 느낌" + pop 타이밍 레이스로 에러가 터질 수 있다.
+    // 따라서 화면 종료 시점에는 reader 전용 컨트롤러만 정리한다.
 
     // 🎯 reader 모드에서 생성한 모든 비디오 컨트롤러 정지 및 dispose
     // 먼저 목록을 복사 (dispose 중에 맵이 변경될 수 있음)
@@ -1405,20 +1276,17 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       final controller = controllersToDispose[i];
       final url = urlsToRemove[i];
       try {
-        if (controller.value.isInitialized) {
-          // 일시정지
+        // 일시정지 (가능하면)
+        try {
           if (controller.value.isPlaying) {
             controller.pause();
             debugPrint('[PostReaderScreen] 컨트롤러 일시정지: $url');
           }
-          // 리스너 제거 시도
-          try {
-            controller.removeListener(() {});
-          } catch (_) {}
-          // dispose
-          controller.dispose();
-          debugPrint('[PostReaderScreen] 컨트롤러 dispose: $url');
-        }
+        } catch (_) {}
+
+        // dispose (initialize 여부와 무관하게 best-effort)
+        controller.dispose();
+        debugPrint('[PostReaderScreen] 컨트롤러 dispose: $url');
       } catch (e) {
         debugPrint('[PostReaderScreen] 컨트롤러 정리 오류 ($url): $e');
       }
@@ -1534,12 +1402,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         body: FutureBuilder<Map<String, dynamic>>(
           future: _contentFuture,
           builder: (context, snap) {
-            // 🎯 로딩 상태: content 로딩 중이거나 상위 미디어 프리로드 중
-            final isLoading =
-                snap.connectionState == ConnectionState.waiting ||
-                (snap.hasData && !_topMediaPreloaded);
-
-            if (isLoading) {
+            // ✅ 로딩 상태: content 로딩 중에만 로딩 로고 표시 (프리로드로 UI를 막지 않음)
+            if (snap.connectionState == ConnectionState.waiting) {
               return DoppyLoadingLogo(
                 opacity: _showLoadingLogo ? 1.0 : 0.0,
                 showBackButton: _showLoadingBackButton,
@@ -1547,20 +1411,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               );
             }
 
-            // ✅ 데이터/미디어 선행 준비 후 약간 더 대기하여 첫 프레임 안정화
-            if (snap.hasData && !_isRenderReady && _topMediaPreloaded) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) {
-                  debugPrint('[PostReaderScreen] 🎨 렌더링 준비 완료');
-                  setState(() => _isRenderReady = true);
-                }
-              });
-              return DoppyLoadingLogo(
-                opacity: _showLoadingLogo ? 1.0 : 0.0,
-                showBackButton: _showLoadingBackButton,
-                onBack: _closeLoadingScreen,
-              );
-            }
             if (snap.hasError) {
               return Scaffold(
                 // ✅ 에러 화면에서도 키보드(viewInsets)로 인한 불필요 레이아웃 변경 차단
@@ -1614,6 +1464,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             if (snap.hasData) {
               final merged = Map<String, dynamic>.from(widget.exported);
               merged['content'] = snap.data!;
+
+              // ✅ 상위 3개는 이미 await preloadTopMedia로 끝난 상태.
+              // 나머지는 딱 1번만 백그라운드로 프리로드한다(중복/재빌드 방지).
+              if (snap.data != null && snap.data!.isNotEmpty) {
+                _startRemainingMediaPreloadOnce(snap.data!);
+              }
 
               // 🎯 공개범위 정보도 최신 상태로 업데이트 (_loadContentWithPreloadedMedia에서 이미 업데이트됨)
               if (_accessLevel != null) {

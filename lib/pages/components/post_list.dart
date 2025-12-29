@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:collection';
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/pages/screens/group_selection_screen.dart';
+import 'package:doppy/image/utils/read_image_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/like_service.dart';
@@ -31,7 +33,6 @@ class PostList extends StatefulWidget {
   final NetworkError? networkError; // 네트워크 에러 상태
   final VoidCallback? onRetryError; // 에러 재시도 콜백
   final bool isTabActive; // 탭이 활성화되었는지 (다른 탭으로 이동하면 비디오 정지)
-  final Function(String?)? onBackgroundImageChanged; // 배경 이미지 URL 변경 콜백
 
   const PostList({
     super.key,
@@ -51,7 +52,6 @@ class PostList extends StatefulWidget {
     this.networkError, // 네트워크 에러 상태
     this.onRetryError, // 에러 재시도 콜백
     this.isTabActive = true, // 기본값은 활성화
-    this.onBackgroundImageChanged, // 배경 이미지 URL 변경 콜백
   });
 
   @override
@@ -63,6 +63,13 @@ class _PostListState extends State<PostList> {
   final ScrollController _scrollController = ScrollController();
   int _currentIndex = 0;
   late List<PostData> _items;
+  final LinkedHashSet<String> _prefetchedThumbs = LinkedHashSet<String>();
+  bool _prefetchScheduled = false;
+  double _lastPullProgress = 0.0;
+
+  // ✅ 좌/우 넘김 애니메이션을 통일해서 체감을 부드럽게
+  static const Duration _pageTurnDuration = Duration(milliseconds: 200);
+  static const Curve _pageTurnCurve = Curves.easeInOut;
 
   // 🎯 친구글이 없을 때 보여줄 온보딩 플레이스홀더 아이템
   final List<PostData> _noFriendPostItem = [
@@ -124,8 +131,67 @@ class _PostListState extends State<PostList> {
     // 각 게시물의 좋아요 상태 확인
     _loadLikeStatusForAllPosts();
 
-    // 초기 배경 이미지 업데이트
-    _updateBackgroundImage();
+    // ✅ 다음 카드(들) 썸네일 미리 프리캐시 (현재 카드가 중앙에 오기 전)
+    _schedulePrefetchAround(_currentIndex);
+  }
+
+  List<PostData> _postsToUse() =>
+      _items.isEmpty && widget.isShowingFriendsOnly
+          ? _noFriendPostItem
+          : _items;
+
+  bool _isNetworkUrl(String url) =>
+      url.startsWith('http://') || url.startsWith('https://');
+
+  void _touchPrefetchedThumb(String url) {
+    // LRU-ish: 최근 접근을 뒤로 이동
+    _prefetchedThumbs.remove(url);
+    _prefetchedThumbs.add(url);
+
+    // 상한을 둬서 무한 성장 방지 (메모리 누수 느낌 제거)
+    const int maxEntries = 250;
+    while (_prefetchedThumbs.length > maxEntries) {
+      _prefetchedThumbs.remove(_prefetchedThumbs.first);
+    }
+  }
+
+  void _schedulePrefetchAround(int index) {
+    if (_prefetchScheduled) return;
+    _prefetchScheduled = true;
+    Future.microtask(() async {
+      _prefetchScheduled = false;
+      if (!mounted) return;
+      await _prefetchAround(index);
+    });
+  }
+
+  Future<void> _prefetchAround(int index) async {
+    final postsToUse = _postsToUse();
+    if (postsToUse.isEmpty) return;
+
+    // 다음 2장만 선로드 (너무 공격적이면 메모리/네트워크 낭비)
+    final nextIndices = <int>[index + 1, index + 2];
+
+    for (final i in nextIndices) {
+      if (i < 0 || i >= postsToUse.length) continue;
+      final url = postsToUse[i].thumbnailUrlForCache.trim();
+      if (!_isNetworkUrl(url)) continue;
+      if (_prefetchedThumbs.contains(url)) {
+        _touchPrefetchedThumb(url);
+        continue;
+      }
+      _touchPrefetchedThumb(url);
+
+      try {
+        // PostCard와 동일하게 width=800 기준으로 프리캐시
+        await precacheImage(
+          ReadImageProvider.build(url: url, decodeWidth: 800),
+          context,
+        );
+      } catch (_) {
+        // 실패는 무시 (다음 프레임에서 자연 로드)
+      }
+    }
   }
 
   void _onLikeServiceChanged() {
@@ -143,40 +209,6 @@ class _PostListState extends State<PostList> {
         _likeService.setInitialLikeData(postId, post.isLiked, post.likeCount);
       }
     }
-  }
-
-  // 🎯 현재 포스트의 배경 이미지 URL을 계산해서 콜백으로 전달
-  void _updateBackgroundImage() {
-    if (widget.onBackgroundImageChanged == null) return;
-
-    // 빌드 중이 아닐 때만 콜백 호출 (addPostFrameCallback으로 지연)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || widget.onBackgroundImageChanged == null) return;
-
-      // 친구글이 없을 때는 _noFriendPostItem 사용
-      final List<PostData> postsToUse =
-          _items.isEmpty && widget.isShowingFriendsOnly
-              ? _noFriendPostItem
-              : _items;
-
-      if (postsToUse.isEmpty) {
-        widget.onBackgroundImageChanged!(null);
-        return;
-      }
-
-      final safeIndex = _currentIndex.clamp(0, postsToUse.length - 1);
-      final currentPost = postsToUse[safeIndex];
-      final String imageUrl = currentPost.thumbnailImageUrl.trim();
-
-      // 🎯 네트워크 이미지 또는 로컬 에셋 전달 (비디오는 VideoCacheService로 프리로드)
-      if (imageUrl.isNotEmpty) {
-        // 네트워크 이미지인 경우 비디오도 포함하여 전달
-        // 로컬 에셋인 경우도 전달하여 배경에 표시
-        widget.onBackgroundImageChanged!(imageUrl);
-      } else {
-        widget.onBackgroundImageChanged!(null);
-      }
-    });
   }
 
   void _loadLikeStatusForNewPosts(List<PostData> newPosts) {
@@ -197,19 +229,29 @@ class _PostListState extends State<PostList> {
     // 부모에서 같은 리스트 인스턴스를 mutate(addAll)해도 길이 변경을 감지하여 동기화
     final int newLen = widget.posts.length;
     if (newLen != _items.length || widget.posts != oldWidget.posts) {
-      debugPrint(' PostList 업데이트: 기존 ${_items.length}개 → 새로운 $newLen개');
+      assert(() {
+        debugPrint(' PostList 업데이트: 기존 ${_items.length}개 → 새로운 $newLen개');
+        return true;
+      }());
 
       if (newLen > _items.length) {
         // 증가: 새로 추가된 항목들만 반영
         final newPosts = widget.posts.sublist(_items.length);
         _items.addAll(newPosts);
         _loadLikeStatusForNewPosts(newPosts);
-        debugPrint('새로운 포스트 ${newPosts.length}개 추가됨');
+        assert(() {
+          debugPrint('새로운 포스트 ${newPosts.length}개 추가됨');
+          return true;
+        }());
       } else {
         // 감소하거나 완전 교체: 전체 재동기화
         _items = List<PostData>.from(widget.posts);
         _loadLikeStatusForAllPosts();
-        debugPrint('[PostList] 포스트 목록 재동기화(길이 감소/교체)');
+        _prefetchedThumbs.clear(); // ✅ 새 피드로 교체되면 프리패치도 리셋
+        assert(() {
+          debugPrint('[PostList] 포스트 목록 재동기화(길이 감소/교체)');
+          return true;
+        }());
 
         // 현재 인덱스를 0으로 리셋 (즉시 반영하여 PostCard의 isVisible 업데이트)
         _currentIndex = 0;
@@ -222,28 +264,24 @@ class _PostListState extends State<PostList> {
               // 현재 페이지가 0이 아닐 때만 jumpToPage 호출
               if ((_pageController.page ?? 0).round() != 0) {
                 _pageController.jumpToPage(0);
-                debugPrint('[PostList] PageController를 0으로 이동');
+                assert(() {
+                  debugPrint('[PostList] PageController를 0으로 이동');
+                  return true;
+                }());
               } else {
-                debugPrint('[PostList] PageController 이미 0번 페이지');
+                assert(() {
+                  debugPrint('[PostList] PageController 이미 0번 페이지');
+                  return true;
+                }());
               }
-
-              // 항상 한 번 더 setState하여 PostCard들이 완전히 재빌드되도록 보장
-              // 특히 0번 포스트가 비디오인 경우 볼륨이 재설정되어야 함
-              Future.microtask(() {
-                if (mounted) {
-                  setState(() {
-                    debugPrint('[PostList] 강제 재빌드로 볼륨 재설정 트리거');
-                  });
-                }
-              });
             }
           });
         }
       }
     }
 
-    // 배경 이미지 업데이트
-    _updateBackgroundImage();
+    // 데이터가 바뀌었으면 현재 위치 기준으로 다시 프리캐시
+    _schedulePrefetchAround(_currentIndex);
 
     // 🎯 섹션이 변경되면 (친구글 -> 전체글) 버튼 숨김 플래그 리셋
     if (widget.isShowingFriendsOnly != oldWidget.isShowingFriendsOnly) {
@@ -336,9 +374,6 @@ class _PostListState extends State<PostList> {
                       if (widget.onPageChanged != null) {
                         widget.onPageChanged!(index);
                       }
-
-                      // 배경 이미지 업데이트
-                      _updateBackgroundImage();
                     },
                     itemCount: _noFriendPostItem.length,
                     itemBuilder: (context, index) {
@@ -403,16 +438,19 @@ class _PostListState extends State<PostList> {
                     widget.onPageChanged!(index);
                   }
 
-                  // 배경 이미지 업데이트
-                  _updateBackgroundImage();
+                  // ✅ 다음 카드 프리캐시 (현재 카드가 중앙일 때 이미 다음 이미지가 준비되도록)
+                  _schedulePrefetchAround(index);
 
                   // 무한 스크롤: 마지막 페이지 근처에서 더 로드 (더 일찍 트리거)
                   if (widget.onLoadMore != null &&
                       index >= _items.length - 5 &&
                       !widget.isLoadingMore) {
-                    debugPrint(
-                      '🔄 로드 모어 실행! 현재 인덱스: $index, 전체 아이템: ${_items.length}',
-                    );
+                    assert(() {
+                      debugPrint(
+                        '🔄 로드 모어 실행! 현재 인덱스: $index, 전체 아이템: ${_items.length}',
+                      );
+                      return true;
+                    }());
                     widget.onLoadMore!();
                   }
                 },
@@ -468,7 +506,10 @@ class _PostListState extends State<PostList> {
                     setState(() {
                       _isHorizontalGesture = true;
                     });
-                    debugPrint('🔄 가로 제스처 감지! 세로 완전 차단');
+                    assert(() {
+                      debugPrint('🔄 가로 제스처 감지! 세로 완전 차단');
+                      return true;
+                    }());
                   }
                 }
               }
@@ -489,16 +530,16 @@ class _PostListState extends State<PostList> {
                   if (_gestureAccumX > 0 && _currentIndex > 0) {
                     // 오른쪽으로 스크롤 - 이전 페이지
                     _pageController.previousPage(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeInOut,
+                      duration: _pageTurnDuration,
+                      curve: _pageTurnCurve,
                     );
                     _isGestureActive = false;
                   } else if (_gestureAccumX < 0 &&
                       _currentIndex < postsToUse.length - 1) {
                     // 왼쪽으로 스크롤 - 다음 페이지
                     _pageController.nextPage(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeInOut,
+                      duration: _pageTurnDuration,
+                      curve: _pageTurnCurve,
                     );
                     _isGestureActive = false;
                   }
@@ -512,19 +553,27 @@ class _PostListState extends State<PostList> {
               // 위로 스와이프 감지 (섹션 전환용)
               if (_gestureAccumY < -_verticalSwipeThreshold &&
                   widget.onFilterTap != null) {
-                debugPrint(
-                  '⬆️ Listener로 위로 스와이프 감지! 섹션 전환 (임계값: $_verticalSwipeThreshold)',
-                );
+                assert(() {
+                  debugPrint(
+                    '⬆️ Listener로 위로 스와이프 감지! 섹션 전환 (임계값: $_verticalSwipeThreshold)',
+                  );
+                  return true;
+                }());
                 widget.onFilterTap!();
                 _isGestureActive = false;
                 return;
               }
             },
             onPointerUp: (details) {
-              setState(() {
+              if (_isGestureActive || _isHorizontalGesture) {
+                setState(() {
+                  _isGestureActive = false;
+                  _isHorizontalGesture = false;
+                });
+              } else {
                 _isGestureActive = false;
                 _isHorizontalGesture = false;
-              });
+              }
               _gestureAccumY = 0.0;
               _gestureAccumX = 0.0;
             },
@@ -546,16 +595,16 @@ class _PostListState extends State<PostList> {
                   // 왼쪽 30% - 이전 페이지
                   if (_currentIndex > 0) {
                     _pageController.previousPage(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
+                      duration: _pageTurnDuration,
+                      curve: _pageTurnCurve,
                     );
                   }
                 } else if (tapX > screenWidth * 0.7) {
                   // 오른쪽 30% - 다음 페이지
                   if (_currentIndex < postsToUse.length - 1) {
                     _pageController.nextPage(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
+                      duration: _pageTurnDuration,
+                      curve: _pageTurnCurve,
                     );
                   }
                 } else {
@@ -643,8 +692,14 @@ class _PostListState extends State<PostList> {
             top: 50,
             onRefresh: widget.onRefresh,
             onPullProgress: (progress) {
+              // ✅ drag 중 매 프레임 setState는 비싸다 → 임계치 기반으로만 업데이트
+              final next = progress.clamp(0.0, 1.0);
+              final diff = (next - _lastPullProgress).abs();
+              if (diff < 0.02 && next != 0.0 && next != 1.0) return;
+              _lastPullProgress = next;
+              if (!mounted) return;
               setState(() {
-                _pullProgress = progress;
+                _pullProgress = next;
               });
             },
             child:
@@ -724,16 +779,16 @@ class _PostListState extends State<PostList> {
           // 왼쪽 30% - 이전 페이지
           if (_currentIndex > 0) {
             _pageController.previousPage(
-              duration: const Duration(milliseconds: 150),
-              curve: Curves.easeOut,
+              duration: _pageTurnDuration,
+              curve: _pageTurnCurve,
             );
           }
         } else if (tapX > screenWidth * 0.7) {
           // 오른쪽 30% - 다음 페이지
           if (_currentIndex < postsToUse.length - 1) {
             _pageController.nextPage(
-              duration: const Duration(milliseconds: 150),
-              curve: Curves.easeOut,
+              duration: _pageTurnDuration,
+              curve: _pageTurnCurve,
             );
           }
         } else {
@@ -800,8 +855,9 @@ class _PostListState extends State<PostList> {
                     widget.showCardShimmer
                         ? _buildImageAreaShimmer()
                         : PostCard(
+                          key: ValueKey('postcard_${post.id}'),
                           containerWidth: widget.containerWidth,
-                          thumbnailImageUrl: post.thumbnailImageUrl,
+                          thumbnailImageUrl: post.thumbnailUrlForCache,
                           heroTag:
                               'post-hero-${widget.sectionLabel ?? "main"}-${post.id}-$index-${widget.key?.hashCode ?? hashCode}',
                           title: post.title,
@@ -963,16 +1019,16 @@ class _PostListState extends State<PostList> {
           // 왼쪽 30% - 이전 페이지
           if (_currentIndex > 0) {
             _pageController.previousPage(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOutCubic,
+              duration: _pageTurnDuration,
+              curve: _pageTurnCurve,
             );
           }
         } else if (tapX > screenWidth * 0.7) {
           // 오른쪽 30% - 다음 페이지
           if (_currentIndex < postsToUse.length - 1) {
             _pageController.nextPage(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOutCubic,
+              duration: _pageTurnDuration,
+              curve: _pageTurnCurve,
             );
           }
         } else {

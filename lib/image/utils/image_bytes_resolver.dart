@@ -2,8 +2,9 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:http/http.dart' as http;
+
+import 'edit_image_cache_manager.dart';
 
 /// 네트워크/로컬(파일 경로 or file://) 이미지 소스로부터 bytes를 가져오는 공용 유틸.
 ///
@@ -11,6 +12,8 @@ import 'package:http/http.dart' as http;
 /// - "네트워크면 먼저 bytes를 받고, 로컬이면 즉시 bytes" 요구사항을 만족한다.
 class ImageBytesResolver {
   const ImageBytesResolver._();
+
+  static final Set<String> _warmedDiskCacheUrls = <String>{};
 
   static bool isNetwork(String source) {
     final s = source.trim();
@@ -48,9 +51,11 @@ class ImageBytesResolver {
     }
 
     if (isNetwork(s)) {
-      // ✅ 우선 디스크 캐시를 조회해서(이미 화면에 떠있던 이미지면 히트 가능) 다운로드 대기 시간을 줄인다.
+      // ✅ (편집 모드 최적화) 편집 전용 디스크 캐시를 먼저 조회해서 대기 시간을 줄인다.
       try {
-        final cachedFile = await DefaultCacheManager().getSingleFile(s);
+        final cachedFile = await EditImageCacheManager.instance.getSingleFile(
+          s,
+        );
         if (await cachedFile.exists()) {
           return await cachedFile.readAsBytes();
         }
@@ -89,5 +94,27 @@ class ImageBytesResolver {
         (s) => resolveOne(s, timeout: timeoutPerItem, headers: headers),
       ),
     );
+  }
+
+  /// ✅ (편집 UX용) 네트워크 이미지의 "디스크 캐시"만 미리 채운다.
+  /// - UI 위젯을 CachedNetworkImage로 바꾸지 않아도, 이후 편집 진입 시 bytes 로딩이 빨라진다.
+  /// - 중복 다운로드 방지를 위해 URL 단위로 1회만 수행한다.
+  static Future<void> warmDiskCache(
+    String source, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final s = source.trim();
+    if (s.isEmpty) return;
+    if (!isNetwork(s)) return;
+
+    // 이미 워밍업 시도한 URL은 중복 수행하지 않음
+    if (_warmedDiskCacheUrls.contains(s)) return;
+    _warmedDiskCacheUrls.add(s);
+
+    try {
+      await EditImageCacheManager.instance.downloadFile(s).timeout(timeout);
+    } catch (_) {
+      // 워밍업 실패는 무시 (편집 진입 시 resolveOne이 다시 시도)
+    }
   }
 }

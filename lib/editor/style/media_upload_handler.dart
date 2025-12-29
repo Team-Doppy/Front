@@ -160,6 +160,7 @@ class MediaUploadHandler {
   ) async {
     final layout = result.groupLayout!;
     final files = result.files;
+    final preDimensions = result.imageDimensions;
 
     // 🎯 개별 이미지: 그룹 노드 생성 없이 일반 이미지로 업로드
     if (layout == GroupImageLayout.individual) {
@@ -169,10 +170,10 @@ class MediaUploadHandler {
 
     if (layout == GroupImageLayout.pageview) {
       // 🎯 페이지뷰: 모든 이미지를 하나의 노드로
-      await _uploadPageViewGroup(files, layout, upload);
+      await _uploadPageViewGroup(files, layout, upload, preDimensions);
     } else {
       // 🎯 2열 또는 3열: 이미지를 그룹으로 나눔
-      await _uploadGridLayout(files, layout, upload);
+      await _uploadGridLayout(files, layout, upload, preDimensions);
     }
   }
 
@@ -181,6 +182,7 @@ class MediaUploadHandler {
     List<File> files,
     GroupImageLayout layout,
     UploadService upload,
+    Map<String, dynamic>? preDimensions,
   ) async {
     final localPaths = files.map((f) => f.path).toList();
     // 🎯 성능 최적화: Set 사용으로 O(1) 조회
@@ -195,9 +197,14 @@ class MediaUploadHandler {
     debugPrint(
       '[MediaUploadHandler] 🔨 PageView 그룹 노드 생성 시도: layout=$layout, paths=${localPaths.length}개',
     );
+    final meta =
+        (preDimensions != null && preDimensions.isNotEmpty)
+            ? <String, dynamic>{'imageDimensions': preDimensions}
+            : null;
     final groupPlaceholderId = editorService.addGroupImageNode(
       localPaths: localPaths,
       layout: layout,
+      metadata: meta,
     );
     debugPrint(
       '[MediaUploadHandler] ✅ PageView 그룹 노드 생성 완료: $groupPlaceholderId (layout=$layout)',
@@ -286,6 +293,7 @@ class MediaUploadHandler {
     List<File> files,
     GroupImageLayout layout,
     UploadService upload,
+    Map<String, dynamic>? preDimensions,
   ) async {
     final imagesPerRow = layout == GroupImageLayout.grid2 ? 2 : 3;
     int groupIndex = 0;
@@ -306,7 +314,7 @@ class MediaUploadHandler {
       if (groupFiles.length >= 2) {
         // 2개 이상이면 ImageRowNode 생성
         debugPrint('[MediaUploadHandler] ✅ 그룹 #$groupIndex를 ImageRow로 업로드');
-        await _uploadImageRow(groupFiles, upload);
+        await _uploadImageRow(groupFiles, upload, preDimensions);
       } else {
         // 1개만 남으면 단일 이미지로
         debugPrint(
@@ -323,6 +331,7 @@ class MediaUploadHandler {
   Future<void> _uploadImageRow(
     List<File> groupFiles,
     UploadService upload,
+    Map<String, dynamic>? preDimensions,
   ) async {
     final localPaths = groupFiles.map((f) => f.path).toList();
     // 🎯 성능 최적화: Set 사용으로 O(1) 조회
@@ -337,9 +346,25 @@ class MediaUploadHandler {
     debugPrint(
       '[MediaUploadHandler] 🔨 ImageRow 그룹 노드 생성 시도: layout=grid2, paths=${localPaths.length}개',
     );
+    Map<String, dynamic>? filtered;
+    if (preDimensions != null && preDimensions.isNotEmpty) {
+      final out = <String, dynamic>{};
+      for (final p in localPaths) {
+        final v1 = preDimensions[p];
+        if (v1 != null) out[p] = v1;
+        final v2 = preDimensions['file://$p'];
+        if (v2 != null) out['file://$p'] = v2;
+      }
+      filtered = out.isNotEmpty ? out : null;
+    }
+    final meta =
+        filtered != null
+            ? <String, dynamic>{'imageDimensions': filtered}
+            : null;
     final groupPlaceholderId = editorService.addGroupImageNode(
       localPaths: localPaths,
       layout: GroupImageLayout.grid2,
+      metadata: meta,
     );
     debugPrint(
       '[MediaUploadHandler] ✅ ImageRow 그룹 노드 생성 완료: $groupPlaceholderId (layout=grid2)',

@@ -3,6 +3,7 @@ import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:flutter/material.dart';
 import '../../data/services/auth_service.dart';
 import '../../data/services/blog_service.dart';
+import 'package:doppy/image/utils/read_image_cache_manager.dart';
 import 'user_provider.dart';
 import 'friend_provider.dart';
 import 'group_provider.dart';
@@ -23,6 +24,9 @@ class AuthProvider extends ChangeNotifier {
   bool get isLoggedIn => _isLoggedIn;
 
   Future<void> logout() async {
+    // ✅ 계정 전환/로그아웃 시 read 이미지 디스크 캐시 purge (다른 계정 이미지 섞임 방지)
+    await ReadImageCacheManager.purge();
+
     // 1. AuthService에서 토큰 삭제
     await _authService.logout();
 
@@ -138,6 +142,14 @@ class AuthProvider extends ChangeNotifier {
     required String token,
     required String username,
   }) {
+    // ✅ 계정 전환(사용자명 변경) 케이스에서 read 디스크 캐시 purge
+    // (메모리 이미지 캐시는 Flutter가 관리하지만, 디스크 캐시는 계정 간 섞임 방지를 위해 비운다)
+    final prev = _username;
+    if (prev != null && prev.isNotEmpty && prev != username) {
+      // sync 메서드이므로 best-effort로 비동기 실행
+      Future.microtask(() => ReadImageCacheManager.purge());
+    }
+
     _isLoggedIn = isLoggedIn;
     _token = token;
     _username = username;

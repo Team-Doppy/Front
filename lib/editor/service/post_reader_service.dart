@@ -14,12 +14,33 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/font_preload_service.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
-import 'package:doppy/editor/style/defualt_toolbar.dart';
+import 'package:doppy/image/utils/editor_image_provider.dart';
+import 'package:doppy/editor/style/text_attributions.dart';
 import 'package:video_player/video_player.dart';
 
 /// 읽기 전용 포스트 복구 서비스
 /// PostReaderScreen에서 사용하는 MutableDocument 복원 로직
 class PostReaderService {
+  int _readDecodeWidth(BuildContext context) {
+    final dpr = View.of(context).devicePixelRatio;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final v = (screenWidth * dpr).round();
+    return v.clamp(1, 1000000);
+  }
+
+  bool _isDebug() {
+    var v = false;
+    assert(() {
+      v = true;
+      return true;
+    }());
+    return v;
+  }
+
+  void _d(String msg) {
+    if (_isDebug()) debugPrint(msg);
+  }
+
   /// Exported 데이터로부터 읽기 전용 MutableDocument를 복구한다.
   /// - includeTitleNode: true면 제목 노드도 포함 (드래프트 복구용), false면 제외 (글보기용)
   MutableDocument rebuildDocumentForRead(
@@ -101,7 +122,7 @@ class PostReaderService {
           // 패딩 모드 복원 (노드 레벨 우선, data 내 보조)
           final String? paddingMode =
               (m['padding'] ?? data?['padding'])?.toString();
-          debugPrint('[PostReaderService] ImageNode $id padding=$paddingMode');
+          _d('[PostReaderService] ImageNode $id padding=$paddingMode');
 
           // NodeComponentService에 스포일러 상태 복원
           if (hasSpoiler) {
@@ -614,7 +635,7 @@ class PostReaderService {
       }
     }
 
-    debugPrint('[PostReaderService] 이미지 URL 추출 완료: ${imageUrls.length}개');
+    _d('[PostReaderService] 이미지 URL 추출 완료: ${imageUrls.length}개');
     return imageUrls;
   }
 
@@ -635,7 +656,7 @@ class PostReaderService {
       }
     }
 
-    debugPrint('[PostReaderService] 클립 URL 추출 완료: ${clipUrls.length}개');
+    _d('[PostReaderService] 클립 URL 추출 완료: ${clipUrls.length}개');
     return clipUrls;
   }
 
@@ -716,16 +737,20 @@ class PostReaderService {
       }
     }
 
-    debugPrint(
+    _d(
       '[PostReaderService] 🎯 첫 $mediaNodeCount개 미디어 노드(이미지+영상 합쳐서)에서 URL 추출 완료: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
     );
-    if (imageUrls.isNotEmpty) {
-      debugPrint(
-        '[PostReaderService] 🖼️ 추출된 이미지 URL: ${imageUrls.join(", ")}',
-      );
-    }
-    if (clipUrls.isNotEmpty) {
-      debugPrint('[PostReaderService] 🎬 추출된 비디오 URL: ${clipUrls.join(", ")}');
+    if (_isDebug()) {
+      if (imageUrls.isNotEmpty) {
+        debugPrint(
+          '[PostReaderService] 🖼️ 추출된 이미지 URL: ${imageUrls.join(", ")}',
+        );
+      }
+      if (clipUrls.isNotEmpty) {
+        debugPrint(
+          '[PostReaderService] 🎬 추출된 비디오 URL: ${clipUrls.join(", ")}',
+        );
+      }
     }
 
     return {'images': imageUrls, 'clips': clipUrls};
@@ -809,21 +834,34 @@ class PostReaderService {
       return;
     }
 
-    debugPrint(
+    _d(
       '[PostReaderService] 🚀 첫 $mediaNodeCount개 미디어 노드 프리로드 시작: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
     );
 
     // 🎯 이미지와 비디오를 병렬로 프리로드 (크기 측정 제거 - 서버 응답에 이미 포함)
     final futures = <Future>[];
 
-    // 이미지 프리로드만 (크기는 서버 응답의 imageDimensions 사용)
+    final decodeWidth = _readDecodeWidth(context);
+
+    // 이미지 프리로드 (effectiveProvider 사용 - 렌더링과 최대한 동일한 provider)
     if (imageUrls.isNotEmpty) {
       for (final url in imageUrls) {
-        futures.add(
-          precacheImage(NetworkImage(url), context).catchError((e) {
-            debugPrint('[PostReaderService] 이미지 프리로드 실패: $url - $e');
-          }),
-        );
+        futures.add(() async {
+          try {
+            final built = EditorImageProvider.build(
+              url: url,
+              isEditing: false, // 읽기 모드
+              // ✅ 읽기 모드도 decodeWidth를 줘서 원본(대용량) 디코딩/캐시 점유를 줄이고,
+              // 홈 화면 썸네일/배경 캐시가 밀려나는 현상을 완화한다.
+              decodeWidth: decodeWidth,
+            );
+            // 🎯 effectiveProvider를 프리로드 (렌더링 시 사용하는 것과 정확히 동일)
+            await precacheImage(built.effectiveProvider, context);
+            debugPrint('[PostReaderService] ✅ 이미지 프리로드 완료: $url');
+          } catch (e) {
+            debugPrint('[PostReaderService] ❌ 이미지 프리로드 실패: $url - $e');
+          }
+        }());
       }
     }
 
@@ -854,7 +892,7 @@ class PostReaderService {
     });
     await completer.future;
 
-    debugPrint(
+    _d(
       '[PostReaderService] ✅ 상위 미디어 프리로드 완료: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
     );
 
@@ -910,10 +948,12 @@ class PostReaderService {
   }
 
   /// 이미지를 미리 로드한다
+  /// 🎯 EditorImageProvider를 사용하여 렌더링과 동일한 캐시 키 보장
   Future<void> preloadImages(
     BuildContext context,
     List<String> imageUrls, {
     int maxCount = 15, // 🎯 6 -> 15로 증가 (성능 개선)
+    bool Function()? shouldContinue, // ✅ pop/dispose 시 중단용
   }) async {
     final imagesToPreload = imageUrls.take(maxCount).toList();
 
@@ -921,30 +961,35 @@ class PostReaderService {
       return;
     }
 
-    debugPrint(
-      '[PostReaderService] 🖼️ 이미지 ${imagesToPreload.length}개 미리 로드 시작',
-    );
-    debugPrint(
-      '[PostReaderService] 🖼️ 프리로드할 URL 목록: ${imagesToPreload.join(", ")}',
-    );
+    _d('[PostReaderService] 🖼️ 이미지 ${imagesToPreload.length}개 미리 로드 시작');
+    _d('[PostReaderService] 🖼️ 프리로드할 URL 목록: ${imagesToPreload.join(", ")}');
+
+    final decodeWidth = _readDecodeWidth(context);
 
     try {
-      await Future.wait(
-        imagesToPreload.map((url) {
-          return precacheImage(
-            NetworkImage(url),
+      // ✅ Future.wait는 취소가 불가능해서, pop 시 캐시를 계속 밀어내는 원인이 될 수 있다.
+      // 따라서 순차 실행 + shouldContinue() 체크로 중단 가능하게 한다.
+      for (final url in imagesToPreload) {
+        if (shouldContinue != null && !shouldContinue()) return;
+        try {
+          final built = EditorImageProvider.build(
+            url: url,
+            isEditing: false, // 읽기 모드
+            decodeWidth: decodeWidth,
+          );
+          await precacheImage(
+            built.effectiveProvider,
             context,
             onError: (e, stack) {
               debugPrint('[PostReaderService] ❌ 이미지 프리캐싱 실패: $url - $e');
             },
-          ).then((_) {
-            debugPrint('[PostReaderService] ✅ 이미지 프리캐싱 완료: $url');
-          });
-        }),
-      );
-      debugPrint(
-        '[PostReaderService] ✅ 이미지 프리캐싱 완료: ${imagesToPreload.length}개',
-      );
+          );
+          _d('[PostReaderService] ✅ 이미지 프리캐싱 완료: $url');
+        } catch (e) {
+          debugPrint('[PostReaderService] ❌ 이미지 프리캐싱 중 오류: $url - $e');
+        }
+      }
+      _d('[PostReaderService] ✅ 이미지 프리캐싱 완료: ${imagesToPreload.length}개');
     } catch (e) {
       debugPrint('[PostReaderService] ❌ 이미지 프리캐싱 중 오류: $e');
     }
@@ -1119,16 +1164,32 @@ class PostReaderService {
       );
       stopwatch.stop();
 
-      debugPrint(
-        '[PostReaderService] ✅ 비디오 프리로드 완료 (reader): $url '
-        '(${stopwatch.elapsedMilliseconds}ms, ${controller.value.size.width}x${controller.value.size.height})',
-      );
+      // ✅ 화면이 먼저 종료되면서 controller가 교체/제거된 케이스 방어
+      // (뒤로가기 버튼으로 빠르게 pop → dispose가 먼저 돌고, initialize가 늦게 완료되면 여기서 에러가 터질 수 있음)
+      if (readerVideoControllers[url] != controller) {
+        try {
+          controller.dispose();
+        } catch (_) {}
+        return;
+      }
+
+      // debugPrint는 controller dispose race에 취약하므로 안전하게 처리
+      try {
+        debugPrint(
+          '[PostReaderService] ✅ 비디오 프리로드 완료 (reader): $url '
+          '(${stopwatch.elapsedMilliseconds}ms, ${controller.value.size.width}x${controller.value.size.height})',
+        );
+      } catch (_) {
+        // best-effort
+      }
     } catch (e, stackTrace) {
       debugPrint('[PostReaderService] ❌ 비디오 프리로드 실패 (reader): $url - $e');
       debugPrint('[PostReaderService] 스택: $stackTrace');
 
       // 실패 시 캐시에서 제거 및 컨트롤러 정리
-      readerVideoControllers.remove(url);
+      if (readerVideoControllers[url] == controller) {
+        readerVideoControllers.remove(url);
+      }
 
       if (controller != null) {
         try {

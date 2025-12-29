@@ -22,6 +22,9 @@ import 'crop_editor.dart'
         CropGestureHandler,
         CropAutoZoom;
 import 'rotation_editor.dart';
+import 'adjustment_editor.dart';
+import 'filter_editor.dart';
+import 'utils/filter_presets.dart';
 
 /// 간단한 커스텀 이미지 편집 화면
 /// 바텀시트 기반 UI, Undo/Redo, 실시간 미리보기 제공
@@ -84,7 +87,7 @@ class _ImageEditState {
   double warmth = 0.0; // -100 ~ 100
 
   // 필터 관련 상태
-  FilterType selectedFilter = FilterType.none;
+  FilterModel? selectedFilter;
   double filterIntensity = 1.0;
 
   // 이미지 이동 및 스케일 관련 상태
@@ -148,7 +151,7 @@ class _EditSnapshot {
   final double saturation;
   final double warmth;
 
-  final FilterType selectedFilter;
+  final FilterModel? selectedFilter;
   final double filterIntensity;
 
   static _EditSnapshot fromState(_ImageEditState s) {
@@ -236,8 +239,6 @@ class _EncodeJpegArgs {
   final Uint8List rgba;
   final int quality;
 }
-
-enum FilterType { none, clear, lucent, bright, tender }
 
 /// ✅ 비파괴 커밋 프리뷰: "크롭 결과"를 bytes로 굽지 않고 화면에서만 출력
 class _CommittedCropPreviewPainter extends CustomPainter {
@@ -393,7 +394,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       case _EditMode.filter:
         return 280;
       case _EditMode.adjust:
-        return 400;
+        return 320; // 크롭과 동일한 높이
       case _EditMode.none:
         return 250;
     }
@@ -420,6 +421,11 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   // 필터 스와이프 관련
   bool _hasSwiped = false;
+
+  // 조정 슬라이더 모드 여부
+  bool _isAdjustmentSliderMode = false;
+  final GlobalKey<AdjustmentEditorBottomSheetState> _adjustmentEditorKey =
+      GlobalKey<AdjustmentEditorBottomSheetState>();
 
   // ✅ 완료(내보내기) 중 UI 피드백
   bool _isExporting = false;
@@ -712,6 +718,37 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     return _imageEditStates.putIfAbsent(_currentIndex, () => _ImageEditState());
   }
 
+  void _resetCurrentAdjustmentValue() {
+    final type = _adjustmentEditorKey.currentState?.selectedType;
+    if (type == null) return;
+    final state = _getCurrentEditState();
+
+    setState(() {
+      switch (type) {
+        case AdjustmentType.brightness:
+          state.brightness = 0.0;
+          break;
+        case AdjustmentType.contrast:
+          state.contrast = 0.0;
+          break;
+        case AdjustmentType.saturation:
+          state.saturation = 0.0;
+          break;
+        case AdjustmentType.temperature:
+          // SimpleImageEditorScreen 내부 필드는 warmth로 관리
+          state.warmth = 0.0;
+          break;
+        // 아직 bytes에 반영되지 않는 항목들은 no-op (추후 확장)
+        case AdjustmentType.luminance:
+        case AdjustmentType.exposure:
+        case AdjustmentType.sharpness:
+        case AdjustmentType.blur:
+        case AdjustmentType.vignette:
+          break;
+      }
+    });
+  }
+
   /// 크롭 제스처 핸들러 가져오기 (이미지별)
   CropGestureHandler _getCropGestureHandler(int index) {
     return _cropGestureHandlers.putIfAbsent(index, () => CropGestureHandler());
@@ -832,8 +869,10 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           isDismissible: true,
           enableDrag: true,
           builder:
-              (context) =>
-                  GroupImageLayoutSelector(previewImages: previewFiles),
+              (context) => FractionallySizedBox(
+                heightFactor: 0.93,
+                child: GroupImageLayoutSelector(previewImages: previewFiles),
+              ),
         );
 
         // preview temp 정리 (실패해도 무시)
@@ -965,7 +1004,10 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   }
 
   List<double>? _getCombinedColorMatrix(_ImageEditState state) {
-    final filterMatrix = _getFilterMatrix(state.selectedFilter);
+    final filterMatrix = FilterUtils.getFilterMatrix(
+      state.selectedFilter,
+      intensity: state.filterIntensity,
+    );
     final adjustmentMatrix = _getAdjustmentMatrix(state);
 
     if (filterMatrix != null && adjustmentMatrix != null) {
@@ -1016,7 +1058,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
 
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      // ✅ 에디터 진입 순간에도 배경색이 비지 않도록 Scaffold 레벨에서 기본 배경을 깔아준다.
+      backgroundColor: bgColor.withOpacity(0.8),
       body: Stack(
         children: [
           // 글래스 블러 배경
@@ -1356,13 +1399,26 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                               top: 8.0,
                             ),
                             child: Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 TextButton(
-                                  onPressed:
-                                      () => _closeBottomSheet(cancel: true),
+                                  onPressed: () {
+                                    if (_editMode == _EditMode.adjust &&
+                                        _isAdjustmentSliderMode) {
+                                      // 조정 슬라이더 모드일 때는 버튼 모드로 돌아가기
+                                      _adjustmentEditorKey.currentState
+                                          ?.resetToButtonMode();
+                                    } else {
+                                      _closeBottomSheet(cancel: true);
+                                    }
+                                  },
                                   child: Text(
-                                    l10n.t('cancel'),
+                                    _editMode == _EditMode.crop
+                                        ? l10n.t('back')
+                                        : (_editMode == _EditMode.adjust &&
+                                            _isAdjustmentSliderMode)
+                                        ? l10n.t('back')
+                                        : l10n.t('cancel'),
                                     style: TextStyle(
                                       fontSize: 17,
                                       fontWeight: FontWeight.w600,
@@ -1370,7 +1426,71 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                     ),
                                   ),
                                 ),
-                                const Spacer(),
+                                // ✅ 조정 슬라이더 모드일 때 현재 조정 항목 이름 표시
+                                if (_editMode == _EditMode.adjust &&
+                                    _isAdjustmentSliderMode)
+                                  Expanded(
+                                    child: Center(
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            _adjustmentEditorKey
+                                                    .currentState
+                                                    ?.selectedType
+                                                    ?.label ??
+                                                '',
+                                            style: TextStyle(
+                                              fontSize: 17,
+                                              fontWeight: FontWeight.w600,
+                                              color: fgColor.withOpacity(0.9),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          GestureDetector(
+                                            onTap: _resetCurrentAdjustmentValue,
+                                            behavior:
+                                                HitTestBehavior.translucent,
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(6),
+                                              child: Icon(
+                                                Icons.refresh,
+                                                size: 18,
+                                                color: fgColor.withOpacity(0.9),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  )
+                                // ✅ 필터 슬라이더가 표시될 때 현재 필터 이름 표시
+                                else if (_editMode == _EditMode.filter) ...[
+                                  Builder(
+                                    builder: (context) {
+                                      final state = _getCurrentEditState();
+                                      final isSliderVisible =
+                                          state.selectedFilter != null &&
+                                          state.selectedFilter!.name != '원본';
+                                      if (isSliderVisible) {
+                                        return Expanded(
+                                          child: Center(
+                                            child: Text(
+                                              state.selectedFilter?.name ?? '',
+                                              style: TextStyle(
+                                                fontSize: 17,
+                                                fontWeight: FontWeight.w600,
+                                                color: fgColor.withOpacity(0.9),
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      return const Spacer();
+                                    },
+                                  ),
+                                ] else
+                                  const Spacer(),
                                 TextButton(
                                   onPressed: () async {
                                     await _applyEdit();
@@ -1513,12 +1633,16 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       state: state,
     );
 
+    // ✅ 조정 모드일 때는 key를 고정하여 위젯 재생성 방지 (이미지 크기 고정)
     final imageWidget =
         _getColorFilter(state) != null
             ? ColorFiltered(
-              key: ValueKey(
-                '${state.selectedFilter}_${state.brightness}_${state.contrast}_${state.saturation}',
-              ),
+              key:
+                  _editMode == _EditMode.adjust
+                      ? ValueKey('adjust_mode_$index') // 조정 모드일 때는 고정 key
+                      : ValueKey(
+                        '${state.selectedFilter}_${state.brightness}_${state.contrast}_${state.saturation}',
+                      ),
               colorFilter: _getColorFilter(state)!,
               child: basePaint,
             )
@@ -1532,8 +1656,11 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         );
 
     // 표준: 회전된 외접 사각형이 cropRect를 덮도록 하는 최소 배율(상태값은 건드리지 않음)
+    // ✅ 조정 모드일 때는 크롭 관련 계산을 하지 않아서 이미지 크기가 고정됨
     double k = 1.0;
-    if (cropRectScreen != null && imageRectForCrop != null) {
+    if (_editMode == _EditMode.crop &&
+        cropRectScreen != null &&
+        imageRectForCrop != null) {
       k = CropUtils.coverScaleToContainCropRect(
         imageRectScreen: imageRectForCrop,
         cropRectScreen: cropRectScreen,
@@ -1552,7 +1679,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           ..scale(sx, sy)
           ..translate(-anchor.dx, -anchor.dy);
 
-    return Transform(transform: m, child: imageWidget);
+    return RepaintBoundary(child: Transform(transform: m, child: imageWidget));
   }
 
   Widget _buildImagePreview(
@@ -1610,22 +1737,61 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
         // ✅ 현재 이미지 rect 계산
         // 크롭 모드일 때는 항상 마진이 적용된 함수 사용
-        final currentImageRect =
-            imageSize != null
-                ? (_editMode == _EditMode.crop
-                    ? ImageRectUtils.computeImageRectForCrop(
-                      containerSize: containerSize,
-                      imageSize: imageSize,
-                      scale: state.imageScale,
-                      offset: state.imageOffset,
-                    )
-                    : ImageRectUtils.computeImageRect(
-                      containerSize: containerSize,
-                      imageSize: imageSize,
-                      scale: state.imageScale,
-                      offset: state.imageOffset,
-                    ))
-                : null;
+        // ✅ 조정 모드일 때는 이미지 rect를 캐싱하여 크기 고정
+        Rect? currentImageRect;
+        if (imageSize != null) {
+          if (_editMode == _EditMode.crop) {
+            currentImageRect = ImageRectUtils.computeImageRectForCrop(
+              containerSize: containerSize,
+              imageSize: imageSize,
+              scale: state.imageScale,
+              offset: state.imageOffset,
+            );
+          } else if (_editMode == _EditMode.adjust) {
+            // ✅ 조정 모드일 때는 캐시된 rect 사용 (크기 고정)
+            final cachedSize = _imageDisplaySizes[index];
+            if (cachedSize == null) {
+              // 최초 계산 시에만 계산하고 저장
+              currentImageRect = ImageRectUtils.computeImageRect(
+                containerSize: containerSize,
+                imageSize: imageSize,
+                scale: state.imageScale,
+                offset: state.imageOffset,
+              );
+              _imageDisplaySizes[index] = currentImageRect.size;
+            } else {
+              // 캐시된 크기로 rect 재구성 (오프셋만 현재 값 사용)
+              final baseRect = ImageRectUtils.computeImageRect(
+                containerSize: containerSize,
+                imageSize: imageSize,
+                scale: 1.0, // scale 1.0 기준으로 계산
+                offset: Offset.zero,
+              );
+              // baseRect는 null이 될 수 없음 (imageSize가 null이 아니므로)
+              // 캐시된 크기 비율로 스케일 계산
+              final scaleRatio = cachedSize.width / baseRect.width;
+              final scaledWidth = baseRect.width * scaleRatio;
+              final scaledHeight = baseRect.height * scaleRatio;
+              final offsetX =
+                  baseRect.left - (scaledWidth - baseRect.width) / 2;
+              final offsetY =
+                  baseRect.top - (scaledHeight - baseRect.height) / 2;
+              currentImageRect = Rect.fromLTWH(
+                offsetX + state.imageOffset.dx,
+                offsetY + state.imageOffset.dy,
+                scaledWidth,
+                scaledHeight,
+              );
+            }
+          } else {
+            currentImageRect = ImageRectUtils.computeImageRect(
+              containerSize: containerSize,
+              imageSize: imageSize,
+              scale: state.imageScale,
+              offset: state.imageOffset,
+            );
+          }
+        }
 
         // ✅ 크롭 관련 계산용 imageRect (드래그 중이면 freeze된 값 사용)
         final cropHandler = _getCropGestureHandler(index);
@@ -1679,40 +1845,42 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
               // 1️⃣ 이미지 레이어 (transform 적용)
               IgnorePointer(
                 // 이미지 레이어는 터치 이벤트를 차단 (GestureDetector가 처리)
-                child:
-                    ((_editMode != _EditMode.crop ||
-                                _isClosingAfterCropApply) &&
-                            state.cropState.isCropRectInitialized &&
-                            state.cropState.cropRectImage != null &&
-                            _uiImageCache[index] != null)
-                        ? (_getColorFilter(state) != null
-                            ? ColorFiltered(
-                              colorFilter: _getColorFilter(state)!,
-                              child: CustomPaint(
+                child: RepaintBoundary(
+                  child:
+                      ((_editMode != _EditMode.crop ||
+                                  _isClosingAfterCropApply) &&
+                              state.cropState.isCropRectInitialized &&
+                              state.cropState.cropRectImage != null &&
+                              _uiImageCache[index] != null)
+                          ? (_getColorFilter(state) != null
+                              ? ColorFiltered(
+                                colorFilter: _getColorFilter(state)!,
+                                child: CustomPaint(
+                                  painter: _CommittedCropPreviewPainter(
+                                    image: _uiImageCache[index]!,
+                                    state: state,
+                                    containerSize: containerSize,
+                                  ),
+                                  size: Size.infinite,
+                                ),
+                              )
+                              : CustomPaint(
                                 painter: _CommittedCropPreviewPainter(
                                   image: _uiImageCache[index]!,
                                   state: state,
                                   containerSize: containerSize,
                                 ),
                                 size: Size.infinite,
-                              ),
-                            )
-                            : CustomPaint(
-                              painter: _CommittedCropPreviewPainter(
-                                image: _uiImageCache[index]!,
-                                state: state,
-                                containerSize: containerSize,
-                              ),
-                              size: Size.infinite,
-                            ))
-                        : _buildRotatedImage(
-                          context,
-                          index,
-                          currentImageBytes,
-                          state,
-                          cropRectScreen,
-                          imageRectForCrop,
-                        ),
+                              ))
+                          : _buildRotatedImage(
+                            context,
+                            index,
+                            currentImageBytes,
+                            state,
+                            cropRectScreen,
+                            imageRectForCrop,
+                          ),
+                ),
               ),
               // 2️⃣ 크롭 오버레이 레이어 (transform 미적용 - screen 좌표로 직접 그림)
               if (_editMode == _EditMode.crop &&
@@ -1830,7 +1998,10 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   ColorFilter? _getColorFilter(_ImageEditState state) {
     // 필터 + 조정 결합
-    final filterMatrix = _getFilterMatrix(state.selectedFilter);
+    final filterMatrix = FilterUtils.getFilterMatrix(
+      state.selectedFilter,
+      intensity: state.filterIntensity,
+    );
     final adjustmentMatrix = _getAdjustmentMatrix(state);
 
     // 행렬 곱셈 (간단한 결합)
@@ -1846,149 +2017,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     return null;
   }
 
-  List<double>? _getFilterMatrix(FilterType filter) {
-    switch (filter) {
-      case FilterType.none:
-        return null;
-      case FilterType.clear:
-        return [
-          1.0,
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          1.1,
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          1.1,
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-        ];
-      case FilterType.lucent:
-        return [
-          1.1,
-          0.0,
-          0.0,
-          0.0,
-          10.0,
-          0.0,
-          1.1,
-          0.0,
-          0.0,
-          10.0,
-          0.0,
-          0.0,
-          1.1,
-          0.0,
-          10.0,
-          0.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-        ];
-      case FilterType.bright:
-        return [
-          1.2,
-          0.0,
-          0.0,
-          0.0,
-          20.0,
-          0.0,
-          1.2,
-          0.0,
-          0.0,
-          20.0,
-          0.0,
-          0.0,
-          1.2,
-          0.0,
-          20.0,
-          0.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-        ];
-      case FilterType.tender:
-        return [
-          1.0,
-          0.1,
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          1.0,
-          0.1,
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          1.0,
-          0.0,
-        ];
-    }
-  }
-
   List<double>? _getAdjustmentMatrix(_ImageEditState state) {
-    if (state.brightness == 0.0 &&
-        state.contrast == 0.0 &&
-        state.saturation == 0.0) {
-      return null;
-    }
-
-    // 밝기: +value는 밝게, -value는 어둡게
-    final brightness = state.brightness / 100.0;
-    // 대비: +value는 대비 증가, -value는 대비 감소
-    final contrast = 1.0 + (state.contrast / 100.0);
-    // 채도: +value는 채도 증가, -value는 채도 감소
-    final saturation = 1.0 + (state.saturation / 100.0);
-
-    // 간단한 행렬 계산 (채도 포함)
-    final lumR = 0.299;
-    final lumG = 0.587;
-    final lumB = 0.114;
-    final sr = (1.0 - saturation) * lumR;
-    final sg = (1.0 - saturation) * lumG;
-    final sb = (1.0 - saturation) * lumB;
-
-    return [
-      (sr + saturation) * contrast,
-      sg * contrast,
-      sb * contrast,
-      0.0,
-      brightness * 255,
-      sr * contrast,
-      (sg + saturation) * contrast,
-      sb * contrast,
-      0.0,
-      brightness * 255,
-      sr * contrast,
-      sg * contrast,
-      (sb + saturation) * contrast,
-      0.0,
-      brightness * 255,
-      0.0,
-      0.0,
-      0.0,
-      1.0,
-      0.0,
-    ];
+    return AdjustmentUtils.getAdjustmentMatrix(
+      brightness: state.brightness,
+      contrast: state.contrast,
+      saturation: state.saturation,
+    );
   }
 
   List<double> _multiplyMatrices(List<double> a, List<double> b) {
@@ -2123,16 +2157,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     if (deltaX.abs() > 20 && !_hasSwiped) {
       _hasSwiped = true;
       final state = _getCurrentEditState();
-      final filters = FilterType.values;
-      final currentIndex = filters.indexOf(state.selectedFilter);
-      int newIndex;
-      if (deltaX > 0) {
-        newIndex = currentIndex > 0 ? currentIndex - 1 : filters.length - 1;
-      } else {
-        newIndex = currentIndex < filters.length - 1 ? currentIndex + 1 : 0;
-      }
+      final nextFilter = FilterUtils.getNextFilter(
+        state.selectedFilter,
+        deltaX,
+      );
       setState(() {
-        state.selectedFilter = filters[newIndex];
+        state.selectedFilter = nextFilter;
       });
     }
   }
@@ -2340,201 +2370,60 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   Widget _buildFilterBottomSheet() {
     final state = _getCurrentEditState();
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final fgColor =
-        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
-    final filters = [
-      {'name': '원본', 'filter': FilterType.none},
-      {'name': 'Clear', 'filter': FilterType.clear},
-      {'name': 'Lucent', 'filter': FilterType.lucent},
-      {'name': 'Bright', 'filter': FilterType.bright},
-      {'name': 'Tender', 'filter': FilterType.tender},
-    ];
-
     final currentImageBytes = _images[_currentIndex];
 
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, right: 4, top: 10, bottom: 40),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children:
-              filters.map((filter) {
-                final filterType = filter['filter'] as FilterType;
-                final isSelected = state.selectedFilter == filterType;
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            state.selectedFilter = filterType;
-                          });
-                        },
-                        child: Container(
-                          width: 70,
-                          height: 70,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color:
-                                  isSelected
-                                      ? Theme.of(context).colorScheme.primary
-                                      : fgColor.withOpacity(0.2),
-                              width: isSelected ? 3 : 1,
-                            ),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(7),
-                            child: FutureBuilder<ui.Image>(
-                              future: _loadImage(currentImageBytes),
-                              builder: (context, snapshot) {
-                                if (snapshot.hasData) {
-                                  return ColorFiltered(
-                                    colorFilter: ColorFilter.matrix(
-                                      _getFilterMatrix(filterType) ??
-                                          [
-                                            1,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            1,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            1,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            1,
-                                            0,
-                                          ],
-                                    ),
-                                    child: CustomPaint(
-                                      painter: ImagePainter(
-                                        snapshot.data!,
-                                        Offset.zero,
-                                        1.0,
-                                      ),
-                                      size: Size.infinite,
-                                    ),
-                                  );
-                                }
-                                // ✅ 기존 노드 편집 진입에서는 "초기 로딩" UI를 숨김
-                                if (widget.isExistingNodeEdit) {
-                                  return const SizedBox.shrink();
-                                }
-                                return Container(
-                                  color: fgColor.withOpacity(0.1),
-                                  child: Center(
-                                    child: SizedBox(
-                                      width: 24,
-                                      height: 24,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 4,
-                                        color: fgColor,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        filter['name'] as String,
-                        style: TextStyle(
-                          color:
-                              isSelected
-                                  ? Theme.of(context).colorScheme.primary
-                                  : fgColor,
-                          fontSize: 11,
-                          fontWeight:
-                              isSelected ? FontWeight.w600 : FontWeight.w400,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-        ),
-      ),
+    return FilterEditorBottomSheet(
+      selectedFilter: state.selectedFilter,
+      filterIntensity: state.filterIntensity,
+      imageBytes: currentImageBytes,
+      isExistingNodeEdit: widget.isExistingNodeEdit,
+      onFilterChanged: (filter) {
+        // ✅ 필터 선택만 하고 히스토리는 저장하지 않음 (바텀시트 닫을 때만 저장)
+        setState(() {
+          state.selectedFilter = filter;
+        });
+      },
+      onFilterIntensityChanged: (intensity) {
+        // ✅ 필터 강도 변경 (히스토리는 저장하지 않음)
+        setState(() {
+          state.filterIntensity = intensity;
+        });
+      },
     );
   }
 
   Widget _buildAdjustmentBottomSheet() {
     final state = _getCurrentEditState();
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final fgColor =
-        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
-    final adjustments = [
-      {'label': '밝기', 'type': 'brightness', 'icon': Icons.brightness_6},
-      {'label': '대비', 'type': 'contrast', 'icon': Icons.contrast},
-      {'label': '채도', 'type': 'saturation', 'icon': Icons.palette},
-    ];
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-      child: Column(
-        children:
-            adjustments.map((adj) {
-              final type = adj['type'] as String;
-              double value = 0.0;
-              if (type == 'brightness') value = state.brightness;
-              if (type == 'contrast') value = state.contrast;
-              if (type == 'saturation') value = state.saturation;
+    // AdjustmentState로 변환
+    final adjustmentState =
+        AdjustmentState()
+          ..brightness = state.brightness
+          ..contrast = state.contrast
+          ..saturation = state.saturation;
 
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(adj['icon'] as IconData, color: fgColor, size: 20),
-                        const SizedBox(width: 8),
-                        Text(
-                          adj['label'] as String,
-                          style: TextStyle(
-                            color: fgColor,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          value.toStringAsFixed(0),
-                          style: TextStyle(color: fgColor, fontSize: 14),
-                        ),
-                      ],
-                    ),
-                    Slider(
-                      value: value,
-                      min: -100,
-                      max: 100,
-                      onChanged: (newValue) {
-                        setState(() {
-                          if (type == 'brightness') state.brightness = newValue;
-                          if (type == 'contrast') state.contrast = newValue;
-                          if (type == 'saturation') state.saturation = newValue;
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              );
-            }).toList(),
-      ),
+    return AdjustmentEditorBottomSheet(
+      key: _adjustmentEditorKey,
+      state: adjustmentState,
+      onStateChanged: (newState) {
+        setState(() {
+          state.brightness = newState.brightness;
+          state.contrast = newState.contrast;
+          state.saturation = newState.saturation;
+          // 추가 속성들 (향후 구현)
+          // state.luminance = newState.luminance;
+          // state.exposure = newState.exposure;
+          // state.sharpness = newState.sharpness;
+          // state.temperature = newState.temperature;
+          // state.blur = newState.blur;
+          // state.vignette = newState.vignette;
+        });
+      },
+      onSliderModeChanged: (isSliderMode) {
+        setState(() {
+          _isAdjustmentSliderMode = isSliderMode;
+        });
+      },
     );
   }
 }

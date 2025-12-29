@@ -11,6 +11,7 @@ import 'package:doppy/data/services/auth_service.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -47,6 +48,9 @@ class _SplashScreenState extends State<SplashScreen>
   final HomeDataService _homeDataService = HomeDataService();
 
   late final Future<_BootstrapResult> _bootstrapFuture;
+  bool _showRootShell = false;
+  bool _hideSplashOverlay = false;
+  HomeData? _preloadedHomeData;
 
   @override
   void initState() {
@@ -80,7 +84,7 @@ class _SplashScreenState extends State<SplashScreen>
     // 🎯 애니메이션이 시작된 후 데이터 로드 및 네비게이션 시작
     WidgetsBinding.instance.addPostFrameCallback((_) {
       startSequence();
-      _navigateAfterReady();
+      _transitionAfterReady();
     });
   }
 
@@ -151,7 +155,6 @@ class _SplashScreenState extends State<SplashScreen>
         size: 20, // 🎯 10 -> 20으로 증가 (앱 시작 시에도 20개 로드)
       );
 
-      // 이미지 프리캐시는 Splash에서 하지 않음 (RootShell에서 처리)
       return homeData;
     } catch (e) {
       debugPrint('[SplashScreen] 피드 데이터 로드 실패: $e');
@@ -255,7 +258,7 @@ class _SplashScreenState extends State<SplashScreen>
     }
   }
 
-  Future<void> _navigateAfterReady() async {
+  Future<void> _transitionAfterReady() async {
     // 🎯 애니메이션과 부트스트랩을 동일한 await 그룹으로 묶기
     await Future.wait([
       _fadeInController.forward().orCancel.catchError((_) => null),
@@ -264,36 +267,57 @@ class _SplashScreenState extends State<SplashScreen>
 
     if (!mounted) return;
 
-    // 🎯 로딩 완료 후 doppy 로고 페이드아웃 애니메이션 완료까지 대기
-    await _fadeOutController.forward();
-
-    if (!mounted) return;
-
-    // 마지막 프레임이 그려질 시간을 아주 조금 보장 (체감상 "완전히 사라진 후" 전환)
-    await Future.delayed(const Duration(milliseconds: 16));
-    if (!mounted) return;
-
     // 부트스트랩 결과에 따라 네비게이션
     final result = await _bootstrapFuture;
     if (!mounted) return;
 
     if (result.loggedIn) {
-      // ✅ 딥링크가 스플래시 중 push될 수 있으므로, 스택을 완전히 초기화해서
-      // "뒤로가기 시 이상한 화면(빈 All Posts/스플래시 잔존)"이 나오지 않게 한다.
-      Navigator.of(context).pushAndRemoveUntil(
-        PageRouteBuilder(
-          pageBuilder:
-              (_, __, ___) => RootShell(
-                initialIndex: 0,
-                preloadedHomeData: result.homeData,
-              ),
-          transitionDuration: const Duration(milliseconds: 250),
-          transitionsBuilder:
-              (_, a, __, child) => FadeTransition(opacity: a, child: child),
-        ),
-        (route) => false,
-      );
+      // ✅ RootShell을 먼저 "아래에" 렌더링해두고, 스플래시 오버레이만 페이드아웃
+      // 화면 전환 시 포스트 리스트/배경이 "빡" 하고 늦게 나타나는 느낌을 줄인다.
+      setState(() {
+        _preloadedHomeData = result.homeData;
+        _showRootShell = true;
+      });
+
+      // RootShell/HomeScreen/PostList가 최소 1~2프레임 렌더링될 시간을 확보
+      // (PostList의 배경 이미지 콜백이 addPostFrameCallback 기반이라 한 프레임 늦게 올 수 있음)
+      await SchedulerBinding.instance.endOfFrame;
+      await SchedulerBinding.instance.endOfFrame;
+      if (!mounted) return;
+
+      // 🎯 로딩 완료 후 doppy 로고 페이드아웃 애니메이션 완료까지 대기
+      await _fadeOutController.forward();
+      if (!mounted) return;
+
+      // 오버레이 제거 (이제 RootShell만 보이게)
+      setState(() {
+        _hideSplashOverlay = true;
+      });
+
+      // ✅ 스플래시 로고 애니메이션이 끝난 뒤에만 이미지 프리캐시 시작
+      // (스플래시 중 precacheImage/디코딩이 돌면 원형 스피너가 버벅여 보일 수 있음)
+      try {
+        final homeData = result.homeData;
+        if (homeData != null && !homeData.isEmpty) {
+          final primaryPosts =
+              homeData.friendsPosts.isNotEmpty
+                  ? homeData.friendsPosts
+                  : homeData.allPosts;
+          if (primaryPosts.isNotEmpty) {
+            _homeDataService.startPreloadingImagesInBackground(
+              primaryPosts,
+              context,
+              count: 5,
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint('[SplashScreen] 이미지 프리캐시 시작 실패(무시): $e');
+      }
     } else {
+      // 로그인 화면으로 전환 (스택 초기화)
+      await _fadeOutController.forward();
+      if (!mounted) return;
       Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
     }
   }
@@ -312,37 +336,48 @@ class _SplashScreenState extends State<SplashScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          Center(
-            child: AnimatedBuilder(
-              animation: Listenable.merge([
-                _fadeInController,
-                _fadeOutController,
-              ]),
-              builder: (context, _) {
-                // 페이드아웃이 진행 중이면 fadeOutOpacity, 아니면 fadeInOpacity
-                final currentOpacity =
-                    _fadeOutController.value > 0.0
-                        ? _fadeOutOpacity.value
-                        : _fadeInOpacity.value;
+          // ✅ 홈을 미리 렌더링 (스플래시가 위에 덮여있어서 사용자는 못 봄)
+          if (_showRootShell)
+            RootShell(initialIndex: 0, preloadedHomeData: _preloadedHomeData),
 
-                return Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    DoppyLoadingLogo(
-                      opacity: currentOpacity,
-                      // Splash에서는 외부 애니메이션 컨트롤러가 opacity를 이미 제어하므로
-                      // 내부 AnimatedOpacity 지연(400ms)을 제거해서 "완전히 사라진 뒤" 전환되게 함
-                      opacityDuration: Duration.zero,
-                      dTextSize: 40,
-                      ppyTextSize: 40,
-                      spinnerStrokeWidth: 4.5,
-                      spinnerColor: Theme.of(context).colorScheme.primary,
+          // ✅ 스플래시 오버레이 (페이드아웃 후 제거)
+          if (!_hideSplashOverlay)
+            Positioned.fill(
+              // ✅ 뒤에 깔린 RootShell이 로고 페이드아웃 중 "비쳐 보이지" 않도록
+              // 오버레이 자체는 끝까지 불투명 배경을 유지한다.
+              child: IgnorePointer(
+                ignoring: true,
+                child: ColoredBox(
+                  color: Theme.of(context).colorScheme.background,
+                  child: Center(
+                    child: AnimatedBuilder(
+                      animation: Listenable.merge([
+                        _fadeInController,
+                        _fadeOutController,
+                      ]),
+                      builder: (context, _) {
+                        // 페이드아웃이 진행 중이면 fadeOutOpacity, 아니면 fadeInOpacity
+                        final currentOpacity =
+                            _fadeOutController.value > 0.0
+                                ? _fadeOutOpacity.value
+                                : _fadeInOpacity.value;
+
+                        return DoppyLoadingLogo(
+                          opacity: currentOpacity,
+                          // Splash에서는 외부 애니메이션 컨트롤러가 opacity를 이미 제어하므로
+                          // 내부 AnimatedOpacity 지연(400ms)을 제거해서 "완전히 사라진 뒤" 전환되게 함
+                          opacityDuration: Duration.zero,
+                          dTextSize: 40,
+                          ppyTextSize: 40,
+                          spinnerStrokeWidth: 4.5,
+                          spinnerColor: Theme.of(context).colorScheme.primary,
+                        );
+                      },
                     ),
-                  ],
-                );
-              },
+                  ),
+                ),
+              ),
             ),
-          ),
         ],
       ),
     );

@@ -101,10 +101,15 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                     final newSpoilerValue = !isImageSpoiler;
                     final nodeId = widget.selectedId!;
 
-                    // 1. NodeComponentService에 스포일러 상태 저장
-                    NodeComponentService().setSpoiler(nodeId, newSpoilerValue);
+                    // ✅ 편집 모드(문서 기반)에서는 NodeComponentService의 세션 캐시가
+                    // 문서 metadata와 충돌하면 undo/redo 시 상태가 어긋날 수 있다.
+                    // 따라서 토글 시 세션 캐시를 제거하고, 문서 metadata만 변경한다.
+                    NodeComponentService().clearSpoilerForNode(
+                      nodeId,
+                      notify: false,
+                    );
 
-                    // 2. 문서의 metadata도 업데이트 (복원 시 스포일러 상태 유지)
+                    // 문서의 metadata 업데이트 (undo/redo 포함 복원 시 스포일러 상태 유지)
                     try {
                       // 🎯 prop으로 전달받은 editorService 우선 사용, 없으면 Provider로 접근
                       final editorService =

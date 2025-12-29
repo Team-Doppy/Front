@@ -1,7 +1,9 @@
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/utils/config.dart';
-import 'package:doppy/editor/style/defualt_toolbar.dart'; // HighlightAttribution import
+import 'package:doppy/editor/style/text_attributions.dart';
+import 'package:doppy/editor/style/text_styling_service.dart'
+    show TextStylingService;
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';

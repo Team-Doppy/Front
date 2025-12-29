@@ -77,6 +77,8 @@ class EditorService extends ChangeNotifier {
   bool _initialStateSaved = false; // 🎯 초기 상태 저장 완료 플래그 (중복 방지)
   bool _isDeletingNode = false; // 🎯 노드 삭제 중 플래그 (중복 저장 방지)
   bool _firstChangeAfterLoad = false; // 🎯 임시저장 불러온 직후 첫 변경사항 플래그
+  bool _isSanitizingInvalidSelection =
+      false; // 🎯 삭제된 노드를 가리키는 selection 강제 정리 중(재진입 방지)
 
   // ✅ "실제 변경이 있었으면 반드시 히스토리에 들어가야 한다"를 보장하기 위한 버전 값
   // - 문서에 의미있는 변경이 발생할 때마다 증가
@@ -88,6 +90,29 @@ class EditorService extends ChangeNotifier {
   // - 스냅샷이 스택에 push되면 false
   // - undo/redo 직전 flush는 이 값이 true일 때만 수행 (undo 후 무한 flush 방지)
   bool _hasPendingHistoryChanges = false;
+
+  /// 현재 문서의 "제목 노드"(index 0, ParagraphNode && metadata.isTitle == true) id를 캐시한다.
+  ///
+  /// ⚠️ 주의:
+  /// - DocumentChangeListener는 변경이 적용된 "이후"에 호출된다.
+  /// - 따라서 NodeRemovedEvent에서 제목 삭제 여부를 `getEditingIndex()==0` 같은
+  ///   selection 기반으로 판단하면, 임시저장 로드 직후/selection 클리어 상태에서
+  ///   **아무 노드 삭제든** 복구(recovery)로 오판하여 히스토리가 누락될 수 있다.
+  /// - 삭제된 노드 id가 “직전까지 제목이었던 id”인지로만 판별한다.
+  String? _cachedTitleNodeId;
+
+  void _refreshCachedTitleNodeId() {
+    try {
+      final first = document.nodeCount > 0 ? document.getNodeAt(0) : null;
+      if (first is ParagraphNode && first.metadata['isTitle'] == true) {
+        _cachedTitleNodeId = first.id;
+      } else {
+        _cachedTitleNodeId = null;
+      }
+    } catch (_) {
+      _cachedTitleNodeId = null;
+    }
+  }
 
   // ✅ 레지스트리 복구/자동 정리(빈 문단 삭제, 제목 보호 등)로 인한 문서 변경은
   // 히스토리에 담지 않는다. (유저가 한 변경이 아니며, Undo 스택을 오염시키기 때문)
@@ -126,7 +151,16 @@ class EditorService extends ChangeNotifier {
   void _finalizeBatchDeleteHistory() {
     // saveHistoryBeforeDelete()가 세팅한 플래그가 남아있으면 다음 삭제에서 오동작할 수 있으므로 정리
     _isDeletingNode = false;
-    _saveCurrentState(immediate: true);
+    // ✅ 배치 삭제는 여러 NodeRemovedEvent가 연속으로 발생한다.
+    // - 중간 단계에서 스냅샷을 계속 쌓으면 undo step이 오염된다.
+    // - 그렇다고 비동기(microtask)로 after-state를 저장하면, 사용자가 즉시 Undo/Redo를 눌렀을 때
+    //   "삭제 후 상태"가 누락되거나(redo가 안 먹음), Undo 이후 상태가 잘못 저장되어 redo 스택이 깨질 수 있다.
+    //
+    // 따라서 배치 삭제 커맨드가 끝나는 시점에 after-state를 **동기적으로** 1회 저장한다.
+    if (_isExecutingHistory) return;
+    _historyTimer?.cancel();
+    final snapshot = _copyAllNodes();
+    _addToHistoryStack(snapshot, '배치 삭제 후 상태 저장');
   }
 
   void _ensureParagraphAlignmentForNodeId(String nodeId) {
@@ -141,6 +175,22 @@ class EditorService extends ChangeNotifier {
   }
 
   ({DocumentSelection selection, Set<String> coveredSpecialNodeIds})?
+  _selectionAndSpecialNodesFromSelection(
+    Document document,
+    DocumentSelection selection,
+  ) {
+    if (selection.isCollapsed) return null;
+
+    final coveredSpecialNodeIds = _getSpecialNodeIdsCoveredBySelection(
+      document,
+      selection,
+    );
+    if (coveredSpecialNodeIds.isEmpty) return null;
+
+    return (selection: selection, coveredSpecialNodeIds: coveredSpecialNodeIds);
+  }
+
+  ({DocumentSelection selection, Set<String> coveredSpecialNodeIds})?
   _selectionAndSpecialNodesFromDocumentRange(
     Document document,
     DocumentRange range,
@@ -152,15 +202,10 @@ class EditorService extends ChangeNotifier {
             ? range
             : DocumentSelection(base: range.start, extent: range.end);
 
-    final coveredSpecialNodeIds = _getSpecialNodeIdsCoveredBySelection(
-      document,
-      selection,
-    );
-    if (coveredSpecialNodeIds.isEmpty) return null;
-
-    return (selection: selection, coveredSpecialNodeIds: coveredSpecialNodeIds);
+    return _selectionAndSpecialNodesFromSelection(document, selection);
   }
 
+  // ignore: prefer_function_declarations_over_variables
   late final EditRequestHandler _deleteSelectionWithSpecialNodesHandler = (
     ed,
     request,
@@ -196,6 +241,7 @@ class EditorService extends ChangeNotifier {
     );
   };
 
+  // ignore: prefer_function_declarations_over_variables
   late final EditRequestHandler _deleteContentWithSpecialNodesHandler = (
     ed,
     request,
@@ -205,10 +251,14 @@ class EditorService extends ChangeNotifier {
     // 🎯 DeleteContentRequest의 실제 삭제 범위를 기준으로 "보라색으로 포함된" 특수노드들을 계산한다.
     // (IME/하드웨어 키보드 모두 DeleteContentRequest로 들어오므로 여기서 처리하면 플랫폼 무관)
     final range = request.documentRange;
-    final parsed = _selectionAndSpecialNodesFromDocumentRange(
-      ed.document,
-      range,
-    );
+    // ✅ 중요: 드래그 방향(아래→위 vs 위→아래)에 따라 `composer.selection`의 base/extent가 달라진다.
+    // 반면 `documentRange.start/end`는 "문서상 앞/뒤"로 정규화될 수 있어 방향 정보가 사라질 수 있음.
+    // 보라색 하이라이트 판정(특수노드 포함/미포함)과 동일한 기준을 유지하려면 composer.selection을 우선한다.
+    final composerSel = ed.composer.selection;
+    final parsed =
+        (composerSel != null && !composerSel.isCollapsed)
+            ? _selectionAndSpecialNodesFromSelection(ed.document, composerSel)
+            : _selectionAndSpecialNodesFromDocumentRange(ed.document, range);
     if (parsed == null) return null;
 
     _logSelectionDeletionDebug(
@@ -239,6 +289,8 @@ class EditorService extends ChangeNotifier {
   }) : _context = context {
     document.addListener(_onDocumentChanged);
     editor.composer.selectionNotifier.addListener(_onSelectionChanged);
+    // 초기 제목 노드 id 캐시
+    _refreshCachedTitleNodeId();
 
     // ✅ 범위 삭제(특수노드 혼합) 보완 핸들러 설치
     // - 기본 DeleteContentRequest 처리 전에 가로채서, 누락된 특수노드까지 함께 삭제
@@ -749,7 +801,8 @@ class EditorService extends ChangeNotifier {
       final boundary = baseIndex == start ? selection.base : selection.extent;
       final pos = boundary.nodePosition;
       if (pos is UpstreamDownstreamNodePosition) {
-        return pos.affinity == TextAffinity.downstream;
+        // ✅ start 경계는 upstream일 때 포함 (아래→위 드래그 대칭 보장)
+        return pos.affinity == TextAffinity.upstream;
       }
     }
 
@@ -912,6 +965,14 @@ class EditorService extends ChangeNotifier {
       debugPrint('[EditorService] Selection 클리어 실패: $e');
     }
 
+    // ✅ undo/redo는 문서 스냅샷만 복원한다.
+    // NodeComponentService는 "세션 캐시"(예: 스포일러 임시 해제)를 들고 있어
+    // 문서 metadata와 충돌하면 undo/redo 직후 화면 상태가 어긋날 수 있다.
+    // 따라서 복원 시작 시 세션 캐시를 조용히 비워 문서 상태와 동기화한다.
+    try {
+      NodeComponentService().clearSpoilers(notify: false);
+    } catch (_) {}
+
     // 🎯 2. 레지스트리 및 명시적 삭제 목록 초기화 (복원 전 정리)
     _specialNodeRegistry.clear();
     _explicitlyDeletedNodes.clear();
@@ -998,7 +1059,10 @@ class EditorService extends ChangeNotifier {
       }
 
       // 제목 보호(삭제 방지)도 자동 복구로 간주
-      if (getEditingIndex() == 0) {
+      // ✅ "현재 커서가 제목 영역에 있다"는 정보(getEditingIndex==0)는 제목 삭제 여부와 무관하다.
+      // 임시저장 불러온 직후(커서 숨김/selection null)에는 getEditingIndex가 0으로 떨어져
+      // 어떤 노드 삭제든 recovery로 오판 -> undo 스택 누락이 발생할 수 있다.
+      if (_cachedTitleNodeId != null && removedId == _cachedTitleNodeId) {
         isRecoveryChange = true;
       }
 
@@ -1029,6 +1093,9 @@ class EditorService extends ChangeNotifier {
     if (!isRecoveryChange) {
       _trackChangeFromLog(change);
     }
+
+    // 제목 id 캐시 갱신 (구조 변경/복구 모두 포함)
+    _refreshCachedTitleNodeId();
 
     // 🎯 텍스트 입력/삭제 시 노드 선택 자동 해제 (가볍게 처리)
     if ((change is TextInsertionEvent || change is TextDeletedEvent) &&
@@ -1906,6 +1973,35 @@ class EditorService extends ChangeNotifier {
   void _onSelectionChanged() {
     final sel = editor.composer.selectionNotifier.value;
 
+    // ✅ iOS IME(super_editor) 크래시 방지:
+    // selection이 문서에 없는 nodeId를 가리키면 super_editor 내부에서 null-assertion 크래시가 발생할 수 있다.
+    // (InspectDocumentSelection.selectUpstreamPosition 등)
+    // 따라서 즉시 selection을 clear 해서 "유효하지 않은 selection" 상태를 외부가 관찰하지 못하게 한다.
+    if (sel != null && !_isSanitizingInvalidSelection) {
+      final baseExists = document.getNodeById(sel.base.nodeId) != null;
+      final extentExists = document.getNodeById(sel.extent.nodeId) != null;
+      if (!baseExists || !extentExists) {
+        _isSanitizingInvalidSelection = true;
+        debugPrint(
+          '[EditorService] ⚠️ Invalid selection detected → force clear (baseExists=$baseExists, extentExists=$extentExists, base=${sel.base.nodeId}, extent=${sel.extent.nodeId})',
+        );
+        try {
+          editor.composer.clearSelection();
+        } catch (_) {}
+        if (_context != null) {
+          try {
+            final nodeService = _context!.read<NodeComponentService>();
+            nodeService.clearSelectionSilently();
+            nodeService.clearHighlightedSelectionSilently();
+          } catch (_) {}
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _isSanitizingInvalidSelection = false;
+        });
+        return;
+      }
+    }
+
     // 🎯 케이스 1: 선택 완전 해제
     if (sel == null) {
       if (_context != null) {
@@ -1960,6 +2056,23 @@ class EditorService extends ChangeNotifier {
       final node = document.getNodeById(nodeId);
       if (node == null) {
         debugPrint('[EditorService] ⚠️ 노드가 존재하지 않음: $nodeId');
+        // 여기까지 오면 selectionNotifier가 "삭제된 노드"를 가리키고 있음 → 강제 해제
+        if (!_isSanitizingInvalidSelection) {
+          _isSanitizingInvalidSelection = true;
+          try {
+            editor.composer.clearSelection();
+          } catch (_) {}
+          if (_context != null) {
+            try {
+              final nodeService = _context!.read<NodeComponentService>();
+              nodeService.clearSelectionSilently();
+              nodeService.clearHighlightedSelectionSilently();
+            } catch (_) {}
+          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _isSanitizingInvalidSelection = false;
+          });
+        }
         return;
       }
 
@@ -3394,10 +3507,21 @@ class EditorService extends ChangeNotifier {
           imageUrl: remainingUrls.first,
           metadata: singleImageMetadata.isNotEmpty ? singleImageMetadata : null,
         );
-        document.replaceNodeById(rowId, singleImageNode);
         debugPrint(
           '[EditorService] 🔄 Row를 단일 이미지로 변환: rowId=$rowId, metadata keys=${singleImageMetadata.keys.toList()}',
         );
+
+        // ✅ 중요: Replace + Insert를 개별 document mutation으로 하면 DocumentLayout이 중간 상태를 그리며
+        // Row → Single 변환 순간에 "깜빡임"이 발생할 수 있다.
+        // SuperEditor의 트랜잭션(editor.execute)으로 한 번에 배치 처리해서 중간 프레임을 줄인다.
+        final int targetInsertIndex = insertIndex ?? rowIndex;
+        editor.execute([
+          ReplaceNodeRequest(existingNodeId: rowId, newNode: singleImageNode),
+          InsertNodeAtIndexRequest(
+            nodeIndex: targetInsertIndex,
+            newNode: newImageNode,
+          ),
+        ]);
       } else if (remainingUrls.isEmpty) {
         // 이미지가 없으면 행 삭제
         document.deleteNode(rowId);
@@ -3408,19 +3532,29 @@ class EditorService extends ChangeNotifier {
           imageUrls: remainingUrls,
           metadata: remainingMetadata.isNotEmpty ? remainingMetadata : null,
         );
-        document.replaceNodeById(rowId, updatedRowNode);
         debugPrint(
           '[EditorService] ✅ Row 업데이트: rowId=$rowId, imageUrls=${remainingUrls.length}개, metadata keys=${remainingMetadata.keys.toList()}',
         );
+
+        final int targetInsertIndex = insertIndex ?? rowIndex;
+        editor.execute([
+          ReplaceNodeRequest(existingNodeId: rowId, newNode: updatedRowNode),
+          InsertNodeAtIndexRequest(
+            nodeIndex: targetInsertIndex,
+            newNode: newImageNode,
+          ),
+        ]);
       }
 
-      // 분리된 이미지를 원하는 위치에 삽입 (기본: 원래 행의 위치)
-      final int targetInsertIndex = insertIndex ?? rowIndex;
-      document.insertNodeAt(targetInsertIndex, newImageNode);
-      // 🎯 notifyListeners는 finally 이후에 한 번만
+      // ✅ remainingUrls.isEmpty인 케이스(삭제)만 기존 경로 유지: 여기서는 insert만 수행
+      // (Delete를 editor.execute로 바꾸려면 Delete 요청 타입에 대한 안정성 확인이 필요)
+      if (remainingUrls.isEmpty) {
+        final int targetInsertIndex = insertIndex ?? rowIndex;
+        document.insertNodeAt(targetInsertIndex, newImageNode);
+      }
 
       debugPrint(
-        '[EditorService] ✅ 이미지 분리 완료: newImageId=$newImageId, insertIndex=$targetInsertIndex',
+        '[EditorService] ✅ 이미지 분리 완료: newImageId=$newImageId, insertIndex=${insertIndex ?? rowIndex}',
       );
       return newImageId;
     } finally {
@@ -4100,6 +4234,104 @@ class _DeleteSelectionAndSpecialNodesCommand extends EditCommand {
   final void Function(String nodeId) ensureParagraphAlignmentForNodeId;
   final void Function(String nodeId) markSpecialNodeExplicitlyDeleted;
 
+  DocumentPosition? _pickSafeCaretBeforeDeletion(
+    Document doc, {
+    required DocumentSelection selection,
+    required Set<String> coveredSpecialNodeIds,
+    required DocumentPosition? caretAfterDeletion,
+  }) {
+    // 1) caretAfterDeletion이 이미 계산되어 있고, 그 node가 삭제 대상이 아니면 최우선
+    if (caretAfterDeletion != null) {
+      final n = doc.getNodeById(caretAfterDeletion.nodeId);
+      if (n != null &&
+          !coveredSpecialNodeIds.contains(caretAfterDeletion.nodeId)) {
+        return caretAfterDeletion;
+      }
+    }
+
+    // 2) extent가 텍스트 노드 쪽이라면(대부분의 케이스), extent로 collapse (삭제 range는 별도로 유지)
+    final extentNode = doc.getNodeById(selection.extent.nodeId);
+    if (extentNode != null &&
+        !coveredSpecialNodeIds.contains(selection.extent.nodeId)) {
+      return selection.extent;
+    }
+
+    // 3) base가 삭제 대상이 아니면 base
+    final baseNode = doc.getNodeById(selection.base.nodeId);
+    if (baseNode != null &&
+        !coveredSpecialNodeIds.contains(selection.base.nodeId)) {
+      return selection.base;
+    }
+
+    return null;
+  }
+
+  // DeleteSelectionRequest는 affinity 방향(아래→위 vs 위→아래)에 따라 내부 로직이 달라지고,
+  // 특수 노드(start 경계 포함) 케이스에서 DeleteSelectionCommand가 null-assertion 크래시를 내는 경우가 있어
+  // selection을 DocumentRange로 정규화하여 DeleteContentCommand 경로로 통일한다.
+  DocumentRange _documentRangeFromSelection(
+    Document doc,
+    DocumentSelection selection,
+  ) {
+    final baseIndex = doc.getNodeIndexById(selection.base.nodeId);
+    final extentIndex = doc.getNodeIndexById(selection.extent.nodeId);
+
+    // 인덱스를 못 찾으면 보수적으로 base..extent로 둔다.
+    if (baseIndex == -1 || extentIndex == -1) {
+      return DocumentRange(start: selection.base, end: selection.extent);
+    }
+
+    if (baseIndex < extentIndex) {
+      return DocumentRange(start: selection.base, end: selection.extent);
+    }
+    if (baseIndex > extentIndex) {
+      return DocumentRange(start: selection.extent, end: selection.base);
+    }
+
+    // 같은 노드 내에서는 nodePosition의 선후를 비교
+    final bp = selection.base.nodePosition;
+    final ep = selection.extent.nodePosition;
+
+    int comparePositions(Object a, Object b) {
+      // 특수 노드(Upstream/Downstream)
+      if (a is UpstreamDownstreamNodePosition &&
+          b is UpstreamDownstreamNodePosition) {
+        final aUp = a == const UpstreamDownstreamNodePosition.upstream();
+        final bUp = b == const UpstreamDownstreamNodePosition.upstream();
+        if (aUp == bUp) return 0;
+        return aUp ? -1 : 1;
+      }
+
+      // 텍스트 노드(TextPosition)
+      if (a is TextPosition && b is TextPosition) {
+        if (a.offset != b.offset) return a.offset < b.offset ? -1 : 1;
+        if (a.affinity == b.affinity) return 0;
+        return a.affinity == TextAffinity.upstream ? -1 : 1;
+      }
+
+      // 혼합 타입: upstream/downstream은 "노드 경계"로 보고,
+      // upstream < (텍스트) < downstream 순으로 정렬한다.
+      int rank(Object p) {
+        if (p is UpstreamDownstreamNodePosition) {
+          return p == const UpstreamDownstreamNodePosition.upstream() ? 0 : 2;
+        }
+        if (p is TextPosition) return 1;
+        return 1;
+      }
+
+      final ra = rank(a);
+      final rb = rank(b);
+      if (ra == rb) return 0;
+      return ra < rb ? -1 : 1;
+    }
+
+    final cmp = comparePositions(bp, ep);
+    if (cmp <= 0) {
+      return DocumentRange(start: selection.base, end: selection.extent);
+    }
+    return DocumentRange(start: selection.extent, end: selection.base);
+  }
+
   @override
   HistoryBehavior get historyBehavior => HistoryBehavior.undoable;
 
@@ -4119,8 +4351,42 @@ class _DeleteSelectionAndSpecialNodesCommand extends EditCommand {
       // 🎯 삭제 전 상태 저장 (EditorService 커스텀 undo 안정화)
       saveHistoryBeforeDelete();
 
-      // ✅ 중요: DeleteSelectionCommand가 내부에서 특수노드를 삭제할 수 있으므로,
-      // 삭제 전에 "명시적 삭제"로 마킹해서 NodeRemovedEvent 복원 로직과 충돌을 막는다.
+      // 🎯 삭제 후 caret 위치 계산 (SuperEditor 기본 UX와 정렬)
+      final caretAfterDeletion =
+          CommonEditorOperations.getDocumentPositionAfterExpandedDeletion(
+            document: doc,
+            selection: selectionForDeletion,
+          );
+
+      // ✅ iOS IME/컨트롤 레이어가 "삭제된 노드를 가리키는 selection"을 직렬화/레이아웃하는 순간
+      // super_editor 내부에서 null-assertion 크래시가 발생할 수 있다.
+      // 따라서 실제 삭제 전에 selection을 안전한 위치로 먼저 collapse/clear 한다.
+      final safeCaretBeforeDeletion = _pickSafeCaretBeforeDeletion(
+        doc,
+        selection: selectionForDeletion,
+        coveredSpecialNodeIds: coveredSpecialNodeIds,
+        caretAfterDeletion: caretAfterDeletion,
+      );
+      if (safeCaretBeforeDeletion != null) {
+        executor.executeCommand(
+          ChangeSelectionCommand(
+            DocumentSelection.collapsed(position: safeCaretBeforeDeletion),
+            SelectionChangeType.placeCaret,
+            SelectionReason.userInteraction,
+          ),
+        );
+      } else {
+        executor.executeCommand(
+          const ChangeSelectionCommand(
+            null,
+            SelectionChangeType.clearSelection,
+            SelectionReason.userInteraction,
+          ),
+        );
+      }
+
+      // 🎯 DeleteContentCommand로 삭제될 수 있는(=deletable) 특수노드는 미리 명시적 삭제 표시
+      // (NodeRemovedEvent에서 복원 로직이 먼저 실행되는 걸 방지)
       for (final id in coveredSpecialNodeIds) {
         final node = doc.getNodeById(id);
         if (node != null && node.isDeletable) {
@@ -4128,13 +4394,13 @@ class _DeleteSelectionAndSpecialNodesCommand extends EditCommand {
         }
       }
 
-      // 1) 기본 selection 삭제 (SuperEditor 기본 정책 유지)
-      executor.executeCommand(DeleteSelectionCommand(affinity: affinity));
-
-      // ✅ 삭제 직후 최종 selection(extent) 위치의 문단 정렬을 즉시 보정
-      final selAfter = context.composer.selection;
-      if (selAfter != null) {
-        ensureParagraphAlignmentForNodeId(selAfter.extent.nodeId);
+      // 1) selection을 DocumentRange로 정규화한 뒤 기본 범위 삭제
+      // (DeleteSelectionCommand 경로에서 발생하는 null-assertion 크래시 회피)
+      final range = _documentRangeFromSelection(doc, selectionForDeletion);
+      final nodesInRange = doc.getNodesInside(range.start, range.end);
+      final hasAnyDeletable = nodesInRange.any((n) => n.isDeletable);
+      if (hasAnyDeletable) {
+        executor.executeCommand(DeleteContentCommand(documentRange: range));
       }
 
       // 2) 기본 삭제에서 누락된 특수노드 보완 삭제
@@ -4143,6 +4409,26 @@ class _DeleteSelectionAndSpecialNodesCommand extends EditCommand {
         if (!stillExists) continue;
         markSpecialNodeExplicitlyDeleted(id);
         executor.executeCommand(DeleteNodeCommand(nodeId: id));
+      }
+
+      // 3) selection 정리
+      if (caretAfterDeletion != null) {
+        executor.executeCommand(
+          ChangeSelectionCommand(
+            DocumentSelection.collapsed(position: caretAfterDeletion),
+            SelectionChangeType.deleteContent,
+            SelectionReason.userInteraction,
+          ),
+        );
+        ensureParagraphAlignmentForNodeId(caretAfterDeletion.nodeId);
+      } else {
+        executor.executeCommand(
+          const ChangeSelectionCommand(
+            null,
+            SelectionChangeType.clearSelection,
+            SelectionReason.contentChange,
+          ),
+        );
       }
     } finally {
       finalizeBatchDeleteHistory();

@@ -73,6 +73,7 @@ dependencies:
   crypto: ^3.0.5
   app_links: ^6.3.3
   overlay_support: ^2.1.0
+  imgly_sdk: ^3.3.0
 
 dependency_overrides:
   screenshot: ^3.0.0

@@ -6,7 +6,7 @@ import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:doppy/image/utils/read_image_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 
@@ -375,33 +375,37 @@ class _PostCardState extends State<PostCard>
                             ),
                   )
                   : SizedBox.expand(
-                    child: CachedNetworkImage(
-                      imageUrl: widget.thumbnailImageUrl,
+                    child: Image(
+                      image: ReadImageProvider.build(
+                        url: widget.thumbnailImageUrl,
+                        decodeWidth: 800,
+                      ),
                       fit: BoxFit.cover,
-                      key: ValueKey('bg-${widget.thumbnailImageUrl}'),
-                      fadeInDuration: const Duration(milliseconds: 180),
-                      fadeOutDuration: const Duration(milliseconds: 80),
-                      placeholder:
-                          (context, url) => ShimmerBox(
-                            width: double.infinity,
-                            height: double.infinity,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                      errorWidget:
-                          (context, error, stackTrace) => Container(
-                            color: Theme.of(context).colorScheme.surfaceVariant,
-                            child: Center(
-                              child: Icon(
-                                Icons.error,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.54),
-                                size: 40,
-                              ),
+                      gaplessPlayback: true,
+                      filterQuality: FilterQuality.low,
+                      key: ValueKey('thumb-${widget.thumbnailImageUrl}'),
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return ShimmerBox(
+                          width: double.infinity,
+                          height: double.infinity,
+                          borderRadius: BorderRadius.circular(12),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          color: Theme.of(context).colorScheme.surfaceVariant,
+                          child: Center(
+                            child: Icon(
+                              Icons.error,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.54),
+                              size: 40,
                             ),
                           ),
-                      memCacheWidth: 800, // 메모리 캐시 크기 지정
-                      maxWidthDiskCache: 800, // 디스크 캐시 크기
+                        );
+                      },
                     ),
                   ),
 
@@ -461,14 +465,6 @@ class _PostCardState extends State<PostCard>
     super.build(context); // AutomaticKeepAliveClientMixin 필수
     // 🎯 로컬 에셋 기반 포스트인지 확인 (온보딩 플레이스홀더)
     final isOnboardingPost = widget.postId.startsWith('onboarding_placeholder');
-
-    // 🎯 LikeService에서 좋아요 상태 가져오기 (항상 최신 상태 반영)
-    // initState에서 이미 setInitialLikeData를 호출했으므로 LikeService에 값이 있어야 함
-    // 사용자가 좋아요를 클릭하면 LikeService 값이 즉시 업데이트되므로 항상 LikeService 값을 우선 사용
-    // LikeService에 값이 없을 때만 fallback으로 widget.isLiked 사용
-    final hasLikeData = _likeService.hasPost(widget.postId);
-    final currentIsLiked =
-        hasLikeData ? _likeService.isPostLiked(widget.postId) : widget.isLiked;
 
     // 디버그 로그 제거 (불필요한 리빌드 방지)
 

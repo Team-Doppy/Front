@@ -4,6 +4,7 @@ import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/image/simple_image_editor_screen.dart';
 import 'package:doppy/image/video_trim_screen.dart';
 import 'package:doppy/image/group_image_layout_selector.dart';
+import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -42,12 +43,16 @@ class MediaPickerResult {
   final List<File> files;
   final MediaType selectedMediaType; // 실제로 선택된 미디어 타입
   final GroupImageLayout? groupLayout; // 🎯 그룹 이미지 레이아웃 (선택된 경우만)
+  // ✅ 그룹(페이지뷰/그리드) 삽입 전, 로컬 이미지의 (width/height)를 미리 측정해서 전달
+  // 형태: { "<localPath>": {"width": n, "height": n}, ... }
+  final Map<String, dynamic>? imageDimensions;
   final String? thumbnailPath; // 🎯 비디오 썸네일 경로 (비디오인 경우만)
 
   MediaPickerResult({
     required this.files,
     required this.selectedMediaType,
     this.groupLayout,
+    this.imageDimensions,
     this.thumbnailPath,
   });
 }
@@ -72,10 +77,13 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   bool _isLoadingMore = false;
   final ScrollController _scrollController = ScrollController();
   bool _isSubmitting = false;
-  Future<void> _popWithResult(MediaPickerResult result) async {
-    if (!mounted) return;
-    if (_isSubmitting) return;
-    _isSubmitting = true;
+  bool _isClosing = false; // ✅ pop/close 중복 방지 (업로드/노드삽입 완료 전 닫힘 방지용)
+
+  /// ✅ pop 전에 반드시 호출: 노드 추가/리플레이스(업로드 포함)가 끝났을 때만 true 반환
+  Future<bool> _runBeforePop(MediaPickerResult result) async {
+    if (!mounted) return false;
+    if (_isClosing) return false;
+    _isClosing = true;
 
     try {
       if (widget.onBeforePop != null) {
@@ -86,8 +94,16 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       }
     } catch (e) {
       debugPrint('[MediaPicker] onBeforePop 실패: $e');
+      // ✅ 실패 시에는 닫지 말고(타이밍 보장) 다시 시도 가능하게 풀어준다.
+      _isClosing = false;
+      return false;
     }
+    return true;
+  }
 
+  Future<void> _popWithResult(MediaPickerResult result) async {
+    final ok = await _runBeforePop(result);
+    if (!ok) return;
     if (!mounted) return;
     Navigator.of(context).pop(result);
   }
@@ -497,23 +513,22 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                   groupLayout: selectedLayout,
                 );
 
-                // ✅ onBeforePop + 딜레이를 먼저 수행한 뒤, "에디터 + 피커"를 연속으로 pop
-                try {
-                  if (widget.onBeforePop != null) {
-                    await widget.onBeforePop!(pickerResult);
-                    if (widget.beforePopDelay > Duration.zero) {
-                      await Future.delayed(widget.beforePopDelay);
-                    }
-                  }
-                } catch (e) {
-                  debugPrint('[MediaPicker] onBeforePop 실패: $e');
+                // ✅ 노드 추가/리플레이스 완료 이후에만 닫기 (타이밍 보장)
+                final ok = await _runBeforePop(pickerResult);
+                if (!ok) {
+                  _isSubmitting = false; // ✅ 실패 시 재시도 가능
+                  return;
                 }
-
                 if (!mounted) return;
 
-                final nav = Navigator.of(editorContext);
-                nav.pop(); // 에디터 닫기
-                nav.pop(pickerResult); // 피커 닫기 (같은 타이밍)
+                // 1) 편집 화면 닫기
+                if (editorContext.mounted) {
+                  Navigator.of(editorContext).pop();
+                }
+                // 2) 전환 안정화를 위해 다음 프레임에 피커 닫기
+                await Future.delayed(Duration.zero);
+                if (!mounted) return;
+                Navigator.of(context).pop(pickerResult);
               },
             );
           },
@@ -548,7 +563,8 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
       debugPrint('그룹이미지: ${imageFiles.length}개 이미지 변환 완료');
 
-      // 🎯 레이아웃 선택 화면을 모달 바텀시트로 표시 (일관된 UX)
+      // 🎯 레이아웃 선택 화면을 모달 바텀시트로 표시
+      // - UX: 화면의 95%까지만 올라오게 제한
       bool didSelectLayout = false;
 
       await showModalBottomSheet<void>(
@@ -558,45 +574,85 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         isDismissible: true,
         enableDrag: true,
         builder:
-            (sheetContext) => GroupImageLayoutSelector(
-              previewImages: imageFiles,
-              onSelected: (layout) async {
-                if (didSelectLayout) return;
-                if (!mounted) return;
-                if (_isSubmitting) return;
+            (sheetContext) => FractionallySizedBox(
+              heightFactor: 0.93,
+              child: GroupImageLayoutSelector(
+                previewImages: imageFiles,
+                onSelected: (layout) async {
+                  if (didSelectLayout) return;
+                  if (!mounted) return;
+                  if (_isSubmitting) return;
 
-                didSelectLayout = true;
-                _isSubmitting = true;
+                  didSelectLayout = true;
+                  _isSubmitting = true;
 
-                debugPrint(
-                  '[MediaPicker] ✅ 그룹이미지 선택 완료: ${imageFiles.length}개, 레이아웃: $layout',
-                );
+                  debugPrint(
+                    '[MediaPicker] ✅ 그룹이미지 선택 완료: ${imageFiles.length}개, 레이아웃: $layout',
+                  );
 
-                final result = MediaPickerResult(
-                  files: imageFiles,
-                  selectedMediaType: MediaType.image,
-                  groupLayout: layout,
-                );
-
-                // ✅ 여기서는 "시트 + 피커"를 마지막에 함께 닫기 위해,
-                // onBeforePop/딜레이를 먼저 수행한 뒤 pop을 연속 호출한다.
-                try {
-                  if (widget.onBeforePop != null) {
-                    await widget.onBeforePop!(result);
-                    if (widget.beforePopDelay > Duration.zero) {
-                      await Future.delayed(widget.beforePopDelay);
+                  // ✅ 노드 삽입 전에(=시트 닫히기 전에) 이미지 크기를 미리 측정해서
+                  // Row/PageView가 첫 프레임부터 정확한 높이로 그려지게 한다.
+                  Map<String, dynamic>? preDimensions;
+                  if (layout != GroupImageLayout.individual) {
+                    // 간단한 로딩 오버레이
+                    if (sheetContext.mounted) {
+                      showDialog<void>(
+                        context: sheetContext,
+                        barrierDismissible: false,
+                        builder:
+                            (_) => const Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                      );
+                    }
+                    try {
+                      final dims = <String, dynamic>{};
+                      for (final f in imageFiles) {
+                        final path = f.path;
+                        final size =
+                            await ImageSizeUtils.extractSizeFromImageProvider(
+                              path,
+                            );
+                        if (size == null) continue;
+                        final entry = {
+                          'width': size.width.round(),
+                          'height': size.height.round(),
+                        };
+                        dims[path] = entry;
+                        dims['file://$path'] = entry;
+                      }
+                      preDimensions = dims.isNotEmpty ? dims : null;
+                    } finally {
+                      if (sheetContext.mounted) {
+                        // 로딩 오버레이 닫기
+                        Navigator.of(sheetContext, rootNavigator: true).pop();
+                      }
                     }
                   }
-                } catch (e) {
-                  debugPrint('[MediaPicker] onBeforePop 실패: $e');
-                }
 
-                if (!mounted) return;
+                  final result = MediaPickerResult(
+                    files: imageFiles,
+                    selectedMediaType: MediaType.image,
+                    groupLayout: layout,
+                    imageDimensions: preDimensions,
+                  );
 
-                // 🎯 같은 타이밍에 닫히도록 pop을 연속 호출
-                Navigator.of(sheetContext).pop();
-                Navigator.of(context).pop(result);
-              },
+                  // ✅ 노드 추가/리플레이스 완료 이후에만 "시트 + 피커" 닫기
+                  final ok = await _runBeforePop(result);
+                  if (!ok) {
+                    // ✅ 실패 시 재시도 가능
+                    didSelectLayout = false;
+                    _isSubmitting = false;
+                    return;
+                  }
+                  if (!mounted) return;
+
+                  Navigator.of(sheetContext).pop(); // 레이아웃 선택 시트 닫기
+                  await Future.delayed(Duration.zero);
+                  if (!mounted) return;
+                  Navigator.of(context).pop(result); // 피커 닫기
+                },
+              ),
             ),
       );
 
@@ -657,7 +713,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
               if (trimResult != null && mounted) {
                 widget.onMediaSelected(trimResult.videoFile);
-                Navigator.of(context).pop(
+                await _popWithResult(
                   MediaPickerResult(
                     files: [trimResult.videoFile],
                     selectedMediaType: _mediaType,
@@ -673,7 +729,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
           // 이미지는 바로 반환
           widget.onMediaSelected(file);
-          Navigator.of(context).pop(
+          await _popWithResult(
             MediaPickerResult(files: [file], selectedMediaType: _mediaType),
           );
         }

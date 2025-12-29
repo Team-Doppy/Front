@@ -402,10 +402,10 @@ class CommentItem extends StatelessWidget {
       key: ValueKey('network_${comment.id}_$imageUrl'),
       children: [
         (enableImageHero
-            ? Hero(
-              tag: 'comment_image_${comment.id}', // 🎯 Hero 태그
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
+            ? ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Hero(
+                tag: 'comment_image_${comment.id}', // 🎯 Hero 태그
                 child: GestureDetector(
                   onTap: () {
                     _showImageFullscreen(
@@ -861,13 +861,12 @@ class CommentItem extends StatelessWidget {
     String? imageUrl, // 🎯 다운로드용 URL
     String? localImagePath, // 🎯 로컬 이미지 경로
   ) {
-    final bg = Colors.black; // ✅ 뷰어 배경색은 일관되게 유지
     Navigator.of(context).push(
       PageRouteBuilder(
         // ✅ opaque=false면 아래 화면이 비치면서 "깜빡임/배경색 변화"가 더 잘 보임
         // 댓글 이미지 뷰어는 배경색을 안정적으로 유지하기 위해 opaque=true로 고정
         opaque: true,
-        barrierColor: bg,
+        barrierColor: Colors.transparent, // ✅ Hero 애니메이션 시 어두워지는 효과 제거
         barrierDismissible: true,
         pageBuilder: (context, animation, secondaryAnimation) {
           return _CommentImageFullscreenDialog(
@@ -1076,15 +1075,13 @@ class _CommentImageFullscreenDialogState
 
   @override
   Widget build(BuildContext context) {
-    // 🎯 드래그 거리에 따른 스케일/투명도 계산
+    // 🎯 드래그 거리에 따른 스케일 계산 (어두워지는 효과 제거)
     final dragDistance = _dragOffset.abs();
     final scale = (1.0 - (dragDistance / 1000)).clamp(0.85, 1.0);
-    final opacity = (1.0 - (dragDistance / 500)).clamp(0.0, 1.0);
 
     return Scaffold(
-      backgroundColor: Theme.of(
-        context,
-      ).colorScheme.background.withOpacity(opacity),
+      backgroundColor: Theme.of(context).colorScheme.surface,
+
       body: GestureDetector(
         onTap: () => Navigator.of(context).pop(),
         onVerticalDragUpdate: _onVerticalDragUpdate,
@@ -1099,34 +1096,6 @@ class _CommentImageFullscreenDialogState
                   scale: scale,
                   child: Hero(
                     tag: widget.heroTag,
-                    flightShuttleBuilder: (
-                      BuildContext flightContext,
-                      Animation<double> animation,
-                      HeroFlightDirection flightDirection,
-                      BuildContext fromHeroContext,
-                      BuildContext toHeroContext,
-                    ) {
-                      // ✅ Hero flight 중 배경색이 어두워지지 않도록 Material 없이 반환
-                      return Image(
-                        image: widget.imageProvider,
-                        fit: BoxFit.contain,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            width: 200,
-                            height: 200,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.surface.withOpacity(0.5),
-                            child: Icon(
-                              Icons.broken_image,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.5),
-                            ),
-                          );
-                        },
-                      );
-                    },
                     child: Material(
                       color: Colors.transparent,
                       elevation: 0,
@@ -1244,37 +1213,11 @@ class _CommentImageFullscreenDialogState
                     children: [
                       // 🎯 프로필 이미지
                       if (widget.comment.authorProfileImageUrl.isNotEmpty)
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.3),
-                              width: 1,
-                            ),
-                          ),
-                          child: ClipOval(
-                            child: Image.network(
-                              widget.comment.authorProfileImageUrl,
-                              width: 32,
-                              height: 32,
-                              cacheWidth: 32,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  width: 32,
-                                  height: 32,
-                                  color: Colors.white.withOpacity(0.2),
-                                  child: Icon(
-                                    Icons.person,
-                                    size: 18,
-                                    color: Colors.white.withOpacity(0.7),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
+                        CommonProfileAvatar(
+                          imageUrl: widget.comment.authorProfileImageUrl,
+                          username: widget.comment.author,
+                          size: 32,
+                          borderWidth: 1,
                         ),
                       if (widget.comment.authorProfileImageUrl.isNotEmpty)
                         const SizedBox(width: 12),
@@ -1286,8 +1229,8 @@ class _CommentImageFullscreenDialogState
                           children: [
                             Text(
                               widget.comment.author,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurface,
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -1296,7 +1239,9 @@ class _CommentImageFullscreenDialogState
                             Text(
                               _formatDateString(widget.comment.createdAt),
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.8),
                                 fontSize: 12,
                               ),
                             ),

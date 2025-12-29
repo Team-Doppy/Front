@@ -13,7 +13,9 @@ import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/utils/time_utils.dart';
 import 'package:super_editor/super_editor.dart';
-import 'package:flutter/material.dart';
+// NOTE: 편집 화면은 CachedNetworkImage로 디스크/메모리 캐시를 처리하므로
+// 드래프트 로드 시점의 precacheImage(NetworkImage)는 제거됨 (메모리 eviction/깜빡임 유발).
+import 'package:flutter/foundation.dart';
 
 /// 임시저장 데이터 모델
 class DraftData {
@@ -217,7 +219,6 @@ class DraftService {
     required StickerService stickerService,
     NodeComponentService? nodeComponentService,
     dynamic dragService, // DragService 타입 (순환 참조 방지)
-    BuildContext? context, // 🚀 이미지 프리로드용 컨텍스트
   }) async {
     try {
       // 🚀 1. 드래프트 데이터 로드 (최적화된 방식)
@@ -275,59 +276,11 @@ class DraftService {
         stickerService: stickerService,
       );
 
-      // 🚀 7. 전체 네트워크 이미지를 순차적으로 배치 프리캐시
-      if (context != null) {
-        _precacheAllImagesInBatch(context, exportedData);
-      }
-
       debugPrint('[DraftService] ✅ 임시저장 불러오기 완료');
       return true;
     } catch (e) {
       debugPrint('[DraftService] Error loading draft: $e');
       return false;
-    }
-  }
-
-  /// 🚀 전체 네트워크 이미지를 순차적으로 배치 프리캐시
-  void _precacheAllImagesInBatch(
-    BuildContext context,
-    Map<String, dynamic> exportedData,
-  ) {
-    try {
-      final postReaderService = PostReaderService();
-      final allImageUrls = postReaderService.extractImageUrls(exportedData);
-
-      // 네트워크 URL만 필터링
-      final networkUrls =
-          allImageUrls.where((url) => EditorService.isNetworkUrl(url)).toList();
-
-      if (networkUrls.isEmpty) return;
-
-      // 🚀 배치로 병렬 프리캐시 (20개씩 동시 처리, 네트워크 부하 분산)
-      Future.microtask(() async {
-        const batchSize = 20; // 한 배치당 동시 처리 개수
-        for (int i = 0; i < networkUrls.length; i += batchSize) {
-          if (!context.mounted) break;
-
-          // 현재 배치 추출
-          final batch = networkUrls.skip(i).take(batchSize).toList();
-
-          // 배치 내에서 병렬로 프리캐시 (await 없이 시작만)
-          for (final url in batch) {
-            if (!context.mounted) break;
-            precacheImage(NetworkImage(url), context).catchError((_) {
-              // 개별 실패는 무시
-            });
-          }
-
-          // 배치 간 짧은 딜레이 (네트워크 부하 분산)
-          if (i + batchSize < networkUrls.length) {
-            await Future.delayed(const Duration(milliseconds: 50));
-          }
-        }
-      });
-    } catch (_) {
-      // 프리캐시 실패는 무시 (나중에 위젯에서 로드됨)
     }
   }
 

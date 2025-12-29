@@ -1,12 +1,13 @@
-import 'dart:io';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
+import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
@@ -155,6 +156,9 @@ class PageViewImageComponentBuilder implements ComponentBuilder {
     SingleColumnLayoutComponentViewModel componentViewModel,
   ) {
     if (componentViewModel is PageViewImageComponentViewModel) {
+      // ✅ 중요: nodeId 기반 GlobalObjectKey로 컴포넌트 Key를 안정화해서
+      // 문서 조작 시 PageController/이미지 캐시 State가 불필요하게 리셋되는 것을 방지한다.
+      // ✅ 중요: SuperEditor의 componentKey 추적을 깨면 드래그&드롭/삽입이 망가질 수 있으므로 유지한다.
       return PageViewImageComponent(
         nodeId: componentViewModel.nodeId,
         imageUrls: componentViewModel.imageUrls,
@@ -214,6 +218,9 @@ class PageViewImageComponent extends StatefulWidget {
 
 class _PageViewImageComponentState extends State<PageViewImageComponent>
     with DocumentComponent, TickerProviderStateMixin {
+  // ✅ 같은 URL 이미지가 리빌드/재해결 과정에서 잠깐 frame=null이 되어도
+  // 마지막으로 성공적으로 렌더된 child를 유지해서 "사라졌다가 다시 뜨는" 깜빡임을 줄인다.
+  final Map<String, Widget> _lastRenderedByUrl = <String, Widget>{};
   late PageController _pageController;
   int _currentPage = 0;
 
@@ -222,6 +229,39 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
   bool _scatterActive = false;
   bool _wasSpoilerVisible = false;
   bool _isSpecialNodeGapTap = false;
+
+  // ✅ CachedNetworkImage 로딩 중에도 이전 이미지를 유지(깜빡임 방지)
+  final Map<String, ImageProvider> _lastNetworkProviders = {};
+
+  // 로컬 경로 -> 업로드 URL 변환 과정에서도 "같은 이미지"로 취급할 수 있도록
+  // 업로드 매핑(uploadedUrls: {localPath: networkUrl})을 역으로 조회해서 canonical seed를 만든다.
+  String _canonicalSeedForImageUrl(String imageUrl) {
+    try {
+      // ignore: invalid_use_of_visible_for_testing_member
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_visible_for_testing_member
+      final doc = seState?.editContext.editor.document;
+      if (doc == null) return imageUrl;
+      final node = doc.getNodeById(widget.nodeId);
+      if (node is! PageViewImageNode) return imageUrl;
+      final meta = node.metadata;
+      final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+      if (uploadedUrls == null || uploadedUrls.isEmpty) return imageUrl;
+
+      // localPath인 경우
+      if (uploadedUrls.containsKey(imageUrl)) return imageUrl;
+
+      // networkUrl인 경우: value==imageUrl인 localPath 찾기
+      for (final entry in uploadedUrls.entries) {
+        final v = entry.value?.toString() ?? '';
+        if (v == imageUrl) {
+          final k = entry.key.toString();
+          if (k.isNotEmpty) return k;
+        }
+      }
+    } catch (_) {}
+    return imageUrl;
+  }
 
   // DocumentComponent 필수 메서드들
   @override
@@ -393,6 +433,12 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
   @override
   void initState() {
     super.initState();
+    assert(() {
+      debugPrint(
+        '[ImgLife][PageView] init: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}, urls=${widget.imageUrls.length}',
+      );
+      return true;
+    }());
     _pageController = PageController(
       viewportFraction: 0.8, // 🎯 화면의 80% 사용
     );
@@ -412,10 +458,44 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
 
   @override
   void dispose() {
+    assert(() {
+      debugPrint(
+        '[ImgLife][PageView] dispose: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}',
+      );
+      return true;
+    }());
     _pageController.dispose();
     _controller.dispose();
     _scatterCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant PageViewImageComponent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final urlsChanged = !_areUrlsEqual(oldWidget.imageUrls, widget.imageUrls);
+    if (urlsChanged) {
+      _lastRenderedByUrl.clear();
+    }
+    assert(() {
+      debugPrint(
+        '[ImgLife][PageView] didUpdateWidget: nodeId=${widget.nodeId}, urlsChanged=$urlsChanged, oldCount=${oldWidget.imageUrls.length}, newCount=${widget.imageUrls.length}',
+      );
+      if (urlsChanged) {
+        debugPrint(
+          '[ImgLife][PageView] urls(old)=${oldWidget.imageUrls}\n[ImgLife][PageView] urls(new)=${widget.imageUrls}',
+        );
+      }
+      return true;
+    }());
+  }
+
+  bool _areUrlsEqual(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -620,7 +700,7 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                                                 sigmaX: 0,
                                                 sigmaY: 0,
                                               ),
-                                      child: _buildImageWidget(imageUrl),
+                                      child: _buildImageWidget(index, imageUrl),
                                     ),
                                     if (isSpoilerFlag)
                                       Positioned.fill(
@@ -831,81 +911,59 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
   }
 
   /// 🎯 이미지 위젯 빌드 (로컬/네트워크 자동 판단)
-  Widget _buildImageWidget(String imageUrl) {
-    final isLocal = _isLocalPath(imageUrl);
+  Widget _buildImageWidget(int index, String imageUrl) {
+    final decodeWidth =
+        widget.isEditing
+            ? EditorImageProvider.editingDecodeWidth(
+              context,
+              widget.screenWidth,
+            )
+            : null;
 
-    if (isLocal) {
-      // 로컬 이미지
-      final filePath =
-          imageUrl.startsWith('file://') ? imageUrl.substring(7) : imageUrl;
-      final dpr = View.of(context).devicePixelRatio;
-
-      return Image.file(
-        File(filePath),
-        key: ValueKey('$imageUrl-${Theme.of(context).brightness}'),
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
-        // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
-        cacheWidth:
-            widget.isEditing ? (widget.screenWidth * dpr).round() : null,
-        frameBuilder: (context, child, frame, wasSyncLoaded) {
-          if (wasSyncLoaded || frame != null) {
-            return child;
-          }
-          return ShimmerBox(
-            width: double.infinity,
-            height: 400,
-            isDarkMode: widget.isDarkMode,
-          );
-        },
-        errorBuilder: (context, error, stack) {
-          debugPrint('[PageViewImage] 로컬 이미지 로드 실패: $imageUrl, $error');
-          return ImageErrorPlaceholder(width: 200);
-        },
-      );
-    } else {
-      // 🎯 네트워크 이미지 (프리로드된 경우 즉시 표시)
-      final dpr = View.of(context).devicePixelRatio;
-      return Image.network(
-        imageUrl,
-        key: ValueKey('$imageUrl-${Theme.of(context).brightness}'),
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
-        // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
-        cacheWidth:
-            widget.isEditing ? (widget.screenWidth * dpr).round() : null,
-        frameBuilder: (context, child, frame, wasSyncLoaded) {
-          // 🎯 프리로드되었거나 캐시에 있으면 즉시 표시
-          if (wasSyncLoaded || frame != null) {
-            return child;
-          }
-
-          // 🎯 로드 중이면 투명 컨테이너 (로컬 이미지 계속 보임)
-          return Container(
-            width: double.infinity,
-            height: 400,
-            color: Colors.transparent,
-          );
-        },
-        errorBuilder: (context, error, stack) {
-          debugPrint('[PageViewImage] 네트워크 이미지 로드 실패: $imageUrl, $error');
-          return ImageErrorPlaceholder(width: 200);
-        },
-      );
+    final built = EditorImageProvider.build(
+      url: imageUrl,
+      isEditing: widget.isEditing,
+      decodeWidth: decodeWidth,
+    );
+    if (!built.isLocal) {
+      _lastNetworkProviders[imageUrl] = built.baseProvider;
     }
-  }
 
-  bool _isLocalPath(String path) {
-    if (path.isEmpty) return false;
-    if (path.startsWith('http://') || path.startsWith('https://')) return false;
-    if (path.startsWith('file://')) return true;
-    return path.startsWith('/') ||
-        path.contains('/Application/') ||
-        path.contains('/Documents/');
+    final seed = _canonicalSeedForImageUrl(imageUrl);
+    final dupCount =
+        widget.imageUrls
+            .where((u) => _canonicalSeedForImageUrl(u) == seed)
+            .length;
+    final keySeed = dupCount <= 1 ? seed : '$seed#$index';
+
+    return Image(
+      key: ValueKey(
+        'pv_${widget.nodeId}_${Theme.of(context).brightness}_$keySeed',
+      ),
+      image: built.effectiveProvider,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      filterQuality: FilterQuality.low,
+      gaplessPlayback: true,
+      frameBuilder: (context, child, frame, wasSyncLoaded) {
+        if (wasSyncLoaded || frame != null) {
+          _lastRenderedByUrl[imageUrl] = child;
+          return child;
+        }
+        final last = _lastRenderedByUrl[imageUrl];
+        if (last != null) return last;
+        return ShimmerBox(
+          width: double.infinity,
+          height: 400,
+          isDarkMode: widget.isDarkMode,
+        );
+      },
+      errorBuilder: (context, error, stack) {
+        debugPrint('[PageViewImage] 이미지 로드 실패: $imageUrl, $error');
+        return ImageErrorPlaceholder(width: 200);
+      },
+    );
   }
 
   bool _shouldShowTopDropLine() {
@@ -999,7 +1057,9 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
       final boundary = baseIndex == start ? selection.base : selection.extent;
       final pos = boundary.nodePosition;
       if (pos is UpstreamDownstreamNodePosition) {
-        return pos.affinity == TextAffinity.downstream;
+        // ✅ start 경계: "노드 앞쪽(upstream)"에 걸리면 노드를 포함한다고 본다.
+        // 아래→위 드래그에서 특수 노드가 start 경계가 되는 경우가 많아 대칭성을 보장해야 한다.
+        return pos.affinity == TextAffinity.upstream;
       }
     }
     if (myIndex == end) {

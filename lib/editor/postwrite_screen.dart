@@ -26,6 +26,7 @@ import 'package:doppy/editor/service/content_change_detector.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/editor/style/style_sheet.dart';
 import 'package:doppy/editor/style/defualt_toolbar.dart';
+import 'package:doppy/editor/style/text_styling_service.dart';
 import 'package:doppy/editor/writer_sticker_canvas.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/theme/app_theme.dart';
@@ -1749,7 +1750,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     stickerService: stickerService,
                     nodeComponentService: nodeComponentService,
                     dragService: dragService,
-                    context: context, // 🚀 이미지 프리로드용 컨텍스트
                   );
 
                   if (success && mounted) {

@@ -661,8 +661,8 @@ class _RotationRulerSliderState extends State<RotationRulerSlider> {
     if (_dragStartX == null || _dragStartValue == null) return;
 
     final deltaX = details.localPosition.dx - _dragStartX!;
-    // 화면에 표시할 범위(중앙 기준 좌우 90도씩, 총 180도)
-    final deltaDegree = (deltaX / width) * 180;
+    // ✅ 감도 높이기: 180 -> 240
+    final deltaDegree = (deltaX / width) * 240;
     final newValue = (_dragStartValue! + deltaDegree.round()) % 360;
     final normalizedValue = newValue < 0 ? newValue + 360 : newValue;
     widget.onChanged(normalizedValue);
@@ -685,13 +685,13 @@ class _RotationRulerSliderState extends State<RotationRulerSlider> {
               (details) => _onPanUpdate(details, constraints.maxWidth),
           onHorizontalDragEnd: _onPanEnd,
           child: SizedBox(
-            height: 40,
+            height: 50, // ✅ 필터와 동일한 높이
             child: CustomPaint(
               painter: _RotationRulerPainter(
                 currentValue: widget.value,
                 textColor: widget.textColor,
               ),
-              size: Size(constraints.maxWidth, 40),
+              size: Size(constraints.maxWidth, 50), // ✅ 필터와 동일한 높이
             ),
           ),
         );
@@ -710,13 +710,13 @@ class _RotationRulerPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final tickPaint =
         Paint()
-          ..color = textColor.withOpacity(0.5)
+          ..color = textColor.withOpacity(0.3) // ✅ 필터와 동일
           ..strokeWidth = 1.5
           ..strokeCap = StrokeCap.round;
 
     final majorTickPaint =
         Paint()
-          ..color = textColor.withOpacity(0.7)
+          ..color = textColor.withOpacity(0.5) // ✅ 필터와 동일
           ..strokeWidth = 2.0
           ..strokeCap = StrokeCap.round;
 
@@ -727,54 +727,67 @@ class _RotationRulerPainter extends CustomPainter {
           ..strokeCap = StrokeCap.round;
 
     final centerX = size.width / 2;
-    final bottomY = size.height - 4;
+    final bottomY = size.height - 8; // ✅ 필터와 동일하게 변경
 
-    const totalTicks = 360;
     const visibleRange = 90.0;
     final pixelsPerDegree = size.width / (visibleRange * 2);
 
-    for (int i = 0; i < totalTicks; i++) {
-      final degree = i.toDouble();
+    // ✅ 가운데 바는 항상 표시
+    canvas.drawLine(
+      Offset(centerX, bottomY),
+      Offset(centerX, bottomY - 24), // ✅ 필터와 동일한 높이
+      centerPaint,
+    );
+
+    // ✅ 조정 슬라이더와 동일한 스타일: 더 큰 틱 간격 + 주요 틱 숫자 표시
+    const tickInterval = 5.0; // 5도 단위
+    for (double degree = 0; degree < 360; degree += tickInterval) {
       var relative = degree - currentValue.toDouble();
       if (relative > 180) relative -= 360;
       if (relative < -180) relative += 360;
       if (relative.abs() > visibleRange) continue;
 
       final x = centerX + relative * pixelsPerDegree;
-      final isMajor = (i % 10 == 0);
-      final isMedium = (i % 5 == 0);
 
-      final tickHeight =
-          (relative.abs() < 0.01)
-              ? 18.0
-              : isMajor
-              ? 16.0
-              : isMedium
-              ? 12.0
-              : 8.0;
+      // ✅ 현재 값 위치는 건너뛰기 (가운데 바가 이미 그려졌으므로)
+      if (relative.abs() < 0.5) continue;
 
-      final paint =
-          (relative.abs() < 0.01)
-              ? centerPaint
-              : isMajor
-              ? majorTickPaint
-              : tickPaint;
+      final isMajor = (degree.round() % 25 == 0); // 25도 단위마다 주요 틱
 
-      canvas.drawLine(
-        Offset(x, bottomY - tickHeight),
-        Offset(x, bottomY),
-        paint,
-      );
+      if (isMajor) {
+        canvas.drawLine(
+          Offset(x, bottomY),
+          Offset(x, bottomY - 16),
+          majorTickPaint,
+        );
+
+        // 숫자 표시 (현재 각도 기준 -180~180로 표기)
+        final raw = (currentValue + relative.round()) % 360;
+        final normalized = raw < 0 ? raw + 360 : raw;
+        final display = normalized > 180 ? normalized - 360 : normalized;
+        if (display != 0) {
+          final textSpan = TextSpan(
+            text: display.toString(),
+            style: TextStyle(
+              color: textColor.withOpacity(0.5),
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          );
+          final textPainter = TextPainter(
+            text: textSpan,
+            textDirection: TextDirection.ltr,
+          );
+          textPainter.layout();
+          textPainter.paint(
+            canvas,
+            Offset(x - textPainter.width / 2, bottomY - 32),
+          );
+        }
+      } else {
+        canvas.drawLine(Offset(x, bottomY), Offset(x, bottomY - 8), tickPaint);
+      }
     }
-
-    // 중앙 아래 삼각형 포인터
-    final trianglePaint = Paint()..color = textColor;
-    final path = Path();
-    path.moveTo(centerX, size.height);
-    path.lineTo(centerX - 6, size.height - 8);
-    path.lineTo(centerX + 6, size.height - 8);
-    path.close();
-    canvas.drawPath(path, trianglePaint);
   }
 
   @override

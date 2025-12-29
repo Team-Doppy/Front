@@ -661,6 +661,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.2.2"
+  imgly_sdk:
+    dependency: "direct main"
+    description:
+      name: imgly_sdk
+      sha256: c22173e0b36ed4a1dd49f79a94635eb2b72a577a80e23fc026c03eb2722c233c
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.3.0"
   intl:
     dependency: transitive
     description:

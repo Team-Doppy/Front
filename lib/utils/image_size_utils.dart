@@ -124,6 +124,20 @@ class ImageSizeUtils {
       );
 
       late ImageStreamListener listener;
+      Timer? timeoutTimer;
+      bool removed = false;
+
+      void safeRemoveListener() {
+        if (removed) return;
+        removed = true;
+        try {
+          stream.removeListener(listener);
+        } catch (_) {
+          // 일부 케이스에서 stream/completer가 이미 disposed 상태가 될 수 있음.
+          // (예: 위젯 언마운트/이미지 교체로 인해 스트림 정리 후 타이머가 늦게 실행)
+        }
+      }
+
       listener = ImageStreamListener(
         (ImageInfo info, bool synchronousCall) {
           final size = Size(
@@ -133,24 +147,26 @@ class ImageSizeUtils {
           if (!completer.isCompleted) {
             completer.complete(size);
           }
-          stream.removeListener(listener);
+          timeoutTimer?.cancel();
+          safeRemoveListener();
         },
         onError: (exception, stackTrace) {
           if (!completer.isCompleted) {
             completer.complete(null);
           }
-          stream.removeListener(listener);
+          timeoutTimer?.cancel();
+          safeRemoveListener();
         },
       );
 
       stream.addListener(listener);
 
       // 타임아웃: 10초 후 리스너 제거
-      Future.delayed(const Duration(seconds: 10), () {
+      timeoutTimer = Timer(const Duration(seconds: 10), () {
         if (!completer.isCompleted) {
           completer.complete(null);
         }
-        stream.removeListener(listener);
+        safeRemoveListener();
       });
 
       return await completer.future;

@@ -213,6 +213,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         final backgroundImageUrl = _getCurrentBackgroundImageUrl(searchService);
 
         return Scaffold(
+          resizeToAvoidBottomInset: false,
           backgroundColor: Theme.of(context).colorScheme.background,
           body: Stack(
             children: [

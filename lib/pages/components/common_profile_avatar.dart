@@ -135,6 +135,158 @@ class CommonProfileAvatar extends StatelessWidget {
   }
 }
 
+/// Hero 전환 등에 사용할 "정적" 아바타
+/// - Shimmer/Progress/제스처/애니메이션 없이 이미지(또는 placeholder)만 표시
+/// - Hero flight 중 placeholder ↔ image 스왑/애니메이션으로 인한 깜빡임을 줄이기 위한 용도
+class StaticProfileAvatar extends StatelessWidget {
+  final String? imageUrl;
+  final String username;
+  final double size;
+  final double borderWidth;
+  final Color borderColor;
+  final Color? backgroundColor;
+
+  const StaticProfileAvatar({
+    super.key,
+    this.imageUrl,
+    required this.username,
+    required this.size,
+    this.borderWidth = 2.0,
+    required this.borderColor,
+    this.backgroundColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final String? url = imageUrl;
+
+    return RepaintBoundary(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: backgroundColor ?? Theme.of(context).colorScheme.background,
+          border: Border.all(color: borderColor, width: borderWidth),
+        ),
+        child: ClipOval(
+          child:
+              (url != null && url.isNotEmpty)
+                  ? _StaticAvatarImage(imageUrl: url, size: size)
+                  : _StaticAvatarPlaceholder(
+                    username: username,
+                    size: size,
+                    isDarkMode: isDarkMode,
+                  ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StaticAvatarImage extends StatelessWidget {
+  final String imageUrl;
+  final double size;
+  const _StaticAvatarImage({required this.imageUrl, required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isNetwork =
+        imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
+    final bool isFileUrl = imageUrl.startsWith('file://');
+
+    if (isNetwork) {
+      return Image(
+        image: CachedNetworkImageProvider(imageUrl),
+        fit: BoxFit.cover,
+        // Hero 중 프레임 튐을 줄이기 위해 gapless playback + 고품질 샘플링
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.high,
+        // ✅ 잔상 방지: 이전 프레임을 숨기고 새 이미지가 로드될 때만 표시
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded || frame != null) {
+            return child;
+          }
+          // 로딩 중에는 투명하게 (이전 이미지 잔상 방지)
+          return const SizedBox.shrink();
+        },
+        // ✅ 이미지가 변경될 때 이전 이미지를 즉시 제거
+        errorBuilder: (context, error, stackTrace) {
+          return _StaticAvatarPlaceholder(
+            username: '',
+            size: size,
+            isDarkMode: Theme.of(context).brightness == Brightness.dark,
+          );
+        },
+      );
+    }
+
+    if (isFileUrl) {
+      final String path = Uri.parse(imageUrl).toFilePath();
+      return Image.file(
+        File(path),
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.high,
+        // ✅ 잔상 방지: 이전 프레임을 숨기고 새 이미지가 로드될 때만 표시
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded || frame != null) {
+            return child;
+          }
+          // 로딩 중에는 투명하게 (이전 이미지 잔상 방지)
+          return const SizedBox.shrink();
+        },
+        errorBuilder: (context, error, stackTrace) {
+          return _StaticAvatarPlaceholder(
+            username: '',
+            size: size,
+            isDarkMode: Theme.of(context).brightness == Brightness.dark,
+          );
+        },
+      );
+    }
+
+    // 알 수 없는 형식은 placeholder로 대체
+    return _StaticAvatarPlaceholder(
+      username: '',
+      size: size,
+      isDarkMode: Theme.of(context).brightness == Brightness.dark,
+    );
+  }
+}
+
+class _StaticAvatarPlaceholder extends StatelessWidget {
+  final String username;
+  final double size;
+  final bool isDarkMode;
+  const _StaticAvatarPlaceholder({
+    required this.username,
+    required this.size,
+    required this.isDarkMode,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final String firstLetter =
+        username.isNotEmpty ? username[0].toUpperCase() : '';
+    return Container(
+      width: size,
+      height: size,
+      decoration: const BoxDecoration(shape: BoxShape.circle),
+      alignment: Alignment.center,
+      child: Text(
+        firstLetter,
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+          fontSize: size * 0.4,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
 // 작은 크기용 프리셋
 class SmallProfileAvatar extends StatelessWidget {
   final String? imageUrl;

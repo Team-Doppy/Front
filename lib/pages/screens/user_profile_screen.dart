@@ -635,38 +635,68 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                           profileUploadTasks.isNotEmpty ||
                                           _isUploadingProfileImage;
 
-                                      final avatar = CommonProfileAvatar(
+                                      final borderColor =
+                                          Theme.of(context).brightness ==
+                                                  Brightness.dark
+                                              ? Colors.grey.shade500
+                                              : Colors.grey.shade400;
+
+                                      // ✅ Hero는 Transform/Progress/Shimmer 등 "동적 요소"와 분리된
+                                      //    정적 아바타만 사용해야 비행 시작 깜빡임/튐이 줄어듭니다.
+                                      final heroAvatar = StaticProfileAvatar(
                                         imageUrl: _displayImageUrl,
                                         username: _displayUsername,
                                         size: 150,
                                         borderWidth: isUploading ? 0 : 3,
-                                        borderColor:
-                                            Theme.of(context).brightness ==
-                                                    Brightness.dark
-                                                ? Colors.grey.shade500
-                                                : Colors.grey.shade400,
-                                        isUploading: isUploading,
-                                        onTap:
-                                            _isOwnProfile && !isUploading
-                                                ? _changeProfileImage
-                                                : null,
+                                        borderColor: borderColor,
                                       );
 
                                       // Hero 애니메이션 적용
-                                      return Hero(
-                                        tag:
-                                            'profile_image_${_displayUsername}',
-                                        createRectTween: (begin, end) {
-                                          // ✅ 직선 경로(나갈 때처럼 자연스럽게)
-                                          return RectTween(
-                                            begin: begin,
-                                            end: end,
-                                          );
-                                        },
-                                        child: Material(
-                                          color: Colors.transparent,
-                                          child: avatar,
-                                        ),
+                                      return Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                          Hero(
+                                            tag:
+                                                'profile_image_${_displayUsername}',
+                                            createRectTween: (begin, end) {
+                                              // ✅ 직선 경로(나갈 때처럼 자연스럽게)
+                                              return RectTween(
+                                                begin: begin,
+                                                end: end,
+                                              );
+                                            },
+                                            child: Material(
+                                              color: Colors.transparent,
+                                              child: heroAvatar,
+                                            ),
+                                          ),
+                                          // 탭/업로드 인디케이터는 Hero 바깥에서 처리(비행 중 변형 독립)
+                                          if (_isOwnProfile && !isUploading)
+                                            Positioned.fill(
+                                              child: Material(
+                                                color: Colors.transparent,
+                                                child: InkWell(
+                                                  customBorder:
+                                                      const CircleBorder(),
+                                                  onTap: _changeProfileImage,
+                                                ),
+                                              ),
+                                            ),
+                                          if (isUploading)
+                                            Positioned.fill(
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 3,
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<
+                                                      Color
+                                                    >(
+                                                      Theme.of(
+                                                        context,
+                                                      ).colorScheme.primary,
+                                                    ),
+                                              ),
+                                            ),
+                                        ],
                                       );
                                     },
                                   ),

@@ -11,7 +11,7 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:super_editor/super_editor.dart';
-import 'package:doppy/editor/style/defualt_toolbar.dart';
+import 'package:doppy/editor/style/text_attributions.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'dart:convert';

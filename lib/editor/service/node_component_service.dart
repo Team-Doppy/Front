@@ -51,6 +51,28 @@ class NodeComponentService extends ChangeNotifier {
     }
   }
 
+  /// 특정 노드의 스포일러 세션 캐시만 제거한다.
+  ///
+  /// - 문서 metadata(`meta['spoiler']`)가 진짜 소스가 되어야 하는 편집(undo/redo 포함)에서는
+  ///   세션 캐시가 metadata를 덮어쓰면 안 된다.
+  /// - 읽기 모드에서 "한 번만 스포일러 보기" 같은 UX를 위해 세션 캐시를 쓰되,
+  ///   편집/undo/redo에서는 필요 시 이 캐시를 제거하여 동기화를 맞춘다.
+  void clearSpoilerForNode(String nodeId, {bool notify = true}) {
+    if (!_spoilerByNodeId.containsKey(nodeId)) return;
+    _spoilerByNodeId.remove(nodeId);
+
+    if (!notify) return;
+
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle) {
+      notifyListeners();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (hasListeners) notifyListeners();
+      });
+    }
+  }
+
   // ===== 스포일러 헬퍼 =====
   bool shouldShowImageSpoiler(String nodeId, Map<String, dynamic>? metadata) {
     if (isSpoilerDisabled(nodeId)) return false; // 해제되면 숨기지 않음

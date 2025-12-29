@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
@@ -13,9 +12,11 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
+import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
@@ -41,6 +42,9 @@ class SingleImageComponentBuilder implements ComponentBuilder {
     SingleColumnLayoutComponentViewModel componentViewModel,
   ) {
     if (componentViewModel is ImageComponentViewModel) {
+      // ✅ 중요: SuperEditor의 DocumentLayout/히트테스트/드래그&드롭은
+      // componentContext.componentKey로 컴포넌트를 추적한다.
+      // 이 키를 외부에서 고정 키로 바꾸면 분리/병합/삽입이 깨질 수 있으므로 그대로 전달한다.
       return SingleImageComponent(
         nodeId: componentViewModel.nodeId,
         imageUrl: componentViewModel.imageUrl,
@@ -176,6 +180,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   @override
   void initState() {
     super.initState();
+    assert(() {
+      debugPrint(
+        '[ImgLife][Single] init: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}, url=${widget.imageUrl}',
+      );
+      return true;
+    }());
 
     // 🎯 메타데이터에서 이미지 크기 미리 로드 (shimmer 최적화)
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -197,27 +207,45 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
   @override
   void dispose() {
+    assert(() {
+      debugPrint(
+        '[ImgLife][Single] dispose: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}, url=${widget.imageUrl}',
+      );
+      return true;
+    }());
     _controller.dispose();
     _scatterCtrl.dispose();
     super.dispose();
   }
 
   @override
+  void didUpdateWidget(covariant SingleImageComponent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    assert(() {
+      final urlChanged = oldWidget.imageUrl != widget.imageUrl;
+      if (urlChanged) {
+        debugPrint(
+          '[ImgLife][Single] didUpdateWidget(urlChanged): nodeId=${widget.nodeId}, oldUrl=${oldWidget.imageUrl}, newUrl=${widget.imageUrl}',
+        );
+      } else {
+        debugPrint(
+          '[ImgLife][Single] didUpdateWidget: nodeId=${widget.nodeId} (urlSame)',
+        );
+      }
+      return true;
+    }());
+  }
+
+  @override
   Widget build(BuildContext context) {
     // 🎯 편집 모드에서만 selection 체크 (성능 최적화)
     // 🎯 읽기 모드에서도 doc에 접근하여 특수 노드 간격 확인 (포스트 라이트와 동일하게)
-    DocumentSelection? composerSelection;
-    Document? doc;
-    // ignore: invalid_use_of_visible_for_testing_member
-    SuperEditorState? seState;
-    // ignore: invalid_use_of_visible_for_testing_member
-    seState = context.findAncestorStateOfType<SuperEditorState>();
-    // ignore: invalid_use_of_visible_for_testing_member
-    doc = seState?.editContext.editor.document;
-    if (widget.isEditing) {
-      // ignore: invalid_use_of_visible_for_testing_member
-      composerSelection = seState?.editContext.composer.selection;
-    }
+    final editorService = _getEditorService();
+    final Document? doc = editorService?.document;
+    final DocumentSelection? composerSelection =
+        widget.isEditing
+            ? editorService?.editor.composer.selectionNotifier.value
+            : null;
     final bool hasImageAbove =
         doc == null ? false : _hasNeighborImage(doc, widget.nodeId, -1);
     final bool hasImageBelow =
@@ -232,9 +260,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
           // 실제 이미지 내용 + 좌/우 세로 라인 (머지 모드에서)
           LayoutBuilder(
             builder: (context, constraints) {
-              debugPrint(
-                '[SingleImage] LayoutBuilder 호출: nodeId=${widget.nodeId}, constraints.maxWidth=${constraints.maxWidth}, screenWidth=${widget.screenWidth}',
-              );
+              assert(() {
+                debugPrint(
+                  '[SingleImage] LayoutBuilder 호출: nodeId=${widget.nodeId}, constraints.maxWidth=${constraints.maxWidth}, screenWidth=${widget.screenWidth}',
+                );
+                return true;
+              }());
 
               // 🎯 성능 최적화: context.watch → context.select로 변경하여 필요한 부분만 rebuild
               final editedBytes = context
@@ -250,8 +281,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
               );
 
               // 🎯 업로드 중 상태 판정 (메타데이터 + 실제 업로드 태스크 존재 여부)
-              // ignore: invalid_use_of_visible_for_testing_member
-              final doc = seState?.editContext.editor.document;
+              final doc = editorService?.document;
               // 🎯 업로드 중 상태 확인 (편집 모드에서만, 읽기 전용 모드에서는 항상 false)
               bool isUploading = false;
               if (widget.isEditing) {
@@ -799,7 +829,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       final boundary = baseIndex == start ? selection.base : selection.extent;
       final pos = boundary.nodePosition;
       if (pos is UpstreamDownstreamNodePosition) {
-        return pos.affinity == TextAffinity.downstream;
+        // ✅ start 경계는 upstream일 때 포함 (아래→위 드래그 대칭 보장)
+        return pos.affinity == TextAffinity.upstream;
       }
     }
     // 끝 경계가 이 노드인 경우
@@ -823,11 +854,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     _sizeInitialized = true; // 실패해도 재시도 방지
 
     try {
-      // ignore: invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member
-      final seState = context.findAncestorStateOfType<SuperEditorState>();
-      // ignore: invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member
-      final doc = seState?.editContext.editor.document;
-      final node = doc?.getNodeById(widget.nodeId);
+      final editorService = _getEditorService();
+      final node = editorService?.document.getNodeById(widget.nodeId);
 
       if (node is! ImageNode) return null;
 
@@ -886,9 +914,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
       if (size != null) {
         _cachedImageSize = size;
-        debugPrint(
-          '[SingleImage] ✅ 이미지 크기 측정 완료: ${widget.imageUrl} -> ${size.width.toInt()}x${size.height.toInt()}',
-        );
+        assert(() {
+          debugPrint(
+            '[SingleImage] ✅ 이미지 크기 측정 완료: ${widget.imageUrl} -> ${size.width.toInt()}x${size.height.toInt()}',
+          );
+          return true;
+        }());
         _saveImageSizeToMetadata(size);
       } else {
         // 🎯 HEIC 파일 등은 ImageProvider로 재시도
@@ -900,9 +931,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
               );
           if (providerSize != null && mounted) {
             _cachedImageSize = providerSize;
-            debugPrint(
-              '[SingleImage] ✅ ImageProvider에서 크기 추출: ${widget.imageUrl} -> ${providerSize.width.toInt()}x${providerSize.height.toInt()}',
-            );
+            assert(() {
+              debugPrint(
+                '[SingleImage] ✅ ImageProvider에서 크기 추출: ${widget.imageUrl} -> ${providerSize.width.toInt()}x${providerSize.height.toInt()}',
+              );
+              return true;
+            }());
             _saveImageSizeToMetadata(providerSize);
           }
         }
@@ -972,9 +1006,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         editorService.document.replaceNodeById(widget.nodeId, updatedNode);
 
         assert(() {
-          debugPrint(
-            '[SingleImage] ✅ 이미지 크기 저장 완료: nodeId=${widget.nodeId}, url=${widget.imageUrl}, size=${size.width.toInt()}x${size.height.toInt()}',
-          );
+          assert(() {
+            debugPrint(
+              '[SingleImage] ✅ 이미지 크기 저장 완료: nodeId=${widget.nodeId}, url=${widget.imageUrl}, size=${size.width.toInt()}x${size.height.toInt()}',
+            );
+            return true;
+          }());
           return true;
         }());
       } else {
@@ -1058,120 +1095,65 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       );
     }
 
-    final url = widget.imageUrl;
-
-    // 업로드 중이면 metadata.localPath로 미리보기
-    try {
-      // ignore: invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member
-      final seState = context.findAncestorStateOfType<SuperEditorState>();
-      // ignore: invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member
-      final doc = seState?.editContext.editor.document;
-      final node = doc?.getNodeById(widget.nodeId);
-      if (node is ImageNode) {
-        final meta = (node as dynamic).metadata as Map<String, dynamic>?;
-        final localPath = meta != null ? (meta['localPath']?.toString()) : null;
-        if ((url.isEmpty || !_isNetworkUrl(url)) &&
-            localPath != null &&
-            localPath.isNotEmpty) {
-          final filePath =
-              localPath.startsWith('file://')
-                  ? localPath.substring(7)
-                  : localPath;
-          final double w = widget.screenWidth; // 🚀 최고 효율: prop 사용
-          return Image.file(
-            File(filePath),
-            key: ValueKey('single_${widget.nodeId}'),
-            fit: BoxFit.contain,
-            cacheWidth: w.isFinite ? w.toInt() : null,
-            filterQuality: FilterQuality.low,
-            frameBuilder: (context, child, frame, wasSyncLoaded) {
-              if (wasSyncLoaded || frame != null) {
-                _lastRenderedChild = child;
-                // 🎯 편집 모드에서만 메타데이터 없을 때 크기 측정
-                if (widget.isEditing && _cachedImageSize == null) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) {
-                      _measureAndSaveImageSize();
-                    }
-                  });
-                }
-                return child;
-              }
-              // 🎯 메타데이터에서 실제 크기 가져오기
-              final metaSize = _getImageSizeFromMetadata();
-              final h =
-                  metaSize != null
-                      ? (w * metaSize.height / metaSize.width) // 실제 비율
-                      : w / (4 / 5); // 기본 비율
-              return _lastRenderedChild ??
-                  ShimmerBox(
-                    width: w,
-                    height: h,
-                    isDarkMode: widget.isDarkMode,
-                  );
-            },
-            errorBuilder:
-                (context, error, stack) => ImageErrorPlaceholder(
-                  width: widget.screenWidth, // 🎯 성능 최적화: MediaQuery 제거
-                ),
-          );
+    // ✅ 업로드 중이면 metadata.localPath로 미리보기 (단, 위젯 타입은 항상 Image(ImageProvider)로 통일)
+    String displayUrl = widget.imageUrl;
+    if (widget.isEditing &&
+        (displayUrl.isEmpty || !_isNetworkUrl(displayUrl))) {
+      try {
+        final editorService = _getEditorService();
+        final node = editorService?.document.getNodeById(widget.nodeId);
+        if (node is ImageNode) {
+          final meta = (node as dynamic).metadata as Map<String, dynamic>?;
+          final localPath = meta?['localPath']?.toString();
+          if (localPath != null && localPath.isNotEmpty) {
+            displayUrl = localPath;
+          }
         }
-      }
-    } catch (_) {}
-    if (_isLocalPath(url)) {
-      final filePath = url.startsWith('file://') ? url.substring(7) : url;
-      final dpr = View.of(context).devicePixelRatio;
-      return Image.file(
-        File(filePath),
-        key: ValueKey('single_${widget.nodeId}'),
-        fit: BoxFit.contain,
-        // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
-        // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
-        cacheWidth:
-            widget.isEditing ? (widget.screenWidth * dpr).round() : null,
-        errorBuilder:
-            (context, error, stack) => ImageErrorPlaceholder(
-              width: widget.screenWidth, // 🎯 성능 최적화: MediaQuery 제거
-            ),
-      );
+      } catch (_) {}
     }
 
-    final dpr = View.of(context).devicePixelRatio;
-    return Image.network(
-      url,
+    final decodeWidth =
+        widget.isEditing
+            ? EditorImageProvider.editingDecodeWidth(
+              context,
+              widget.screenWidth,
+            )
+            : null;
+
+    final built = EditorImageProvider.build(
+      url: displayUrl,
+      isEditing: widget.isEditing,
+      decodeWidth: decodeWidth,
+    );
+
+    return Image(
       key: ValueKey('single_${widget.nodeId}'),
+      image: built.effectiveProvider,
       fit: BoxFit.contain,
-      // ✅ 편집 모드에서만 decode 크기 축소 (메모리/eviction 완화)
-      // ✅ 읽기 모드에서는 precacheImage(NetworkImage(url))와 캐시 키를 맞춰 프리로드 히트 보장
-      cacheWidth: widget.isEditing ? (widget.screenWidth * dpr).round() : null,
+      filterQuality: FilterQuality.low,
+      gaplessPlayback: true,
       frameBuilder: (context, child, frame, wasSyncLoaded) {
-        // 프리로드(캐시 히트)된 경우 즉시 child 렌더 → 쉬머 미노출
         if (wasSyncLoaded || frame != null) {
           _lastRenderedChild = child;
-          // 🎯 편집 모드에서만 메타데이터 없을 때 크기 측정 (이미지 업로드 시)
-          // 보기 모드에서는 메타데이터 필수 (재계산 안 함)
           if (widget.isEditing && _cachedImageSize == null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                _measureAndSaveImageSize();
-              }
+              if (mounted) _measureAndSaveImageSize();
             });
           }
           return child;
         }
-        final w = widget.screenWidth; // 🎯 성능 최적화: MediaQuery 제거
-        // 🎯 메타데이터에서 실제 크기 가져오기
+        final w = widget.screenWidth;
         final metaSize = _getImageSizeFromMetadata();
         final h =
             metaSize != null
-                ? (w * metaSize.height / metaSize.width) // 실제 비율
-                : w / (4 / 5); // 기본 비율
+                ? (w * metaSize.height / metaSize.width)
+                : w / (4 / 5);
         return _lastRenderedChild ??
             ShimmerBox(width: w, height: h, isDarkMode: widget.isDarkMode);
       },
       errorBuilder:
           (context, error, stack) => ImageErrorPlaceholder(
-            width: widget.screenWidth, // 🎯 성능 최적화: MediaQuery 제거
+            width: widget.screenWidth,
             height: widget.screenWidth / (4 / 5),
           ),
     );
@@ -1179,15 +1161,6 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
   bool _isNetworkUrl(String path) {
     return path.startsWith('http://') || path.startsWith('https://');
-  }
-
-  bool _isLocalPath(String path) {
-    if (path.isEmpty) return false;
-    if (path.startsWith('http://') || path.startsWith('https://')) return false;
-    if (path.startsWith('file://')) return true;
-    return path.startsWith('/') ||
-        path.contains('/Application/') ||
-        path.contains('/Documents/');
   }
 
   bool _hasNeighborImage(Document doc, String nodeId, int direction) {

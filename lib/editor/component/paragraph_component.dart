@@ -10,7 +10,7 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:provider/provider.dart';
-import 'package:doppy/editor/style/defualt_toolbar.dart';
+import 'package:doppy/editor/style/text_attributions.dart';
 
 /// 패키지 기본 ParagraphComponent를 사용하고,
 /// 드래그 드롭 라인만 오버레이로 추가하는 경량 커스텀 빌더

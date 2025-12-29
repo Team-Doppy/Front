@@ -797,7 +797,8 @@ class _LinkComponentState extends State<_LinkComponent>
       final boundary = baseIndex == start ? selection.base : selection.extent;
       final pos = boundary.nodePosition;
       if (pos is UpstreamDownstreamNodePosition) {
-        return pos.affinity == TextAffinity.downstream;
+        // ✅ start 경계는 upstream일 때 포함 (아래→위 드래그 대칭 보장)
+        return pos.affinity == TextAffinity.upstream;
       }
     }
     // 끝 경계가 이 노드인 경우

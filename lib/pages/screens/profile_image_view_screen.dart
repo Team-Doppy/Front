@@ -1,10 +1,10 @@
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/image/crop_editor.dart';
 import 'package:doppy/image/media_picker_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/cupertino.dart';
@@ -196,40 +196,73 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                 },
         child: Stack(
           children: [
-            // 중앙 프로필 이미지 (Hero 애니메이션)
-            Center(
+            // 중앙 프로필 이미지 (Hero 애니메이션) - 위쪽으로 약간 이동
+            Align(
+              alignment: const Alignment(
+                0,
+                -0.25,
+              ), // 위로 약간 이동 (0 = 중앙, -1 = 최상단)
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  // ✅ Hero는 고정 레이아웃(앵커)만 잡고, Transform은 child 내부에서만 적용해야 튐이 사라짐
+                  // ✅ Hero는 고정 레이아웃(앵커)만 잡고, Transform은 Hero 바깥에서 적용
+                  //    드래그 피드백은 유지하되 Hero 전환 시 깜빡임은 방지
                   if (_selectedImage == null)
-                    Hero(
-                      tag: 'profile_image_${widget.username}',
-                      createRectTween:
-                          (begin, end) => RectTween(begin: begin, end: end),
-                      flightShuttleBuilder: (
-                        flightContext,
-                        animation,
-                        flightDirection,
-                        fromHeroContext,
-                        toHeroContext,
-                      ) {
-                        // ✅ 비행 중에는 Transform/Sliver/Scroll 영향을 끊기 위해 "순수 아바타"만 렌더
-                        return SizedBox(
+                    Transform.translate(
+                      offset:
+                          canSwipeDismiss
+                              ? Offset(
+                                (_dragOffset.dx * 0.18).clamp(-40.0, 40.0),
+                                (_dragOffset.dy * 0.18).clamp(-40.0, 40.0),
+                              )
+                              : Offset.zero,
+                      child: Hero(
+                        tag: 'profile_image_${widget.username}',
+                        createRectTween:
+                            (begin, end) => RectTween(begin: begin, end: end),
+                        flightShuttleBuilder: (
+                          flightContext,
+                          animation,
+                          flightDirection,
+                          fromHeroContext,
+                          toHeroContext,
+                        ) {
+                          // ✅ 비행 중에는 "출발/도착 Hero의 child"를 그대로 재사용해야
+                          //    CachedNetworkImage placeholder ↔ image 스왑으로 인한 시작 깜빡임이 줄어듭니다.
+                          final fromHero =
+                              fromHeroContext.widget is Hero
+                                  ? (fromHeroContext.widget as Hero).child
+                                  : fromHeroContext.widget;
+                          final toHero =
+                              toHeroContext.widget is Hero
+                                  ? (toHeroContext.widget as Hero).child
+                                  : toHeroContext.widget;
+
+                          final stableChild =
+                              flightDirection == HeroFlightDirection.push
+                                  ? fromHero
+                                  : toHero;
+
+                          return SizedBox(
+                            width: _cropSize,
+                            height: _cropSize,
+                            child: Material(
+                              color: Colors.transparent,
+                              child: stableChild,
+                            ),
+                          );
+                        },
+                        child: SizedBox(
                           width: _cropSize,
                           height: _cropSize,
-                          child: _buildHeroAvatar(
-                            enableTransform: false,
-                            dragOffset: Offset.zero,
+                          // ✅ 이미지 URL이 바뀔 때 위젯을 완전히 재생성하여 잔상 방지
+                          key: ValueKey(
+                            'hero_avatar_${widget.profileImageUrl}',
                           ),
-                        );
-                      },
-                      child: SizedBox(
-                        width: _cropSize,
-                        height: _cropSize,
-                        child: _buildHeroAvatar(
-                          enableTransform: canSwipeDismiss,
-                          dragOffset: _dragOffset,
+                          child: _buildHeroAvatar(
+                            enableTransform: false, // Hero 내부는 정적
+                            dragOffset: Offset.zero, // Transform은 외부에서 처리
+                          ),
                         ),
                       ),
                     ),
@@ -243,7 +276,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
               ),
             ),
 
-            // 상단 취소 버튼
+            // 상단 뒤로가기 버튼
             SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -252,17 +285,11 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                   child: GestureDetector(
                     onTap: () => Navigator.pop(context),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      child: Text(
-                        AppLocalizations.of(context).translate('cancel'),
-                        style: TextStyle(
-                          color: theme.colorScheme.primary,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w400,
-                        ),
+                      padding: const EdgeInsets.all(8.0),
+                      child: Icon(
+                        Icons.arrow_back,
+                        color: theme.colorScheme.onSurface,
+                        size: 24,
                       ),
                     ),
                   ),
@@ -291,7 +318,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                       _buildCircleButton(
                                         context: context,
                                         icon: Icons.check,
-                                        label: '완료',
+                                        label: AppLocalizations.of(
+                                          context,
+                                        ).translate('complete'),
                                         onTap: () async {
                                           if (_selectedImage != null &&
                                               _uiImage != null) {
@@ -311,14 +340,18 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                       _buildCircleButton(
                                         context: context,
                                         icon: Icons.tune,
-                                        label: '보정',
+                                        label: AppLocalizations.of(
+                                          context,
+                                        ).translate('adjust'),
                                         onTap: _enterAdjustMode,
                                       ),
                                       const SizedBox(width: 16),
                                       _buildCircleButton(
                                         context: context,
                                         icon: Icons.close,
-                                        label: '취소',
+                                        label: AppLocalizations.of(
+                                          context,
+                                        ).translate('cancel'),
                                         onTap: () {
                                           setState(() {
                                             _selectedImage = null;
@@ -343,7 +376,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                   _buildCircleButton(
                                     context: context,
                                     icon: Icons.check,
-                                    label: '확인',
+                                    label: AppLocalizations.of(
+                                      context,
+                                    ).translate('confirm'),
                                     onTap: () {
                                       widget.onSetDefaultImage();
                                       Navigator.pop(context);
@@ -353,7 +388,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                   _buildCircleButton(
                                     context: context,
                                     icon: Icons.close,
-                                    label: '취소',
+                                    label: AppLocalizations.of(
+                                      context,
+                                    ).translate('cancel'),
                                     onTap: () {
                                       setState(() {
                                         _isDefaultImageMode = false;
@@ -370,7 +407,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                   _buildCircleButton(
                                     context: context,
                                     icon: Icons.ios_share,
-                                    label: '공유하기',
+                                    label: AppLocalizations.of(
+                                      context,
+                                    ).translate('share'),
                                     onTap: widget.onShareProfile,
                                   ),
 
@@ -378,7 +417,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                   _buildCircleButton(
                                     context: context,
                                     icon: Icons.photo_library,
-                                    label: '갤러리선택',
+                                    label: AppLocalizations.of(
+                                      context,
+                                    ).translate('select_from_gallery'),
                                     onTap: () {
                                       _showMediaPicker();
                                     },
@@ -388,7 +429,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                   _buildCircleButton(
                                     context: context,
                                     icon: Icons.person,
-                                    label: '기본이미지',
+                                    label: AppLocalizations.of(
+                                      context,
+                                    ).translate('change_to_default'),
                                     onTap: () {
                                       // 기본이미지 모드로 전환 (확인/취소 버튼 표시)
                                       setState(() {
@@ -423,10 +466,16 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                             : Icons.person_add,
                                     label:
                                         isFollowing
-                                            ? '팔로잉'
+                                            ? AppLocalizations.of(
+                                              context,
+                                            ).translate('following')
                                             : isRequested
-                                            ? '요청됨'
-                                            : '팔로우',
+                                            ? AppLocalizations.of(
+                                              context,
+                                            ).translate('request_sent')
+                                            : AppLocalizations.of(
+                                              context,
+                                            ).translate('follow'),
                                     onTap: () async {
                                       if (isFollowing) {
                                         // 팔로우 해제
@@ -447,7 +496,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                               _buildCircleButton(
                                 context: context,
                                 icon: Icons.ios_share,
-                                label: '공유하기',
+                                label: AppLocalizations.of(
+                                  context,
+                                ).translate('share'),
                                 onTap: widget.onShareProfile,
                               ),
 
@@ -459,7 +510,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                         _isDownloading
                                             ? Icons.downloading
                                             : Icons.download,
-                                    label: '다운로드',
+                                    label: AppLocalizations.of(
+                                      context,
+                                    ).translate('download'),
                                     onTap: () => _downloadImage(context),
                                   )
                                   : const SizedBox(),
@@ -469,29 +522,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPlaceholder() {
-    final theme = Theme.of(context);
-    final String firstLetter =
-        widget.username.isNotEmpty ? widget.username[0].toUpperCase() : '';
-
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceVariant,
-        shape: BoxShape.circle,
-      ),
-      child: Center(
-        child: Text(
-          firstLetter,
-          style: TextStyle(
-            color: theme.colorScheme.onSurface.withOpacity(0.3),
-            fontSize: 100,
-            fontWeight: FontWeight.w600,
-          ),
         ),
       ),
     );
@@ -507,40 +537,26 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         widget.profileImageUrl != null &&
         widget.profileImageUrl!.isNotEmpty;
 
-    final Offset visualOffset =
-        enableTransform
-            ? Offset(
-              (dragOffset.dx * 0.18).clamp(-40.0, 40.0),
-              (dragOffset.dy * 0.18).clamp(-40.0, 40.0),
-            )
-            : Offset.zero;
+    // UserProfileScreen과 동일한 보더 스타일 적용
+    final borderColor =
+        theme.brightness == Brightness.dark
+            ? Colors.grey.shade500
+            : Colors.grey.shade400;
 
     return Material(
       color: Colors.transparent,
-      child: RepaintBoundary(
-        child: Transform.translate(
-          offset: visualOffset,
-          child: Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: theme.colorScheme.surfaceVariant,
-            ),
-            child: ClipOval(
-              child:
-                  hasProfileImage
-                      ? CachedNetworkImage(
-                        imageUrl: widget.profileImageUrl!,
-                        fit: BoxFit.cover,
-                        fadeInDuration: Duration.zero,
-                        fadeOutDuration: Duration.zero,
-                        placeholder: (context, url) => _buildPlaceholder(),
-                        errorWidget:
-                            (context, url, error) => _buildPlaceholder(),
-                      )
-                      : _buildPlaceholder(),
-            ),
-          ),
-        ),
+      // ✅ Hero child는 Transform/placeholder 애니메이션과 독립적인 "정적" 위젯이어야
+      //    비행 시작/종료 시 튐/깜빡임이 줄어듭니다.
+      child: StaticProfileAvatar(
+        key: ValueKey(
+          'static_avatar_${widget.profileImageUrl}_${widget.username}',
+        ), // ✅ 이미지 URL이 바뀔 때 완전히 재생성하여 잔상 방지
+        imageUrl: hasProfileImage ? widget.profileImageUrl : null,
+        username: widget.username,
+        size: _cropSize,
+        borderWidth: 3.0,
+        borderColor: borderColor,
+        backgroundColor: theme.colorScheme.surfaceVariant,
       ),
     );
   }
@@ -590,7 +606,10 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
       }
     } catch (e) {
       if (context.mounted) {
-        ErrorHandler.showError(context, '팔로우 요청에 실패했습니다');
+        ErrorHandler.showError(
+          context,
+          AppLocalizations.of(context).translate('friend_request_failed'),
+        );
       }
     }
   }
@@ -604,7 +623,10 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
       }
     } catch (e) {
       if (context.mounted) {
-        ErrorHandler.showError(context, '팔로우 해제에 실패했습니다');
+        ErrorHandler.showError(
+          context,
+          AppLocalizations.of(context).translate('unfriend_failed'),
+        );
       }
     }
   }
@@ -618,11 +640,17 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
       if (success && widget.onFollowStatusChanged != null) {
         widget.onFollowStatusChanged!();
       } else if (!success && context.mounted) {
-        ErrorHandler.showError(context, '요청 취소에 실패했습니다');
+        ErrorHandler.showError(
+          context,
+          AppLocalizations.of(context).translate('cancel_request_failed'),
+        );
       }
     } catch (e) {
       if (context.mounted) {
-        ErrorHandler.showError(context, '요청 취소에 실패했습니다');
+        ErrorHandler.showError(
+          context,
+          AppLocalizations.of(context).translate('cancel_request_failed'),
+        );
       }
     }
   }
@@ -761,7 +789,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
               TextButton(
                 onPressed: () => _exitAdjustMode(apply: false),
                 child: Text(
-                  '취소',
+                  AppLocalizations.of(context).translate('cancel'),
                   style: TextStyle(
                     color: theme.colorScheme.onSurface.withOpacity(0.8),
                     fontSize: 16,
@@ -773,7 +801,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
               TextButton(
                 onPressed: () => _exitAdjustMode(apply: true),
                 child: Text(
-                  '완료',
+                  AppLocalizations.of(context).translate('complete'),
                   style: TextStyle(
                     color: theme.colorScheme.primary,
                     fontSize: 16,
@@ -792,25 +820,25 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                   theme: theme,
                   tool: _AdjustTool.brightness,
                   icon: Icons.brightness_6,
-                  label: '밝기',
+                  label: AppLocalizations.of(context).translate('brightness'),
                 ),
                 _buildAdjustToolButton(
                   theme: theme,
                   tool: _AdjustTool.contrast,
                   icon: Icons.contrast,
-                  label: '대비',
+                  label: AppLocalizations.of(context).translate('contrast'),
                 ),
                 _buildAdjustToolButton(
                   theme: theme,
                   tool: _AdjustTool.saturation,
                   icon: Icons.palette,
-                  label: '채도',
+                  label: AppLocalizations.of(context).translate('saturation'),
                 ),
                 _buildAdjustToolButton(
                   theme: theme,
                   tool: _AdjustTool.warmth,
                   icon: Icons.thermostat,
-                  label: '따뜻함',
+                  label: AppLocalizations.of(context).translate('warmth'),
                 ),
               ],
             ),
@@ -882,19 +910,19 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
     switch (_activeAdjustTool) {
       case _AdjustTool.brightness:
         value = _brightness;
-        label = '밝기';
+        label = AppLocalizations.of(context).translate('brightness');
         break;
       case _AdjustTool.contrast:
         value = _contrast;
-        label = '대비';
+        label = AppLocalizations.of(context).translate('contrast');
         break;
       case _AdjustTool.saturation:
         value = _saturation;
-        label = '채도';
+        label = AppLocalizations.of(context).translate('saturation');
         break;
       case _AdjustTool.warmth:
         value = _warmth;
-        label = '따뜻함';
+        label = AppLocalizations.of(context).translate('warmth');
         break;
     }
 
@@ -1194,7 +1222,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         _uiImage!.width.toDouble(),
         _uiImage!.height.toDouble(),
       );
-      final containerSize = Size(_cropSize, _cropSize);
+      final containerSize = const Size(_cropSize, _cropSize);
+      // ✅ export는 DPR을 반영해 더 높은 해상도로 렌더링(아바타에서 색 점/aliasing 완화)
+      final dpr = MediaQuery.of(context).devicePixelRatio;
 
       // ✅ 화면에서 보던 것과 동일한 방식으로 렌더링해서 결과에도 회전/이동/확대/보정 반영
       final imageRect = ImageRectUtils.computeImageRect(
@@ -1206,11 +1236,23 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
 
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
-      final size = Size(_cropSize, _cropSize);
+      final size = containerSize;
+
+      // 고해상도 렌더링(좌표계는 그대로 두고 캔버스만 스케일)
+      canvas.scale(dpr, dpr);
 
       // 원형 클립
+      // ✅ fringing 완화: 경계 1px(물리 픽셀) 안쪽으로 살짝 줄여 알파 경계 색 번짐을 덜 보이게 함
+      final inset = 1.0 / dpr;
       final clipPath =
-          Path()..addOval(Rect.fromLTWH(0, 0, size.width, size.height));
+          Path()..addOval(
+            Rect.fromLTWH(
+              inset,
+              inset,
+              size.width - inset * 2,
+              size.height - inset * 2,
+            ),
+          );
       canvas.clipPath(clipPath);
 
       final center = Offset(size.width / 2, size.height / 2);
@@ -1229,16 +1271,19 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         _uiImage!,
         srcRect,
         imageRect,
-        Paint()..colorFilter = _buildAdjustmentColorFilter(),
+        Paint()
+          ..isAntiAlias = true
+          // ✅ fringing 완화: export에서는 high → medium (미리보기 품질은 유지)
+          ..filterQuality = FilterQuality.medium
+          ..colorFilter = _buildAdjustmentColorFilter(),
       );
       canvas.restore();
 
       // Picture를 Image로 변환
       final picture = recorder.endRecording();
-      final image = await picture.toImage(
-        size.width.toInt(),
-        size.height.toInt(),
-      );
+      final outW = (size.width * dpr).round();
+      final outH = (size.height * dpr).round();
+      final image = await picture.toImage(outW, outH);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       final pngBytes = byteData!.buffer.asUint8List();
 
@@ -1248,6 +1293,11 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         '${tempDir.path}/cropped_profile_${DateTime.now().millisecondsSinceEpoch}.png',
       );
       await tempFile.writeAsBytes(pngBytes);
+      debugPrint(
+        '[ProfileImageView] crop export: logical=${size.width.toInt()}x${size.height.toInt()} '
+        'dpr=${dpr.toStringAsFixed(2)} '
+        'out=${outW}x${outH} bytes=${pngBytes.length} path=${tempFile.path}',
+      );
 
       // 임시 디렉토리 정리 (파일은 유지)
       try {
@@ -1296,6 +1346,8 @@ class _UnifiedImagePainter extends CustomPainter {
     final backgroundPaint =
         Paint()
           ..color = Colors.white.withOpacity(0.3)
+          ..isAntiAlias = true
+          ..filterQuality = FilterQuality.high
           ..colorFilter = adjustmentFilter;
 
     // 원형 영역을 제외한 경로 생성
@@ -1328,7 +1380,10 @@ class _UnifiedImagePainter extends CustomPainter {
       image,
       srcRect,
       screenImageRect,
-      Paint()..colorFilter = adjustmentFilter,
+      Paint()
+        ..isAntiAlias = true
+        ..filterQuality = FilterQuality.high
+        ..colorFilter = adjustmentFilter,
     );
     canvas.restore();
 

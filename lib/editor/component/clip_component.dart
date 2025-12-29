@@ -439,11 +439,16 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     if (_metadataAspectRatio != null) return; // 이미 로드됨
 
     try {
-      // ignore: invalid_use_of_visible_for_testing_member
-      final seState = context.findAncestorStateOfType<SuperEditorState>();
-      // ignore: invalid_use_of_visible_for_testing_member
-      final doc = seState?.editContext.editor.document;
-      final node = doc?.getNodeById(widget.nodeId);
+      final EditorService? editorService =
+          widget.dragService?.editorService ??
+          (() {
+            try {
+              return Provider.of<EditorService>(context, listen: false);
+            } catch (_) {
+              return null;
+            }
+          }());
+      final node = editorService?.document.getNodeById(widget.nodeId);
       if (node is ClipNode) {
         final aspectRatioValue = node.metadata['aspectRatio'];
         if (aspectRatioValue != null) {
@@ -459,13 +464,20 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
   @override
   Widget build(BuildContext context) {
     // 🎯 읽기/편집 모드 통합: 특수 노드 간격 확인 로직 통일
-    // ignore: invalid_use_of_visible_for_testing_member
-    final seState = context.findAncestorStateOfType<SuperEditorState>();
-    // ignore: invalid_use_of_visible_for_testing_member
-    final doc = seState?.editContext.editor.document;
-    // ignore: invalid_use_of_visible_for_testing_member
-    final composerSelection =
-        widget.isEditing ? seState?.editContext.composer.selection : null;
+    final EditorService? editorService =
+        widget.dragService?.editorService ??
+        (() {
+          try {
+            return Provider.of<EditorService>(context, listen: false);
+          } catch (_) {
+            return null;
+          }
+        }());
+    final Document? doc = editorService?.document;
+    final DocumentSelection? composerSelection =
+        widget.isEditing
+            ? editorService?.editor.composer.selectionNotifier.value
+            : null;
 
     // 이웃하는 특수 노드 체크
     final bool hasImageAbove =
@@ -537,9 +549,12 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
           // 실제 비디오 내용 + 좌/우 세로 라인 (머지 모드에서)
           LayoutBuilder(
             builder: (context, constraints) {
-              debugPrint(
-                '[ClipComponent] LayoutBuilder 호출: nodeId=${widget.nodeId}, constraints.maxWidth=${constraints.maxWidth}, screenWidth=${widget.screenWidth}',
-              );
+              assert(() {
+                debugPrint(
+                  '[ClipComponent] LayoutBuilder 호출: nodeId=${widget.nodeId}, constraints.maxWidth=${constraints.maxWidth}, screenWidth=${widget.screenWidth}',
+                );
+                return true;
+              }());
 
               // 🎯 싱글 이미지와 동일: constraints를 통해 스타일시트 패딩 자동 반영
               // 🎯 paddingMode를 ValueKey에 포함하여 리빌드 트리거
@@ -921,7 +936,8 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       final boundary = baseIndex == start ? selection.base : selection.extent;
       final pos = boundary.nodePosition;
       if (pos is UpstreamDownstreamNodePosition) {
-        return pos.affinity == TextAffinity.downstream;
+        // ✅ start 경계는 upstream일 때 포함 (아래→위 드래그 대칭 보장)
+        return pos.affinity == TextAffinity.upstream;
       }
     }
     // 끝 경계가 이 노드인 경우
