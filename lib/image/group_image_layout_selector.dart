@@ -3,6 +3,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:photo_manager/photo_manager.dart';
+import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
 
 enum GroupImageLayout {
   individual, // 개별 이미지
@@ -16,10 +18,15 @@ class GroupImageLayoutSelector extends StatelessWidget {
   const GroupImageLayoutSelector({
     super.key,
     this.previewImages,
+    this.previewAssets,
     this.onSelected,
   });
 
   final List<File>? previewImages;
+
+  /// 🎯 미리 로드된 AssetEntity 리스트 (썸네일 빠른 표시용)
+  /// previewAssets가 있으면 이를 우선 사용하고, 없으면 previewImages 사용
+  final List<AssetEntity>? previewAssets;
 
   /// 선택 시 부모에서 원하는 타이밍/처리를 제어할 수 있도록 훅 제공.
   /// - null이면 기존처럼 `Navigator.pop(layout)`로 결과 반환
@@ -87,93 +94,122 @@ class GroupImageLayoutSelector extends StatelessWidget {
 
             // 레이아웃 옵션들
             Flexible(
-              child: ListView(
-                shrinkWrap: true,
+              child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                children: [
-                  // 개별 이미지 (항상 표시)
-                  _LayoutOption(
-                    title: l10n.t('individual_images'),
-                    description: l10n.t('individual_images_description'),
-                    icon: Icons.image,
-                    previewImages: previewImages,
-                    previewLayout: GroupImageLayout.individual,
-                    onTap: () async {
-                      if (!context.mounted) return;
-                      if (onSelected != null) {
-                        await onSelected!(GroupImageLayout.individual);
-                        return;
-                      }
-                      // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
-                      Navigator.of(context).pop(GroupImageLayout.individual);
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 2열 그리드
-                  if (showGrid2) ...[
-                    _LayoutOption(
-                      title: l10n.t('grid_2_column'),
-                      description: l10n.t('grid_2_column_description'),
-                      icon: Icons.grid_view,
-                      previewImages: previewImages,
-                      previewLayout: GroupImageLayout.grid2,
-                      onTap: () async {
+                child: Column(
+                  children: [
+                    // 개별 이미지 버튼 (항상 표시)
+                    CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: () async {
                         if (!context.mounted) return;
                         if (onSelected != null) {
-                          await onSelected!(GroupImageLayout.grid2);
+                          await onSelected!(GroupImageLayout.individual);
                           return;
                         }
-                        // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
-                        Navigator.of(context).pop(GroupImageLayout.grid2);
+                        Navigator.of(context).pop(GroupImageLayout.individual);
                       },
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 16,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: colorScheme.outline.withOpacity(0.1),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
+                              children: [
+                                Text(
+                                  l10n.t('individual_images'),
+                                  style: TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w600,
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Icon(
+                              Icons.chevron_right,
+                              color: colorScheme.onSurface.withOpacity(0.3),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 16),
-                  ],
 
-                  // 3열 그리드
-                  if (showGrid3) ...[
-                    _LayoutOption(
-                      title: l10n.t('grid_3_column'),
-                      description: l10n.t('grid_3_column_description'),
-                      icon: Icons.grid_on,
-                      previewImages: previewImages,
-                      previewLayout: GroupImageLayout.grid3,
-                      onTap: () async {
-                        if (!context.mounted) return;
-                        if (onSelected != null) {
-                          await onSelected!(GroupImageLayout.grid3);
-                          return;
-                        }
-                        // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
-                        Navigator.of(context).pop(GroupImageLayout.grid3);
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                  ],
+                    // 2열 그리드
+                    if (showGrid2)
+                      _LayoutOption(
+                        title: l10n.t('grid_2_column'),
+                        description: l10n.t('grid_2_column_description'),
+                        icon: Icons.grid_view,
+                        previewImages: previewImages,
+                        previewAssets: previewAssets,
+                        previewLayout: GroupImageLayout.grid2,
+                        onTap: () async {
+                          if (!context.mounted) return;
+                          if (onSelected != null) {
+                            await onSelected!(GroupImageLayout.grid2);
+                            return;
+                          }
+                          Navigator.of(context).pop(GroupImageLayout.grid2);
+                        },
+                      ),
+                    if (showGrid2) const SizedBox(height: 16),
 
-                  // 페이지뷰
-                  if (showPageView) ...[
-                    _LayoutOption(
-                      title: l10n.t('pageview_layout'),
-                      description: l10n.t('pageview_layout_description'),
-                      icon: Icons.swipe,
-                      previewImages: previewImages,
-                      previewLayout: GroupImageLayout.pageview,
-                      onTap: () async {
-                        if (!context.mounted) return;
-                        if (onSelected != null) {
-                          await onSelected!(GroupImageLayout.pageview);
-                          return;
-                        }
-                        // 🎯 레이아웃 타입 즉시 반환 (플레이스홀더 생성은 MediaUploadHandler에서 처리)
-                        Navigator.of(context).pop(GroupImageLayout.pageview);
-                      },
-                    ),
-                  ],
+                    // 3열 그리드
+                    if (showGrid3)
+                      _LayoutOption(
+                        title: l10n.t('grid_3_column'),
+                        description: l10n.t('grid_3_column_description'),
+                        icon: Icons.grid_on,
+                        previewImages: previewImages,
+                        previewAssets: previewAssets,
+                        previewLayout: GroupImageLayout.grid3,
+                        onTap: () async {
+                          if (!context.mounted) return;
+                          if (onSelected != null) {
+                            await onSelected!(GroupImageLayout.grid3);
+                            return;
+                          }
+                          Navigator.of(context).pop(GroupImageLayout.grid3);
+                        },
+                      ),
+                    if (showGrid3) const SizedBox(height: 16),
 
-                  const SizedBox(height: 30), // 하단 여백
-                ],
+                    // 페이지뷰
+                    if (showPageView)
+                      _LayoutOption(
+                        title: l10n.t('pageview_layout'),
+                        description: l10n.t('pageview_layout_description'),
+                        icon: Icons.swipe,
+                        previewImages: previewImages,
+                        previewAssets: previewAssets,
+                        previewLayout: GroupImageLayout.pageview,
+                        onTap: () async {
+                          if (!context.mounted) return;
+                          if (onSelected != null) {
+                            await onSelected!(GroupImageLayout.pageview);
+                            return;
+                          }
+                          Navigator.of(context).pop(GroupImageLayout.pageview);
+                        },
+                      ),
+
+                    const SizedBox(height: 30), // 하단 여백
+                  ],
+                ),
               ),
             ),
           ],
@@ -215,6 +251,7 @@ class _LayoutOption extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
   final List<File>? previewImages;
+  final List<AssetEntity>? previewAssets;
   final GroupImageLayout previewLayout;
 
   const _LayoutOption({
@@ -224,6 +261,7 @@ class _LayoutOption extends StatelessWidget {
     required this.onTap,
     required this.previewLayout,
     this.previewImages,
+    this.previewAssets,
   });
 
   @override
@@ -248,36 +286,14 @@ class _LayoutOption extends StatelessWidget {
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: colorScheme.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(icon, color: colorScheme.primary, size: 28),
-                ),
-                const SizedBox(width: 16),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                          color: colorScheme.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        description,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: colorScheme.onSurface.withOpacity(0.6),
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurface,
+                    ),
                   ),
                 ),
                 Icon(
@@ -288,7 +304,8 @@ class _LayoutOption extends StatelessWidget {
             ),
 
             // 🎯 미리보기 이미지
-            if (previewImages != null && previewImages!.isNotEmpty) ...[
+            if ((previewImages != null && previewImages!.isNotEmpty) ||
+                (previewAssets != null && previewAssets!.isNotEmpty)) ...[
               const SizedBox(height: 16),
               _buildPreview(colorScheme),
             ],
@@ -299,7 +316,10 @@ class _LayoutOption extends StatelessWidget {
   }
 
   Widget _buildPreview(ColorScheme colorScheme) {
-    if (previewImages == null || previewImages!.isEmpty) {
+    final hasImages = previewImages != null && previewImages!.isNotEmpty;
+    final hasAssets = previewAssets != null && previewAssets!.isNotEmpty;
+
+    if (!hasImages && !hasAssets) {
       return const SizedBox.shrink();
     }
 
@@ -316,42 +336,97 @@ class _LayoutOption extends StatelessWidget {
   }
 
   Widget _buildIndividualPreview() {
-    final displayImages = previewImages!.take(3).toList();
+    if (previewAssets != null && previewAssets!.isNotEmpty) {
+      final displayAssets = previewAssets!.take(2).toList();
+      return Column(
+        children: [
+          for (int i = 0; i < displayAssets.length; i++) ...[
+            if (i > 0) const SizedBox(height: 6),
+            _buildPreviewAsset(displayAssets[i], height: 100),
+          ],
+        ],
+      );
+    }
 
+    final displayImages = previewImages!.take(2).toList();
     return Column(
       children: [
         for (int i = 0; i < displayImages.length; i++) ...[
-          if (i > 0) const SizedBox(height: 4),
-          _buildPreviewImage(displayImages[i], height: 60),
+          if (i > 0) const SizedBox(height: 6),
+          _buildPreviewImage(displayImages[i], height: 100),
         ],
       ],
     );
   }
 
   Widget _buildGrid2Preview() {
-    final displayImages = previewImages!.take(4).toList();
+    if (previewAssets != null && previewAssets!.isNotEmpty) {
+      final displayAssets = previewAssets!.take(4).toList();
+      return Column(
+        children: [
+          // 첫 번째 행 (2개)
+          if (displayAssets.length >= 2)
+            Row(
+              children: [
+                Expanded(
+                  child: _buildPreviewAsset(displayAssets[0], height: 150),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: _buildPreviewAsset(displayAssets[1], height: 150),
+                ),
+              ],
+            ),
+          // 두 번째 행 (2개)
+          if (displayAssets.length >= 3) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildPreviewAsset(displayAssets[2], height: 150),
+                ),
+                const SizedBox(width: 4),
+                if (displayAssets.length >= 4)
+                  Expanded(
+                    child: _buildPreviewAsset(displayAssets[3], height: 150),
+                  )
+                else
+                  const Expanded(child: SizedBox()),
+              ],
+            ),
+          ],
+        ],
+      );
+    }
 
+    final displayImages = previewImages!.take(4).toList();
     return Column(
       children: [
         // 첫 번째 행 (2개)
         if (displayImages.length >= 2)
           Row(
             children: [
-              Expanded(child: _buildPreviewImage(displayImages[0], height: 80)),
-              const SizedBox(width: 2),
-              Expanded(child: _buildPreviewImage(displayImages[1], height: 80)),
+              Expanded(
+                child: _buildPreviewImage(displayImages[0], height: 150),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _buildPreviewImage(displayImages[1], height: 150),
+              ),
             ],
           ),
         // 두 번째 행 (2개)
         if (displayImages.length >= 3) ...[
-          const SizedBox(height: 2),
+          const SizedBox(height: 4),
           Row(
             children: [
-              Expanded(child: _buildPreviewImage(displayImages[2], height: 80)),
-              const SizedBox(width: 2),
+              Expanded(
+                child: _buildPreviewImage(displayImages[2], height: 150),
+              ),
+              const SizedBox(width: 4),
               if (displayImages.length >= 4)
                 Expanded(
-                  child: _buildPreviewImage(displayImages[3], height: 80),
+                  child: _buildPreviewImage(displayImages[3], height: 150),
                 )
               else
                 const Expanded(child: SizedBox()),
@@ -363,38 +438,95 @@ class _LayoutOption extends StatelessWidget {
   }
 
   Widget _buildGrid3Preview() {
-    final displayImages = previewImages!.take(6).toList();
+    if (previewAssets != null && previewAssets!.isNotEmpty) {
+      final displayAssets = previewAssets!.take(6).toList();
+      return Column(
+        children: [
+          // 첫 번째 행 (3개)
+          if (displayAssets.length >= 3)
+            Row(
+              children: [
+                Expanded(
+                  child: _buildPreviewAsset(displayAssets[0], height: 140),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: _buildPreviewAsset(displayAssets[1], height: 140),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: _buildPreviewAsset(displayAssets[2], height: 140),
+                ),
+              ],
+            ),
+          // 두 번째 행 (3개)
+          if (displayAssets.length >= 4) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildPreviewAsset(displayAssets[3], height: 140),
+                ),
+                const SizedBox(width: 4),
+                if (displayAssets.length >= 5)
+                  Expanded(
+                    child: _buildPreviewAsset(displayAssets[4], height: 140),
+                  )
+                else
+                  const Expanded(child: SizedBox()),
+                const SizedBox(width: 4),
+                if (displayAssets.length >= 6)
+                  Expanded(
+                    child: _buildPreviewAsset(displayAssets[5], height: 140),
+                  )
+                else
+                  const Expanded(child: SizedBox()),
+              ],
+            ),
+          ],
+        ],
+      );
+    }
 
+    final displayImages = previewImages!.take(6).toList();
     return Column(
       children: [
         // 첫 번째 행 (3개)
         if (displayImages.length >= 3)
           Row(
             children: [
-              Expanded(child: _buildPreviewImage(displayImages[0], height: 70)),
-              const SizedBox(width: 2),
-              Expanded(child: _buildPreviewImage(displayImages[1], height: 70)),
-              const SizedBox(width: 2),
-              Expanded(child: _buildPreviewImage(displayImages[2], height: 70)),
+              Expanded(
+                child: _buildPreviewImage(displayImages[0], height: 140),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _buildPreviewImage(displayImages[1], height: 140),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _buildPreviewImage(displayImages[2], height: 140),
+              ),
             ],
           ),
         // 두 번째 행 (3개)
         if (displayImages.length >= 4) ...[
-          const SizedBox(height: 2),
+          const SizedBox(height: 4),
           Row(
             children: [
-              Expanded(child: _buildPreviewImage(displayImages[3], height: 70)),
-              const SizedBox(width: 2),
+              Expanded(
+                child: _buildPreviewImage(displayImages[3], height: 140),
+              ),
+              const SizedBox(width: 4),
               if (displayImages.length >= 5)
                 Expanded(
-                  child: _buildPreviewImage(displayImages[4], height: 70),
+                  child: _buildPreviewImage(displayImages[4], height: 140),
                 )
               else
                 const Expanded(child: SizedBox()),
-              const SizedBox(width: 2),
+              const SizedBox(width: 4),
               if (displayImages.length >= 6)
                 Expanded(
-                  child: _buildPreviewImage(displayImages[5], height: 70),
+                  child: _buildPreviewImage(displayImages[5], height: 140),
                 )
               else
                 const Expanded(child: SizedBox()),
@@ -406,77 +538,138 @@ class _LayoutOption extends StatelessWidget {
   }
 
   Widget _buildPageViewPreview(ColorScheme colorScheme) {
-    final displayImages = previewImages!.take(3).toList();
+    return StatefulBuilder(
+      builder: (context, setState) {
+        int currentPage = 0;
+        final itemCount =
+            previewAssets != null && previewAssets!.isNotEmpty
+                ? previewAssets!.length
+                : previewImages!.length;
 
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        // 배경 카드들 (깊이감 표현)
-        if (displayImages.length >= 3)
-          Transform.scale(
-            scale: 0.9,
-            child: Opacity(
-              opacity: 0.3,
-              child: Container(
-                height: 120,
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHigh,
-                  borderRadius: BorderRadius.circular(8),
+        return SizedBox(
+          height: 160,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // 실제 PageView
+              PageView.builder(
+                itemCount: itemCount,
+                controller: PageController(viewportFraction: 0.998),
+                padEnds: false,
+                onPageChanged: (index) {
+                  setState(() {
+                    currentPage = index;
+                  });
+                },
+                itemBuilder: (context, index) {
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      left: 0,
+                      right: index < itemCount - 1 ? 12 : 0,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child:
+                          previewAssets != null && previewAssets!.isNotEmpty
+                              ? _buildPreviewAsset(
+                                previewAssets![index],
+                                height: 160,
+                              )
+                              : _buildPreviewImage(
+                                previewImages![index],
+                                height: 160,
+                              ),
+                    ),
+                  );
+                },
+              ),
+              // 인디케이터
+              Positioned(
+                bottom: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.6),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${currentPage + 1}/$itemCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
-        if (displayImages.length >= 2)
-          Transform.scale(
-            scale: 0.95,
-            child: Opacity(
-              opacity: 0.5,
-              child: Container(
-                height: 120,
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHigh,
-                  borderRadius: BorderRadius.circular(8),
+        );
+      },
+    );
+  }
+
+  /// 🎯 AssetEntity를 사용한 빠른 썸네일 표시
+  Widget _buildPreviewAsset(AssetEntity asset, {required double height}) {
+    return Builder(
+      builder: (context) {
+        final l10n = AppLocalizations.of(context);
+        final thumbnailSize = (height * MediaQuery.of(context).devicePixelRatio)
+            .round()
+            .clamp(400, 800);
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: AssetEntityImage(
+            asset,
+            isOriginal: false,
+            thumbnailSize: ThumbnailSize(thumbnailSize, thumbnailSize),
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              debugPrint('[GroupImageLayoutSelector] ❌ 썸네일 로드 실패: $error');
+              return Container(
+                height: height,
+                width: double.infinity,
+                color: Colors.grey.shade300,
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.broken_image,
+                        color: Colors.grey,
+                        size: 24,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        l10n.t('load_failed_text'),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
-        // 메인 이미지
-        if (displayImages.isNotEmpty)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: _buildPreviewImage(displayImages[0], height: 120),
-          ),
-        // 인디케이터
-        Positioned(
-          bottom: 8,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.6),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              '1/${previewImages!.length}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 
   Widget _buildPreviewImage(File file, {required double height}) {
-    // 디버그 로그
-    debugPrint('[GroupImageLayoutSelector] 이미지 경로: ${file.path}');
-    debugPrint('[GroupImageLayoutSelector] 파일 존재: ${file.existsSync()}');
-
     return Builder(
       builder: (context) {
         final l10n = AppLocalizations.of(context);
+        final dpr = MediaQuery.of(context).devicePixelRatio;
+        // ✅ 디바이스 픽셀 비율을 고려한 캐시 크기 (고해상도 화면에서도 깨지지 않도록)
+        // 더 큰 캐시 크기로 이미지 품질 개선
+        final cacheSize = (height * dpr * 2).round().clamp(400, 1200);
 
         return ClipRRect(
           borderRadius: BorderRadius.circular(4),
@@ -485,12 +678,13 @@ class _LayoutOption extends StatelessWidget {
             height: height,
             width: double.infinity,
             fit: BoxFit.cover,
-            cacheWidth: 200, // 메모리 절약을 위해 크기 제한
+            cacheWidth: cacheSize,
+            filterQuality: FilterQuality.high, // ✅ 이미지 품질 최대화
             errorBuilder: (context, error, stackTrace) {
               debugPrint('[GroupImageLayoutSelector] ❌ 이미지 로드 실패: $error');
-              debugPrint('[GroupImageLayoutSelector] 스택: $stackTrace');
               return Container(
                 height: height,
+                width: double.infinity,
                 color: Colors.grey.shade300,
                 child: Center(
                   child: Column(

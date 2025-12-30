@@ -54,25 +54,37 @@ class AdjustmentState {
   }
 
   void setValue(AdjustmentType type, double value) {
+    // ✅ 0 근처 값은 정확히 0으로 스냅 (부동소수/ -0.0 방지)
+    // 버튼 활성(보라색 테두리) 판정이 즉시 꺼지도록 보장
+    final v = value.abs() < 0.01 ? 0.0 : value;
     switch (type) {
       case AdjustmentType.brightness:
-        brightness = value;
+        brightness = v;
+        break;
       case AdjustmentType.contrast:
-        contrast = value;
+        contrast = v;
+        break;
       case AdjustmentType.saturation:
-        saturation = value;
+        saturation = v;
+        break;
       case AdjustmentType.luminance:
-        luminance = value;
+        luminance = v;
+        break;
       case AdjustmentType.exposure:
-        exposure = value;
+        exposure = v;
+        break;
       case AdjustmentType.sharpness:
-        sharpness = value;
+        sharpness = v;
+        break;
       case AdjustmentType.temperature:
-        temperature = value;
+        temperature = v;
+        break;
       case AdjustmentType.blur:
-        blur = value;
+        blur = v;
+        break;
       case AdjustmentType.vignette:
-        vignette = value;
+        vignette = v;
+        break;
     }
   }
 
@@ -251,7 +263,7 @@ class AdjustmentEditorBottomSheetState
       children: [
         // ✅ 상단: 드래그 중일 때 수치 칩, 아닐 때 조정 항목 버튼들 (고정 높이)
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 10),
           child: SizedBox(
             height: 80, // ✅ 높이 증가로 오버플로우 해결
             child: AnimatedSwitcher(
@@ -274,11 +286,46 @@ class AdjustmentEditorBottomSheetState
                           Expanded(
                             child: ListView.separated(
                               scrollDirection: Axis.horizontal,
-                              itemCount: AdjustmentType.values.length,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              itemCount:
+                                  AdjustmentType.values.length + 1, // 리셋 버튼 포함
                               separatorBuilder:
                                   (_, __) => const SizedBox(width: 12),
                               itemBuilder: (context, i) {
-                                final type = AdjustmentType.values[i];
+                                // 가장 좌측: 리셋 버튼
+                                if (i == 0) {
+                                  // 모든 조정 값이 0인지 확인
+                                  final hasAnyAdjustment = AdjustmentType.values
+                                      .any(
+                                        (type) =>
+                                            widget.state.getValue(type).abs() >
+                                            0.01,
+                                      );
+
+                                  return _ResetButton(
+                                    fgColor: fgColor,
+                                    isActive: hasAnyAdjustment,
+                                    onTap: () {
+                                      // 모든 조정 값을 0으로 리셋
+                                      final resetState = AdjustmentState();
+                                      widget.onStateChanged(resetState);
+                                      // 슬라이더 모드면 버튼 모드로 돌아가기
+                                      if (_selectedType != null) {
+                                        setState(() {
+                                          _selectedType = null;
+                                          widget.onSliderModeChanged?.call(
+                                            false,
+                                          );
+                                        });
+                                      }
+                                    },
+                                  );
+                                }
+
+                                // 조정 버튼들
+                                final type = AdjustmentType.values[i - 1];
                                 final value = widget.state.getValue(type);
                                 // ✅ 0으로 돌렸는데도 "활성(프라이머리)"이 남는 문제 방지 (부동소수 오차/ -0.0)
                                 final isActive = value.abs() > 0.01;
@@ -358,6 +405,62 @@ class AdjustmentEditorBottomSheetState
         widget.onDragEnd?.call();
       },
       isDragging: _isAdjustmentDragging,
+    );
+  }
+}
+
+/// 리셋 버튼 (가장 좌측에 배치)
+class _ResetButton extends StatelessWidget {
+  const _ResetButton({
+    required this.fgColor,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final Color fgColor;
+  final bool isActive; // 조정이 하나라도 적용되어 있으면 활성
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return GestureDetector(
+      onTap: isActive ? onTap : null, // 조정이 없으면 비활성화
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 원형 아이콘 버튼
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isActive ? cs.primary : fgColor.withOpacity(0.3),
+                width: isActive ? 2.5 : 1.5,
+              ),
+            ),
+            child: Center(
+              child: Icon(
+                Icons.block, // 금지 아이콘
+                color: isActive ? cs.primary : fgColor.withOpacity(0.5),
+                size: 22,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          // 라벨
+          Text(
+            '리셋',
+            style: TextStyle(
+              color: isActive ? cs.primary : fgColor.withOpacity(0.5),
+              fontSize: 11,
+              fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

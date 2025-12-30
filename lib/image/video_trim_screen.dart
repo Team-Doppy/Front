@@ -20,6 +20,18 @@ class TrimmedVideoResult {
   TrimmedVideoResult({required this.videoFile, this.thumbnailPath});
 }
 
+/// 트림 범위 설정 (도메인 규칙)
+class TrimRangeConfig {
+  /// 최소 트림 길이 (초)
+  static const double minLength = 1.0;
+
+  /// 최대 트림 길이 (초)
+  static const double maxTrimLength = 60.0;
+
+  /// 선택 최소 간격 (초) - 현재는 minLength와 동일하게 사용
+  static const double selectionMinGap = 1.0;
+}
+
 /// Trimmer 클래스 - video_trimmer 패키지 구조와 동일
 /// 비디오 상태를 관리하는 ChangeNotifier
 class Trimmer extends ChangeNotifier {
@@ -29,7 +41,10 @@ class Trimmer extends ChangeNotifier {
 
   double _startValue = 0.0;
   double _endValue = 60.0;
-  double _currentPosition = 0.0;
+  // 🎯 ValueNotifier로 currentPosition 최적화 (100ms 타이머 업데이트 최적화)
+  final ValueNotifier<double> _currentPositionNotifier = ValueNotifier<double>(
+    0.0,
+  );
   bool _isPlaying = false;
   bool _isInitialized = false;
 
@@ -41,17 +56,25 @@ class Trimmer extends ChangeNotifier {
 
   // 🎯 핸들 드래그 상태 (타이머 보정 충돌 방지용)
   bool _isHandleDragging = false;
+  // 🎯 재생바 드래그 상태 (타이머 보정 충돌 방지용)
+  bool _isPlaybackBarDragging = false;
 
   VideoPlayerController? get videoPlayerController => _videoPlayerController;
   File? get videoFile => _videoFile;
   Duration? get videoDuration => _videoDuration;
   double get startValue => _startValue;
   double get endValue => _endValue;
-  double get currentPosition => _currentPosition;
+  double get currentPosition => _currentPositionNotifier.value;
+  ValueNotifier<double> get currentPositionNotifier => _currentPositionNotifier;
   bool get isPlaying => _isPlaying;
   bool get isInitialized => _isInitialized;
   List<Uint8List?> get thumbnails => _thumbnails;
   bool get isLoadingThumbnails => _isLoadingThumbnails;
+
+  // 🎯 도메인 규칙 접근
+  double get minLength => TrimRangeConfig.minLength;
+  double get maxTrimLength => TrimRangeConfig.maxTrimLength;
+  double get selectionMinGap => TrimRangeConfig.selectionMinGap;
 
   /// 비디오 로드
   Future<void> loadVideo({
@@ -63,8 +86,8 @@ class Trimmer extends ChangeNotifier {
 
     final maxSeconds = videoDuration.inSeconds.toDouble();
     _startValue = 0.0;
-    _endValue = maxSeconds < 60.0 ? maxSeconds : 60.0;
-    _currentPosition = _startValue;
+    _endValue = maxSeconds < maxTrimLength ? maxSeconds : maxTrimLength;
+    _currentPositionNotifier.value = _startValue;
 
     try {
       _videoPlayerController = VideoPlayerController.file(videoFile);
@@ -74,7 +97,6 @@ class Trimmer extends ChangeNotifier {
       _videoPlayerController!.seekTo(
         Duration(milliseconds: (_startValue * 1000).toInt()),
       );
-      _videoPlayerController!.addListener(_onPlaybackUpdate);
 
       _startPlaybackTimer();
       notifyListeners();
@@ -92,8 +114,8 @@ class Trimmer extends ChangeNotifier {
         return;
       }
 
-      // 🎯 핸들 드래그 중에는 타이머 보정 개입 금지 (타이밍 충돌 방지)
-      if (_isHandleDragging) {
+      // 🎯 핸들/재생바 드래그 중에는 타이머 보정 개입 금지 (타이밍 충돌 방지)
+      if (_isHandleDragging || _isPlaybackBarDragging) {
         return;
       }
 
@@ -113,7 +135,10 @@ class Trimmer extends ChangeNotifier {
           if (startMs < 0) return; // 음수 방지
           _videoPlayerController!.seekTo(Duration(milliseconds: startMs));
           _isPlaying = false;
-          _currentPosition = _startValue.clamp(0.0, double.infinity);
+          _currentPositionNotifier.value = _startValue.clamp(
+            0.0,
+            double.infinity,
+          );
           needsUpdate = true;
         } else if (position < _startValue) {
           // 시작 이전: 시작으로 이동
@@ -121,13 +146,18 @@ class Trimmer extends ChangeNotifier {
               ((_startValue.clamp(0.0, double.infinity)) * 1000).toInt();
           if (startMs < 0) return; // 음수 방지
           _videoPlayerController!.seekTo(Duration(milliseconds: startMs));
-          _currentPosition = _startValue.clamp(0.0, double.infinity);
+          _currentPositionNotifier.value = _startValue.clamp(
+            0.0,
+            double.infinity,
+          );
           needsUpdate = true;
         } else {
           // 정상 범위 내
-          if (_currentPosition != position) {
-            _currentPosition = position.clamp(0.0, double.infinity);
-            needsUpdate = true;
+          // 🎯 ValueNotifier는 자체적으로 리스너를 가지므로 notifyListeners 불필요
+          final clampedPosition = position.clamp(0.0, double.infinity);
+          if (_currentPositionNotifier.value != clampedPosition) {
+            _currentPositionNotifier.value = clampedPosition;
+            // currentPosition 변경은 ValueNotifier가 처리하므로 needsUpdate는 false
           }
         }
       }
@@ -144,10 +174,6 @@ class Trimmer extends ChangeNotifier {
     });
   }
 
-  void _onPlaybackUpdate() {
-    // 타이머에서 처리
-  }
-
   /// 재생/일시정지 토글
   void videoPlaybackControl() {
     if (_videoPlayerController == null || !_isInitialized) {
@@ -159,7 +185,8 @@ class Trimmer extends ChangeNotifier {
       _isPlaying = false;
     } else {
       // 현재 위치가 범위를 벗어나면 시작 지점으로
-      if (_currentPosition >= _endValue || _currentPosition < _startValue) {
+      if (_currentPositionNotifier.value >= _endValue ||
+          _currentPositionNotifier.value < _startValue) {
         seekTo(_startValue);
       }
       _videoPlayerController!.play();
@@ -185,9 +212,17 @@ class Trimmer extends ChangeNotifier {
     // 🎯 Duration 생성 시 음수 방지
     final milliseconds = (clampedPosition * 1000).toInt();
     if (milliseconds < 0) return; // 음수 방지
+
+    // 🎯 재생 중이 아니어도 프레임이 업데이트되도록 시크 수행
     _videoPlayerController!.seekTo(Duration(milliseconds: milliseconds));
-    _currentPosition = clampedPosition;
+
+    // 🎯 즉시 UI 업데이트 (비디오 프레임은 seekTo가 비동기로 처리)
+    _currentPositionNotifier.value = clampedPosition;
     notifyListeners();
+
+    debugPrint(
+      '[Trimmer] seekTo: ${clampedPosition.toStringAsFixed(2)}s (${milliseconds}ms)',
+    );
   }
 
   /// 시작 값 변경
@@ -205,7 +240,10 @@ class Trimmer extends ChangeNotifier {
       maxSeconds > 0 ? maxSeconds : double.infinity,
     );
     // 🎯 currentPosition 즉시 클램프 (타이머 보정 충돌 방지)
-    _currentPosition = _currentPosition.clamp(_startValue, _endValue);
+    _currentPositionNotifier.value = _currentPositionNotifier.value.clamp(
+      _startValue,
+      _endValue,
+    );
     notifyListeners();
   }
 
@@ -221,13 +259,21 @@ class Trimmer extends ChangeNotifier {
 
     _endValue = value.clamp(0.0, maxSeconds > 0 ? maxSeconds : double.infinity);
     // 🎯 currentPosition 즉시 클램프 (타이머 보정 충돌 방지)
-    _currentPosition = _currentPosition.clamp(_startValue, _endValue);
+    _currentPositionNotifier.value = _currentPositionNotifier.value.clamp(
+      _startValue,
+      _endValue,
+    );
     notifyListeners();
   }
 
   /// 핸들 드래그 상태 설정 (타이머 보정 충돌 방지용)
   void setHandleDragging(bool isDragging) {
     _isHandleDragging = isDragging;
+  }
+
+  /// 재생바 드래그 상태 설정 (타이머 보정 충돌 방지용)
+  void setPlaybackBarDragging(bool isDragging) {
+    _isPlaybackBarDragging = isDragging;
   }
 
   /// 썸네일 로드
@@ -406,9 +452,9 @@ class Trimmer extends ChangeNotifier {
   @override
   void dispose() {
     _playbackTimer?.cancel();
-    _videoPlayerController?.removeListener(_onPlaybackUpdate);
     _videoPlayerController?.pause();
     _videoPlayerController?.dispose();
+    _currentPositionNotifier.dispose();
     super.dispose();
   }
 }
@@ -511,6 +557,10 @@ class _TrimEditorState extends State<TrimEditor> {
   double? _dragStartTimelineX; // timeline absolute px (= localX + scrollOffset)
   double? _dragStartOppositeValue; // 🎯 반대쪽 핸들 값 (역전 방지용)
 
+  // 🎯 재생바 드래그 시작 기준값 (정밀 시크용)
+  double? _playbackBarDragStartTimelineX; // timeline absolute px
+  double? _playbackBarDragStartPosition; // seconds
+
   @override
   void initState() {
     super.initState();
@@ -567,8 +617,9 @@ class _TrimEditorState extends State<TrimEditor> {
           return const SizedBox.shrink();
         }
 
-        const maxTrimLength = 60.0;
-        final selectionMinGap = 1.0;
+        // 🎯 도메인 규칙을 Trimmer에서 가져옴
+        final maxTrimLength = widget.trimmer.maxTrimLength;
+        final selectionMinGap = widget.trimmer.selectionMinGap;
 
         // 🎯 썸네일 스트립 너비 계산
         final thumbnailStripWidth =
@@ -806,32 +857,36 @@ class _TrimEditorState extends State<TrimEditor> {
                   child: Builder(
                     builder: (context) {
                       final colorScheme = Theme.of(context).colorScheme;
-                      final currentPosition = widget.trimmer.currentPosition
-                          .clamp(
+                      return ValueListenableBuilder<double>(
+                        valueListenable: widget.trimmer.currentPositionNotifier,
+                        builder: (context, currentPosition, _) {
+                          final clampedPosition = currentPosition.clamp(
                             widget.trimmer.startValue,
                             widget.trimmer.endValue,
                           );
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(
-                            color: colorScheme.outline.withOpacity(0.2),
-                            width: 1,
-                          ),
-                        ),
-                        child: Text(
-                          _formatDurationMMSS(currentPosition),
-                          style: TextStyle(
-                            color: colorScheme.onSurface,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: colorScheme.outline.withOpacity(0.2),
+                                width: 1,
+                              ),
+                            ),
+                            child: Text(
+                              _formatDurationMMSS(clampedPosition),
+                              style: TextStyle(
+                                color: colorScheme.onSurface,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          );
+                        },
                       );
                     },
                   ),
@@ -895,121 +950,140 @@ class _TrimEditorState extends State<TrimEditor> {
     required double pxPerSecond,
     required double maxVisibleWidth,
   }) {
-    // 🎯 오버레이 드래그 중이면 숨기기
-    if (_isHandleDragging) {
-      return const SizedBox.shrink();
-    }
-
     // 🎯 실제 startValue/endValue 사용 (정확한 동기화)
     final startValue = widget.trimmer.startValue;
     final endValue = widget.trimmer.endValue;
     final currentPos = widget.trimmer.currentPosition;
 
-    // 🎯 선택 범위 내에서의 상대 위치 계산 (0.0 ~ 1.0)
+    // 🎯 선택 범위 길이(초)
     final rangeLength = endValue - startValue;
     if (rangeLength <= 0) {
       return const SizedBox.shrink();
     }
 
-    // 🎯 현재 위치를 범위 내로 클램프 (재생바가 항상 표시되도록)
+    // 🎯 현재 위치를 범위 내로 클램프
     final clampedCurrentPos = currentPos.clamp(startValue, endValue);
-    final relativePosition = (clampedCurrentPos - startValue) / rangeLength;
 
-    // 🎯 startX와 endX는 이미 핸들의 중심 위치
-    // 재생바도 핸들 중심부터 중심까지 이동
-    final visualStartX = startX;
-    final visualEndX = endX;
-    final visualWidth = visualEndX - visualStartX;
+    // 🎯 핸들 폭을 제외한 “두 핸들 사이” 구간에서만 이동 (오버런 방지)
+    // startX/endX는 경계선(=트림 시작/끝 시간의 픽셀 위치)임
+    const handleWidth = 20.0;
+    final innerStartX = startX + handleWidth;
+    final innerEndX = endX - handleWidth;
+    if (innerEndX <= innerStartX) {
+      return const SizedBox.shrink();
+    }
 
-    // 🎯 재생바의 화면상 절대 위치
-    final barWidth = _isPlaybackBarDragging ? 6.0 : 3.0;
-    final barLeft =
-        visualStartX + (visualWidth * relativePosition) - (barWidth / 2);
+    // 🎯 재생바 두께/터치 영역 (항상 활성화)
+    final barWidth = _isPlaybackBarDragging ? 10.0 : 8.0;
+    final hitWidth = barWidth + 28.0;
 
-    // 🎯 재생바 위치를 경계선 사이로 제한
-    final minDistanceFromBoundary = 4.0;
-    final minBarLeft = startX + minDistanceFromBoundary;
-    final maxBarLeft = endX - minDistanceFromBoundary - barWidth;
+    // 🎯 시간 → 픽셀(화면 좌표) : pxPerSecond 단일 진실로 정밀 매핑
+    final rawCenterX =
+        startX + ((clampedCurrentPos - startValue) * pxPerSecond);
 
-    final clampedBarLeft = barLeft.clamp(minBarLeft, maxBarLeft);
+    // 🎯 “핸들 사이” 내부에서만 이동 (바 두께 고려)
+    final minCenterX = innerStartX + (barWidth / 2);
+    final maxCenterX = innerEndX - (barWidth / 2);
+    final clampedCenterX = rawCenterX.clamp(minCenterX, maxCenterX);
 
     return Positioned(
-      left: clampedBarLeft,
+      left: clampedCenterX - (hitWidth / 2),
       top: 0,
       bottom: 0,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanStart: (details) {
-          if (_isHandleDragging) {
-            return;
-          }
+          if (_isHandleDragging) return;
 
-          debugPrint('[PlaybackBar] 드래그 시작');
-          setState(() {
-            _isPlaybackBarDragging = true;
-          });
-          // 재생 중이면 일시정지
+          final box =
+              _timelineKey.currentContext?.findRenderObject() as RenderBox?;
+          if (box == null) return;
+
+          // 재생 중이면 일시정지 후 드래그 시크 (정확도/UX)
           if (widget.trimmer.isPlaying) {
             widget.trimmer.videoPlaybackControl();
           }
+
+          final localX = box.globalToLocal(details.globalPosition).dx;
+          final currentScrollOffset =
+              _scrollController.hasClients ? _scrollController.offset : 0.0;
+          final timelineX = localX + currentScrollOffset;
+
+          setState(() {
+            _isPlaybackBarDragging = true;
+            _playbackBarDragStartTimelineX = timelineX;
+            _playbackBarDragStartPosition = widget.trimmer.currentPosition;
+          });
+          // 🎯 재생바 드래그 시작 시 Trimmer에 상태 전달 (타이머 보정 충돌 방지)
+          widget.trimmer.setPlaybackBarDragging(true);
         },
         onPanUpdate: (details) {
-          if (!_isPlaybackBarDragging || _isHandleDragging) return;
+          if (!_isPlaybackBarDragging ||
+              _playbackBarDragStartTimelineX == null ||
+              _playbackBarDragStartPosition == null) {
+            return;
+          }
 
-          // 🎯 드래그 delta를 상대 위치 변화로 변환 (시각적 너비 기준)
-          final deltaPixels = details.delta.dx;
-          final deltaRelative = deltaPixels / visualWidth;
-          final deltaTime = deltaRelative * rangeLength;
+          final box =
+              _timelineKey.currentContext?.findRenderObject() as RenderBox?;
+          if (box == null) return;
 
-          // 새로운 위치 계산 (startValue/endValue 기준)
-          var newPosition = clampedCurrentPos + deltaTime;
+          final localX = box.globalToLocal(details.globalPosition).dx;
+          final currentScrollOffset =
+              _scrollController.hasClients ? _scrollController.offset : 0.0;
+          final timelineX = localX + currentScrollOffset;
 
-          // 범위 제한 (startValue/endValue 사용)
+          // 🎯 픽셀 → 시간 (pxPerSecond 단일 진실로 정밀 매핑)
+          final dx = timelineX - _playbackBarDragStartTimelineX!;
+          final deltaSeconds = dx / pxPerSecond;
+
+          var newPosition = _playbackBarDragStartPosition! + deltaSeconds;
           newPosition = newPosition.clamp(startValue, endValue);
 
-          debugPrint(
-            '[PlaybackBar] 드래그: $newPosition초 (범위: $startValue ~ $endValue)',
-          );
           widget.trimmer.seekTo(newPosition);
         },
-        onPanEnd: (details) {
-          debugPrint('[PlaybackBar] 드래그 종료');
+        onPanEnd: (_) {
           setState(() {
             _isPlaybackBarDragging = false;
+            _playbackBarDragStartTimelineX = null;
+            _playbackBarDragStartPosition = null;
           });
+          // 🎯 재생바 드래그 종료 시 Trimmer에 상태 전달
+          widget.trimmer.setPlaybackBarDragging(false);
         },
-        child: Container(
-          width: barWidth + 20, // 터치 영역 확장
-          alignment: Alignment.center,
-          child: Builder(
-            builder: (context) {
-              final colorScheme = Theme.of(context).colorScheme;
-              return Container(
-                width: barWidth,
-                decoration: BoxDecoration(
-                  color: colorScheme.surface,
-                  borderRadius: BorderRadius.circular(barWidth / 2),
-                  border: Border.all(
-                    color: colorScheme.outline.withOpacity(0.3),
-                    width: 1,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: colorScheme.shadow.withOpacity(0.3),
-                      blurRadius: _isPlaybackBarDragging ? 8 : 4,
-                      offset: const Offset(0, 2),
+        child: SizedBox(
+          width: hitWidth,
+          child: Center(
+            child: Builder(
+              builder: (context) {
+                final colorScheme = Theme.of(context).colorScheme;
+                return Container(
+                  width: barWidth,
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface,
+                    borderRadius: BorderRadius.circular(barWidth / 2),
+                    border: Border.all(
+                      color: colorScheme.outline.withOpacity(0.35),
+                      width: 1,
                     ),
-                  ],
-                ),
-              );
-            },
+                    boxShadow: [
+                      BoxShadow(
+                        color: colorScheme.shadow.withOpacity(0.30),
+                        blurRadius: _isPlaybackBarDragging ? 8 : 5,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           ),
         ),
       ),
     );
   }
 
-  /// 드래그 가능한 오버레이 (핸들 대신 사용)
+  /// 드래그 가능한 오버레이 (시크만 수행, 구간 조절은 핸들에서만)
   Widget _buildDraggableOverlay({
     required bool isStart,
     required double pxPerSecond,
@@ -1028,21 +1102,16 @@ class _TrimEditorState extends State<TrimEditor> {
         final localX = box.globalToLocal(details.globalPosition).dx;
 
         setState(() {
-          _isHandleDragging = true;
-          _dragStartValue =
-              isStart ? widget.trimmer.startValue : widget.trimmer.endValue;
-          // 🎯 반대쪽 핸들 값 저장 (역전 방지용)
-          _dragStartOppositeValue =
-              isStart ? widget.trimmer.endValue : widget.trimmer.startValue;
+          // 🎯 오버레이 드래그는 시크만 하므로 _isHandleDragging은 false
+          // 재생 중이면 일시정지
+          if (widget.trimmer.isPlaying) {
+            widget.trimmer.videoPlaybackControl();
+          }
           _dragStartTimelineX = localX + scrollOffset;
         });
-        widget.trimmer.setHandleDragging(true);
       },
       onPanUpdate: (details) {
-        if (_dragStartValue == null ||
-            _dragStartTimelineX == null ||
-            _dragStartOppositeValue == null)
-          return;
+        if (_dragStartTimelineX == null) return;
 
         final box =
             _timelineKey.currentContext?.findRenderObject() as RenderBox?;
@@ -1052,77 +1121,27 @@ class _TrimEditorState extends State<TrimEditor> {
             _scrollController.hasClients ? _scrollController.offset : 0.0;
         final timelineX = localX + currentScrollOffset;
 
+        // 🎯 픽셀 변화를 시간으로 변환
         final dx = timelineX - _dragStartTimelineX!;
         final deltaSeconds = dx / pxPerSecond;
-        const minLength = 1.0;
 
-        if (isStart) {
-          var newStart = _dragStartValue! + deltaSeconds;
+        // 🎯 현재 위치에서 델타만큼 이동 (시크만 수행)
+        final currentPos = widget.trimmer.currentPosition;
+        var newPosition = currentPos + deltaSeconds;
 
-          // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
-          if (newStart >= _dragStartOppositeValue!) return;
+        // 🎯 전체 비디오 길이 내로 제한
+        newPosition = newPosition.clamp(0.0, totalSeconds);
 
-          newStart = newStart.clamp(
-            0.0,
-            (_dragStartOppositeValue! - minLength).clamp(0.0, totalSeconds),
-          );
+        // 🎯 시크 수행
+        widget.trimmer.seekTo(newPosition);
 
-          // 🎯 유효하지 않은 값 방지
-          if (newStart.isNaN || newStart.isInfinite || newStart < 0) return;
-
-          // 🎯 최종 역전 체크 (clamp 후에도)
-          if (newStart >= _dragStartOppositeValue!) return;
-
-          final proposedLength = _dragStartOppositeValue! - newStart;
-          if (proposedLength < minLength) return;
-          if (proposedLength > maxTrimLength) return;
-          newStart = newStart.clamp(0.0, totalSeconds);
-
-          widget.trimmer.onChangeStart(newStart);
-          widget.onChangeStart?.call(newStart);
-          // 🎯 드래그 중 즉시 UI 업데이트 (오버레이가 따라오도록)
-          setState(() {});
-        } else {
-          var newEnd = _dragStartValue! + deltaSeconds;
-
-          // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
-          if (newEnd <= _dragStartOppositeValue!) return;
-
-          newEnd = newEnd.clamp(
-            (_dragStartOppositeValue! + minLength).clamp(0.0, totalSeconds),
-            totalSeconds,
-          );
-
-          // 🎯 유효하지 않은 값 방지
-          if (newEnd.isNaN || newEnd.isInfinite || newEnd < 0) return;
-
-          // 🎯 최종 역전 체크 (clamp 후에도)
-          if (newEnd <= _dragStartOppositeValue!) return;
-
-          final proposedLength = newEnd - _dragStartOppositeValue!;
-          if (proposedLength < minLength) return;
-          if (proposedLength > maxTrimLength) return;
-          newEnd = newEnd.clamp(0.0, totalSeconds);
-
-          widget.trimmer.onChangeEnd(newEnd);
-          widget.onChangeEnd?.call(newEnd);
-          // 🎯 드래그 중 즉시 UI 업데이트 (오버레이가 따라오도록)
-          setState(() {});
-        }
+        // 🎯 드래그 시작 위치 업데이트 (누적 계산)
+        _dragStartTimelineX = timelineX;
       },
       onPanEnd: (_) {
         setState(() {
-          _isHandleDragging = false;
-          _dragStartValue = null;
-          _dragStartOppositeValue = null;
           _dragStartTimelineX = null;
         });
-        widget.trimmer.setHandleDragging(false);
-        if (isStart) {
-          widget.trimmer.seekTo(widget.trimmer.startValue);
-        } else {
-          widget.trimmer.seekTo(widget.trimmer.endValue);
-        }
       },
       child: Container(
         decoration: BoxDecoration(
@@ -1186,7 +1205,7 @@ class _TrimEditorState extends State<TrimEditor> {
 
         final dx = timelineX - _dragStartTimelineX!;
         final deltaSeconds = dx / pxPerSecond;
-        const minLength = 1.0;
+        final minLength = widget.trimmer.minLength;
 
         if (isStart) {
           var newStart = _dragStartValue! + deltaSeconds;

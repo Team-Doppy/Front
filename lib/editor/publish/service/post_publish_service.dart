@@ -45,6 +45,9 @@ class PostPublishService {
     required List<int> selectedGroupIds,
     required int? categoryId,
   }) async {
+    // ✅ 썸네일 URL 검증은 UI 레이어(_publish)에서 이미 수행됨
+    // 여기서는 검증 없이 페이로드만 빌드
+
     // 기존 exportedBase를 복사하고 편집된 내용으로 덮어쓰기
     final editedBase = Map<String, dynamic>.from(exportedBase);
 

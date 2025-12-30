@@ -8,6 +8,7 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
+import 'package:doppy/editor/utils/animated_drop_line.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
@@ -268,11 +269,18 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                   .select<NodeComponentService, Uint8List?>(
                     (service) => service.getEditedBytes(widget.nodeId),
                   );
-              // 🎯 이미지 자체도 RepaintBoundary로 감싸서 키보드 애니메이션 시 repaint 방지
-              final image = RepaintBoundary(
-                child: Padding(
-                  padding: EdgeInsets.zero,
-                  child: _buildImage(editedBytes),
+              // ✅ 패딩(center/full) 토글 시 너비 변화 → AspectRatio 기반 높이 변화가 발생한다.
+              // AnimatedSize로 감싸서 "확장/축소"를 부드럽게 만든다.
+              // (가로는 부모가 타이트하게 잡는 경우가 많아서, 높이 변화 애니메이션이 체감에 가장 크게 기여함)
+              final image = AnimatedSize(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: RepaintBoundary(
+                  child: Padding(
+                    padding: EdgeInsets.zero,
+                    child: _buildImage(editedBytes),
+                  ),
                 ),
               );
 
@@ -492,58 +500,74 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                                 ),
                               ),
                             ),
-                          if (isSpoilerFlag)
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: Builder(
-                                  builder: (context) {
-                                    final brightness =
-                                        Theme.of(context).brightness;
-                                    final isLightTheme =
-                                        brightness == Brightness.light;
-                                    return Stack(
+                          // ✅ 스포일러 토글(ON/OFF) 시 "블러/오버레이"가 부드럽게 변하도록 애니메이션 처리
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: TweenAnimationBuilder<double>(
+                                tween: Tween<double>(
+                                  begin: 0.0,
+                                  end: isSpoilerFlag ? 1.0 : 0.0,
+                                ),
+                                duration: const Duration(milliseconds: 180),
+                                curve: Curves.easeOutCubic,
+                                builder: (context, t, _) {
+                                  if (t <= 0.001) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  final brightness =
+                                      Theme.of(context).brightness;
+                                  final isLightTheme =
+                                      brightness == Brightness.light;
+
+                                  final sigma = 20.0 * t;
+                                  return Opacity(
+                                    opacity: t,
+                                    child: Stack(
                                       children: [
-                                        // ✅ 기본 블러 레이어 (전체 채우기)
+                                        // ✅ 블러 레이어 (서서히 적용)
                                         Positioned.fill(
                                           child: ClipRect(
                                             child: BackdropFilter(
                                               filter: ui.ImageFilter.blur(
-                                                sigmaX: 20,
-                                                sigmaY: 20,
+                                                sigmaX: sigma,
+                                                sigmaY: sigma,
                                               ),
                                               child: Container(
                                                 color: Colors.black.withOpacity(
-                                                  0.1,
+                                                  0.10 * t,
                                                 ),
                                               ),
                                             ),
                                           ),
                                         ),
+                                        // ✅ 도트/마스크 레이어 (서서히 노출)
                                         Positioned.fill(
                                           child: AnimatedBuilder(
                                             animation: _controller,
                                             builder: (context, _) {
-                                              return CustomPaint(
-                                                painter: _ImageSpoilerPainter(
-                                                  phase: _controller.value,
-                                                  isEditing: widget.isEditing,
-                                                  // 배경 마스크 제거 → 블러만 적용
-                                                  backgroundColor:
-                                                      Colors.transparent,
-                                                  // 점은 항상 흰색
-                                                  dotColor: Colors.white,
-                                                  isLightTheme: isLightTheme,
+                                              return Opacity(
+                                                opacity: t,
+                                                child: CustomPaint(
+                                                  painter: _ImageSpoilerPainter(
+                                                    phase: _controller.value,
+                                                    isEditing: widget.isEditing,
+                                                    backgroundColor:
+                                                        Colors.transparent,
+                                                    dotColor: Colors.white,
+                                                    isLightTheme: isLightTheme,
+                                                  ),
                                                 ),
                                               );
                                             },
                                           ),
                                         ),
                                       ],
-                                    );
-                                  },
-                                ),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
+                          ),
                           if (_scatterActive)
                             Positioned.fill(
                               child: IgnorePointer(
@@ -619,7 +643,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       right: 0,
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 2),
-                        child: Container(height: 5, color: AppColors.primary),
+                        child: AnimatedDropLine(
+                          child: Container(height: 5, color: AppColors.primary),
+                        ),
                       ),
                     ),
 
@@ -630,7 +656,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       left: 0,
                       child: Padding(
                         padding: const EdgeInsets.only(right: 2),
-                        child: Container(width: 5, color: AppColors.primary),
+                        child: AnimatedDropLine(
+                          child: Container(width: 5, color: AppColors.primary),
+                        ),
                       ),
                     ),
                   if (!isUploading && _shouldShowRightVerticalLine())
@@ -640,7 +668,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       right: 0,
                       child: Padding(
                         padding: const EdgeInsets.only(left: 2),
-                        child: Container(width: 5, color: AppColors.primary),
+                        child: AnimatedDropLine(
+                          child: Container(width: 5, color: AppColors.primary),
+                        ),
                       ),
                     ),
                   if (!isUploading && _shouldShowBottomDropLine())
@@ -650,7 +680,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       right: 0,
                       child: Padding(
                         padding: const EdgeInsets.only(top: 2),
-                        child: Container(height: 5, color: AppColors.primary),
+                        child: AnimatedDropLine(
+                          child: Container(height: 5, color: AppColors.primary),
+                        ),
                       ),
                     ),
                 ],
@@ -1108,13 +1140,12 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       } catch (_) {}
     }
 
-    final decodeWidth =
-        widget.isEditing
-            ? EditorImageProvider.editingDecodeWidth(
-              context,
-              widget.screenWidth,
-            )
-            : null;
+    // ✅ 읽기 모드에서도 decodeWidth를 줘야 PostReaderService.preloadTopMedia(precacheImage)와
+    // 동일한 ResizeImage(width) 캐시 키로 hit가 난다.
+    final decodeWidth = EditorImageProvider.editingDecodeWidth(
+      context,
+      widget.screenWidth,
+    );
 
     final built = EditorImageProvider.build(
       url: displayUrl,

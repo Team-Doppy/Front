@@ -66,7 +66,7 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
         children: [
           const SizedBox(height: 36),
           Text(
-            '어느 카테고리에 저장할까요?',
+            context.tr('publish_category_question'),
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.bold,
               fontSize: 22,
@@ -172,7 +172,7 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
                     });
                   },
                   child: Text(
-                    '취소',
+                    context.tr('cancel'),
                     style: TextStyle(
                       fontWeight: FontWeight.w500,
                       color:
@@ -289,7 +289,11 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
       }
     } catch (e) {
       if (mounted) {
-        ErrorHandler.handleError(context, e, customMessage: '카테고리 생성 실패');
+        ErrorHandler.handleError(
+          context,
+          e,
+          customMessage: context.tr('category_create_failed'),
+        );
       }
     }
   }
@@ -355,7 +359,7 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
       final username = currentUser?.username ?? '';
 
       if (username.isEmpty) {
-        throw Exception('사용자 정보를 찾을 수 없습니다.');
+        throw Exception(context.tr('user_info_not_found'));
       }
 
       final categories = await BlogService().getUserCategories(username);

@@ -3,6 +3,7 @@ import 'package:doppy/pages/components/comment_reaction_users_bottom_sheet.dart'
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/utils/time_utils.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:doppy/data/models/user_model.dart';
@@ -39,6 +40,7 @@ class CommentItem extends StatelessWidget {
     this.onHorizontalDragEnd,
     this.postAuthorUsername,
     this.enableImageHero = true,
+    this.customBottomPadding,
   });
 
   final Comment comment;
@@ -61,6 +63,7 @@ class CommentItem extends StatelessWidget {
   final Function(DragEndDetails)? onHorizontalDragEnd; // 🎯 드래그 종료 핸들러
   final String? postAuthorUsername; // 🎯 포스트 작성자 username (비밀댓글 권한 체크용)
   final bool enableImageHero; // ✅ 라우트 전환 시 Hero flight 방지용 (프리뷰에서는 false)
+  final double? customBottomPadding; // 🎯 외부에서 지정하는 하단 패딩 (다른 작성자 간 간격 조절용)
 
   /// 🎯 비밀댓글에 대한 권한 체크
   /// 작성자이거나 포스트 작성자인 경우에만 true 반환
@@ -152,6 +155,91 @@ class CommentItem extends StatelessWidget {
     }
   }
 
+  /// 🎯 @username 언급이 포함된 텍스트를 파싱하여 RichText로 변환
+  Widget _buildTextWithMentions(BuildContext context, bool isMe) {
+    final text = comment.content;
+    final baseStyle = TextStyle(
+      color: isMe ? Colors.white : Theme.of(context).colorScheme.onSurface,
+      fontSize: 15,
+      height: 1.35,
+    );
+    final mentionStyle = TextStyle(
+      color: isMe ? Colors.white : Theme.of(context).colorScheme.onSurface,
+      fontSize: 15,
+      height: 1.35,
+      decoration: TextDecoration.underline,
+      decorationColor:
+          isMe
+              ? Colors.white.withOpacity(0.8)
+              : Theme.of(context).colorScheme.primary.withOpacity(0.8),
+    );
+
+    // @username 패턴 찾기 (정규식: @ 다음에 공백이나 줄바꿈 전까지의 문자)
+    final mentionRegex = RegExp(r'@(\w+)');
+    final matches = mentionRegex.allMatches(text);
+
+    if (matches.isEmpty) {
+      // 언급이 없으면 일반 텍스트
+      return Text(text, style: baseStyle);
+    }
+
+    // TextSpan 리스트 생성
+    final spans = <TextSpan>[];
+    int lastEnd = 0;
+
+    for (final match in matches) {
+      // 언급 전의 일반 텍스트
+      if (match.start > lastEnd) {
+        spans.add(
+          TextSpan(
+            text: text.substring(lastEnd, match.start),
+            style: baseStyle,
+          ),
+        );
+      }
+
+      // 언급 텍스트 (@username)
+      final username = match.group(1)!;
+      final mentionText = match.group(0)!; // @username 전체
+
+      spans.add(
+        TextSpan(
+          text: mentionText,
+          style: mentionStyle,
+          recognizer:
+              TapGestureRecognizer()
+                ..onTap = () {
+                  // 프로필 화면으로 이동
+                  if (onProfileTap != null) {
+                    onProfileTap!(username);
+                  } else {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder:
+                            (context) => UserProfileScreen(
+                              otherUser: User(
+                                username: username,
+                                profileImageUrl: '', // 프로필 이미지는 서버에서 가져올 수 있음
+                              ),
+                            ),
+                      ),
+                    );
+                  }
+                },
+        ),
+      );
+
+      lastEnd = match.end;
+    }
+
+    // 마지막 일반 텍스트
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(text: text.substring(lastEnd), style: baseStyle));
+    }
+
+    return RichText(text: TextSpan(children: spans));
+  }
+
   @override
   Widget build(BuildContext context) {
     final canInteract = _canInteractWithPrivateComment();
@@ -178,7 +266,7 @@ class CommentItem extends StatelessWidget {
           key: globalKey,
           padding: EdgeInsets.only(
             top: showProfile ? 8 : 2,
-            bottom: showAuthorInfo ? 8 : 2,
+            bottom: customBottomPadding ?? (showAuthorInfo ? 8 : 2),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -678,19 +766,7 @@ class CommentItem extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Flexible(
-                              child: Text(
-                                comment.content,
-                                style: TextStyle(
-                                  color:
-                                      isMe
-                                          ? Colors.white
-                                          : Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                  fontSize: 15,
-                                  height: 1.35,
-                                ),
-                              ),
+                              child: _buildTextWithMentions(context, isMe),
                             ),
                             // 🎯 비밀댓글 자물쇠 아이콘
                             if (comment.isSecret ||

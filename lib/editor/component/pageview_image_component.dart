@@ -4,6 +4,7 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
+import 'package:doppy/editor/utils/animated_drop_line.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
@@ -689,22 +690,36 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                                 borderRadius: BorderRadius.circular(8),
                                 child: Stack(
                                   children: [
-                                    ImageFiltered(
-                                      imageFilter:
-                                          isSpoilerFlag
-                                              ? ui.ImageFilter.blur(
-                                                sigmaX: 12,
-                                                sigmaY: 12,
-                                              )
-                                              : ui.ImageFilter.blur(
-                                                sigmaX: 0,
-                                                sigmaY: 0,
-                                              ),
+                                    // ✅ 스포일러 토글(ON/OFF) 시 블러를 부드럽게
+                                    TweenAnimationBuilder<double>(
+                                      tween: Tween<double>(
+                                        begin: 0.0,
+                                        end: isSpoilerFlag ? 12.0 : 0.0,
+                                      ),
+                                      duration: const Duration(
+                                        milliseconds: 180,
+                                      ),
+                                      curve: Curves.easeOutCubic,
+                                      builder: (context, sigma, child) {
+                                        return ImageFiltered(
+                                          imageFilter: ui.ImageFilter.blur(
+                                            sigmaX: sigma,
+                                            sigmaY: sigma,
+                                          ),
+                                          child: child,
+                                        );
+                                      },
                                       child: _buildImageWidget(index, imageUrl),
                                     ),
-                                    if (isSpoilerFlag)
-                                      Positioned.fill(
-                                        child: IgnorePointer(
+                                    // ✅ 블러 위 어둡게 오버레이도 페이드
+                                    Positioned.fill(
+                                      child: IgnorePointer(
+                                        child: AnimatedOpacity(
+                                          opacity: isSpoilerFlag ? 1 : 0,
+                                          duration: const Duration(
+                                            milliseconds: 160,
+                                          ),
+                                          curve: Curves.easeOutCubic,
                                           child: Container(
                                             color: Colors.black.withOpacity(
                                               0.15,
@@ -712,6 +727,7 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                                           ),
                                         ),
                                       ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -880,9 +896,11 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                             top: 0,
                             left: 0,
                             right: 0,
-                            child: Container(
-                              height: 5,
-                              color: AppColors.primary,
+                            child: AnimatedDropLine(
+                              child: Container(
+                                height: 5,
+                                color: AppColors.primary,
+                              ),
                             ),
                           ),
                         if (_shouldShowBottomDropLine())
@@ -890,9 +908,11 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                             bottom: 0,
                             left: 0,
                             right: 0,
-                            child: Container(
-                              height: 5,
-                              color: AppColors.primary,
+                            child: AnimatedDropLine(
+                              child: Container(
+                                height: 5,
+                                color: AppColors.primary,
+                              ),
                             ),
                           ),
                       ],
@@ -912,13 +932,12 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
 
   /// 🎯 이미지 위젯 빌드 (로컬/네트워크 자동 판단)
   Widget _buildImageWidget(int index, String imageUrl) {
-    final decodeWidth =
-        widget.isEditing
-            ? EditorImageProvider.editingDecodeWidth(
-              context,
-              widget.screenWidth,
-            )
-            : null;
+    // ✅ 읽기 모드에서도 decodeWidth를 줘야 PostReaderService.preloadTopMedia(precacheImage)와
+    // 동일한 ResizeImage(width) 캐시 키로 hit가 난다.
+    final decodeWidth = EditorImageProvider.editingDecodeWidth(
+      context,
+      widget.screenWidth,
+    );
 
     final built = EditorImageProvider.build(
       url: imageUrl,

@@ -8,6 +8,7 @@ import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
+import 'package:doppy/editor/utils/animated_drop_line.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
@@ -102,7 +103,8 @@ class LinkComponentViewModel extends SingleColumnLayoutComponentViewModel {
     required this.title,
     required this.description,
     required this.thumbnailUrl,
-  }) : super(padding: EdgeInsets.zero, createdAt: DateTime.now());
+    required EdgeInsets padding, // 🎯 ClipComponent와 동일: metadata 기반 padding 전달
+  }) : super(padding: padding, createdAt: DateTime.now());
 
   final String url;
   final String title;
@@ -116,6 +118,7 @@ class LinkComponentViewModel extends SingleColumnLayoutComponentViewModel {
     title: title,
     description: description,
     thumbnailUrl: thumbnailUrl,
+    padding: padding as EdgeInsets, // 🎯 복사 시에도 padding 유지
   );
 }
 
@@ -156,12 +159,19 @@ class LinkComponentBuilder implements ComponentBuilder {
     DocumentNode node,
   ) {
     if (node is LinkNode) {
+      // 🎯 ClipComponent와 동일: 메타데이터에서 padding 모드 읽기
+      final paddingMode = node.metadata['padding'] as String? ?? 'center';
+      final horizontalPadding = paddingMode == 'full' ? 0.0 : 20.0;
       return LinkComponentViewModel(
         nodeId: node.id,
         url: node.url,
         title: node.title,
         description: node.description,
         thumbnailUrl: node.thumbnailUrl,
+        padding: EdgeInsets.only(
+          left: horizontalPadding,
+          right: horizontalPadding,
+        ),
       );
     }
     return null;
@@ -529,17 +539,36 @@ class _LinkComponentState extends State<_LinkComponent>
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     // ✅ 표시 모드: full(default)=썸네일까지 표시, compact=썸네일 영역 제거
-                    if (!_isCompactViewMode(doc))
-                      if (widget.thumbnailUrl.isNotEmpty)
-                        AspectRatio(
-                          aspectRatio: 16 / 9,
-                          child: _buildThumbnail(constraints),
-                        )
-                      else
-                        AspectRatio(
-                          aspectRatio: 16 / 9,
-                          child: _buildIconPlaceholder(),
-                        ),
+                    // ✅ 토글 시 레이아웃 점프/빨간 에러 화면 방지: AnimatedSize + AnimatedSwitcher로 부드럽게 전환
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeOutCubic,
+                      alignment: Alignment.topCenter,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 160),
+                        switchInCurve: Curves.easeOut,
+                        switchOutCurve: Curves.easeIn,
+                        transitionBuilder:
+                            (child, anim) =>
+                                FadeTransition(opacity: anim, child: child),
+                        child:
+                            _isCompactViewMode(doc)
+                                ? const SizedBox.shrink(
+                                  key: ValueKey('link_thumb_compact'),
+                                )
+                                : (widget.thumbnailUrl.isNotEmpty
+                                    ? AspectRatio(
+                                      key: const ValueKey('link_thumb_image'),
+                                      aspectRatio: 16 / 9,
+                                      child: _buildThumbnail(constraints),
+                                    )
+                                    : AspectRatio(
+                                      key: const ValueKey('link_thumb_icon'),
+                                      aspectRatio: 16 / 9,
+                                      child: _buildIconPlaceholder(),
+                                    )),
+                      ),
+                    ),
 
                     // 아래: 텍스트 정보
                     Container(
@@ -688,21 +717,25 @@ class _LinkComponentState extends State<_LinkComponent>
                   if (widget.isEditing && _shouldShowTopDropLine())
                     Positioned(
                       top: 0,
-                      left: 20,
-                      right: 20,
+                      left: 0,
+                      right: 0,
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 2),
-                        child: Container(height: 5, color: AppColors.primary),
+                        child: AnimatedDropLine(
+                          child: Container(height: 5, color: AppColors.primary),
+                        ),
                       ),
                     ),
                   if (widget.isEditing && _shouldShowBottomDropLine())
                     Positioned(
                       bottom: 0,
-                      left: 20,
-                      right: 20,
+                      left: 0,
+                      right: 0,
                       child: Padding(
                         padding: const EdgeInsets.only(top: 2),
-                        child: Container(height: 5, color: AppColors.primary),
+                        child: AnimatedDropLine(
+                          child: Container(height: 5, color: AppColors.primary),
+                        ),
                       ),
                     ),
                 ],

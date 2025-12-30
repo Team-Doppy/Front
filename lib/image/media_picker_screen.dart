@@ -18,6 +18,8 @@ class MediaPickerScreen extends StatefulWidget {
   final MediaType initialMediaType; // 초기 미디어 타입
   final int maxSelectionCount; // 최대 선택 개수
   final bool enableToggle; // 토글 가능 여부
+  // ✅ (UX) 화면을 띄우기 전에 첫 페이지를 미리 로드한 결과를 주입할 수 있음
+  final MediaPickerPreload? initialPreload;
   // ✅ "팝(pop) 전에" 상위 화면(에디터 등)에서 노드 삽입/프리캐시 같은 작업을 수행할 수 있도록 훅 제공
   final Future<void> Function(MediaPickerResult result)? onBeforePop;
   // ✅ onBeforePop 이후, 짧은 여유 시간(디코드/캐시/프레임 안정화)을 주기 위한 딜레이
@@ -30,12 +32,96 @@ class MediaPickerScreen extends StatefulWidget {
     this.initialMediaType = MediaType.video,
     this.maxSelectionCount = 1,
     this.enableToggle = true,
+    this.initialPreload,
     this.onBeforePop,
     this.beforePopDelay = const Duration(milliseconds: 180),
   });
 
+  /// ✅ (UX) MediaPickerScreen을 띄우기 전에 첫 페이지를 미리 로드한다.
+  /// - 권한 요청(필요 시 iOS 권한 팝업 포함)
+  /// - All/Recent 앨범 조회
+  /// - page=0 size=pageSize 로드
+  ///
+  /// 실패 시에도 null 대신 "권한 없음" preload를 반환해서
+  /// 호출부에서 로딩을 끝내고 화면을 일관되게 열 수 있게 한다.
+  static Future<MediaPickerPreload> preloadInitialPage({
+    required MediaType mediaType,
+    int pageSize = 50,
+  }) async {
+    try {
+      final PermissionState ps = await PhotoManager.requestPermissionExtend();
+      if (!ps.isAuth) {
+        return MediaPickerPreload(
+          mediaType: mediaType,
+          hasPermission: false,
+          allAlbum: null,
+          firstPage: const <AssetEntity>[],
+          pageSize: pageSize,
+        );
+      }
+
+      final paths = await PhotoManager.getAssetPathList(
+        type:
+            mediaType == MediaType.video
+                ? RequestType.video
+                : RequestType.image,
+        hasAll: true,
+      );
+      if (paths.isEmpty) {
+        return MediaPickerPreload(
+          mediaType: mediaType,
+          hasPermission: true,
+          allAlbum: null,
+          firstPage: const <AssetEntity>[],
+          pageSize: pageSize,
+        );
+      }
+      final allAlbum = paths.firstWhere(
+        (p) => p.isAll,
+        orElse: () => paths.first,
+      );
+      final firstPage = await allAlbum.getAssetListPaged(
+        page: 0,
+        size: pageSize,
+      );
+      return MediaPickerPreload(
+        mediaType: mediaType,
+        hasPermission: true,
+        allAlbum: allAlbum,
+        firstPage: firstPage,
+        pageSize: pageSize,
+      );
+    } catch (e) {
+      debugPrint('[MediaPicker] preloadInitialPage 실패: $e');
+      return MediaPickerPreload(
+        mediaType: mediaType,
+        hasPermission: false,
+        allAlbum: null,
+        firstPage: const <AssetEntity>[],
+        pageSize: pageSize,
+      );
+    }
+  }
+
   @override
   State<MediaPickerScreen> createState() => _MediaPickerScreenState();
+}
+
+/// MediaPickerScreen 최초 노출 UX 개선을 위한 프리로드 결과
+class MediaPickerPreload {
+  final MediaType mediaType;
+  final bool hasPermission;
+  final AssetPathEntity? allAlbum;
+  final List<AssetEntity> firstPage;
+  final int pageSize;
+
+  const MediaPickerPreload({
+    required this.mediaType,
+    required this.hasPermission,
+    required this.allAlbum,
+    required this.firstPage,
+    required this.pageSize,
+  });
 }
 
 /// MediaPickerScreen에서 반환되는 결과
@@ -74,7 +160,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
   // 🎯 페이지네이션
   int _currentPage = 0;
-  final int _pageSize = 100; // 한 번에 로드할 개수
+  final int _pageSize = 50; // 한 번에 로드할 개수
   bool _hasMoreMedia = true;
   bool _isLoadingMore = false;
   final ScrollController _scrollController = ScrollController();
@@ -137,7 +223,10 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   @override
   void initState() {
     super.initState();
-    _mediaType = widget.initialMediaType;
+    // ✅ 외부에서 프리로드된 결과가 있으면 그걸 우선 사용
+    final preload = widget.initialPreload;
+    _mediaType = preload?.mediaType ?? widget.initialMediaType;
+
     // 미디어 타입에 따라 최대 선택 개수 설정
     if (_mediaType == MediaType.image) {
       // 이미지: widget.maxSelectionCount가 명시적으로 1이면 1, 아니면 최소 5개
@@ -155,7 +244,18 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     // 🎯 스크롤 리스너 추가 (페이지네이션)
     _scrollController.addListener(_onScroll);
 
-    _requestPermissionAndLoadVideos();
+    if (preload != null) {
+      // ✅ 피커 화면이 뜨는 순간부터 1페이지는 이미 로드된 상태
+      _hasPermission = preload.hasPermission;
+      _cachedAllAlbum = preload.allAlbum;
+      _cachedAllAlbumType = preload.mediaType;
+      _media = preload.firstPage;
+      _currentPage = 0;
+      _hasMoreMedia = preload.firstPage.length >= _pageSize;
+      _isLoading = false;
+    } else {
+      _requestPermissionAndLoadVideos();
+    }
   }
 
   @override
@@ -722,6 +822,8 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
               heightFactor: 0.93,
               child: GroupImageLayoutSelector(
                 previewImages: imageFiles,
+                previewAssets:
+                    selectedAssets, // 🎯 썸네일 빠른 표시를 위해 AssetEntity 전달
                 onSelected: (layout) async {
                   if (didSelectLayout) return;
                   if (!mounted) return;
@@ -853,7 +955,8 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                 await _popWithResult(
                   MediaPickerResult(
                     files: [trimResult.videoFile],
-                    selectedMediaType: _mediaType,
+                    // ✅ 실제 선택된 타입은 파일 기준으로 고정 (토글 상태와 무관)
+                    selectedMediaType: MediaType.video,
                     thumbnailPath: trimResult.thumbnailPath, // 🎯 썸네일 경로 포함
                   ),
                 );
@@ -867,7 +970,11 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
           // 이미지는 바로 반환
           widget.onMediaSelected(file);
           await _popWithResult(
-            MediaPickerResult(files: [file], selectedMediaType: _mediaType),
+            MediaPickerResult(
+              files: [file],
+              // ✅ 실제 선택된 타입은 파일 기준으로 고정
+              selectedMediaType: MediaType.image,
+            ),
           );
         }
       } else {
@@ -958,7 +1065,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                         child: Text(
                           AppLocalizations.of(context).t('media_type_video'),
                           style: TextStyle(
-                            fontSize: 14,
+                            fontSize: _mediaType == MediaType.image ? 16 : 14,
                             fontWeight: FontWeight.w600,
                             color:
                                 _mediaType == MediaType.image
@@ -975,7 +1082,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                         child: Text(
                           AppLocalizations.of(context).t('media_type_image'),
                           style: TextStyle(
-                            fontSize: 14,
+                            fontSize: _mediaType == MediaType.image ? 14 : 16,
                             fontWeight: FontWeight.w600,
                             color:
                                 _mediaType == MediaType.image
@@ -1238,6 +1345,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                     controller: _scrollController, // 🎯 스크롤 컨트롤러 연결
                     key: ValueKey('${_crossAxisCount}_$_mediaType'),
                     padding: const EdgeInsets.all(2),
+                    cacheExtent: 500, // 🎯 캐시 범위 제한 (성능 최적화)
+                    addAutomaticKeepAlives: false, // 🎯 메모리 절약
+                    addRepaintBoundaries: true, // 🎯 렌더링 최적화
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: _crossAxisCount,
                       crossAxisSpacing: 1,
@@ -1387,7 +1497,11 @@ class _VideoThumbnailWidget extends StatelessWidget {
                   width: 24,
                   height: 24,
 
-                  child: Icon(Icons.check, color: Colors.black, size: 50),
+                  child: Icon(
+                    Icons.check,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 50,
+                  ),
                 ),
               ),
             ),
@@ -1488,7 +1602,11 @@ class _ImageThumbnailWidget extends StatelessWidget {
                   width: 26,
                   height: 26,
 
-                  child: Icon(Icons.check, color: Colors.black, size: 50),
+                  child: Icon(
+                    Icons.check,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 50,
+                  ),
                 ),
               ),
             ),

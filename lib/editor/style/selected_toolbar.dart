@@ -88,7 +88,7 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
       isCompactLink = meta['viewMode'] == 'compact';
     }
     return Container(
-      height: 38,
+      height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 12),
 
       child: Row(
@@ -180,6 +180,43 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                       debugPrint('[SelectedToolbar] 스포일러 metadata 업데이트 실패: $e');
                     }
 
+                    // ✅ 스포일러 토글 후에도 SelectedToolbar 유지:
+                    // padding 토글과 동일하게 다음 프레임에 selection을 복구한다.
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!mounted) return;
+                      try {
+                        final editorService =
+                            widget.editorService ??
+                            context.read<EditorService>();
+
+                        // composer selection 복구 (특수 노드 downstream)
+                        try {
+                          editorService.editor.execute([
+                            ChangeSelectionRequest(
+                              DocumentSelection.collapsed(
+                                position: DocumentPosition(
+                                  nodeId: nodeId,
+                                  nodePosition:
+                                      const UpstreamDownstreamNodePosition.downstream(),
+                                ),
+                              ),
+                              SelectionChangeType.placeCaret,
+                              SelectionReason.userInteraction,
+                            ),
+                          ]);
+                        } catch (_) {}
+
+                        // NodeComponentService 선택 강제 유지 (토글 X)
+                        context.read<NodeComponentService>().setSelectedNode(
+                          nodeId,
+                        );
+                      } catch (e) {
+                        debugPrint(
+                          '[SelectedToolbar] 스포일러 토글 후 selection 복구 실패: $e',
+                        );
+                      }
+                    });
+
                     if (mounted) setState(() {});
                   }
                 },
@@ -199,26 +236,142 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                       ? 'assets/icons/arrow-double-shrink.svg' // 확장됨 → 축소 아이콘
                       : 'assets/icons/arrow-double-expand.svg', // 축소됨 → 확장 아이콘
               isActive: true,
-              onTap: () async {
-                if (widget.onChangeAlignment != null &&
-                    widget.selectedId != null) {
-                  await widget.onChangeAlignment!(
-                    currentNode,
-                    widget.selectedId!,
-                  );
-                  if (mounted) setState(() {});
+              onTap: () {
+                final nodeId = widget.selectedId;
+                if (nodeId == null) return;
+
+                // ✅ 링크 viewMode 토글과 동일 철학:
+                // - 툴바 내부에서 metadata만 ReplaceNodeRequest로 교체
+                // - selection이 풀리지 않아 SelectedToolbar가 닫히지 않게 한다.
+                try {
+                  final editorService =
+                      widget.editorService ?? context.read<EditorService>();
+                  final node = editorService.document.getNodeById(nodeId);
+                  if (node == null) return;
+
+                  // 현재 padding: 기본값은 center
+                  String currentPadding = 'center';
+                  Map<String, dynamic> updatedMetadata = {};
+
+                  if (node is ImageNode) {
+                    final meta = Map<String, dynamic>.from(
+                      (node as dynamic).metadata as Map<String, dynamic>? ?? {},
+                    );
+                    currentPadding = (meta['padding'] as String?) ?? 'center';
+                    meta['padding'] =
+                        currentPadding == 'full' ? 'center' : 'full';
+                    updatedMetadata = meta;
+
+                    final updatedNode = AppImageNode(
+                      id: nodeId,
+                      imageUrl: (node as dynamic).imageUrl as String,
+                      altText: node.altText,
+                      metadata: updatedMetadata,
+                    );
+                    editorService.editor.execute([
+                      ReplaceNodeRequest(
+                        existingNodeId: nodeId,
+                        newNode: updatedNode,
+                      ),
+                    ]);
+                  } else if (node is ClipNode) {
+                    final meta = Map<String, dynamic>.from(node.metadata);
+                    currentPadding = (meta['padding'] as String?) ?? 'center';
+                    meta['padding'] =
+                        currentPadding == 'full' ? 'center' : 'full';
+                    updatedMetadata = meta;
+
+                    final updatedNode = ClipNode(
+                      id: node.id,
+                      label: node.label,
+                      colorHex: node.colorHex,
+                      url: node.url,
+                      localPath: node.localPath,
+                      thumbnailPath: node.thumbnailPath,
+                      metadata: updatedMetadata,
+                    );
+                    editorService.editor.execute([
+                      ReplaceNodeRequest(
+                        existingNodeId: nodeId,
+                        newNode: updatedNode,
+                      ),
+                    ]);
+                  } else if (node is LinkNode) {
+                    final meta = Map<String, dynamic>.from(node.metadata);
+                    currentPadding = (meta['padding'] as String?) ?? 'center';
+                    meta['padding'] =
+                        currentPadding == 'full' ? 'center' : 'full';
+                    updatedMetadata = meta;
+
+                    final updatedNode = LinkNode(
+                      id: node.id,
+                      url: node.url,
+                      title: node.title,
+                      description: node.description,
+                      thumbnailUrl: node.thumbnailUrl,
+                      metadata: updatedMetadata,
+                    );
+                    editorService.editor.execute([
+                      ReplaceNodeRequest(
+                        existingNodeId: nodeId,
+                        newNode: updatedNode,
+                      ),
+                    ]);
+                  }
+                } catch (e) {
+                  debugPrint('[SelectedToolbar] padding 토글 실패: $e');
                 }
+
+                // ✅ 토글 후에도 SelectedToolbar가 닫히지 않게:
+                // - 문서 Replace로 인해 composer selection이 잠깐 바뀌면서 EditorService가 선택을 해제할 수 있다.
+                // - 다음 프레임에 "해당 노드 downstream caret" + "NodeComponentService selection"을 복구한다.
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  try {
+                    final editorService =
+                        widget.editorService ?? context.read<EditorService>();
+
+                    // 1) composer selection 복구 (특수 노드 downstream)
+                    try {
+                      editorService.editor.execute([
+                        ChangeSelectionRequest(
+                          DocumentSelection.collapsed(
+                            position: DocumentPosition(
+                              nodeId: nodeId,
+                              nodePosition:
+                                  const UpstreamDownstreamNodePosition.downstream(),
+                            ),
+                          ),
+                          SelectionChangeType.placeCaret,
+                          SelectionReason.userInteraction,
+                        ),
+                      ]);
+                    } catch (_) {}
+
+                    // 2) NodeComponentService 선택 강제 유지 (토글 X)
+                    context.read<NodeComponentService>().setSelectedNode(
+                      nodeId,
+                    );
+                  } catch (e) {
+                    debugPrint('[SelectedToolbar] selection 복구 실패: $e');
+                  }
+                });
+
+                if (mounted) setState(() {});
               },
             ),
-            SizedBox(width: 16),
+            const SizedBox(width: 8),
           ],
 
           // 링크: 간략/풀 모드 토글 (간략=썸네일 영역 제거)
           if (currentNode is LinkNode) ...[
-            _buildMainMaterialIcon(
+            _buildMainSvgIcon(
               context: context,
-              icon:
-                  isCompactLink ? Icons.image_outlined : Icons.subject_outlined,
+              svgPath:
+                  isCompactLink
+                      ? 'assets/icons/editor_gallery.svg'
+                      : 'assets/icons/ic_text.svg',
+              isActive: false,
               onTap: () {
                 final nodeId = widget.selectedId;
                 if (nodeId == null) return;
@@ -249,7 +402,7 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                 }
               },
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 8),
           ],
 
           // ✅ 수정(크롭/편집) 버튼: 싱글/로우/페이지뷰 모두 활성화
@@ -302,35 +455,20 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
           width: 36,
           height: 40,
           alignment: Alignment.center,
-          child: SvgPicture.asset(
-            svgPath,
-            width: size ?? (isActive ? 28 : 25),
-            height: size ?? (isActive ? 28 : 25),
-            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 160),
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder:
+                (child, anim) => FadeTransition(opacity: anim, child: child),
+            child: SvgPicture.asset(
+              svgPath,
+              key: ValueKey(svgPath),
+              width: size ?? (isActive ? 28 : 25),
+              height: size ?? (isActive ? 28 : 25),
+              colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+            ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMainMaterialIcon({
-    required BuildContext context,
-    required IconData icon,
-    required VoidCallback onTap,
-    double size = 26,
-  }) {
-    final Color onSurface = Theme.of(context).colorScheme.onSurface;
-    final Color color = onSurface.withOpacity(0.5);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          width: 36,
-          height: 40,
-          alignment: Alignment.center,
-          child: Icon(icon, size: size, color: color),
         ),
       ),
     );

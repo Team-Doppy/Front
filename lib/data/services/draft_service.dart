@@ -86,6 +86,8 @@ class DraftData {
 class DraftService {
   static const String _draftsKey = 'draft_posts';
   static const String _currentDraftKey = 'current_draft';
+  // 🎯 자동저장 전용(최근 1개만 유지): 임시저장 리스트에는 노출하지 않음
+  static const String _autoDraftKey = 'auto_draft';
 
   /// 현재 에디터 상태를 임시저장
   Future<String> saveDraft({
@@ -168,6 +170,95 @@ class DraftService {
       debugPrint('[DraftService] ❌ 임시저장 실패: $e');
       debugPrint('[DraftService] 스택 트레이스: $stackTrace');
       throw Exception('임시저장에 실패했습니다: $e');
+    }
+  }
+
+  /// 🎯 자동저장(최근 1개만 유지): 임시저장 리스트(`_draftsKey`)에는 저장하지 않음
+  Future<String> saveAutoDraft({
+    required EditorService editorService,
+    required StickerService stickerService,
+    required String draftId,
+    required String title,
+    String summary = '',
+    required String thumbnailUrl,
+    String? videoFilePath,
+    String? videoThumbnailPath,
+    required String visibility,
+    required List<int> selectedGroupIds,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      final base = PostExporter.exportToMap(
+        editorService: editorService,
+        stickerService: stickerService,
+        forPublishing: true,
+        // ✅ 자동저장은 "복구 목적"이라 업로드 중/미완료 이미지가 있어도 저장을 허용한다.
+        // (최근 1개만 유지 + 리스트 미노출 정책이므로 안전)
+        allowPartialUpload: true,
+      );
+      final String v = visibility.toLowerCase();
+      final bool privateOnly = v == 'private';
+      final bool publicOnly = v == 'public';
+      final Map<String, dynamic> finalPayload =
+          PostExporter.composeFinalPayload(
+            thumbnailImageUrl: thumbnailUrl,
+            base: Map<String, dynamic>.from(base),
+            privateOnly: privateOnly,
+            publicOnly: publicOnly,
+            selectedGroupIds: selectedGroupIds,
+            createdAt: DateTime.now(),
+            skipValidation: true,
+          );
+
+      final now = DateTime.now();
+      final effectiveTitle = title.trim().isEmpty ? '제목 없음' : title.trim();
+
+      final draftData = DraftData(
+        id: draftId,
+        title: effectiveTitle,
+        summary: summary,
+        content: json.encode(finalPayload),
+        thumbnailUrl: thumbnailUrl,
+        videoFilePath: videoFilePath,
+        videoThumbnailPath: videoThumbnailPath,
+        visibility: visibility,
+        selectedGroupIds: selectedGroupIds,
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      await prefs.setString(_autoDraftKey, json.encode(draftData.toJson()));
+      return draftId;
+    } catch (e, stackTrace) {
+      debugPrint('[DraftService] ❌ 자동저장 실패: $e');
+      debugPrint('[DraftService] 스택 트레이스: $stackTrace');
+      throw Exception('자동저장에 실패했습니다: $e');
+    }
+  }
+
+  /// 🎯 자동저장(최근 1개) 가져오기
+  Future<DraftData?> getAutoDraft() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_autoDraftKey);
+      if (raw == null) return null;
+      final jsonMap = json.decode(raw);
+      if (jsonMap is! Map<String, dynamic>) return null;
+      return DraftData.fromJson(jsonMap);
+    } catch (e) {
+      debugPrint('[DraftService] Error getting auto draft: $e');
+      return null;
+    }
+  }
+
+  /// 🎯 자동저장(최근 1개) 삭제
+  Future<void> clearAutoDraft() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_autoDraftKey);
+    } catch (e) {
+      debugPrint('[DraftService] Error clearing auto draft: $e');
     }
   }
 
@@ -280,6 +371,57 @@ class DraftService {
       return true;
     } catch (e) {
       debugPrint('[DraftService] Error loading draft: $e');
+      return false;
+    }
+  }
+
+  /// 🎯 자동저장(최근 1개) 불러오기
+  Future<bool> loadAutoDraft({
+    required EditorService editorService,
+    required StickerService stickerService,
+    NodeComponentService? nodeComponentService,
+    dynamic dragService, // DragService 타입 (순환 참조 방지)
+  }) async {
+    try {
+      final draft = await getAutoDraft();
+      if (draft == null) return false;
+
+      final exportedData = json.decode(draft.content) as Map<String, dynamic>;
+      final postReaderService = PostReaderService();
+
+      editorService.editor.composer.clearSelection();
+      nodeComponentService?.clearSelection();
+      nodeComponentService?.clearHighlightedSelection();
+
+      editorService.clearHistory();
+      if (dragService != null) {
+        (dragService as dynamic).invalidateNodeRectCache();
+      }
+
+      final document = postReaderService.rebuildDocumentForRead(
+        exportedData,
+        includeTitleNode: true,
+      );
+
+      await _replaceDocumentSafely(editorService, document);
+      editorService.registerAllSpecialNodes();
+      editorService.ensureTrailingParagraphAfterLastSpecialNode();
+      if (dragService != null) {
+        (dragService as dynamic).invalidateNodeRectCache();
+      }
+
+      editorService.saveInitialStateSync();
+      editorService.markSavedSnapshot();
+
+      postReaderService.restoreStickers(
+        exported: exportedData,
+        stickerService: stickerService,
+      );
+
+      debugPrint('[DraftService] ✅ 자동저장 불러오기 완료');
+      return true;
+    } catch (e) {
+      debugPrint('[DraftService] Error loading auto draft: $e');
       return false;
     }
   }
@@ -444,7 +586,7 @@ class DraftService {
         ParagraphNode(
           id: '1',
           text: AttributedText(''),
-          metadata: {'isTitle': true, 'textAlign': 'center'},
+          metadata: {'textAlign': 'center'},
         ),
       );
 
@@ -494,6 +636,7 @@ class DraftService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_draftsKey);
       await prefs.remove(_currentDraftKey);
+      await prefs.remove(_autoDraftKey);
 
       debugPrint('[DraftService] All drafts deleted');
       return true;

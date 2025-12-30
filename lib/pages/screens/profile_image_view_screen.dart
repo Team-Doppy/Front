@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+import 'package:doppy/image/adjustment_editor.dart';
 import 'package:doppy/image/crop_editor.dart';
 import 'package:doppy/image/media_picker_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -41,13 +42,18 @@ class ProfileImageViewScreen extends StatefulWidget {
 }
 
 class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   bool _isDownloading = false;
 
   // 이미지 선택 관련
   File? _selectedImage;
   ui.Image? _uiImage;
   bool _isDefaultImageMode = false; // 기본이미지 모드
+
+  // ✅ 조정 바텀시트 애니메이션
+  static const double _adjustBottomSheetMaxHeight = 320.0;
+  late final AnimationController _adjustBottomSheetController;
+  late final Animation<double> _adjustBottomSheetAnimation;
 
   // 스와이프 제스처 관련
   double _dragStartY = 0.0;
@@ -61,12 +67,14 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
 
   // 인라인 보정 모드
   bool _isAdjustMode = false;
-  _AdjustTool _activeAdjustTool = _AdjustTool.brightness;
   double _brightness = 0.0; // -100 ~ 100
   double _contrast = 0.0; // -100 ~ 100
   double _saturation = 0.0; // -100 ~ 100
   double _warmth = 0.0; // -100 ~ 100
   _AdjustSnapshot? _adjustSnapshot;
+  bool _isAdjustmentSliderMode = false;
+  final GlobalKey<AdjustmentEditorBottomSheetState> _adjustmentEditorKey =
+      GlobalKey<AdjustmentEditorBottomSheetState>();
 
   // 이미지 상태 (crop_editor.dart 구조 참고)
   double _imageScale = 1.0;
@@ -83,6 +91,15 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
   @override
   void initState() {
     super.initState();
+    _adjustBottomSheetController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    _adjustBottomSheetAnimation = CurvedAnimation(
+      parent: _adjustBottomSheetController,
+      curve: Curves.easeInOut,
+    );
+
     _dragResetController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 160),
@@ -103,6 +120,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
 
   @override
   void dispose() {
+    _adjustBottomSheetController.dispose();
     _dragResetController.dispose();
     super.dispose();
   }
@@ -196,101 +214,127 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                 },
         child: Stack(
           children: [
-            // 중앙 프로필 이미지 (Hero 애니메이션) - 위쪽으로 약간 이동
-            Align(
-              alignment: const Alignment(
-                0,
-                -0.25,
-              ), // 위로 약간 이동 (0 = 중앙, -1 = 최상단)
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // ✅ Hero는 고정 레이아웃(앵커)만 잡고, Transform은 Hero 바깥에서 적용
-                  //    드래그 피드백은 유지하되 Hero 전환 시 깜빡임은 방지
-                  if (_selectedImage == null)
-                    Transform.translate(
-                      offset:
-                          canSwipeDismiss
-                              ? Offset(
-                                (_dragOffset.dx * 0.18).clamp(-40.0, 40.0),
-                                (_dragOffset.dy * 0.18).clamp(-40.0, 40.0),
-                              )
-                              : Offset.zero,
-                      child: Hero(
-                        tag: 'profile_image_${widget.username}',
-                        createRectTween:
-                            (begin, end) => RectTween(begin: begin, end: end),
-                        flightShuttleBuilder: (
-                          flightContext,
-                          animation,
-                          flightDirection,
-                          fromHeroContext,
-                          toHeroContext,
-                        ) {
-                          // ✅ 비행 중에는 "출발/도착 Hero의 child"를 그대로 재사용해야
-                          //    CachedNetworkImage placeholder ↔ image 스왑으로 인한 시작 깜빡임이 줄어듭니다.
-                          final fromHero =
-                              fromHeroContext.widget is Hero
-                                  ? (fromHeroContext.widget as Hero).child
-                                  : fromHeroContext.widget;
-                          final toHero =
-                              toHeroContext.widget is Hero
-                                  ? (toHeroContext.widget as Hero).child
-                                  : toHeroContext.widget;
+            // 중앙 프로필 이미지 (Hero 애니메이션) - 바텀시트 올라올 때 20px만큼만 올라감
+            AnimatedBuilder(
+              animation: _adjustBottomSheetAnimation,
+              builder: (context, child) {
+                // ✅ 바텀시트가 올라올 때 원형 이미지를 20px만큼만 위로 이동
+                final dy = -50.0 * _adjustBottomSheetAnimation.value;
+                return Transform.translate(offset: Offset(0, dy), child: child);
+              },
+              child: Align(
+                alignment: const Alignment(
+                  0,
+                  -0.25,
+                ), // 위로 약간 이동 (0 = 중앙, -1 = 최상단)
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // ✅ Hero는 고정 레이아웃(앵커)만 잡고, Transform은 Hero 바깥에서 적용
+                    //    드래그 피드백은 유지하되 Hero 전환 시 깜빡임은 방지
+                    if (_selectedImage == null)
+                      Transform.translate(
+                        offset:
+                            canSwipeDismiss
+                                ? Offset(
+                                  (_dragOffset.dx * 0.18).clamp(-40.0, 40.0),
+                                  (_dragOffset.dy * 0.18).clamp(-40.0, 40.0),
+                                )
+                                : Offset.zero,
+                        child: Hero(
+                          tag: 'profile_image_${widget.username}',
+                          createRectTween:
+                              (begin, end) => RectTween(begin: begin, end: end),
+                          flightShuttleBuilder: (
+                            flightContext,
+                            animation,
+                            flightDirection,
+                            fromHeroContext,
+                            toHeroContext,
+                          ) {
+                            // ✅ 비행 중에는 "출발/도착 Hero의 child"를 그대로 재사용해야
+                            //    CachedNetworkImage placeholder ↔ image 스왑으로 인한 시작 깜빡임이 줄어듭니다.
+                            final fromHero =
+                                fromHeroContext.widget is Hero
+                                    ? (fromHeroContext.widget as Hero).child
+                                    : fromHeroContext.widget;
+                            final toHero =
+                                toHeroContext.widget is Hero
+                                    ? (toHeroContext.widget as Hero).child
+                                    : toHeroContext.widget;
 
-                          final stableChild =
-                              flightDirection == HeroFlightDirection.push
-                                  ? fromHero
-                                  : toHero;
+                            final stableChild =
+                                flightDirection == HeroFlightDirection.push
+                                    ? fromHero
+                                    : toHero;
 
-                          return SizedBox(
+                            return SizedBox(
+                              width: _cropSize,
+                              height: _cropSize,
+                              child: Material(
+                                color: Colors.transparent,
+                                child: stableChild,
+                              ),
+                            );
+                          },
+                          child: SizedBox(
                             width: _cropSize,
                             height: _cropSize,
-                            child: Material(
-                              color: Colors.transparent,
-                              child: stableChild,
+                            // ✅ 이미지 URL이 바뀔 때 위젯을 완전히 재생성하여 잔상 방지
+                            key: ValueKey(
+                              'hero_avatar_${widget.profileImageUrl}',
                             ),
-                          );
-                        },
-                        child: SizedBox(
-                          width: _cropSize,
-                          height: _cropSize,
-                          // ✅ 이미지 URL이 바뀔 때 위젯을 완전히 재생성하여 잔상 방지
-                          key: ValueKey(
-                            'hero_avatar_${widget.profileImageUrl}',
-                          ),
-                          child: _buildHeroAvatar(
-                            enableTransform: false, // Hero 내부는 정적
-                            dragOffset: Offset.zero, // Transform은 외부에서 처리
+                            child: _buildHeroAvatar(
+                              enableTransform: false, // Hero 내부는 정적
+                              dragOffset: Offset.zero, // Transform은 외부에서 처리
+                            ),
                           ),
                         ),
                       ),
-                    ),
 
-                  // 선택된 이미지가 있을 때 표시
-                  if (_selectedImage != null &&
-                      _uiImage != null &&
-                      widget.isOwnProfile)
-                    _buildImageEditor(theme),
-                ],
+                    // 선택된 이미지가 있을 때 표시
+                    if (_selectedImage != null &&
+                        _uiImage != null &&
+                        widget.isOwnProfile)
+                      _buildImageEditor(theme),
+                  ],
+                ),
               ),
             ),
 
-            // 상단 뒤로가기 버튼
+            // 상단 뒤로가기 버튼 (바텀시트 올라왔을 때 숨김)
+            if (!_isAdjustMode)
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: GestureDetector(
+                      onTap: () => Navigator.pop(context),
+                      child: Container(
+                        padding: const EdgeInsets.only(left: 8.0),
+                        child: Icon(
+                          Icons.arrow_back_ios_new,
+                          color: theme.colorScheme.onSurface,
+                          size: 24,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
             SafeArea(
               child: Padding(
-                padding: const EdgeInsets.all(16.0),
+                padding: const EdgeInsets.only(top: 16.0),
                 child: Align(
-                  alignment: Alignment.topLeft,
-                  child: GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: Container(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Icon(
-                        Icons.arrow_back,
-                        color: theme.colorScheme.onSurface,
-                        size: 24,
-                      ),
+                  alignment: Alignment.topCenter,
+                  child: Text(
+                    AppLocalizations.of(context).translate('profile_image'),
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurface,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
@@ -311,7 +355,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                       widget.isOwnProfile
                           ? _selectedImage != null
                               ? (_isAdjustMode
-                                  ? _buildAdjustBottomSheet(theme)
+                                  ? const SizedBox.shrink()
                                   : Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
@@ -521,6 +565,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                 ),
               ),
             ),
+
+            // ✅ 조정 바텀시트 오버레이 (SimpleImageEditorScreen처럼 "올라오는" 형태)
+            if (_isAdjustMode) _buildAdjustBottomSheet(theme),
           ],
         ),
       ),
@@ -746,11 +793,12 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         warmth: _warmth,
       );
       _isAdjustMode = true;
-      _activeAdjustTool = _AdjustTool.brightness;
+      _isAdjustmentSliderMode = false;
     });
+    _adjustBottomSheetController.forward(from: 0);
   }
 
-  void _exitAdjustMode({required bool apply}) {
+  Future<void> _exitAdjustMode({required bool apply}) async {
     if (!apply) {
       final snap = _adjustSnapshot;
       if (snap != null) {
@@ -760,6 +808,12 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         _warmth = snap.warmth;
       }
     }
+    // 슬라이더 모드면 버튼 모드로 복귀(안전)
+    _adjustmentEditorKey.currentState?.resetToButtonMode();
+    _isAdjustmentSliderMode = false;
+
+    await _adjustBottomSheetController.reverse();
+    if (!mounted) return;
     setState(() {
       _isAdjustMode = false;
       _adjustSnapshot = null;
@@ -767,213 +821,125 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
   }
 
   Widget _buildAdjustBottomSheet(ThemeData theme) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.12),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              TextButton(
-                onPressed: () => _exitAdjustMode(apply: false),
-                child: Text(
-                  AppLocalizations.of(context).translate('cancel'),
-                  style: TextStyle(
-                    color: theme.colorScheme.onSurface.withOpacity(0.8),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
+    final l10n = AppLocalizations.of(context);
+
+    final state =
+        AdjustmentState()
+          ..brightness = _brightness
+          ..contrast = _contrast
+          ..saturation = _saturation
+          ..temperature = _warmth;
+
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: AnimatedBuilder(
+        animation: _adjustBottomSheetAnimation,
+        builder: (context, child) {
+          if (_adjustBottomSheetAnimation.value <= 0) {
+            return const SizedBox.shrink();
+          }
+          return ClipRect(
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: _adjustBottomSheetAnimation.value,
+              child: child,
+            ),
+          );
+        },
+        child: SafeArea(
+          top: false,
+          child: Container(
+            constraints: const BoxConstraints(
+              maxHeight: _adjustBottomSheetMaxHeight,
+            ),
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.12),
+                  blurRadius: 16,
+                  offset: const Offset(0, -8),
                 ),
-              ),
-              const Spacer(),
-              TextButton(
-                onPressed: () => _exitAdjustMode(apply: true),
-                child: Text(
-                  AppLocalizations.of(context).translate('complete'),
-                  style: TextStyle(
-                    color: theme.colorScheme.primary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                _buildAdjustToolButton(
-                  theme: theme,
-                  tool: _AdjustTool.brightness,
-                  icon: Icons.brightness_6,
-                  label: AppLocalizations.of(context).translate('brightness'),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: [
+                      TextButton(
+                        onPressed: () => _exitAdjustMode(apply: false),
+                        child: Text(
+                          l10n.translate('cancel'),
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurface,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Center(
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                l10n.translate('adjust'),
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.8),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => _exitAdjustMode(apply: true),
+                        child: Text(
+                          l10n.translate('complete'),
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurface,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                _buildAdjustToolButton(
-                  theme: theme,
-                  tool: _AdjustTool.contrast,
-                  icon: Icons.contrast,
-                  label: AppLocalizations.of(context).translate('contrast'),
-                ),
-                _buildAdjustToolButton(
-                  theme: theme,
-                  tool: _AdjustTool.saturation,
-                  icon: Icons.palette,
-                  label: AppLocalizations.of(context).translate('saturation'),
-                ),
-                _buildAdjustToolButton(
-                  theme: theme,
-                  tool: _AdjustTool.warmth,
-                  icon: Icons.thermostat,
-                  label: AppLocalizations.of(context).translate('warmth'),
+                const SizedBox(height: 6),
+                Flexible(
+                  child: AdjustmentEditorBottomSheet(
+                    key: _adjustmentEditorKey,
+                    state: state,
+                    onStateChanged: (newState) {
+                      setState(() {
+                        _brightness = newState.brightness;
+                        _contrast = newState.contrast;
+                        _saturation = newState.saturation;
+                        _warmth =
+                            newState.temperature; // ✅ temperature ↔ warmth
+                      });
+                    },
+                    onSliderModeChanged: (isSliderMode) {
+                      setState(() => _isAdjustmentSliderMode = isSliderMode);
+                    },
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 10),
-          _buildAdjustSlider(theme),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAdjustToolButton({
-    required ThemeData theme,
-    required _AdjustTool tool,
-    required IconData icon,
-    required String label,
-  }) {
-    final selected = _activeAdjustTool == tool;
-    return GestureDetector(
-      onTap: () => setState(() => _activeAdjustTool = tool),
-      child: Container(
-        margin: const EdgeInsets.only(right: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color:
-              selected
-                  ? theme.colorScheme.primary.withOpacity(0.12)
-                  : theme.colorScheme.surfaceVariant.withOpacity(0.25),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color:
-                selected
-                    ? theme.colorScheme.primary.withOpacity(0.6)
-                    : Colors.transparent,
-            width: 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 18,
-              color:
-                  selected
-                      ? theme.colorScheme.primary
-                      : theme.colorScheme.onSurface.withOpacity(0.8),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                color:
-                    selected
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurface.withOpacity(0.8),
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
         ),
       ),
-    );
-  }
-
-  Widget _buildAdjustSlider(ThemeData theme) {
-    double value;
-    String label;
-    switch (_activeAdjustTool) {
-      case _AdjustTool.brightness:
-        value = _brightness;
-        label = AppLocalizations.of(context).translate('brightness');
-        break;
-      case _AdjustTool.contrast:
-        value = _contrast;
-        label = AppLocalizations.of(context).translate('contrast');
-        break;
-      case _AdjustTool.saturation:
-        value = _saturation;
-        label = AppLocalizations.of(context).translate('saturation');
-        break;
-      case _AdjustTool.warmth:
-        value = _warmth;
-        label = AppLocalizations.of(context).translate('warmth');
-        break;
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                color: theme.colorScheme.onSurface.withOpacity(0.85),
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const Spacer(),
-            Text(
-              value.toStringAsFixed(0),
-              style: TextStyle(
-                color: theme.colorScheme.onSurface.withOpacity(0.85),
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        Slider(
-          value: value,
-          min: -100,
-          max: 100,
-          onChanged: (v) {
-            setState(() {
-              switch (_activeAdjustTool) {
-                case _AdjustTool.brightness:
-                  _brightness = v;
-                  break;
-                case _AdjustTool.contrast:
-                  _contrast = v;
-                  break;
-                case _AdjustTool.saturation:
-                  _saturation = v;
-                  break;
-                case _AdjustTool.warmth:
-                  _warmth = v;
-                  break;
-              }
-            });
-          },
-        ),
-      ],
     );
   }
 
@@ -1406,8 +1372,6 @@ class _UnifiedImagePainter extends CustomPainter {
         oldDelegate.rotation != rotation;
   }
 }
-
-enum _AdjustTool { brightness, contrast, saturation, warmth }
 
 class _AdjustSnapshot {
   const _AdjustSnapshot({

@@ -250,6 +250,7 @@ class _FilterEditorBottomSheetState extends State<FilterEditorBottomSheet> {
                       ListView.builder(
                         shrinkWrap: true,
                         scrollDirection: Axis.horizontal,
+                        reverse: true, // ✅ 스크롤 방향 반대
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
                         ), // ✅ 패딩 추가로 잘림 방지
@@ -414,7 +415,8 @@ class _FilterIntensitySliderState extends State<_FilterIntensitySlider> {
     const range = 1.0; // 0.0 ~ 1.0
     // ✅ 한 번의 드래그로 0~100까지 도달 가능하도록 감도 상향 (필터 UX)
     // - width만큼 드래그하면 range(=1.0)를 거의 커버
-    final deltaValue = (deltaX / width) * (range / 1.0);
+    // ✅ 손가락 방향과 맞추기 위해 부호 반대
+    final deltaValue = -(deltaX / width) * (range / 1.0);
     final newValue = (_dragStartValue! + deltaValue).clamp(0.0, 1.0);
     widget.onChanged(newValue);
   }

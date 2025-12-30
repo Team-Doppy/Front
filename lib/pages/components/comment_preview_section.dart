@@ -82,10 +82,8 @@ class CommentPreviewSection extends StatelessWidget {
               isMe: isMe,
               showProfile: showProfile,
               showAuthorInfo: showAuthorInfo,
-              // ✅ 댓글창 진입 시 이미지가 "아래에서 쭉 올라오는" 현상은
-              // PostReader 프리뷰 ↔ CommentBottomSheet 간 Hero flight 때문.
-              // 프리뷰에서는 이미지 Hero를 꺼서 기본 채팅처럼 고정되게 한다.
-              enableImageHero: false,
+              // ✅ 이미지 클릭 시 히어로 애니메이션으로 전체화면 뷰어 열기
+              enableImageHero: true,
               onReactionToggle: (commentId, emoji) {
                 commentService.toggleReaction(commentId, emoji);
               },

@@ -23,6 +23,7 @@ class SearchService extends ChangeNotifier {
   String _selectedCategory = '추천'; // '추천', '계정'
   bool _isSearching = false; // 검색 중인지 여부
   bool _isFocused = false; // 검색창 포커스 여부
+  bool _isKeyboardVisible = false; // 키보드 표시 여부
   bool _viewLocked = false; // 화면 전환 잠금 (네비게이션 중 레이아웃 고정)
   // 블로그 제목 검색 단발 결과 보관
   List<SearchContentItem> _blogResults = [];
@@ -74,6 +75,7 @@ class SearchService extends ChangeNotifier {
   String get selectedCategory => _selectedCategory;
   bool get isSearching => _isSearching;
   bool get isFocused => _isFocused;
+  bool get isKeyboardVisible => _isKeyboardVisible;
   bool get isViewLocked => _viewLocked;
   bool get hasSearched => _query.isNotEmpty && !_isSearching;
   List<SearchContentItem> get contentItems {
@@ -1189,6 +1191,13 @@ class SearchService extends ChangeNotifier {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       notifyListeners();
     });
+  }
+
+  /// 키보드 표시 상태 업데이트
+  void setKeyboardVisible(bool v) {
+    if (_isKeyboardVisible == v) return;
+    _isKeyboardVisible = v;
+    notifyListeners();
   }
 
   void lockView() {

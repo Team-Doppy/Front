@@ -71,7 +71,7 @@ class _Step2AudienceSelectionState extends State<Step2AudienceSelection> {
             children: [
               const SizedBox(height: 36),
               Text(
-                '누구에게 공개할까요?',
+                context.tr('publish_audience_question'),
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   fontSize: 22,
@@ -242,7 +242,7 @@ class _Step2AudienceSelectionState extends State<Step2AudienceSelection> {
               Padding(
                 padding: const EdgeInsets.only(top: 16, bottom: 8),
                 child: Text(
-                  '그룹',
+                  context.tr('group_section'),
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -368,10 +368,10 @@ class _Step2AudienceSelectionState extends State<Step2AudienceSelection> {
                                         padding: const EdgeInsets.all(16),
                                         child: Row(
                                           children: [
-                                            const Expanded(
+                                            Expanded(
                                               child: Text(
-                                                '그룹 만들기',
-                                                style: TextStyle(
+                                                context.tr('create_group_button'),
+                                                style: const TextStyle(
                                                   color: Colors.white,
                                                   fontSize: 16,
                                                   fontWeight: FontWeight.w600,

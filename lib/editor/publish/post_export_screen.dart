@@ -17,6 +17,9 @@ import 'package:doppy/editor/publish/component/step1_thumbnail_edit.dart';
 import 'package:doppy/editor/publish/component/step2_audience_selection.dart';
 import 'package:doppy/editor/publish/component/step3_category_selection.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
+import 'package:doppy/data/services/draft_service.dart';
+import 'package:doppy/image/utils/edit_image_cache_manager.dart';
+import 'package:doppy/editor/publish/post_exporter.dart';
 import 'dart:io';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
@@ -214,15 +217,22 @@ class _PostExportScreenState extends State<PostExportScreen>
       }
     }
 
-    // 🎯 Summary는 항상 자동 추출
-    final collected = PostContentUtils.collectText(exported);
-    _excerpt = PostContentUtils.extractSummary(
-      collectedText: collected,
-      title: _title,
-      maxLength: 100,
-    );
-    _excerptController.text = _excerpt;
-    debugPrint('[PostExport] ℹ️ 자동 추출 summary 사용: $_excerpt');
+    // 🎯 Summary: exported에 명시된 값이 있으면 그 값을 우선 사용, 없으면 자동 추출
+    final exportedSummary = (exported['summary'] ?? '').toString().trim();
+    if (exportedSummary.isNotEmpty) {
+      _excerpt = exportedSummary;
+      _excerptController.text = _excerpt;
+      debugPrint('[PostExport] ℹ️ exported summary 사용: $_excerpt');
+    } else {
+      final collected = PostContentUtils.collectText(exported);
+      _excerpt = PostContentUtils.extractSummary(
+        collectedText: collected,
+        title: _title,
+        maxLength: 100,
+      );
+      _excerptController.text = _excerpt;
+      debugPrint('[PostExport] ℹ️ 자동 추출 summary 사용: $_excerpt');
+    }
 
     // 공개 범위 초기값 동기화: accessLevel/sharedGroupIds 반영
     try {
@@ -272,6 +282,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
     Navigator.of(context).pop({
       'thumbnailImageUrl': _exportedThumbnailImageUrl,
+      'title': _titleController.text.trim(),
       'summary': _excerptController.text.trim(),
     });
   }
@@ -355,8 +366,20 @@ class _PostExportScreenState extends State<PostExportScreen>
       }
 
       // 3. 썸네일 검증 (모든 공개 범위에서 필수)
-      if (_exportedThumbnailImageUrl.trim().isEmpty) {
+      final trimmedThumbnailUrl = _exportedThumbnailImageUrl.trim();
+      if (trimmedThumbnailUrl.isEmpty) {
         ErrorHandler.showError(context, context.tr('thumbnail_required'));
+        return;
+      }
+      // ✅ 썸네일 URL이 네트워크 경로인지 검증 (로컬 경로 허용 X)
+      final isHttpUrl =
+          trimmedThumbnailUrl.startsWith('http://') ||
+          trimmedThumbnailUrl.startsWith('https://');
+      if (!isHttpUrl) {
+        ErrorHandler.showError(
+          context,
+          context.tr('thumbnail_upload_required'),
+        );
         return;
       }
 
@@ -419,6 +442,50 @@ class _PostExportScreenState extends State<PostExportScreen>
       debugPrint('Upload successful: ${uploadResult}');
 
       if (!mounted) return;
+
+      // 🎯 발행 성공 후 임시저장 삭제 및 관련 디스크 캐시 삭제 (비동기 처리)
+      // 사용자 경험에 영향을 주지 않도록 백그라운드에서 처리
+      if (widget.sessionKey != null &&
+          widget.sessionKey!.startsWith('draft_')) {
+        final draftId = widget.sessionKey!;
+        final thumbnailUrl = _exportedThumbnailImageUrl;
+
+        // 비동기로 실행 (await 제거)
+        Future.microtask(() async {
+          try {
+            debugPrint('[PostExport] 임시저장 삭제 시작: $draftId');
+
+            // 1. 사용된 이미지 URL 수집
+            final usedImageUrls = PostExporter.collectUsedMediaUrls(payload);
+            // 썸네일 URL도 포함
+            if (thumbnailUrl.isNotEmpty) {
+              usedImageUrls.add(thumbnailUrl);
+            }
+
+            debugPrint('[PostExport] 삭제할 이미지 URL 개수: ${usedImageUrls.length}');
+
+            // 2. 편집 모드 디스크 캐시 삭제
+            if (usedImageUrls.isNotEmpty) {
+              await EditImageCacheManager.instance.removeCachesForUrls(
+                usedImageUrls,
+              );
+              debugPrint('[PostExport] ✅ 편집 모드 디스크 캐시 삭제 완료');
+            }
+
+            // 3. 임시저장 삭제
+            final draftService = DraftService();
+            final deleted = await draftService.deleteDraft(draftId);
+            if (deleted) {
+              debugPrint('[PostExport] ✅ 임시저장 삭제 완료: $draftId');
+            } else {
+              debugPrint('[PostExport] ⚠️ 임시저장 삭제 실패: $draftId');
+            }
+          } catch (e) {
+            debugPrint('[PostExport] ⚠️ 임시저장/캐시 삭제 중 오류 (무시): $e');
+            // 발행은 성공했으므로 오류를 무시하고 계속 진행
+          }
+        });
+      }
 
       // 스티커 캔버스 청소
       try {
@@ -727,7 +794,15 @@ class _PostExportScreenState extends State<PostExportScreen>
       case 0: // Step 1: 썸네일 & 글 편집
         final editedTitle = _titleController.text.trim();
         final editedExcerpt = _excerptController.text.trim();
-        return _exportedThumbnailImageUrl.isNotEmpty &&
+        // ✅ 로컬 경로 허용 X: 반드시 UploadService로 업로드 완료되어
+        // exportedThumbnailImageUrl이 http(s) URL인 상태여야만 진행 가능
+        final thumbnailUrl = _exportedThumbnailImageUrl.trim();
+        final isHttpUrl =
+            thumbnailUrl.startsWith('http://') ||
+            thumbnailUrl.startsWith('https://');
+        return !_isUploadingThumb &&
+            thumbnailUrl.isNotEmpty &&
+            isHttpUrl &&
             editedTitle.isNotEmpty &&
             editedExcerpt.isNotEmpty;
       case 1: // Step 2: 공개 범위
@@ -1002,8 +1077,8 @@ class _PostExportScreenState extends State<PostExportScreen>
                 : context.tr('previous'),
             style: TextStyle(
               color: textColor.withOpacity(0.9),
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ),
@@ -1011,16 +1086,20 @@ class _PostExportScreenState extends State<PostExportScreen>
 
       actions: [
         if (_currentStep < _totalSteps - 1)
-          TextButton(
-            onPressed: _canProceedToNextStep() ? _nextStep : null,
-            child: Text(
-              context.tr('next'),
-              style: TextStyle(
-                color:
-                    _canProceedToNextStep()
-                        ? textColor.withOpacity(1)
-                        : textColor.withOpacity(0.3),
-                fontWeight: FontWeight.w500,
+          GestureDetector(
+            onTap: _canProceedToNextStep() ? _nextStep : null,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                context.tr('next'),
+                style: TextStyle(
+                  color:
+                      _canProceedToNextStep()
+                          ? textColor.withOpacity(1)
+                          : textColor.withOpacity(0.3),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           )
@@ -1066,8 +1145,8 @@ class _PostExportScreenState extends State<PostExportScreen>
                           key: const ValueKey('text'),
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.9),
-                            fontWeight: FontWeight.w500,
-                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
                           ),
                         ),
               ),

@@ -1,5 +1,6 @@
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/config.dart';
+import 'package:doppy/editor/utils/animated_drop_line.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -110,7 +111,9 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
     with TickerProviderStateMixin {
   late final AnimationController _controller;
   final GlobalKey _subtreeKey = GlobalKey();
-  // 캐시 사용 제거: attribution 변경에 즉시 반응하도록 항상 재계산
+  // ✅ 스포일러/형광펜이 실제로 그려지는 Stack의 좌표계를 고정하기 위한 키
+  final GlobalKey _paintHostKey = GlobalKey();
+
   // 스포일러 해제(리빌) 파티클 이펙트
   late final AnimationController _scatterCtrl;
   bool _scatterActive = false;
@@ -121,6 +124,10 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
   // 🎯 형광펜도 스포일러처럼 "이전 박스 유지 + 1프레임 재시도"로 깜빡임/끊김 방지
   List<_ColoredRect> _prevHighlightRects = const [];
   bool _highlightBoxRetryScheduled = false;
+  // Undo/redo can swap the underlying text layout while reusing the same widget
+  // state (same nodeId). Only keep previous boxes when attribution spans are unchanged.
+  String _lastSpoilerSpanSig = '';
+  String _lastHighlightSpanSig = '';
 
   double _estimateParagraphFontSize() {
     try {
@@ -151,13 +158,73 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
     }
   }
 
-  bool _isFirstNode() {
+  String _computeSpoilerSpanSignature() {
     try {
-      final doc = widget.editorService.editor.document;
-      final nodeIndex = doc.getNodeIndexById(widget.nodeId);
-      return nodeIndex == 0;
+      final node = widget.editorService.editor.document.getNodeById(
+        widget.nodeId,
+      );
+      if (node is! ParagraphNode) return '';
+      final text = node.text;
+
+      final parts = <String>[];
+      bool inSpoiler = false;
+      int start = 0;
+      for (int i = 0; i <= text.text.length; i++) {
+        final attrs =
+            i < text.text.length
+                ? text.getAllAttributionsAt(i)
+                : const <Attribution>{};
+        final has = attrs.any(
+          (a) => a is NamedAttribution && a.id == 'spoiler',
+        );
+        if (has && !inSpoiler) {
+          inSpoiler = true;
+          start = i;
+        } else if (!has && inSpoiler) {
+          inSpoiler = false;
+          parts.add('$start-$i');
+        }
+      }
+      return parts.join(',');
     } catch (_) {
-      return false;
+      return '';
+    }
+  }
+
+  String _computeHighlightSpanSignature() {
+    try {
+      final node = widget.editorService.editor.document.getNodeById(
+        widget.nodeId,
+      );
+      if (node is! ParagraphNode) return '';
+      final text = node.text;
+
+      final parts = <String>[];
+      Color? currentColor;
+      int runStart = -1;
+      for (int i = 0; i <= text.text.length; i++) {
+        Color? colorAtI;
+        if (i < text.text.length) {
+          final attrs = text.getAllAttributionsAt(i);
+          for (final a in attrs) {
+            if (a is HighlightAttribution) {
+              colorAtI = a.color;
+              break;
+            }
+          }
+        }
+
+        if (colorAtI != currentColor) {
+          if (currentColor != null && runStart != -1) {
+            parts.add('$runStart-$i:${currentColor.value}');
+          }
+          currentColor = colorAtI;
+          runStart = currentColor != null ? i : -1;
+        }
+      }
+      return parts.join(',');
+    } catch (_) {
+      return '';
     }
   }
 
@@ -261,11 +328,8 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
           child: KeyedSubtree(key: _subtreeKey, child: widget.child),
         );
 
-        // 🎯 첫 번째 노드이고 비어있을 때 힌트 텍스트 표시
-        final isFirstNode = _isFirstNode();
-        final isEmpty = _isParagraphEmpty();
-
         Widget stack = Stack(
+          key: _paintHostKey,
           children: [
             // 폰트 사이즈에 따라 문단 상단 여백/최소 높이를 유동적으로 조절하여
             // 작은 폰트일 때 아래 노드들이 자연스럽게 위로 당겨지도록 한다.
@@ -281,50 +345,24 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                   minHeight:
                       _isParagraphEmpty()
                           ? 22
-                          : (_estimateParagraphFontSize() * 1.4).clamp(
-                            0.0,
-                            999,
-                          ),
+                          : (_estimateParagraphFontSize() *
+                                  EditorConfig.defaultLineHeight)
+                              .clamp(0.0, 999),
                 ),
-                child: Stack(
-                  children: [
-                    content,
-                    // 🎯 첫 번째 노드 힌트 텍스트
-                    if (isFirstNode && isEmpty)
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: Center(
-                            child: Align(
-                              alignment:
-                                  _resolveTextAlign() == TextAlign.center
-                                      ? Alignment.center
-                                      : _resolveTextAlign() == TextAlign.right
-                                      ? Alignment.centerRight
-                                      : Alignment.centerLeft,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                ),
-                                child: Text(
-                                  '본문을 입력하세요',
-                                  style: TextStyle(
-                                    color:
-                                        Theme.of(context).colorScheme.onSurface,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
+                child: content,
               ),
             ),
             // 🎯 형광펜 오버레이 (편집 모드에서만)
             Builder(
               builder: (context) {
+                // If attribution spans changed (e.g., undo/redo restore), drop cached boxes so
+                // we don't render stale geometry until a layout pass completes.
+                final hiSig = _computeHighlightSpanSignature();
+                if (hiSig != _lastHighlightSpanSig) {
+                  _lastHighlightSpanSig = hiSig;
+                  _prevHighlightRects = const [];
+                }
+
                 final hi = _collectHighlightBoxes(context);
                 final hasHighlight = _hasHighlightAttribution();
                 // 레이아웃 갱신 타이밍(특히 글자 입력/폰트 사이즈 변경)에는 hi가 잠깐 비는 경우가 있음
@@ -372,6 +410,12 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
             if (hasSpoiler)
               Builder(
                 builder: (context) {
+                  final spSig = _computeSpoilerSpanSignature();
+                  if (spSig != _lastSpoilerSpanSig) {
+                    _lastSpoilerSpanSig = spSig;
+                    _prevBoxes = const [];
+                  }
+
                   final boxes = _collectSpoilerBoxes(context, nodeService);
                   // 🎯 토글 직후 첫 프레임에는 RenderParagraph 레이아웃이 아직 반영 전이라
                   // boxes가 비는 경우가 있음 → 다음 프레임에 1회 setState로 재계산
@@ -481,23 +525,27 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                 },
               ),
             if (showTop)
-              const Positioned(
+              Positioned(
                 top: 0,
                 left: 20,
                 right: 20,
-                child: SizedBox(
-                  height: 4,
-                  child: ColoredBox(color: AppColors.primary),
+                child: AnimatedDropLine(
+                  child: const SizedBox(
+                    height: 4,
+                    child: ColoredBox(color: AppColors.primary),
+                  ),
                 ),
               ),
             if (showBottom)
-              const Positioned(
+              Positioned(
                 bottom: 0,
                 left: 20,
                 right: 20,
-                child: SizedBox(
-                  height: 4,
-                  child: ColoredBox(color: AppColors.primary),
+                child: AnimatedDropLine(
+                  child: const SizedBox(
+                    height: 4,
+                    child: ColoredBox(color: AppColors.primary),
+                  ),
                 ),
               ),
           ],
@@ -540,10 +588,33 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
       }
     } catch (_) {}
 
-    // 🎯 스포일러 여부를 먼저 확인 (텍스트 attribution만 체크, 렌더링 없음)
+    // ✅ 보기 모드에서도 형광펜(HighlightAttribution)은 렌더링해야 한다.
+    // 기존 구현은 스포일러만 처리해서 형광펜이 "아예" 안 보였음.
     final hasSpoiler = _hasSpoilerAttribution();
+    final hasHighlight = _hasHighlightAttribution();
+
+    // ✅ 하이라이트 박스는 레이아웃 타이밍(특히 첫 프레임)에는 잠깐 비는 경우가 있어서
+    // 편집 모드와 동일하게 "이전 박스 유지 + 1프레임 재시도"를 적용한다.
+    List<_ColoredRect> highlightRects = const [];
+    if (hasHighlight) {
+      final hi = _collectHighlightBoxes(context);
+      if (hi.isEmpty && !_highlightBoxRetryScheduled) {
+        _highlightBoxRetryScheduled = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _highlightBoxRetryScheduled = false;
+          if (mounted) setState(() {});
+        });
+      }
+      highlightRects = hi.isNotEmpty ? hi : _prevHighlightRects;
+      if (highlightRects.isNotEmpty) {
+        _prevHighlightRects = highlightRects;
+      }
+    } else if (_prevHighlightRects.isNotEmpty) {
+      _prevHighlightRects = const [];
+    }
+
+    // 🎯 스포일러가 없으면 "텍스트 + (있다면) 하이라이트"만 그린다.
     if (!hasSpoiler) {
-      // 🎯 스포일러 없으면 초경량 위젯 반환 (애니메이션 리스닝 없음)
       return RepaintBoundary(
         child: Padding(
           padding: EdgeInsets.only(
@@ -554,16 +625,36 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
               minHeight:
                   _isParagraphEmpty()
                       ? 22
-                      : (_estimateParagraphFontSize() * 1.4).clamp(0.0, 999),
+                      : (_estimateParagraphFontSize() *
+                              EditorConfig.defaultLineHeight)
+                          .clamp(0.0, 999),
             ),
-            child: wrappedContent,
+            child: Stack(
+              key: _paintHostKey,
+              children: [
+                if (highlightRects.isNotEmpty)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      ignoring: true,
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          painter: _ParagraphHighlightPainter(
+                            highlights: highlightRects,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                wrappedContent,
+              ],
+            ),
           ),
         ),
       );
     }
 
     // 🎯 스포일러가 있을 때만 복잡한 위젯 트리 구성
-    return _SpoilerReadOnlyWidget(
+    final spoilerWidget = _SpoilerReadOnlyWidget(
       nodeId: widget.nodeId,
       subtreeKey: _subtreeKey,
       controller: _controller,
@@ -586,6 +677,26 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
           _scatterBoxes = scatterBoxes;
         }
       },
+    );
+
+    // ✅ 스포일러가 있더라도, 형광펜 배경은 텍스트 아래 레이어로 같이 그린다.
+    // (실제로 스포일러 마스크가 덮이면 보이지 않을 수 있지만, 토글/해제 직후 자연스럽게 복원됨)
+    if (highlightRects.isEmpty) return spoilerWidget;
+    return Stack(
+      key: _paintHostKey,
+      children: [
+        Positioned.fill(
+          child: IgnorePointer(
+            ignoring: true,
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: _ParagraphHighlightPainter(highlights: highlightRects),
+              ),
+            ),
+          ),
+        ),
+        spoilerWidget,
+      ],
     );
   }
 
@@ -703,24 +814,17 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
       final rp = _findRenderParagraph(ro);
       if (rp == null) return const [];
 
-      final paraOffset = (rp as RenderBox).localToGlobal(Offset.zero);
-      final hostOffset =
-          (context.findRenderObject() as RenderBox?)?.localToGlobal(
-            Offset.zero,
-          ) ??
-          Offset.zero;
+      final paraBox = rp as RenderBox;
+      final hostBox =
+          (_paintHostKey.currentContext?.findRenderObject() as RenderBox?) ??
+          (this.context.findRenderObject() as RenderBox?);
+      if (hostBox == null) return const [];
 
       // 🎯 선택 영역(보라색)과 동일한 방식: RenderParagraph.getBoxesForSelection 기반 박스 계산
       final boxes = <Rect>[];
       for (final r in spans) {
         boxes.addAll(
-          _measureSelectionRectsForRange(
-            rp,
-            r.start,
-            r.end,
-            paraOffset,
-            hostOffset,
-          ),
+          _measureSelectionRectsForRange(rp, r.start, r.end, paraBox, hostBox),
         );
       }
       return boxes;
@@ -743,12 +847,11 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
       if (ctx == null) return const [];
       final rp = _findRenderParagraph(ctx.findRenderObject());
       if (rp == null) return const [];
-      final paraOffset = (rp as RenderBox).localToGlobal(Offset.zero);
-      final hostOffset =
-          (context.findRenderObject() as RenderBox?)?.localToGlobal(
-            Offset.zero,
-          ) ??
-          Offset.zero;
+      final paraBox = rp as RenderBox;
+      final hostBox =
+          (_paintHostKey.currentContext?.findRenderObject() as RenderBox?) ??
+          (this.context.findRenderObject() as RenderBox?);
+      if (hostBox == null) return const [];
 
       final List<_ColoredRect> out = [];
 
@@ -773,8 +876,8 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
               rp,
               runStart,
               i,
-              paraOffset,
-              hostOffset,
+              paraBox,
+              hostBox,
             );
             for (final r in rects) {
               out.add(_ColoredRect(rect: r, color: currentColor));
@@ -845,6 +948,7 @@ class _SpoilerReadOnlyWidget extends StatefulWidget {
 class _SpoilerReadOnlyWidgetState extends State<_SpoilerReadOnlyWidget> {
   bool _wasMaskVisible = false;
   List<Rect> _prevBoxes = const [];
+  final GlobalKey _paintHostKey = GlobalKey();
 
   double _estimateParagraphFontSize() {
     try {
@@ -932,9 +1036,12 @@ class _SpoilerReadOnlyWidgetState extends State<_SpoilerReadOnlyWidget> {
               minHeight:
                   _isParagraphEmpty()
                       ? 22
-                      : (_estimateParagraphFontSize() * 1.4).clamp(0.0, 999),
+                      : (_estimateParagraphFontSize() *
+                              EditorConfig.defaultLineHeight)
+                          .clamp(0.0, 999),
             ),
             child: Stack(
+              key: _paintHostKey,
               children: [
                 widget.wrappedContent,
                 // 스포일러 마스크
@@ -1054,23 +1161,16 @@ class _SpoilerReadOnlyWidgetState extends State<_SpoilerReadOnlyWidget> {
       final rp = _findRenderParagraph(ro);
       if (rp == null) return const [];
 
-      final paraOffset = (rp as RenderBox).localToGlobal(Offset.zero);
-      final hostOffset =
-          (context.findRenderObject() as RenderBox?)?.localToGlobal(
-            Offset.zero,
-          ) ??
-          Offset.zero;
+      final paraBox = rp as RenderBox;
+      final hostBox =
+          (_paintHostKey.currentContext?.findRenderObject() as RenderBox?) ??
+          (this.context.findRenderObject() as RenderBox?);
+      if (hostBox == null) return const [];
 
       final boxes = <Rect>[];
       for (final r in calc) {
         boxes.addAll(
-          _measureSelectionRectsForRange(
-            rp,
-            r.start,
-            r.end,
-            paraOffset,
-            hostOffset,
-          ),
+          _measureSelectionRectsForRange(rp, r.start, r.end, paraBox, hostBox),
         );
       }
       return boxes;
@@ -1193,8 +1293,8 @@ List<Rect> _measureSelectionRectsForRange(
   RenderParagraph rp,
   int start,
   int end,
-  Offset paraOffset,
-  Offset hostOffset,
+  RenderBox paraBox,
+  RenderBox hostBox,
 ) {
   if (start >= end) return const [];
 
@@ -1215,12 +1315,15 @@ List<Rect> _measureSelectionRectsForRange(
   // 같은 줄에서 공백 단위로 쪼개진 박스들을 병합 (선택 영역과 동일한 높이 유지)
   final mergedLocal = _mergeRectsByLine(localRects);
 
-  // 좌표계 변환 (문단 → 호스트)
-  final delta = Offset(
-    paraOffset.dx - hostOffset.dx,
-    paraOffset.dy - hostOffset.dy,
-  );
-  return mergedLocal.map((r) => r.shift(delta)).toList();
+  // ✅ 좌표계 변환: 문단 로컬 → 글로벌 → 호스트 로컬
+  // offset 차 방식은 Postwrite/Reader 등 트리 구조 차이에 따라 쉽게 오차가 난다.
+  return mergedLocal.map((r) {
+    final globalTL = paraBox.localToGlobal(r.topLeft);
+    final globalBR = paraBox.localToGlobal(r.bottomRight);
+    final localTL = hostBox.globalToLocal(globalTL);
+    final localBR = hostBox.globalToLocal(globalBR);
+    return Rect.fromPoints(localTL, localBR);
+  }).toList();
 }
 
 class _ParagraphSpoilerPainter extends CustomPainter {

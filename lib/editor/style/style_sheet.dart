@@ -47,7 +47,7 @@ Stylesheet buildCustomStylesheet(
           TextStyle bodyStyle = TextStyle(
             fontSize: 16,
             color: bodyColor,
-            height: 1.4, // 🎯 커서 위치 일관성 유지 (FontSizeAttribution과 동일)
+            height: EditorConfig.defaultLineHeight,
             leadingDistribution: TextLeadingDistribution.even,
           );
 
@@ -174,7 +174,7 @@ Stylesheet buildCustomStylesheet(
             fontSize: attribution.fontSize,
             // 🎯 폰트 크기를 줄이면 행간도 자연스럽게 같이 줄어들어야 함
             // (노드 간 간격/선택 박스 간격이 폰트 크기 변화에 반응)
-            height: 1.4,
+            height: EditorConfig.defaultLineHeight,
             leadingDistribution: TextLeadingDistribution.even,
           );
         } else if (attribution is FontFamilyAttribution) {
@@ -187,7 +187,7 @@ Stylesheet buildCustomStylesheet(
         fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
         fontStyle: isItalic ? FontStyle.italic : FontStyle.normal,
         decoration: _buildTextDecoration(hasUnderline, hasStrikethrough),
-        //height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
+        // height는 위에서 attribution/블록 스타일에서 일관되게 지정한다.
         leadingDistribution: TextLeadingDistribution.even,
         // 형광펜은 별도 오버레이로 렌더링하므로 배경색은 사용하지 않음
       );

@@ -168,6 +168,21 @@ class NodeComponentService extends ChangeNotifier {
   /// 신규 API: 노드 선택
   void selectNode(String? nodeId) => selectImage(nodeId);
 
+  /// ✅ 토글 없이 "선택 상태를 강제로 설정"한다.
+  ///
+  /// - `selectNode()`는 같은 id를 다시 전달하면 선택 해제로 토글된다.
+  /// - ReplaceNodeRequest 등으로 문서가 갱신될 때 selection을 유지하려면
+  ///   토글이 아닌 "set" 동작이 필요하다.
+  void setSelectedNode(String? nodeId, {bool notify = true}) {
+    if (_selectedImageId == nodeId) return;
+    _selectedImageId = nodeId;
+    if (notify) notifyListeners();
+  }
+
+  /// 별칭(호환): 이미지 선택을 토글 없이 강제 설정
+  void setSelectedImage(String? imageId, {bool notify = true}) =>
+      setSelectedNode(imageId, notify: notify);
+
   /// 선택 상태 해제
   void clearSelection() {
     _selectedImageId = null;
@@ -278,37 +293,8 @@ class NodeComponentService extends ChangeNotifier {
     editorService.saveHistoryNow();
     debugPrint('[NodeComponentService] 📸 이미지 편집 전 히스토리 저장');
 
-    // 🎯 로딩 다이얼로그 상태 추적 (함수 스코프)
-    BuildContext? dialogContext;
-    bool isDialogClosed = false; // 다이얼로그가 이미 닫혔는지 추적
-
     try {
       FocusScope.of(context).unfocus();
-
-      // 로딩 다이얼로그 표시 (dialogContext 저장하여 명시적으로 닫기)
-      //여기를 커스텀 스피너로 바꾸면 좋을 듯
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogCtx) {
-          dialogContext = dialogCtx;
-          return PopScope(
-            canPop: false,
-            child: Center(
-              child: SizedBox(
-                width: 80,
-                height: 80,
-                child: Center(
-                  child: CircularProgressIndicator(
-                    strokeWidth: 4,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      );
 
       // ✅ 노드 타입별 이미지 소스(url/path/file://) 수집
       final sources = <String>[];
@@ -320,54 +306,14 @@ class NodeComponentService extends ChangeNotifier {
         sources.addAll(node.imageUrls);
       } else {
         // 지원하지 않는 노드 타입
-        if (!isDialogClosed) {
-          isDialogClosed = true;
-          _closeLoadingDialogSafely(context, dialogContext);
-        }
         if (context.mounted) {
           ErrorHandler.showError(context, context.tr('image_edit_failed'));
         }
         return;
       }
 
-      // ✅ 네트워크/로컬 공통: bytes로 변환
-      List<Uint8List> imageBytesList;
-      try {
-        imageBytesList = await ImageBytesResolver.resolveMany(
-          sources,
-          timeoutPerItem: const Duration(seconds: 10),
-        );
-      } on TimeoutException catch (e) {
-        debugPrint('[NodeComponentService] 이미지 로드 타임아웃: $e');
-        if (!isDialogClosed) {
-          isDialogClosed = true;
-          _closeLoadingDialogSafely(context, dialogContext);
-        }
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, context.tr('image_download_failed'));
-        }
-        return;
-      } catch (e) {
-        debugPrint('[NodeComponentService] 이미지 로드 실패: $e');
-        if (!isDialogClosed) {
-          isDialogClosed = true;
-          _closeLoadingDialogSafely(context, dialogContext);
-        }
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ErrorHandler.showError(context, context.tr('image_load_failed'));
-        }
-        return;
-      }
-
-      // 🎯 이미지 다운로드 완료 후 다이얼로그 닫기 (편집기 열기 전)
-      if (!isDialogClosed) {
-        isDialogClosed = true;
-        _closeLoadingDialogSafely(context, dialogContext);
-      }
-
-      // 3) SimpleImageEditorScreen 열기
+      // 🎯 편집 화면을 먼저 열고, 이미지 로딩은 편집 화면 내부에서 처리
+      // (로딩 다이얼로그 없이 부드러운 전환 애니메이션 제공)
       await Navigator.push<void>(
         context,
         PageRouteBuilder(
@@ -375,40 +321,93 @@ class NodeComponentService extends ChangeNotifier {
           barrierColor: Theme.of(context).colorScheme.background,
           opaque: false,
           barrierDismissible: true,
+          transitionDuration: const Duration(milliseconds: 250),
+          reverseTransitionDuration: const Duration(milliseconds: 250),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            // 🎯 fade + scale 애니메이션으로 부드럽게 전환
+            final fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            );
+            final scaleAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            );
+            return FadeTransition(
+              opacity: fadeAnimation,
+              child: ScaleTransition(scale: scaleAnimation, child: child),
+            );
+          },
           pageBuilder: (editorContext, _, __) {
-            return imageBytesList.length <= 1
-                ? SimpleImageEditorScreen(
-                  imageBytes: imageBytesList.first,
-                  isExistingNodeEdit: true,
-                  enableLayoutSelectionForMultiImage: false,
-                  onDone: (editorContext, result) async {
-                    await _applyEditedImagesToNode(
-                      context: context,
-                      editorContext: editorContext,
-                      imageId: imageId,
-                      node: node,
-                      editorService: editorService,
-                      document: document,
-                      result: result,
+            // 🎯 이미지 로딩을 비동기로 처리 (편집 화면은 즉시 열림)
+            return FutureBuilder<List<Uint8List>>(
+              future: ImageBytesResolver.resolveMany(
+                sources,
+                timeoutPerItem: const Duration(seconds: 10),
+              ),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  // 🎯 로딩 중: 편집 화면 배경에 shimmer 표시
+                  return Scaffold(
+                    backgroundColor: Theme.of(context).colorScheme.background,
+                    body: Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  );
+                }
+                if (snapshot.hasError || !snapshot.hasData) {
+                  // 🎯 에러 발생 시 편집 화면 닫고 에러 표시
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                      ErrorHandler.showError(
+                        context,
+                        context.tr('image_load_failed'),
+                      );
+                    }
+                  });
+                  return Scaffold(
+                    backgroundColor: Theme.of(context).colorScheme.background,
+                    body: const Center(child: SizedBox.shrink()),
+                  );
+                }
+                final imageBytesList = snapshot.data!;
+                return imageBytesList.length <= 1
+                    ? SimpleImageEditorScreen(
+                      imageBytes: imageBytesList.first,
+                      isExistingNodeEdit: true,
+                      enableLayoutSelectionForMultiImage: false,
+                      onDone: (editorContext, result) async {
+                        await _applyEditedImagesToNode(
+                          context: context,
+                          editorContext: editorContext,
+                          imageId: imageId,
+                          node: node,
+                          editorService: editorService,
+                          document: document,
+                          result: result,
+                        );
+                      },
+                    )
+                    : SimpleImageEditorScreen(
+                      imageBytesList: imageBytesList,
+                      isExistingNodeEdit: true,
+                      enableLayoutSelectionForMultiImage: false,
+                      onDone: (editorContext, result) async {
+                        await _applyEditedImagesToNode(
+                          context: context,
+                          editorContext: editorContext,
+                          imageId: imageId,
+                          node: node,
+                          editorService: editorService,
+                          document: document,
+                          result: result,
+                        );
+                      },
                     );
-                  },
-                )
-                : SimpleImageEditorScreen(
-                  imageBytesList: imageBytesList,
-                  isExistingNodeEdit: true,
-                  enableLayoutSelectionForMultiImage: false,
-                  onDone: (editorContext, result) async {
-                    await _applyEditedImagesToNode(
-                      context: context,
-                      editorContext: editorContext,
-                      imageId: imageId,
-                      node: node,
-                      editorService: editorService,
-                      document: document,
-                      result: result,
-                    );
-                  },
-                );
+              },
+            );
           },
         ),
       );
@@ -416,23 +415,11 @@ class NodeComponentService extends ChangeNotifier {
       return;
     } catch (e) {
       debugPrint('[NodeComponentService] 이미지 편집 중 오류: $e');
-      // 로딩 다이얼로그가 열려있을 수 있으므로 닫기 시도 (에디터는 유지)
-      // 단, 이미 닫혔으면 다시 닫지 않음
-      if (!isDialogClosed) {
-        isDialogClosed = true;
-        _closeLoadingDialogSafely(context, dialogContext);
-      }
       if (context.mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ErrorHandler.showError(context, context.tr('image_edit_failed'));
       }
     } finally {
-      // 🎯 finally에서도 로딩 다이얼로그가 열려있으면 닫기 (안전장치, 에디터는 유지)
-      // 단, 이미 닫혔으면 다시 닫지 않음 (중복 pop 방지)
-      if (!isDialogClosed && dialogContext != null) {
-        isDialogClosed = true;
-        _closeLoadingDialogSafely(context, dialogContext);
-      }
       _isEditingImage = false;
     }
   }
@@ -645,35 +632,6 @@ class NodeComponentService extends ChangeNotifier {
         effectiveLayout == GroupImageLayout.grid3) {
       // 기존 로직은 editImage 내부에 남아있으므로, 예상치 못한 타입은 스킵
       return;
-    }
-  }
-
-  // 🎯 로딩 다이얼로그 안전하게 닫기 (에디터는 유지)
-  void _closeLoadingDialogSafely(
-    BuildContext context,
-    BuildContext? dialogContext,
-  ) {
-    if (!context.mounted || dialogContext == null) {
-      debugPrint('[NodeComponentService] 다이얼로그 닫기 스킵: context가 유효하지 않음');
-      return;
-    }
-
-    try {
-      // 다이얼로그 context가 여전히 유효한지 확인
-      if (!dialogContext.mounted) {
-        debugPrint(
-          '[NodeComponentService] 다이얼로그 닫기 스킵: dialogContext가 이미 unmounted',
-        );
-        return;
-      }
-
-      // 다이얼로그 context에서 직접 pop (에디터는 절대 닫히지 않음)
-      Navigator.pop(dialogContext);
-      debugPrint('[NodeComponentService] ✅ 로딩 다이얼로그 닫기 성공');
-    } catch (e) {
-      debugPrint('[NodeComponentService] ⚠️ 로딩 다이얼로그 닫기 실패: $e');
-      // fallback 시도하지 않음 (에디터를 닫을 위험이 있음)
-      // 다이얼로그가 이미 닫혔거나 다른 문제가 있을 수 있음
     }
   }
 }

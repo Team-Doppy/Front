@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
@@ -197,103 +198,140 @@ class _DrawingOverlayState extends State<DrawingOverlay>
             ),
           ),
 
-          // 상단 툴바
+          // 상단 툴바 (EditorAppBar와 동일한 스타일)
           Positioned(
             top: 0,
             left: 0,
             right: 0,
             child: Container(
-              height: 95,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.background,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.only(left: 11.0, right: 8.0, top: 53),
-                child: Row(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4.0),
-                      child: IconButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: Icon(
-                          Icons.close,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.4),
-                          size: 25,
-                        ),
-                        style: IconButton.styleFrom(),
+              color: Theme.of(context).colorScheme.background.withOpacity(1),
+              child: SafeArea(
+                bottom: false,
+                child: ClipRRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.background.withOpacity(1),
                       ),
-                    ),
-                    const SizedBox(width: 5),
+                      height: kToolbarHeight,
+                      width: MediaQuery.of(context).size.width,
+                      child: Row(
+                        children: [
+                          // 뒤로가기 버튼
+                          GestureDetector(
+                            onTap: () => Navigator.of(context).pop(),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              child: Icon(
+                                Icons.arrow_back_ios_new_rounded,
+                                size: 24,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.75),
+                              ),
+                            ),
+                          ),
 
-                    GestureDetector(
-                      onTap: _canUndo() ? _undo : null,
-                      child: SvgPicture.asset(
-                        'assets/icons/editor_undo.svg',
-                        width: 26,
-                        height: 26,
-                        colorFilter: ColorFilter.mode(
-                          Theme.of(context).colorScheme.onSurface.withOpacity(
-                            _canUndo() ? 0.9 : 0.2, // 🎯 활성화 상태에 따라 색상 조절
-                          ),
-                          BlendMode.srcIn,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 15),
-                    GestureDetector(
-                      onTap: _canRedo() ? _redo : null,
-                      child: SvgPicture.asset(
-                        'assets/icons/editor_redo.svg',
-                        width: 26,
-                        height: 26,
-                        colorFilter: ColorFilter.mode(
-                          Theme.of(context).colorScheme.onSurface.withOpacity(
-                            _canRedo() ? 0.9 : 0.2, // 🎯 활성화 상태에 따라 색상 조절
-                          ),
-                          BlendMode.srcIn,
-                        ),
-                      ),
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed:
-                          (_isUploading || !_hasDrawing)
-                              ? null
-                              : _export, // 🎯 그림이 없으면 비활성화
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                      ),
-                      child:
-                          _isUploading
-                              ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.white,
+                          // 언두 버튼
+                          Material(
+                            color: Colors.transparent,
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: InkWell(
+                                onTap: _canUndo() ? _undo : null,
+                                borderRadius: BorderRadius.circular(24),
+                                child: Container(
+                                  padding: const EdgeInsets.all(1),
+                                  child: SvgPicture.asset(
+                                    'assets/icons/editor_undo.svg',
+                                    width: 30,
+                                    height: 30,
+                                    colorFilter: ColorFilter.mode(
+                                      Theme.of(context).colorScheme.onSurface
+                                          .withOpacity(_canUndo() ? 0.6 : 0.15),
+                                      BlendMode.srcIn,
+                                    ),
                                   ),
-                                ),
-                              )
-                              : Text(
-                                '완료',
-                                style: TextStyle(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(
-                                    _hasDrawing ? 0.9 : 0.3, // 🎯 그림이 없으면 흐리게
-                                  ),
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 16,
                                 ),
                               ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+
+                          // 리두 버튼
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: _canRedo() ? _redo : null,
+                                borderRadius: BorderRadius.circular(24),
+                                child: Container(
+                                  padding: const EdgeInsets.all(1),
+                                  child: SvgPicture.asset(
+                                    'assets/icons/editor_redo.svg',
+                                    width: 30,
+                                    height: 30,
+                                    colorFilter: ColorFilter.mode(
+                                      Theme.of(context).colorScheme.onSurface
+                                          .withOpacity(_canRedo() ? 0.6 : 0.15),
+                                      BlendMode.srcIn,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const Spacer(),
+
+                          // 완료 버튼
+                          GestureDetector(
+                            onTap:
+                                (_isUploading || !_hasDrawing) ? null : _export,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              child:
+                                  _isUploading
+                                      ? SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 3.5,
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.primary,
+                                              ),
+                                        ),
+                                      )
+                                      : Text(
+                                        '완료',
+                                        style: TextStyle(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurface.withOpacity(
+                                            _hasDrawing ? 0.9 : 0.3,
+                                          ),
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -773,12 +811,23 @@ class _DrawingOverlayState extends State<DrawingOverlay>
       final logicalHeight = cropBounds.height / pixelRatio;
 
       final double scrollY = widget.scrollController?.offset ?? 0.0;
-      final position = Offset(logicalLeft, logicalTop + scrollY);
+      // 🎯 DrawingOverlay는 전체 화면(상태바 포함) 기준 좌표로 크롭 bounds가 나온다.
+      // 에디터의 스티커 캔버스는 Scaffold body(앱바 아래)를 (0,0)으로 사용하므로,
+      // 상단 앱바 높이만큼 Y를 보정해서 body 로컬 좌표로 변환한 뒤, 문서 좌표로 만들기 위해 scrollY를 더한다.
+      final double editorTopOffset =
+          MediaQuery.paddingOf(context).top + kToolbarHeight;
+      final double bodyLocalTop = (logicalTop - editorTopOffset).clamp(
+        0.0,
+        double.infinity,
+      );
+      final position = Offset(logicalLeft, bodyLocalTop + scrollY);
 
       debugPrint(
         '[DrawingOverlay] 📐 물리→논리 변환: ($cropBounds) → (${logicalLeft.toStringAsFixed(1)}, ${logicalTop.toStringAsFixed(1)}, ${logicalWidth.toStringAsFixed(1)}x${logicalHeight.toStringAsFixed(1)})',
       );
-      debugPrint('[DrawingOverlay] export: scrollY=$scrollY, docPos=$position');
+      debugPrint(
+        '[DrawingOverlay] export: editorTopOffset=$editorTopOffset, scrollY=$scrollY, docPos=$position',
+      );
 
       // 🎯 PNG를 서버에 업로드하고 URL 받기
       final uploadService = UploadService();

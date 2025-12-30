@@ -9,6 +9,9 @@ class EditorConfig {
   static const double textPadding = 1;
   static const double imagePadding = 0;
 
+  /// 기본 라인 높이 배율 (행간). 텍스트 스타일 전반에 동일 기준으로 적용한다.
+  static const double defaultLineHeight = 1.2;
+
   /// 특수 노드(이미지, 비디오, 링크)와 텍스트 노드 사이의 수직 패딩
   static const double specialNodePaddingWithText = 18.0;
 

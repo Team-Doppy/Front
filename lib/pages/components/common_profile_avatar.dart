@@ -91,10 +91,13 @@ class CommonProfileAvatar extends StatelessWidget {
         placeholder: (context, url) => ShimmerBox(width: size, height: size),
         errorWidget:
             (context, url, error) => _buildPlaceholder(context, isDarkMode),
-        memCacheWidth: (size * 2).round(),
-        maxWidthDiskCache: (size * 2).round(),
+        // ✅ 화질 개선: 캐시 크기를 3배로 증가 (더 선명한 이미지)
+        memCacheWidth: (size * 3).round(),
+        maxWidthDiskCache: (size * 3).round(),
         fadeInDuration: const Duration(milliseconds: 0), // 🎯 즉시 표시
         fadeOutDuration: const Duration(milliseconds: 0), // 🎯 즉시 표시
+        // ✅ 고품질 필터링 적용
+        filterQuality: FilterQuality.high,
       );
     } else if (isFileUrl) {
       // 🎯 로컬 파일 경로: Image.file 사용
@@ -102,6 +105,8 @@ class CommonProfileAvatar extends StatelessWidget {
       return Image.file(
         File(path),
         fit: BoxFit.cover,
+        // ✅ 고품질 필터링 적용
+        filterQuality: FilterQuality.high,
         errorBuilder:
             (context, error, stackTrace) =>
                 _buildPlaceholder(context, isDarkMode),
@@ -197,22 +202,20 @@ class _StaticAvatarImage extends StatelessWidget {
     final bool isFileUrl = imageUrl.startsWith('file://');
 
     if (isNetwork) {
-      return Image(
-        image: CachedNetworkImageProvider(imageUrl),
+      // ✅ Hero 전환용 고품질 이미지: 캐시 크기를 더 크게 설정하여 선명도 향상
+      return CachedNetworkImage(
+        imageUrl: imageUrl,
         fit: BoxFit.cover,
-        // Hero 중 프레임 튐을 줄이기 위해 gapless playback + 고품질 샘플링
-        gaplessPlayback: true,
+        // ✅ 화질 개선: Hero 전환용이므로 더 높은 해상도 사용 (4배)
+        memCacheWidth: (size * 4).round(),
+        maxWidthDiskCache: (size * 4).round(),
+        fadeInDuration: const Duration(milliseconds: 0),
+        fadeOutDuration: const Duration(milliseconds: 0),
+        // ✅ 고품질 필터링 적용
         filterQuality: FilterQuality.high,
         // ✅ 잔상 방지: 이전 프레임을 숨기고 새 이미지가 로드될 때만 표시
-        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-          if (wasSynchronouslyLoaded || frame != null) {
-            return child;
-          }
-          // 로딩 중에는 투명하게 (이전 이미지 잔상 방지)
-          return const SizedBox.shrink();
-        },
-        // ✅ 이미지가 변경될 때 이전 이미지를 즉시 제거
-        errorBuilder: (context, error, stackTrace) {
+        placeholder: (context, url) => const SizedBox.shrink(),
+        errorWidget: (context, url, error) {
           return _StaticAvatarPlaceholder(
             username: '',
             size: size,

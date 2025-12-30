@@ -684,13 +684,14 @@ class _RotationRulerSliderState extends State<RotationRulerSlider> {
               (details) => _onPanUpdate(details, constraints.maxWidth),
           onHorizontalDragEnd: _onPanEnd,
           child: SizedBox(
-            height: 40, // ✅ 슬라이더 높이 축소
+            // 요구사항: 눈금 높이/전체 높이 낮게(가운데 눈금 제외)
+            height: 32,
             child: CustomPaint(
               painter: _RotationRulerPainter(
                 currentValue: widget.value,
                 textColor: widget.textColor,
               ),
-              size: Size(constraints.maxWidth, 40), // ✅ 슬라이더 높이 축소
+              size: Size(constraints.maxWidth, 32),
             ),
           ),
         );
@@ -710,17 +711,19 @@ class _RotationRulerPainter extends CustomPainter {
     final majorTickPaint =
         Paint()
           ..color = textColor.withOpacity(0.5) // ✅ 필터와 동일
-          ..strokeWidth = 2.0
+          // 요구사항: 눈금 더 얇게(가운데 눈금 제외)
+          ..strokeWidth = 1.2
           ..strokeCap = StrokeCap.round;
 
     final centerPaint =
         Paint()
           ..color = textColor
+          // 가운데 눈금은 유지(더 두껍게)
           ..strokeWidth = 3.0
           ..strokeCap = StrokeCap.round;
 
     final centerX = size.width / 2;
-    final bottomY = size.height - 8; // ✅ 필터와 동일하게 변경
+    final bottomY = size.height - 6;
 
     // ✅ ±45도 범위로 제한
     const minDegree = -45.0;
@@ -731,7 +734,7 @@ class _RotationRulerPainter extends CustomPainter {
     // ✅ 가운데 바는 항상 표시 (거의 위에 수치칩과 닿을 정도로 길게)
     canvas.drawLine(
       Offset(centerX, bottomY),
-      Offset(centerX, bottomY - 40), // ✅ 더 길게 (24 -> 40)
+      Offset(centerX, bottomY - 28),
       centerPaint,
     );
 
@@ -747,22 +750,25 @@ class _RotationRulerPainter extends CustomPainter {
 
       final x = centerX + relative * pixelsPerDegree;
 
-      // ✅ 현재 값 위치는 건너뛰기 (가운데 바가 이미 그려졌으므로)
-      if (relative.abs() < 0.5) continue;
+      final isCenter = relative.abs() < 0.5;
 
-      // ✅ 모든 틱을 주요 틱으로 표시 (15도 간격: -45, -30, -15, 0, 15, 30, 45)
-      canvas.drawLine(
-        Offset(x, bottomY),
-        Offset(x, bottomY - 16),
-        majorTickPaint,
-      );
+      // ✅ 눈금 라인: 가운데(현재 값)는 가운데 바가 있으니 라인 생략
+      if (!isCenter) {
+        canvas.drawLine(
+          Offset(x, bottomY),
+          // 요구사항: 눈금 높이 낮게
+          Offset(x, bottomY - 10),
+          majorTickPaint,
+        );
+      }
 
-      // 숫자 표시 (대칭적으로)
+      // 숫자 표시
+      // 요구사항: 0 눈금도 표시해야 함(가운데 바가 있어도 라벨은 보여줌)
       final textSpan = TextSpan(
         text: degree.toInt().toString(),
         style: TextStyle(
           color: textColor.withOpacity(0.5),
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: FontWeight.w500,
         ),
       );
@@ -773,7 +779,7 @@ class _RotationRulerPainter extends CustomPainter {
       textPainter.layout();
       textPainter.paint(
         canvas,
-        Offset(x - textPainter.width / 2, bottomY - 32),
+        Offset(x - textPainter.width / 2, bottomY - 22),
       );
     }
   }
@@ -796,7 +802,6 @@ class CropEditorBottomSheet extends StatefulWidget {
     required this.onSelectAspectRatio,
     required this.onResetAspectRatio,
     required this.onRotationChanged,
-    required this.onRotate90,
     required this.onResetRotation,
     required this.onToggleFlipHorizontal,
     required this.onToggleFlipVertical,
@@ -812,7 +817,6 @@ class CropEditorBottomSheet extends StatefulWidget {
   final VoidCallback onResetAspectRatio;
 
   final ValueChanged<int> onRotationChanged;
-  final VoidCallback onRotate90;
   final VoidCallback onResetRotation;
 
   final VoidCallback onToggleFlipHorizontal;
@@ -899,9 +903,14 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
         isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
 
     final aspectRatioOptions = [
+      // 요구사항: "자유" 왼쪽에 리셋(금지 아이콘) 버튼
+      {'label': '리셋', 'ratio': '__reset__'},
       {'label': '자유', 'ratio': null},
       {'label': '1:1', 'ratio': '1:1'},
       {'label': '4:5', 'ratio': '4:5'},
+      // 요구사항: 4:3 / 3:4 추가
+      {'label': '4:3', 'ratio': '4:3'},
+      {'label': '3:4', 'ratio': '3:4'},
       {'label': '16:9', 'ratio': '16:9'},
       {'label': '9:16', 'ratio': '9:16'},
     ];
@@ -909,7 +918,7 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // ✅ 상단: 초기화 | 디바이더 | 90도 회전 | 디바이더 | 비율 버튼들
+        // ✅ 상단: 비율 버튼들
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: SizedBox(
@@ -925,26 +934,6 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
                       : Row(
                         key: const ValueKey('top_row'),
                         children: [
-                          // ✅ 리셋 버튼 제거
-                          // 90도 회전 버튼
-                          circleButton(
-                            context: context,
-                            selected: false,
-                            onTap: widget.onRotate90,
-                            borderColor: fgColor,
-                            child: Icon(
-                              Icons.rotate_right,
-                              color: fgColor,
-                              size: 26,
-                            ),
-                          ),
-                          // 디바이더
-                          Container(
-                            width: 1,
-                            height: 40,
-                            margin: const EdgeInsets.symmetric(horizontal: 12),
-                            color: fgColor.withOpacity(0.2),
-                          ),
                           // 비율 버튼들 (가로 스크롤)
                           Expanded(
                             child: ListView.separated(
@@ -955,10 +944,16 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
                               itemBuilder: (context, i) {
                                 final option = aspectRatioOptions[i];
                                 final ratio = option['ratio'];
+                                final isReset = ratio == '__reset__';
                                 final isSelected =
+                                    !isReset &&
                                     widget.selectedAspectRatio == ratio;
                                 return GestureDetector(
                                   onTap: () {
+                                    if (isReset) {
+                                      widget.onResetAspectRatio();
+                                      return;
+                                    }
                                     widget.onSelectAspectRatio(ratio);
                                   },
                                   child: Container(
@@ -975,15 +970,24 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
                                       ),
                                     ),
                                     child: Center(
-                                      child: Text(
-                                        option['label'] as String,
-                                        style: TextStyle(
-                                          color:
-                                              isSelected ? cs.primary : fgColor,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
+                                      child:
+                                          isReset
+                                              ? Icon(
+                                                Icons.block,
+                                                color: fgColor.withOpacity(0.6),
+                                                size: 22,
+                                              )
+                                              : Text(
+                                                option['label'] as String,
+                                                style: TextStyle(
+                                                  color:
+                                                      isSelected
+                                                          ? cs.primary
+                                                          : fgColor,
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
                                     ),
                                   ),
                                 );
@@ -1931,7 +1935,6 @@ class CropGestureHandler {
 
   // 드래그 감도 및 복귀 감도
   static const double _dragResistance = 0.6;
-  static const double _snapBackStrength = 1.5;
   static const double _minImageScale = 1.0; // 최소 줌 레벨 (축소 제한)
   static const double _maxImageScale = 5.0; // 최대 줌 레벨
   static const double _pinchEpsilon = 0.001; // 핀치로 판단할 최소 scale 변화량
@@ -1991,7 +1994,6 @@ class CropGestureHandler {
   Offset? _computeSnapBackOffset({
     required Rect currentImageRect,
     required Rect screenCropRect,
-    required double imageScale,
   }) {
     double adjustX = 0.0;
     double adjustY = 0.0;
@@ -2014,10 +2016,10 @@ class CropGestureHandler {
 
     if (adjustX == 0.0 && adjustY == 0.0) return null;
 
-    return Offset(
-      (adjustX / imageScale) * _snapBackStrength,
-      (adjustY / imageScale) * _snapBackStrength,
-    );
+    // ✅ 여기서 반환하는 값은 `imageOffset`에 "그대로 더해지는(screen px)" 보정량이어야 한다.
+    // 기존처럼 imageScale로 나누면(특히 zoom-in 상태에서) 보정이 부족해서
+    // 스냅백 후에도 이미지가 크롭 프레임에 딱 붙지 않는 문제가 발생한다.
+    return Offset(adjustX, adjustY);
   }
 
   /// 드래그 시작 처리
@@ -2192,23 +2194,40 @@ class CropGestureHandler {
       scale: imageScale,
       offset: proposedOffset,
     );
-    final testCropRectScreen = ImageRectUtils.imageToScreenRect(
-      imageRect: cropState.cropRectImage!,
-      screenImageRect: testImageRect,
-      imageSize: imageSize,
-    );
+    // ✅ 중요한 기준 통일:
+    // - 크롭 모드에서 사용자가 보는 크롭박스(screen)는 "frozenImageRect 기준"으로 고정돼야 한다.
+    // - 따라서 드래그 저항/스냅 판정도 동일한 기준(cropRectScreen 고정)을 사용해야 한다.
+    final Rect cropRectScreen =
+        (_frozenImageRect != null)
+            ? ImageRectUtils.imageToScreenRect(
+              imageRect: cropState.cropRectImage!,
+              screenImageRect: _frozenImageRect!,
+              imageSize: imageSize,
+            )
+            : ImageRectUtils.imageToScreenRect(
+              imageRect: cropState.cropRectImage!,
+              screenImageRect: testImageRect,
+              imageSize: imageSize,
+            );
 
     // (3) 고무줄 감쇠 적용
     double dx = delta.dx;
     double dy = delta.dy;
 
-    if (testCropRectScreen.left < 0 ||
-        testCropRectScreen.right > containerSize.width) {
+    // ✅ 이미지가 고정 크롭박스를 덮지 못하려고 하면 저항을 준다.
+    // (cropRect가 컨테이너를 벗어나는지 여부는 여기서의 관심사가 아님)
+    final outX =
+        testImageRect.left > cropRectScreen.left + _snapTolerancePx ||
+        testImageRect.right < cropRectScreen.right - _snapTolerancePx;
+    final outY =
+        testImageRect.top > cropRectScreen.top + _snapTolerancePx ||
+        testImageRect.bottom < cropRectScreen.bottom - _snapTolerancePx;
+
+    if (outX) {
       dx *= _dragResistance;
     }
 
-    if (testCropRectScreen.top < 0 ||
-        testCropRectScreen.bottom > containerSize.height) {
+    if (outY) {
       dy *= _dragResistance;
     }
 
@@ -2303,7 +2322,6 @@ class CropGestureHandler {
       final snapBackOffset = _computeSnapBackOffset(
         currentImageRect: currentImageRect,
         screenCropRect: frozenCropRectScreen,
-        imageScale: imageScale,
       );
 
       // ✅ 확대 핀치: cropRectImage 절대 재계산하지 않음 (고정)
@@ -2424,7 +2442,6 @@ class CropGestureHandler {
       final snapBackOffset = _computeSnapBackOffset(
         currentImageRect: currentImageRect,
         screenCropRect: frozenCropRectScreen,
-        imageScale: imageScale,
       );
 
       // ✅ 드래그 완료 시: 화면 중앙 기준으로 cropRectImage 재계산

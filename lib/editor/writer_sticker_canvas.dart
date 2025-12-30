@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:ui' show lerpDouble;
 import 'dart:typed_data';
 import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
@@ -33,11 +34,11 @@ class StickerCanvas extends StatelessWidget {
                     stackKey: _stackKey,
                   ),
 
-                // 휴지통 (드래그 중일 때만 표시) - ValueListenableBuilder로 감지
+                // 휴지통 (툴바가 내려간 후 표시) - shouldShowTrashNotifier로 감지
                 ValueListenableBuilder<bool>(
-                  valueListenable: svc.isDraggingNotifier,
-                  builder: (context, isDragging, child) {
-                    if (!isDragging) return const SizedBox.shrink();
+                  valueListenable: svc.shouldShowTrashNotifier,
+                  builder: (context, shouldShow, child) {
+                    if (!shouldShow) return const SizedBox.shrink();
                     return Positioned(
                       left: 0,
                       right: 0,
@@ -164,7 +165,28 @@ class _StickerView extends StatefulWidget {
   State<_StickerView> createState() => _StickerViewState();
 }
 
-class _StickerViewState extends State<_StickerView> {
+class _StickerViewState extends State<_StickerView>
+    with SingleTickerProviderStateMixin {
+  // 휴지통 흡입 애니메이션
+  late final AnimationController _suckCtrl;
+  bool _lastOverTrash = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _suckCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+      reverseDuration: const Duration(milliseconds: 140),
+    );
+  }
+
+  @override
+  void dispose() {
+    _suckCtrl.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final svc = context.read<StickerService>();
@@ -210,19 +232,29 @@ class _StickerViewState extends State<_StickerView> {
     // 스티커 크기에 따라 터치 영역 확장 (큰 스티커도 핀치 가능하도록)
     final touchPadding = scale > 2.0 ? 100.0 : 50.0;
 
+    // 휴지통 over 상태 변화 감지 -> 흡입 애니메이션 트리거
+    final overTrashNow = isDragging && svc.dragOverDelete;
+    if (overTrashNow != _lastOverTrash) {
+      _lastOverTrash = overTrashNow;
+      if (overTrashNow) {
+        _suckCtrl.forward();
+      } else {
+        _suckCtrl.reverse();
+      }
+    }
+
     return Positioned(
       left: pos.dx - touchPadding,
       top: pos.dy - scrollY - touchPadding,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        // 🎯 드래그만 지원 (핀치 비활성화)
         onPanStart: (details) {
-          debugPrint('[Sticker] 드래그 시작');
-          // 키보드 내리기
+          debugPrint('[Sticker] 드래그 시작(즉시)');
+          // 키보드 내리기 + 선택 해제는 "드래그 시작 시점"에 실행
           FocusScope.of(context).unfocus();
           try {
             context.read<EditorService>().editor.composer.clearSelection();
-          } catch (e) {}
+          } catch (_) {}
           svc.beginDrag(widget.sticker.id);
         },
         onPanUpdate: (details) {
@@ -258,19 +290,53 @@ class _StickerViewState extends State<_StickerView> {
           debugPrint('[Sticker] 드래그 종료');
           svc.endDrag();
         },
+        onTapUp: (_) {
+          // 팬 제스처가 성립되지 않은 케이스에서도 드래그 상태 정리(안전)
+          svc.cancelDragIfNeeded();
+        },
+        onTapCancel: () {
+          svc.cancelDragIfNeeded();
+        },
+        onPanCancel: () {
+          svc.cancelDragIfNeeded();
+        },
         child: Padding(
           padding: EdgeInsets.all(touchPadding), // 터치 패딩 복원
-          child: Transform(
-            transform:
-                Matrix4.identity()
-                  ..rotateZ(rot)
-                  ..scale(scale),
-            alignment: Alignment.center,
-            transformHitTests: true, // 변환된 크기로 히트 테스트
-            child: Opacity(
-              opacity: widget.sticker.opacity,
-              child: _buildBody(widget.sticker, isDragging),
-            ),
+          child: AnimatedBuilder(
+            animation: _suckCtrl,
+            builder: (context, child) {
+              final t = Curves.easeInCubic.transform(_suckCtrl.value);
+
+              // 휴지통 중심(스택 로컬 좌표)을 기준으로 끌려가는 느낌
+              final trashRect = _TrashBinState._rect;
+              final trashCenter = trashRect?.center;
+              final centerLocal = Offset(pos.dx + 70, pos.dy - scrollY + 90);
+              final pull =
+                  (trashCenter != null)
+                      ? (trashCenter - centerLocal)
+                      : Offset.zero;
+
+              final visualScale = lerpDouble(1.0, 0.25, t)!;
+              final visualTranslate = pull * (0.35 * t);
+
+              return Transform.translate(
+                offset: visualTranslate,
+                child: Transform(
+                  transform:
+                      Matrix4.identity()
+                        ..rotateZ(rot)
+                        ..scale(scale * visualScale),
+                  alignment: Alignment.center,
+                  transformHitTests: true, // 변환된 크기로 히트 테스트
+                  child: Opacity(
+                    // ✅ 빨려들어갈 때도 연해지지 않게: 원래 opacity 유지
+                    opacity: widget.sticker.opacity,
+                    child: child,
+                  ),
+                ),
+              );
+            },
+            child: _buildBody(widget.sticker, isDragging),
           ),
         ),
       ),

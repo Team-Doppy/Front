@@ -140,18 +140,25 @@ class TextStylingService extends ChangeNotifier {
       return;
     }
 
+    // 1) 스포일러 attribution 먼저 적용 (이 프레임에서 박스 계산이 바로 되도록)
+    // 2) selection 해제는 다음 프레임에 수행 (레이아웃/렌더 트리 안정화 후)
+    final collapseTo = selection.extent;
     editor.execute([
       ToggleTextAttributionsRequest(
         documentRange: selection,
         attributions: {spoilerAttribution},
       ),
-      // 🎯 스포일러 적용 후 선택(보라색 영역)을 해제하고 커서만 남김
-      ChangeSelectionRequest(
-        DocumentSelection.collapsed(position: selection.extent),
-        SelectionChangeType.placeCaret,
-        SelectionReason.userInteraction,
-      ),
     ]);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      editor.execute([
+        ChangeSelectionRequest(
+          DocumentSelection.collapsed(position: collapseTo),
+          SelectionChangeType.placeCaret,
+          SelectionReason.userInteraction,
+        ),
+      ]);
+    });
   }
 
   /// 형광펜 토글 (기본 노란색)

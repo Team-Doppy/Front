@@ -611,7 +611,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       clipBehavior: Clip.none,
       children: [
         Container(
-          height: 38,
+          height: 40,
           padding: const EdgeInsets.symmetric(horizontal: 2),
           decoration: BoxDecoration(
             color: background,
@@ -636,6 +636,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           svgPath: 'assets/icons/editor_gallery.svg',
           size: 27,
           isActive: true,
+          iconTopPadding: 2,
           onTap: () async {
             try {
               // 키보드 내리기
@@ -671,6 +672,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         _buildMainSvgIcon(
           svgPath: 'assets/icons/ic_text.svg',
           isActive: _expanded == ToolbarSection.text,
+          iconTopPadding: 2,
           onTap: () => _toggle(ToolbarSection.text),
           size: 24,
         ),
@@ -683,6 +685,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         _buildMainIcon(
           icon: _getAlignmentIcon(_currentAlignment),
           isActive: false,
+          iconTopPadding: 2,
           onTap: () {
             // 왼쪽 -> 가운데 -> 오른쪽 -> 왼쪽 순환
             TextAlign nextAlignment;
@@ -771,6 +774,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required VoidCallback onTap,
     Color? activeColor,
     double? size,
+    double iconTopPadding = 0,
   }) {
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
     final Color color =
@@ -784,7 +788,22 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           width: 36,
           height: 50,
           alignment: Alignment.center,
-          child: Icon(icon, size: size ?? (isActive ? 28 : 25), color: color),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 160),
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder:
+                (child, anim) => FadeTransition(opacity: anim, child: child),
+            child: Padding(
+              key: ValueKey(icon.codePoint),
+              padding: EdgeInsets.only(top: iconTopPadding),
+              child: Icon(
+                icon,
+                size: size ?? (isActive ? 28 : 25),
+                color: color,
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -795,6 +814,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     required bool isActive,
     required VoidCallback onTap,
     double? size,
+    double iconTopPadding = 0,
   }) {
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
     final Color color = onSurface.withOpacity(0.5);
@@ -807,11 +827,22 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           width: 36,
           height: 40,
           alignment: Alignment.center,
-          child: SvgPicture.asset(
-            svgPath,
-            width: size ?? (isActive ? 28 : 25),
-            height: size ?? (isActive ? 28 : 25),
-            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 160),
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder:
+                (child, anim) => FadeTransition(opacity: anim, child: child),
+            child: Padding(
+              key: ValueKey(svgPath),
+              padding: EdgeInsets.only(top: iconTopPadding),
+              child: SvgPicture.asset(
+                svgPath,
+                width: size ?? (isActive ? 28 : 25),
+                height: size ?? (isActive ? 28 : 25),
+                colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+              ),
+            ),
           ),
         ),
       ),
@@ -1208,6 +1239,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           widget.stylingService.changeFontSize(size);
           setState(() {
             _textPanel = TextPanel.none; // 크기 선택 후 패널 닫기
+            // 🎯 폰트 사이즈 변경 후 캐시 무효화하여 UI 즉시 업데이트
+            _cachedFontSize = null;
           });
           _updateStyles(updateAlignment: false); // 🎯 스타일만 업데이트
           if (offset != null) {

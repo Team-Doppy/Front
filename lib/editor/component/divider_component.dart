@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/editor/service/drag_service.dart';
+import 'package:doppy/editor/utils/animated_drop_line.dart';
 
 // 언급 블록 노드
 class DividerNode extends BlockNode {
@@ -64,8 +65,14 @@ class DividerComponentViewModel extends SingleColumnLayoutComponentViewModel {
 }
 
 class DividerComponentBuilder implements ComponentBuilder {
-  const DividerComponentBuilder({this.dragService});
+  const DividerComponentBuilder({
+    this.dragService,
+    this.editor,
+    this.focusNode,
+  });
   final DragService? dragService;
+  final Editor? editor;
+  final FocusNode? focusNode;
 
   @override
   Widget? createComponent(
@@ -78,6 +85,8 @@ class DividerComponentBuilder implements ComponentBuilder {
         nodeId: viewModel.nodeId,
         mainAxis: viewModel.mainAxis,
         dragService: dragService,
+        editor: editor,
+        focusNode: focusNode,
       );
     }
     return null;
@@ -135,6 +144,8 @@ class _DividerComponent extends StatefulWidget {
     required this.nodeId,
     required this.mainAxis,
     this.dragService,
+    this.editor,
+    this.focusNode,
   }) : _componentKey = componentKey,
        super(key: componentKey);
 
@@ -142,6 +153,8 @@ class _DividerComponent extends StatefulWidget {
   final String nodeId;
   final MainAxisAlignment mainAxis;
   final DragService? dragService;
+  final Editor? editor;
+  final FocusNode? focusNode;
 
   @override
   State<_DividerComponent> createState() => _DividerComponentState();
@@ -186,25 +199,97 @@ class _DividerComponentState extends State<_DividerComponent>
       children: [pillContent],
     );
 
-    if (widget.dragService == null) return aligned;
+    final tappable =
+        widget.editor == null
+            ? aligned
+            : GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _handleTap,
+              child: aligned,
+            );
+
+    if (widget.dragService == null) return tappable;
 
     return AnimatedBuilder(
       animation: widget.dragService!,
       builder: (context, _) {
         return Stack(
           children: [
-            aligned,
+            tappable,
             if (_shouldShowTopDropLine())
               Positioned(
                 top: 0,
                 left: 0,
                 right: 0,
-                child: Container(height: 3, color: AppColors.primary),
+                child: AnimatedDropLine(
+                  child: Container(height: 3, color: AppColors.primary),
+                ),
               ),
           ],
         );
       },
     );
+  }
+
+  void _handleTap() {
+    final editor = widget.editor;
+    if (editor == null) return;
+
+    // ✅ Divider를 탭하면 "실제 caret"은 다음 문단(다운스트림)으로 이동시킨다.
+    // - 이러면 바로 Backspace로 divider를 지우는 UX를 만들기 쉽다.
+    widget.focusNode?.requestFocus();
+
+    final doc = editor.document;
+    final dividerIndex = doc.getNodeIndexById(widget.nodeId);
+    if (dividerIndex < 0) return;
+
+    ParagraphNode? downstreamParagraph;
+    for (int i = dividerIndex + 1; i < doc.nodeCount; i++) {
+      final n = doc.getNodeAt(i);
+      if (n is ParagraphNode) {
+        downstreamParagraph = n;
+        break;
+      }
+    }
+
+    if (downstreamParagraph == null) {
+      // 문서 끝이면 빈 문단을 하나 만들고 그쪽으로 caret 이동
+      final paragraphId = 'p_${DateTime.now().microsecondsSinceEpoch}';
+      final newParagraph = ParagraphNode(
+        id: paragraphId,
+        text: AttributedText(''),
+      );
+      editor.execute([
+        InsertNodeAtIndexRequest(
+          nodeIndex: (dividerIndex + 1).clamp(0, doc.nodeCount),
+          newNode: newParagraph,
+        ),
+        ChangeSelectionRequest(
+          DocumentSelection.collapsed(
+            position: DocumentPosition(
+              nodeId: paragraphId,
+              nodePosition: const TextNodePosition(offset: 0),
+            ),
+          ),
+          SelectionChangeType.placeCaret,
+          SelectionReason.userInteraction,
+        ),
+      ]);
+      return;
+    }
+
+    editor.execute([
+      ChangeSelectionRequest(
+        DocumentSelection.collapsed(
+          position: DocumentPosition(
+            nodeId: downstreamParagraph.id,
+            nodePosition: const TextNodePosition(offset: 0),
+          ),
+        ),
+        SelectionChangeType.placeCaret,
+        SelectionReason.userInteraction,
+      ),
+    ]);
   }
 
   bool _shouldShowTopDropLine() {

@@ -19,10 +19,12 @@ class DraftListOverlay extends StatefulWidget {
   State<DraftListOverlay> createState() => _DraftListOverlayState();
 }
 
-class _DraftListOverlayState extends State<DraftListOverlay> {
+class _DraftListOverlayState extends State<DraftListOverlay>
+    with TickerProviderStateMixin {
   late Map<String, List<DraftData>> _drafts;
   String? _swipingDraftId;
-  double _swipeProgress = 0.0;
+  late final AnimationController _swipeController;
+  final Set<String> _removingDraftIds = <String>{};
 
   bool _isLoading = true;
 
@@ -35,6 +37,10 @@ class _DraftListOverlayState extends State<DraftListOverlay> {
   void initState() {
     super.initState();
     _drafts = {}; // 초기화
+    _swipeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    )..value = 0.0;
 
     // 깊은 복사로 로컬 상태 보관 (UI 반영 위해 직접 수정)
     _loadDrafts();
@@ -86,6 +92,7 @@ class _DraftListOverlayState extends State<DraftListOverlay> {
 
   @override
   void dispose() {
+    _swipeController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -252,7 +259,12 @@ class _DraftListOverlayState extends State<DraftListOverlay> {
       itemCount: allDrafts.length,
       separatorBuilder: (context, index) => const SizedBox(height: 1),
       itemBuilder: (context, index) {
-        return _buildDraftItem(allDrafts[index]);
+        final draft = allDrafts[index];
+        if (_removingDraftIds.contains(draft.id)) {
+          // 삭제 애니메이션 중인 아이템은 유지하되, 내부에서 shrink 처리
+          return _buildDraftItem(draft);
+        }
+        return _buildDraftItem(draft);
       },
     );
   }
@@ -264,175 +276,311 @@ class _DraftListOverlayState extends State<DraftListOverlay> {
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
     final double deleteButtonWidth = 120.0;
+    // ✅ 스와이프 애니메이션은 controller 기반 (drag 중에도 부드럽게)
+    // 주의: AnimatedBuilder 안에서는 반드시 controller.value를 직접 읽어야 한다.
+    // (빌드 시점에 계산한 값을 캡처하면 애니메이션이 멈춘 것처럼 보일 수 있음)
+    final bool isRemoving = _removingDraftIds.contains(draft.id);
 
-    return GestureDetector(
-      key: ValueKey('draft_${draft.id}'),
-      onTap: () async {
-        if (isSwiping) {
-          // 스와이프 중이면 닫기
-          setState(() {
-            _swipingDraftId = null;
-            _swipeProgress = 0.0;
-          });
-        } else {
-          Navigator.of(context).pop();
-          await Future.delayed(const Duration(milliseconds: 100));
-          widget.onLoadDraft(draft.id);
-        }
-      },
-      onHorizontalDragStart: (details) {
-        if (_swipingDraftId != null && _swipingDraftId != draft.id) {
-          // 다른 아이템이 스와이프 중이면 닫기
-          setState(() {
-            _swipingDraftId = null;
-            _swipeProgress = 0.0;
-          });
-        }
-      },
-      onHorizontalDragUpdate: (details) {
-        if (details.delta.dx < 0) {
-          // 왼쪽으로 스와이프
-          setState(() {
-            _swipingDraftId = draft.id;
-            _swipeProgress = (_swipeProgress +
-                    (-details.delta.dx / deleteButtonWidth))
-                .clamp(0.0, 1.0);
-          });
-        } else if (details.delta.dx > 0 && isSwiping) {
-          // 오른쪽으로 스와이프 (닫기)
-          setState(() {
-            _swipeProgress = (_swipeProgress -
-                    (details.delta.dx / deleteButtonWidth))
-                .clamp(0.0, 1.0);
-            if (_swipeProgress <= 0.1) {
-              _swipingDraftId = null;
-              _swipeProgress = 0.0;
-            }
-          });
-        }
-      },
-      onHorizontalDragEnd: (details) {
-        if (_swipeProgress < 0.5) {
-          // 50% 미만이면 닫기
-          setState(() {
-            _swipingDraftId = null;
-            _swipeProgress = 0.0;
-          });
-        } else {
-          // 50% 이상이면 열린 상태 유지
-          setState(() {
-            _swipeProgress = 1.0;
-          });
-        }
-      },
-      child: Container(
-        height: 85,
-        child: Stack(
-          children: [
-            // 삭제 버튼 (항상 표시, 스와이프 시 보임)
-            Positioned(
-              right: 0,
-              top: 0,
-              bottom: 0,
-              width: deleteButtonWidth,
-              child: GestureDetector(
-                onTap: () async {
-                  // 확인 다이얼로그 표시
-                  final confirmed = await DialogUtils.showConfirmDialog(
-                    context,
-                    title: context.tr('delete_draft_confirm_title'),
-                    message: context.tr('delete_draft_confirm_message'),
-                    confirmText: context.tr('delete'),
-                    cancelText: context.tr('cancel'),
-                    isDestructive: true,
-                  );
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      alignment: Alignment.topCenter,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+        opacity: isRemoving ? 0.0 : 1.0,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+          height: isRemoving ? 0 : 85,
+          child:
+              isRemoving
+                  ? const SizedBox.shrink()
+                  : SizedBox(
+                    key: ValueKey('draft_${draft.id}'),
+                    child: SizedBox(
+                      height: 85,
+                      child: Stack(
+                        children: [
+                          // 삭제 버튼 (스와이프 진행도에 따라 자연스럽게 나타남)
+                          Positioned(
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                            width: deleteButtonWidth,
+                            child: AnimatedBuilder(
+                              animation: _swipeController,
+                              builder: (context, child) {
+                                final t = (isSwiping
+                                        ? _swipeController.value
+                                        : 0.0)
+                                    .clamp(0.0, 1.0);
+                                final eased = Curves.easeOutCubic.transform(t);
+                                final opacity = (eased * 1.15).clamp(0.0, 1.0);
+                                final scale = ui.lerpDouble(0.92, 1.0, eased)!;
+                                return IgnorePointer(
+                                  ignoring: opacity < 0.85,
+                                  child: Opacity(
+                                    opacity: opacity,
+                                    child: Transform.scale(
+                                      scale: scale,
+                                      child: child,
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: InkWell(
+                                onTap: () async {
+                                  // 확인 다이얼로그 표시
+                                  final confirmed =
+                                      await DialogUtils.showConfirmDialog(
+                                        context,
+                                        title: context.tr(
+                                          'delete_draft_confirm_title',
+                                        ),
+                                        message: context.tr(
+                                          'delete_draft_confirm_message',
+                                        ),
+                                        confirmText: context.tr('delete'),
+                                        cancelText: context.tr('cancel'),
+                                        isDestructive: true,
+                                      );
 
-                  if (confirmed == true) {
-                    setState(() {
-                      _swipingDraftId = null;
-                      _swipeProgress = 0.0;
-                    });
+                                  // ✅ 취소/바깥탭이면 스와이프 원복
+                                  if (confirmed != true) {
+                                    if (_swipingDraftId == draft.id) {
+                                      _swipeController.animateTo(
+                                        0.0,
+                                        curve: Curves.easeOutCubic,
+                                        duration: const Duration(
+                                          milliseconds: 220,
+                                        ),
+                                      );
+                                      setState(() => _swipingDraftId = null);
+                                    }
+                                    return;
+                                  }
 
-                    final draftService = DraftService();
-                    await draftService.deleteDraft(draft.id);
-                    _loadDrafts();
-                  }
-                },
-                child: Container(
-                  color: Colors.red.withOpacity(0.15),
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.delete_outline, color: Colors.red, size: 24),
-                        const SizedBox(height: 4),
-                        Text(
-                          context.tr('delete'),
-                          style: TextStyle(
-                            color: Colors.red,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
+                                  if (confirmed == true) {
+                                    // UI에서 먼저 닫고(스와이프), 부드럽게 제거 애니메이션
+                                    setState(() {
+                                      _swipingDraftId = null;
+                                      _swipeController.value = 0.0;
+                                      _removingDraftIds.add(draft.id);
+                                    });
+
+                                    await Future.delayed(
+                                      const Duration(milliseconds: 240),
+                                    );
+
+                                    final draftService = DraftService();
+                                    final ok = await draftService.deleteDraft(
+                                      draft.id,
+                                    );
+                                    if (!mounted) return;
+
+                                    if (!ok) {
+                                      // 실패 시 다시 표시
+                                      setState(() {
+                                        _removingDraftIds.remove(draft.id);
+                                      });
+                                      return;
+                                    }
+
+                                    await _loadDrafts();
+                                    if (!mounted) return;
+                                    setState(() {
+                                      _removingDraftIds.remove(draft.id);
+                                    });
+                                  }
+                                },
+                                child: Container(
+                                  color: Colors.red.withOpacity(0.10),
+                                  child: Center(
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.delete_outline,
+                                          color: Colors.red,
+                                          size: 24,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          context.tr('delete'),
+                                          style: TextStyle(
+                                            color: Colors.red,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
-                      ],
+
+                          // 메인 아이템
+                          Positioned.fill(
+                            child: GestureDetector(
+                              // ✅ 탭/스와이프는 메인 카드에서만 처리해서,
+                              // 삭제 버튼 탭이 불러오기(onTap)로 먹히는 문제를 방지한다.
+                              onTap: () async {
+                                if (isSwiping) {
+                                  _swipeController.animateTo(
+                                    0.0,
+                                    curve: Curves.easeOutCubic,
+                                    duration: const Duration(milliseconds: 220),
+                                  );
+                                  setState(() => _swipingDraftId = null);
+                                  return;
+                                }
+                                Navigator.of(context).pop();
+                                await Future.delayed(
+                                  const Duration(milliseconds: 100),
+                                );
+                                widget.onLoadDraft(draft.id);
+                              },
+                              onHorizontalDragStart: (_) {
+                                if (_swipingDraftId != null &&
+                                    _swipingDraftId != draft.id) {
+                                  _swipeController.value = 0.0;
+                                  setState(() => _swipingDraftId = null);
+                                }
+                                if (_swipingDraftId != draft.id) {
+                                  setState(() => _swipingDraftId = draft.id);
+                                  _swipeController.value = 0.0;
+                                }
+                              },
+                              onHorizontalDragUpdate: (details) {
+                                if (_swipingDraftId != draft.id) return;
+                                if (details.delta.dx < 0) {
+                                  // 🎯 스와이프 감도 향상: 더 빠르게 반응하도록 배율 증가
+                                  final sensitivity = 1.5; // 감도 배율
+                                  final next = (_swipeController.value +
+                                          (-details.delta.dx /
+                                              deleteButtonWidth *
+                                              sensitivity))
+                                      .clamp(0.0, 1.0);
+                                  _swipeController.value = next;
+                                } else if (details.delta.dx > 0) {
+                                  final sensitivity = 1.5;
+                                  final next = (_swipeController.value -
+                                          (details.delta.dx /
+                                              deleteButtonWidth *
+                                              sensitivity))
+                                      .clamp(0.0, 1.0);
+                                  _swipeController.value = next;
+                                  // 🎯 원래대로 돌릴 때 더 적게 밀어도 닫히도록 임계값 상향
+                                  if (_swipeController.value <= 0.08) {
+                                    _swipeController.value = 0.0;
+                                    setState(() => _swipingDraftId = null);
+                                  }
+                                }
+                              },
+                              onHorizontalDragEnd: (details) {
+                                if (_swipingDraftId != draft.id) return;
+                                final vx = details.velocity.pixelsPerSecond.dx;
+                                // 🎯 원래대로 돌릴 때 더 적게 밀어도 되도록 임계값 낮춤
+                                final shouldOpen =
+                                    (vx < -100) ||
+                                    _swipeController.value > 0.08;
+                                final target = shouldOpen ? 1.0 : 0.0;
+                                _swipeController.animateTo(
+                                  target,
+                                  curve: Curves.easeOutCubic,
+                                  duration: const Duration(milliseconds: 260),
+                                );
+                                if (!shouldOpen) {
+                                  setState(() => _swipingDraftId = null);
+                                }
+                              },
+                              child: AnimatedBuilder(
+                                animation: _swipeController,
+                                builder: (context, child) {
+                                  final t = (isSwiping
+                                          ? _swipeController.value
+                                          : 0.0)
+                                      .clamp(0.0, 1.0);
+                                  final eased = Curves.easeOutCubic.transform(
+                                    t,
+                                  );
+                                  return Transform.translate(
+                                    offset: Offset(
+                                      -eased * deleteButtonWidth,
+                                      0,
+                                    ),
+                                    child: child,
+                                  );
+                                },
+                                child: Container(
+                                  color:
+                                      isDarkMode
+                                          ? Theme.of(
+                                            context,
+                                          ).colorScheme.surface
+                                          : const ui.Color.fromARGB(
+                                            255,
+                                            240,
+                                            240,
+                                            240,
+                                          ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 24,
+                                    vertical: 16,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        title,
+                                        style: TextStyle(
+                                          color:
+                                              isCurrentDraft
+                                                  ? Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary
+                                                  : Theme.of(
+                                                    context,
+                                                  ).colorScheme.onSurface,
+                                          fontSize: 16,
+                                          fontWeight:
+                                              isCurrentDraft
+                                                  ? FontWeight.w600
+                                                  : FontWeight.w500,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        _formatDateTime(draft.updatedAt),
+                                        style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.6),
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w400,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ),
-            ),
-
-            // 메인 아이템
-            Positioned.fill(
-              child: Transform.translate(
-                offset: Offset(-_swipeProgress * deleteButtonWidth, 0),
-                child: Container(
-                  color:
-                      isDarkMode
-                          ? Theme.of(context).colorScheme.surface
-                          : const ui.Color.fromARGB(255, 240, 240, 240),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 16,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          color:
-                              isCurrentDraft
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(context).colorScheme.onSurface,
-                          fontSize: 16,
-                          fontWeight:
-                              isCurrentDraft
-                                  ? FontWeight.w600
-                                  : FontWeight.w500,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _formatDateTime(draft.updatedAt),
-                        style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.6),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w400,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );

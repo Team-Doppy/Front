@@ -14,6 +14,7 @@ import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
+import 'package:doppy/editor/utils/animated_drop_line.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
@@ -544,14 +545,21 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
               }());
 
               // 🎯 싱글 이미지와 동일: constraints를 통해 스타일시트 패딩 자동 반영
-              // 🎯 paddingMode를 ValueKey에 포함하여 리빌드 트리거
-              final video = RepaintBoundary(
-                key: ValueKey(
-                  'clip_video_${widget.nodeId}_$currentPaddingMode',
-                ),
-                child: Padding(
-                  padding: EdgeInsets.zero,
-                  child: _buildVideoContent(context),
+              // ✅ 패딩(center/full) 토글 시 너비 변화 → AspectRatio 기반 높이 변화가 발생한다.
+              // AnimatedSize로 감싸서 "확장/축소"를 부드럽게 만든다.
+              // (가로는 부모가 타이트하게 잡는 경우가 많아서, 높이 변화 애니메이션이 체감에 가장 크게 기여함)
+              final video = AnimatedSize(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: RepaintBoundary(
+                  key: ValueKey(
+                    'clip_video_${widget.nodeId}_$currentPaddingMode',
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.zero,
+                    child: _buildVideoContent(context),
+                  ),
                 ),
               );
 
@@ -744,7 +752,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                       right: 0,
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 2),
-                        child: Container(height: 5, color: AppColors.primary),
+                        child: AnimatedDropLine(
+                          child: Container(height: 5, color: AppColors.primary),
+                        ),
                       ),
                     ),
                   if (!isUploading && _shouldShowLeftVerticalLine())
@@ -754,7 +764,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                       left: 0,
                       child: Padding(
                         padding: const EdgeInsets.only(right: 2),
-                        child: Container(width: 5, color: AppColors.primary),
+                        child: AnimatedDropLine(
+                          child: Container(width: 5, color: AppColors.primary),
+                        ),
                       ),
                     ),
                   if (!isUploading && _shouldShowRightVerticalLine())
@@ -764,7 +776,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                       right: 0,
                       child: Padding(
                         padding: const EdgeInsets.only(left: 2),
-                        child: Container(width: 5, color: AppColors.primary),
+                        child: AnimatedDropLine(
+                          child: Container(width: 5, color: AppColors.primary),
+                        ),
                       ),
                     ),
                   if (!isUploading && _shouldShowBottomDropLine())
@@ -774,7 +788,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                       right: 0,
                       child: Padding(
                         padding: const EdgeInsets.only(top: 2),
-                        child: Container(height: 5, color: AppColors.primary),
+                        child: AnimatedDropLine(
+                          child: Container(height: 5, color: AppColors.primary),
+                        ),
                       ),
                     ),
                 ],

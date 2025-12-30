@@ -209,6 +209,15 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   Widget build(BuildContext context) {
     return Consumer<SearchService>(
       builder: (context, searchService, child) {
+        // 🎯 키보드 상태 감지 및 업데이트
+        final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+        final isKeyboardVisible = keyboardHeight > 0;
+
+        // 키보드 상태가 변경되면 SearchService에 업데이트 (즉시 업데이트)
+        if (searchService.isKeyboardVisible != isKeyboardVisible) {
+          searchService.setKeyboardVisible(isKeyboardVisible);
+        }
+
         // 🎯 현재 배경 이미지 URL 가져오기
         final backgroundImageUrl = _getCurrentBackgroundImageUrl(searchService);
 

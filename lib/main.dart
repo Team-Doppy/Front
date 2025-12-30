@@ -698,6 +698,9 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     // 🎯 각 탭의 화면을 IndexedStack으로 재사용 (새로 만들어지지 않음)
+    // 🎯 키보드 높이를 가져와서 바텀 네비게이션 바 위치 조정
+    final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
+
     return Material(
       child: Stack(
         children: [
@@ -731,10 +734,11 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
             ],
           ),
           // 플로팅 바텀 네비게이션 바
+          // 🎯 키보드가 올라와도 화면 하단에 고정되도록 bottom 값을 키보드 높이만큼 조정
           Positioned(
             left: 0,
             right: 0,
-            bottom: 0,
+            bottom: keyboardHeight, // 🎯 키보드 높이만큼 조정하여 화면 하단에 고정
             child: CustomBottomNavigationBar(
               currentIndex: _index,
               actualIndex: _index,

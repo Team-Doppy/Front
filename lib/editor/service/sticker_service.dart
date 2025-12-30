@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'dart:ui';
 import 'dart:typed_data';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 
 enum StickerType { image } // 🎯 PNG 드로잉만 지원
+
+/// 스티커 변경 종류 (에디터 히스토리 연동용)
+enum StickerChangeKind { none, add, remove, clear, transform, restore }
 
 class Sticker {
   // 공통 속성: 컨텐츠, 위치, 스케일, 회전, 투명도, zIndex, 잠금
@@ -67,6 +71,16 @@ class StickerService extends ChangeNotifier {
   // 변화 감지를 위한 초기 상태 저장
   List<Sticker> _initialStickers = <Sticker>[];
 
+  // 🎯 에디터 히스토리 연동(추가/삭제만 기록하기 위한 change kind)
+  StickerChangeKind _lastChangeKind = StickerChangeKind.none;
+  String? _lastChangedStickerId;
+  bool _isRestoringFromHistory = false;
+
+  // 🎯 transform 히스토리 스팸 방지용 임계치 (endDrag에서만 판정)
+  static const double _kMoveThresholdPx = 12.0;
+  static const double _kScaleThreshold = 0.03; // 3%
+  static const double _kRotationThresholdRad = 0.05; // ~2.9°
+
   // 드래그 오버레이 상태
   String? _draggingId;
   Offset _dragBasePos = Offset.zero;
@@ -82,12 +96,20 @@ class StickerService extends ChangeNotifier {
   final ValueNotifier<Offset?> dragPreviewPosNotifier = ValueNotifier(null);
   final ValueNotifier<bool> isDraggingNotifier = ValueNotifier(false);
   final ValueNotifier<bool> dragOverDeleteNotifier = ValueNotifier(false);
+  // 🎯 툴바가 내려간 후 휴지통 표시용 (툴바 애니메이션 완료 후 표시)
+  final ValueNotifier<bool> shouldShowTrashNotifier = ValueNotifier(false);
+
+  Timer? _trashDisplayTimer; // 휴지통 표시 타이머
 
   List<Sticker> get stickers {
     final list = List<Sticker>.from(_stickers);
     list.sort((a, b) => a.zIndex.compareTo(b.zIndex));
     return list;
   }
+
+  StickerChangeKind get lastChangeKind => _lastChangeKind;
+  String? get lastChangedStickerId => _lastChangedStickerId;
+  bool get isRestoringFromHistory => _isRestoringFromHistory;
 
   String? get selectedId => _selectedId;
   String? get draggingId => _draggingId;
@@ -109,6 +131,8 @@ class StickerService extends ChangeNotifier {
     _stickers.add(withZ);
     // 추가 시 바로 선택하여 보더 표시
     _selectedId = withZ.id;
+    _lastChangeKind = StickerChangeKind.add;
+    _lastChangedStickerId = withZ.id;
     notifyListeners();
   }
 
@@ -216,6 +240,17 @@ class StickerService extends ChangeNotifier {
     dragPreviewPosNotifier.value = _dragBasePos;
     isDraggingNotifier.value = true;
     dragOverDeleteNotifier.value = false;
+    // 🎯 휴지통은 툴바가 내려간 후(200ms 후) 표시
+    shouldShowTrashNotifier.value = false;
+
+    // 기존 타이머 취소 (중복 방지)
+    _trashDisplayTimer?.cancel();
+    _trashDisplayTimer = Timer(const Duration(milliseconds: 300), () {
+      if (_draggingId == id) {
+        // 드래그가 여전히 진행 중인지 확인
+        shouldShowTrashNotifier.value = true;
+      }
+    });
 
     // notifyListeners() 완전 제거: 제스처 취소 방지
     // ValueNotifier 변경으로 UI는 자동 업데이트됨
@@ -265,7 +300,27 @@ class StickerService extends ChangeNotifier {
       );
       // 드래그 종료 시 zIndex 업데이트 (최상단으로)
       bringToFront(id, silent: true); // 아직 notify 안함
-      transform(id, position: newPos, scale: newScale, rotation: newRot);
+
+      // 🎯 "의미 있는 이동/변형"인지 판정 (히스토리 기록용)
+      final moved = (newPos - _dragBasePos).distance > _kMoveThresholdPx;
+      final scaled = (newScale - _dragBaseScale).abs() > _kScaleThreshold;
+      final rotated = (newRot - _dragBaseRot).abs() > _kRotationThresholdRad;
+      final significantTransform = moved || scaled || rotated;
+
+      // endDrag에서는 notify 1회만 발생시키기 위해 silent 적용
+      transform(
+        id,
+        position: newPos,
+        scale: newScale,
+        rotation: newRot,
+        silent: true,
+      );
+
+      _lastChangeKind =
+          significantTransform
+              ? StickerChangeKind.transform
+              : StickerChangeKind.none;
+      _lastChangedStickerId = significantTransform ? id : null;
     }
     _draggingId = null;
     _dragAccum = Offset.zero;
@@ -278,10 +333,36 @@ class StickerService extends ChangeNotifier {
     dragPreviewPosNotifier.value = null;
     isDraggingNotifier.value = false;
     dragOverDeleteNotifier.value = false;
+    shouldShowTrashNotifier.value = false;
+
+    // 휴지통 표시 타이머 취소
+    _trashDisplayTimer?.cancel();
+    _trashDisplayTimer = null;
 
     // ignore: avoid_print
     debugPrint('[StickerService] endDrag reset');
     notifyListeners(); // 드래그 종료 시 한 번만 notify
+  }
+
+  /// 드래그가 비정상적으로 남아있을 때 안전하게 종료한다. (탭/취소 케이스 방어)
+  void cancelDragIfNeeded() {
+    if (_draggingId == null && !isDraggingNotifier.value) return;
+    try {
+      _draggingId = null;
+      _dragAccum = Offset.zero;
+      _scaleDelta = 1.0;
+      _rotationDelta = 0.0;
+      _dragOverDelete = false;
+      _isPanning = false;
+      dragPreviewPosNotifier.value = null;
+      isDraggingNotifier.value = false;
+      dragOverDeleteNotifier.value = false;
+      shouldShowTrashNotifier.value = false;
+
+      // 휴지통 표시 타이머 취소
+      _trashDisplayTimer?.cancel();
+      _trashDisplayTimer = null;
+    } catch (_) {}
   }
 
   bool isDraggingSticker(String id) => _draggingId == id;
@@ -298,6 +379,7 @@ class StickerService extends ChangeNotifier {
     Offset? position,
     double? scale,
     double? rotation,
+    bool silent = false,
   }) {
     final index = _stickers.indexWhere((s) => s.id == id);
     if (index == -1) return;
@@ -307,7 +389,11 @@ class StickerService extends ChangeNotifier {
       scale: scale ?? current.scale,
       rotation: rotation ?? current.rotation,
     );
-    notifyListeners();
+    if (!silent) {
+      _lastChangeKind = StickerChangeKind.transform;
+      _lastChangedStickerId = id;
+      notifyListeners();
+    }
   }
 
   void bringToFront(String id, {bool silent = false}) {
@@ -324,6 +410,9 @@ class StickerService extends ChangeNotifier {
     _stickers.clear();
     _initialStickers.clear(); // 🎯 초기 상태도 함께 초기화
     _selectedId = null;
+    cancelDragIfNeeded();
+    _lastChangeKind = StickerChangeKind.clear;
+    _lastChangedStickerId = null;
     notifyListeners();
   }
 
@@ -457,6 +546,39 @@ class StickerService extends ChangeNotifier {
   void remove(String id) {
     _stickers.removeWhere((s) => s.id == id);
     if (_selectedId == id) _selectedId = null;
+    _lastChangeKind = StickerChangeKind.remove;
+    _lastChangedStickerId = id;
+    notifyListeners();
+  }
+
+  /// undo/redo 히스토리에서 스티커 상태를 복원한다.
+  /// - 이 과정에서 발생하는 notify는 "히스토리 복원"으로 표시되어,
+  ///   외부(에디터)에서 히스토리 재저장을 트리거하지 않도록 한다.
+  void restoreFromSnapshot(List<Sticker> stickers) {
+    _isRestoringFromHistory = true;
+    try {
+      cancelDragIfNeeded();
+      _stickers
+        ..clear()
+        ..addAll(stickers);
+      _selectedId = null;
+      _lastChangeKind = StickerChangeKind.restore;
+      _lastChangedStickerId = null;
+      notifyListeners();
+    } finally {
+      _isRestoringFromHistory = false;
+    }
+  }
+
+  /// 에디터 세션 종료 시 스티커 관련 상태를 완전히 정리한다.
+  void resetSession() {
+    _isRestoringFromHistory = false;
+    _lastChangeKind = StickerChangeKind.none;
+    _lastChangedStickerId = null;
+    cancelDragIfNeeded();
+    _stickers.clear();
+    _initialStickers.clear();
+    _selectedId = null;
     notifyListeners();
   }
 }

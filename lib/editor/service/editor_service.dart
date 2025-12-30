@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
@@ -84,10 +85,18 @@ class EditorService extends ChangeNotifier {
   bool _isExecutingHistory = false;
   Timer? _historyTimer;
   bool _initialStateSaved = false; // 🎯 초기 상태 저장 완료 플래그 (중복 방지)
+  bool _isDisposed =
+      false; // ✅ dispose 이후 비동기 작업이 notifyListeners() 호출하는 크래시 방지
   bool _isDeletingNode = false; // 🎯 노드 삭제 중 플래그 (중복 저장 방지)
   bool _firstChangeAfterLoad = false; // 🎯 임시저장 불러온 직후 첫 변경사항 플래그
   bool _isSanitizingInvalidSelection =
       false; // 🎯 삭제된 노드를 가리키는 selection 강제 정리 중(재진입 방지)
+
+  // ✅ 멘션 노드는 "전체가 하나의 특수 텍스트 블록"처럼 취급하지만,
+  // 선택 핸들로 범위 삭제(DeleteSelection) 시에는 super_editor가 한 번에 많은 TextDeletedEvent를 낼 수 있다.
+  // 이때 기존 멘션 삭제 로직이 노드 삭제/selection 이동까지 수행하면 re-entrancy로 편집기가 불안정해질 수 있어,
+  // 범위 삭제에서는 멘션 메타데이터를 'post-frame'으로 안전하게 제거(일반 문단으로 강등)한다.
+  final Set<String> _pendingMentionDemotions = <String>{};
 
   // ✅ "실제 변경이 있었으면 반드시 히스토리에 들어가야 한다"를 보장하기 위한 버전 값
   // - 문서에 의미있는 변경이 발생할 때마다 증가
@@ -284,6 +293,37 @@ class EditorService extends ChangeNotifier {
     );
   };
 
+  // ignore: prefer_function_declarations_over_variables
+  late final EditRequestHandler _deletePreviousDividerOnBackspaceHandler = (
+    ed,
+    request,
+  ) {
+    if (request is! DeleteContentRequest) return null;
+
+    // ✅ "멀티 텍스트처럼" 동작:
+    // - 다음 문단의 caret이 맨 앞(offset 0)일 때 Backspace를 누르면
+    //   바로 이전 DividerNode를 즉시 삭제한다.
+    final sel = ed.composer.selection;
+    if (sel == null || !sel.isCollapsed) return null;
+
+    final extent = sel.extent;
+    final nodePos = extent.nodePosition;
+    if (nodePos is! TextNodePosition) return null;
+    if (nodePos.offset != 0) return null;
+
+    final currentIndex = ed.document.getNodeIndexById(extent.nodeId);
+    if (currentIndex <= 0) return null;
+
+    final prevNode = ed.document.getNodeAt(currentIndex - 1);
+    if (prevNode is! DividerNode) return null;
+
+    return _DeletePreviousDividerOnBackspaceCommand(
+      dividerNodeId: prevNode.id,
+      caretNodeId: extent.nodeId,
+      saveHistoryBeforeDelete: saveHistoryBeforeDelete,
+    );
+  };
+
   EditorService({
     required this.editor,
     required this.document,
@@ -307,6 +347,15 @@ class EditorService extends ChangeNotifier {
       _deleteContentWithSpecialNodesHandler,
     )) {
       editor.requestHandlers.insert(0, _deleteContentWithSpecialNodesHandler);
+    }
+    // ✅ divider backspace 삭제 핸들러는 가장 먼저 실행되도록 마지막에 insert(0)
+    if (!editor.requestHandlers.contains(
+      _deletePreviousDividerOnBackspaceHandler,
+    )) {
+      editor.requestHandlers.insert(
+        0,
+        _deletePreviousDividerOnBackspaceHandler,
+      );
     }
 
     if (enableInitialStateSave) {
@@ -334,14 +383,17 @@ class EditorService extends ChangeNotifier {
 
   // 🎯 초기 상태 저장 (비동기로 처리하여 UI 블로킹 방지)
   Future<void> _saveInitialState() async {
+    if (_isDisposed) return;
     if (_isExecutingHistory || _initialStateSaved)
       return; // 🎯 이미 저장되었으면 중복 실행 방지
 
     // 🎯 추가 지연 (UI 렌더링 완료 보장)
     await Future.delayed(const Duration(milliseconds: 200));
+    if (_isDisposed) return;
 
     // 🎯 노드 복사를 비동기로 처리 (각 노드 사이에 지연 추가)
     final snapshot = await _copyAllNodesAsync();
+    if (_isDisposed) return;
     _addToHistoryStack(snapshot, '초기 상태 저장');
     _initialStateSaved = true; // 🎯 저장 완료 표시
     debugPrint('[EditorService] 📸 초기 상태 저장 (nodes: ${snapshot.nodes.length})');
@@ -363,6 +415,7 @@ class EditorService extends ChangeNotifier {
     final order = <String>[];
 
     for (int i = 0; i < document.nodeCount; i++) {
+      if (_isDisposed) break;
       final node = document.getNodeAt(i);
       if (node == null) continue;
 
@@ -371,9 +424,11 @@ class EditorService extends ChangeNotifier {
 
       // 🎯 노드 복사 전 지연 (UI 업데이트 기회 제공)
       await Future.delayed(const Duration(milliseconds: 50));
+      if (_isDisposed) break;
 
       // 🎯 노드 복사를 microtask로 분산하여 UI 블로킹 방지
       await Future.microtask(() {
+        if (_isDisposed) return;
         nodes[node.id] = _copyNode(node);
         order.add(node.id);
       });
@@ -385,9 +440,12 @@ class EditorService extends ChangeNotifier {
       }
     }
 
+    final stickers = _copyAllStickersForSnapshot();
+
     return _DocumentSnapshot(
       nodes: nodes,
       order: order,
+      stickers: stickers,
       version: _documentVersion,
       selection: null, // 🎯 커서 숨기기
       anchor:
@@ -470,6 +528,7 @@ class EditorService extends ChangeNotifier {
 
   /// 🎯 히스토리 스택에 스냅샷 추가 (중복 코드 제거)
   void _addToHistoryStack(_DocumentSnapshot snapshot, String logLabel) {
+    if (_isDisposed) return;
     // ✅ 동일 스냅샷 중복 방지 (디바운스/flush 타이밍 보호)
     if (_undoStack.isNotEmpty &&
         _areSnapshotsEqual(_undoStack.last, snapshot)) {
@@ -500,7 +559,9 @@ class EditorService extends ChangeNotifier {
     );
 
     // 🎯 Undo/Redo 버튼 상태 업데이트
-    notifyListeners();
+    if (!_isDisposed) {
+      notifyListeners();
+    }
   }
 
   // 🚀 스냅샷 비교 (해시 기반 O(1) 최적화)
@@ -622,15 +683,53 @@ class EditorService extends ChangeNotifier {
       order.add(node.id);
     }
 
+    final stickers = _copyAllStickersForSnapshot();
+
     return _DocumentSnapshot(
       nodes: nodes,
       order: order,
+      stickers: stickers,
       version: _documentVersion,
       selection: null, // 🎯 커서 숨기기
       anchor:
           (editor.composer.selectionNotifier.value ?? _lastSelection)
               ?.extent, // ✅ 히스토리 UX용 앵커(스크롤 위치)
     );
+  }
+
+  List<Sticker> _copyAllStickersForSnapshot() {
+    try {
+      if (_context == null) return const <Sticker>[];
+      final stickerService = _context!.read<StickerService>();
+      final list = stickerService.stickers;
+      if (list.isEmpty) return const <Sticker>[];
+      return list
+          .map((s) {
+            final c = s.content;
+            dynamic copiedContent = c;
+            if (c is Uint8List) {
+              copiedContent = Uint8List.fromList(c);
+            } else if (c is Map) {
+              copiedContent = Map<String, dynamic>.from(
+                c.cast<String, dynamic>(),
+              );
+            }
+            return Sticker(
+              id: s.id,
+              type: s.type,
+              content: copiedContent,
+              position: s.position,
+              scale: s.scale,
+              rotation: s.rotation,
+              opacity: s.opacity,
+              zIndex: s.zIndex,
+              locked: s.locked,
+            );
+          })
+          .toList(growable: false);
+    } catch (_) {
+      return const <Sticker>[];
+    }
   }
 
   // 🎯 노드 deep copy
@@ -1087,6 +1186,14 @@ class EditorService extends ChangeNotifier {
     _specialNodeRegistry.clear();
     _explicitlyDeletedNodes.clear();
 
+    // 🎯 2-1. 스티커 복원 (문서 복원 전에 해도 무방)
+    try {
+      if (_context != null) {
+        final stickerService = _context!.read<StickerService>();
+        stickerService.restoreFromSnapshot(snapshot.stickers);
+      }
+    } catch (_) {}
+
     // 🎯 3. 모든 노드 삭제
     while (document.nodeCount > 0) {
       final node = document.getNodeAt(0);
@@ -1379,6 +1486,16 @@ class EditorService extends ChangeNotifier {
                   deletedLength = (primaryChange as dynamic).length as int?;
                 } catch (_) {}
 
+                // ✅ 범위 삭제(선택 핸들 백스페이스) 방어:
+                // - deletedLength > 1 이면 "드래그로 선택된 구간 삭제"일 가능성이 높다.
+                // - 이 경우 멘션 전용 삭제/노드삭제/selection 이동 로직이 re-entrancy를 일으켜
+                //   키보드/selection이 꼬이고 편집기가 먹통이 되는 케이스가 있다.
+                // - 따라서 범위 삭제에서는 멘션을 '일반 문단'으로 강등만 하고 나머지는 기본 삭제에 맡긴다.
+                if ((deletedLength ?? 1) > 1) {
+                  _scheduleDemoteMentionNode(targetNodeId);
+                  return;
+                }
+
                 // 현재 커서 위치 확인 (삭제 후 위치)
                 final selection = editor.composer.selectionNotifier.value;
                 int? cursorOffset;
@@ -1393,6 +1510,13 @@ class EditorService extends ChangeNotifier {
 
                 // 현재 텍스트 길이 확인 (삭제 후)
                 final currentText = node.text.text;
+
+                // ✅ 멘션 텍스트가 더 이상 온전하지 않으면(부분 삭제/편집) 멘션 메타데이터만 제거한다.
+                // (이 상태에서 멘션 전용 로직을 계속 적용하면 selection 이동/노드 삭제가 꼬일 수 있음)
+                if (!currentText.startsWith(mentionText)) {
+                  _scheduleDemoteMentionNode(targetNodeId);
+                  return;
+                }
 
                 // 삭제 전 텍스트 길이 추정
                 final previousTextLength =
@@ -1453,11 +1577,12 @@ class EditorService extends ChangeNotifier {
                   }
 
                   // 일반 문단으로 변환 (mention 메타데이터 제거)
+                  final dynamic rawAlign = node.metadata['textAlign'];
                   final newParagraph = ParagraphNode(
                     id: targetNodeId,
                     text: newText,
-                    metadata: {
-                      'textAlign': node.metadata['textAlign'] ?? 'center',
+                    metadata: <String, dynamic>{
+                      if (rawAlign is String) 'textAlign': rawAlign,
                     },
                   );
 
@@ -1547,7 +1672,6 @@ class EditorService extends ChangeNotifier {
 
                 // 노드 삭제 전에 커서 위치 저장
                 final savedTargetPosition = targetPosition;
-                final savedNodeIndex = nodeIndex;
 
                 // 🎯 노드가 여전히 존재하는지 확인 (이중 삭제 방지)
                 if (document.getNodeById(targetNodeId) == null) {
@@ -1555,11 +1679,59 @@ class EditorService extends ChangeNotifier {
                   return;
                 }
 
-                // 🎯 먼저 커서를 클리어하여 IME 위치 매핑 오류 방지
-                try {
-                  editor.composer.clearSelection();
-                } catch (e) {
-                  debugPrint('[EditorService] 커서 클리어 실패: $e');
+                // ✅ 키보드가 내려갔다가 올라오는 원인:
+                // - clearSelection()은 IME 연결/selection 정책에 의해 키보드를 닫게 만들 수 있다.
+                // - 멘션 노드를 삭제하기 전에 "다른 노드로 caret을 먼저 이동"해서
+                //   selection이 삭제될 노드를 가리키지 않게 만들면, IME 매핑 오류도 피하면서
+                //   키보드 플리커도 방지할 수 있다.
+                if (savedTargetPosition != null) {
+                  try {
+                    editor.execute([
+                      ChangeSelectionRequest(
+                        DocumentSelection.collapsed(
+                          position: savedTargetPosition,
+                        ),
+                        SelectionChangeType.placeCaret,
+                        SelectionReason.userInteraction,
+                      ),
+                      const ClearComposingRegionRequest(),
+                    ]);
+                  } catch (e) {
+                    debugPrint('[EditorService] 멘션 삭제 전 커서 이동 실패: $e');
+                  }
+                } else {
+                  // 이동할 대상 노드가 없다면, 노드를 삭제하지 말고 일반 빈 문단으로 교체한다.
+                  // (문서가 비는 순간 selection이 null이 되어 IME가 닫힐 수 있음)
+                  try {
+                    final dynamic rawAlign = node.metadata['textAlign'];
+                    final newParagraph = ParagraphNode(
+                      id: targetNodeId,
+                      text: AttributedText(''),
+                      metadata: <String, dynamic>{
+                        if (rawAlign is String) 'textAlign': rawAlign,
+                      },
+                    );
+                    editor.execute([
+                      ReplaceNodeRequest(
+                        existingNodeId: targetNodeId,
+                        newNode: newParagraph,
+                      ),
+                      ChangeSelectionRequest(
+                        DocumentSelection.collapsed(
+                          position: DocumentPosition(
+                            nodeId: targetNodeId,
+                            nodePosition: const TextNodePosition(offset: 0),
+                          ),
+                        ),
+                        SelectionChangeType.placeCaret,
+                        SelectionReason.userInteraction,
+                      ),
+                      const ClearComposingRegionRequest(),
+                    ]);
+                  } catch (e) {
+                    debugPrint('[EditorService] 멘션 노드 빈 문단 교체 실패: $e');
+                  }
+                  return;
                 }
 
                 // 노드 삭제
@@ -1574,132 +1746,8 @@ class EditorService extends ChangeNotifier {
                   return;
                 }
 
-                // 🎯 커서 이동 (삭제 후 여러 프레임을 기다려 안전하게 처리)
-                if (savedTargetPosition != null) {
-                  // 첫 번째 프레임: 문서 구조 안정화 대기
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    // 두 번째 프레임: IME 초기화 대기
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      // 세 번째 프레임: 안전하게 커서 이동
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        try {
-                          // 삭제 후에도 노드가 존재하는지 확인
-                          final targetNode = document.getNodeById(
-                            savedTargetPosition.nodeId,
-                          );
-                          if (targetNode != null &&
-                              targetNode is ParagraphNode) {
-                            // 노드가 여전히 존재하고 유효한지 확인
-                            final currentIndex = document.getNodeIndexById(
-                              savedTargetPosition.nodeId,
-                            );
-                            if (currentIndex != -1) {
-                              editor.execute([
-                                ChangeSelectionRequest(
-                                  DocumentSelection.collapsed(
-                                    position: savedTargetPosition,
-                                  ),
-                                  SelectionChangeType.placeCaret,
-                                  SelectionReason.userInteraction,
-                                ),
-                              ]);
-                              return;
-                            }
-                          }
-
-                          // 타겟 노드가 없으면 안전한 위치로 이동
-                          // 삭제된 노드의 인덱스를 기준으로 다음 또는 이전 노드 찾기
-                          DocumentPosition? fallbackPosition;
-
-                          // 삭제된 노드의 다음 위치 확인
-                          if (savedNodeIndex < document.nodeCount) {
-                            try {
-                              final nextNode = document.getNodeAt(
-                                savedNodeIndex,
-                              );
-                              if (nextNode != null &&
-                                  nextNode is ParagraphNode &&
-                                  nextNode.metadata['isTitle'] != true) {
-                                fallbackPosition = DocumentPosition(
-                                  nodeId: nextNode.id,
-                                  nodePosition: const TextNodePosition(
-                                    offset: 0,
-                                  ),
-                                );
-                              }
-                            } catch (_) {}
-                          }
-
-                          // 이전 노드 확인
-                          if (fallbackPosition == null && savedNodeIndex > 1) {
-                            try {
-                              final prevNode = document.getNodeAt(
-                                savedNodeIndex - 1,
-                              );
-                              if (prevNode != null &&
-                                  prevNode is ParagraphNode &&
-                                  prevNode.metadata['isTitle'] != true) {
-                                final prevText = prevNode.text.text;
-                                fallbackPosition = DocumentPosition(
-                                  nodeId: prevNode.id,
-                                  nodePosition: TextNodePosition(
-                                    offset: prevText.length.clamp(
-                                      0,
-                                      prevText.length,
-                                    ),
-                                  ),
-                                );
-                              }
-                            } catch (_) {}
-                          }
-
-                          // 최후의 수단: 문서 끝으로 이동
-                          if (fallbackPosition == null &&
-                              document.nodeCount > 0) {
-                            try {
-                              final lastNode = document.getNodeAt(
-                                document.nodeCount - 1,
-                              );
-                              if (lastNode is ParagraphNode &&
-                                  lastNode.metadata['isTitle'] != true) {
-                                final lastText = lastNode.text.text;
-                                fallbackPosition = DocumentPosition(
-                                  nodeId: lastNode.id,
-                                  nodePosition: TextNodePosition(
-                                    offset: lastText.length.clamp(
-                                      0,
-                                      lastText.length,
-                                    ),
-                                  ),
-                                );
-                              }
-                            } catch (_) {}
-                          }
-
-                          if (fallbackPosition != null) {
-                            editor.execute([
-                              ChangeSelectionRequest(
-                                DocumentSelection.collapsed(
-                                  position: fallbackPosition,
-                                ),
-                                SelectionChangeType.placeCaret,
-                                SelectionReason.userInteraction,
-                              ),
-                            ]);
-                          }
-                        } catch (e, stackTrace) {
-                          debugPrint('[EditorService] 커서 이동 실패: $e');
-                          debugPrint('[EditorService] 스택 트레이스: $stackTrace');
-                        }
-                      });
-                    });
-                  });
-                } else {
-                  // 커서 위치가 없으면 그냥 클리어만 유지
-                  debugPrint('[EditorService] 멘션 삭제: 커서 이동 위치 없음, 클리어 상태 유지');
-                }
-
-                // 🎯 document.deleteNode()이 이미 document 리스너를 호출하므로 notifyListeners() 불필요
+                // 삭제 직후, caret은 이미 다른 노드로 이동해 있으므로 추가 조작은 하지 않는다.
+                // (불필요한 post-frame selection 변경은 IME/키보드 플리커를 유발할 수 있음)
                 return;
               }
             }
@@ -2082,6 +2130,7 @@ class EditorService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _isDisposed = true;
     _historyTimer?.cancel(); // 🎯 타이머 정리
 
     // 🎯 Undo/Redo 스택 정리
@@ -2429,10 +2478,11 @@ class EditorService extends ChangeNotifier {
 
   /// 제목이 비어있지 않은지 판단
   bool hasNonEmptyTitle() {
-    final node = document.getNodeAt(0);
-    if (node is ParagraphNode && (node.metadata['isTitle'] == true)) {
-      final text = node.text.text.trim();
-      return text.isNotEmpty;
+    for (int i = 0; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node is ParagraphNode && node.metadata['isTitle'] == true) {
+        return node.text.text.trim().isNotEmpty;
+      }
     }
     return false;
   }
@@ -2445,10 +2495,14 @@ class EditorService extends ChangeNotifier {
       if (stickerService.stickers.isNotEmpty) return true;
     }
 
-    for (int i = 1; i < document.length; i++) {
+    // ✅ 과거에는 0번을 "제목"으로 가정하고 1번부터 검사했지만,
+    // 현재는 제목이 외부(썸네일 편집 화면)에서 입력되는 케이스가 있어 0번이 본문일 수 있다.
+    // 따라서 0번부터 검사하되, isTitle==true 노드만 본문 검사에서 제외한다.
+    for (int i = 0; i < document.length; i++) {
       final node = document.getNodeAt(i);
       if (node == null) continue;
       if (node is ParagraphNode) {
+        if (node.metadata['isTitle'] == true) continue;
         if (node.text.text.trim().isNotEmpty) return true;
       } else if (_isSpecialNode(node)) {
         return true;
@@ -2962,13 +3016,13 @@ class EditorService extends ChangeNotifier {
       if (insertIndex < 0) insertIndex = 0;
       if (insertIndex > doc.nodeCount) insertIndex = doc.nodeCount;
 
-      final String align = _getPreviousParagraphAlign(insertIndex);
+      final String? align = _getPreviousParagraphAlign(insertIndex);
       final String paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
 
       final ParagraphNode newParagraph = ParagraphNode(
         id: paragraphId,
         text: AttributedText(''),
-        metadata: {'textAlign': align},
+        metadata: <String, dynamic>{if (align != null) 'textAlign': align},
       );
 
       editor.execute([
@@ -3022,11 +3076,13 @@ class EditorService extends ChangeNotifier {
       if (!isSpecial) return;
 
       final paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
-      final inheritedAlign = _getPreviousParagraphAlign(doc.nodeCount);
+      final String? inheritedAlign = _getPreviousParagraphAlign(doc.nodeCount);
       final trailing = ParagraphNode(
         id: paragraphId,
         text: AttributedText(''),
-        metadata: {'textAlign': inheritedAlign},
+        metadata: <String, dynamic>{
+          if (inheritedAlign != null) 'textAlign': inheritedAlign,
+        },
       );
 
       doc.insertNodeAt(doc.nodeCount, trailing);
@@ -3050,34 +3106,17 @@ class EditorService extends ChangeNotifier {
       final safeIndex = _getCaretNodeIndexSafe();
       int insertIndex = safeIndex;
 
-      // 🎯 제목 노드(index 0)에 커서가 있으면 강제로 다음 라인에 삽입
-      if (insertIndex == 0) {
-        insertIndex = 1;
-        debugPrint('🎯 [Mention] 제목 노드에 커서가 있음, 다음 라인(index 1)에 삽입');
-
-        // 제목 다음에 빈 문단이 없으면 먼저 생성
-        if (doc.nodeCount < 2) {
-          final paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
-          final ParagraphNode newParagraph = ParagraphNode(
-            id: paragraphId,
-            text: AttributedText(''),
-            metadata: {'textAlign': 'center'},
-          );
-          doc.insertNodeAt(1, newParagraph);
-          debugPrint('📝 [Mention] 제목 다음에 빈 문단 생성');
-        }
-      } else {
-        // 🎯 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입
-        if (insertIndex < doc.nodeCount) {
-          final currentNode = doc.getNodeAt(insertIndex);
-          if (currentNode is ParagraphNode) {
-            final hasText = currentNode.text.text.trim().isNotEmpty;
-            if (hasText) {
-              insertIndex = insertIndex + 1;
-              debugPrint(
-                '🎯 [Mention] 현재 문단에 텍스트가 있음, 다음 줄(index $insertIndex)에 삽입',
-              );
-            }
+      // ✅ "첫 번째 노드=제목" 가정 제거:
+      // 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입한다.
+      if (insertIndex < doc.nodeCount) {
+        final currentNode = doc.getNodeAt(insertIndex);
+        if (currentNode is ParagraphNode) {
+          final hasText = currentNode.text.text.trim().isNotEmpty;
+          if (hasText) {
+            insertIndex = insertIndex + 1;
+            debugPrint(
+              '🎯 [Mention] 현재 문단에 텍스트가 있음, 다음 줄(index $insertIndex)에 삽입',
+            );
           }
         }
       }
@@ -3085,7 +3124,7 @@ class EditorService extends ChangeNotifier {
       if (insertIndex > doc.nodeCount) insertIndex = doc.nodeCount;
 
       // 이전 문단 정렬을 승계
-      final String inheritedAlign = _getPreviousParagraphAlign(insertIndex);
+      final String? inheritedAlign = _getPreviousParagraphAlign(insertIndex);
 
       // 🎯 각 username마다 별도의 ParagraphNode 생성 (metadata로 멘션 표시)
       final edits = <EditRequest>[];
@@ -3109,7 +3148,7 @@ class EditorService extends ChangeNotifier {
           id: mentionId,
           text: attributed,
           metadata: {
-            'textAlign': inheritedAlign,
+            if (inheritedAlign != null) 'textAlign': inheritedAlign,
             'mention': true,
             'usernames': [username], // 한 사람당 하나의 노드
           },
@@ -3128,7 +3167,9 @@ class EditorService extends ChangeNotifier {
       final ParagraphNode newParagraph = ParagraphNode(
         id: paragraphId,
         text: AttributedText(''),
-        metadata: {'textAlign': inheritedAlign},
+        metadata: <String, dynamic>{
+          if (inheritedAlign != null) 'textAlign': inheritedAlign,
+        },
       );
       edits.add(
         InsertNodeAtIndexRequest(
@@ -3162,6 +3203,46 @@ class EditorService extends ChangeNotifier {
       _saveCurrentState(immediate: true);
       debugPrint('[EditorService] 📝 멘션 추가 완료');
     }
+  }
+
+  /// ✅ 멘션 문단을 일반 문단으로 '강등'한다.
+  /// - 범위 삭제(선택 핸들 백스페이스)처럼 TextDeletedEvent가 크게 들어오는 케이스에서
+  ///   멘션 전용 삭제 로직(노드 삭제/selection 이동)이 re-entrancy를 일으켜 편집기가 먹통이 될 수 있어,
+  ///   post-frame으로 안전하게 metadata만 제거한다.
+  void _scheduleDemoteMentionNode(String nodeId) {
+    if (_pendingMentionDemotions.contains(nodeId)) return;
+    _pendingMentionDemotions.add(nodeId);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pendingMentionDemotions.remove(nodeId);
+      try {
+        final node = document.getNodeById(nodeId);
+        if (node is! ParagraphNode) return;
+        if (node.metadata['mention'] != true) return;
+
+        final dynamic rawAlign = node.metadata['textAlign'];
+        final newMetadata = <String, dynamic>{
+          if (rawAlign is String) 'textAlign': rawAlign,
+        };
+
+        // 멘션 노드는 보통 bold만 강제되어 있으므로, 강등 시에는 plain text로 정리한다.
+        // (기존 attributions까지 유지하면 다시 멘션처럼 보일 수 있어 UX도 혼란)
+        final newText = AttributedText(node.text.text);
+
+        editor.execute([
+          ReplaceNodeRequest(
+            existingNodeId: nodeId,
+            newNode: ParagraphNode(
+              id: nodeId,
+              text: newText,
+              metadata: newMetadata,
+            ),
+          ),
+        ]);
+      } catch (e) {
+        debugPrint('[EditorService] 멘션 강등 실패(무시): $e');
+      }
+    });
   }
 
   /// 🎯 비디오 클립 노드 추가 (로컬 경로 기반)
@@ -3905,32 +3986,15 @@ class EditorService extends ChangeNotifier {
     final safeIndex = _getCaretNodeIndexSafe();
     int insertIndex = safeIndex;
 
-    // 제목 노드(index 0)에 커서가 있으면 강제로 다음 라인에 삽입
-    if (insertIndex == 0) {
-      insertIndex = 1;
-      debugPrint('🎯 제목 노드에 커서가 있음, 다음 라인(index 1)에 삽입');
-
-      // 제목 다음에 빈 문단이 없으면 먼저 생성
-      if (doc.nodeCount < 2) {
-        final paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
-        final ParagraphNode newParagraph = ParagraphNode(
-          id: paragraphId,
-          text: AttributedText(''),
-          metadata: {'textAlign': 'center'},
-        );
-        doc.insertNodeAt(1, newParagraph);
-        debugPrint('📝 제목 다음에 빈 문단 생성');
-      }
-    } else {
-      // 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입
-      if (insertIndex < doc.nodeCount) {
-        final currentNode = doc.getNodeAt(insertIndex);
-        if (currentNode is ParagraphNode) {
-          final hasText = currentNode.text.text.trim().isNotEmpty;
-          if (hasText) {
-            insertIndex = insertIndex + 1;
-            debugPrint('🎯 현재 문단에 텍스트가 있음, 다음 줄(index $insertIndex)에 삽입');
-          }
+    // ✅ "첫 번째 노드=제목" 가정 제거:
+    // 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입한다.
+    if (insertIndex < doc.nodeCount) {
+      final currentNode = doc.getNodeAt(insertIndex);
+      if (currentNode is ParagraphNode) {
+        final hasText = currentNode.text.text.trim().isNotEmpty;
+        if (hasText) {
+          insertIndex = insertIndex + 1;
+          debugPrint('🎯 현재 문단에 텍스트가 있음, 다음 줄(index $insertIndex)에 삽입');
         }
       }
     }
@@ -3946,11 +4010,13 @@ class EditorService extends ChangeNotifier {
     if (insertingAtEnd) {
       final String paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
       // 직전 문단의 정렬을 승계
-      final String inheritedAlign = _getPreviousParagraphAlign(insertIndex);
+      final String? inheritedAlign = _getPreviousParagraphAlign(insertIndex);
       final ParagraphNode trailingParagraph = ParagraphNode(
         id: paragraphId,
         text: AttributedText(''),
-        metadata: {'textAlign': inheritedAlign},
+        metadata: <String, dynamic>{
+          if (inheritedAlign != null) 'textAlign': inheritedAlign,
+        },
       );
       edits.add(
         InsertNodeAtIndexRequest(
@@ -3987,7 +4053,7 @@ class EditorService extends ChangeNotifier {
     }
   }
 
-  String _getPreviousParagraphAlign(int beforeIndex) {
+  String? _getPreviousParagraphAlign(int beforeIndex) {
     for (int i = beforeIndex - 1; i >= 0; i--) {
       final node = editor.document.getNodeAt(i);
       if (node is ParagraphNode) {
@@ -3995,7 +4061,9 @@ class EditorService extends ChangeNotifier {
         if (align != null) return align;
       }
     }
-    return 'center';
+    // ✅ 이전 문단이 없으면(textAlign 승계 불가) 메타데이터를 강제로 주입하지 않는다.
+    // 기본 정렬은 stylesheet/렌더러 기본값에 맡긴다.
+    return null;
   }
 
   // ===== 게시 가능 여부 판정 =====
@@ -4010,7 +4078,7 @@ class EditorService extends ChangeNotifier {
     final String? align = meta['textAlign'] as String?;
     if (align != null) return;
 
-    String previousAlign = 'center';
+    String? previousAlign;
     for (int i = index - 1; i >= 0; i--) {
       final prev = document.getNodeAt(i);
       if (prev is ParagraphNode) {
@@ -4021,6 +4089,9 @@ class EditorService extends ChangeNotifier {
         break;
       }
     }
+
+    // ✅ 이전 문단이 없으면 첫 문단까지 강제로 center를 넣지 않는다.
+    if (previousAlign == null) return;
 
     meta['textAlign'] = previousAlign;
     final replaced = ParagraphNode(
@@ -4046,6 +4117,7 @@ class EditorService extends ChangeNotifier {
 class _DocumentSnapshot {
   final Map<String, DocumentNode> nodes; // nodeId -> node
   final List<String> order; // 노드 순서
+  final List<Sticker> stickers; // ✅ 스티커 스냅샷(드로잉 포함)
   final int version; // ✅ 변경 버전
   final DocumentSelection? selection; // 커서 위치
   final DocumentPosition? anchor; // ✅ 히스토리 UX용 스크롤 앵커(복원 시 이동)
@@ -4054,13 +4126,18 @@ class _DocumentSnapshot {
   _DocumentSnapshot({
     required this.nodes,
     required this.order,
+    required this.stickers,
     required this.version,
     this.selection,
     this.anchor,
-  }) : _cachedHashCode = _computeHash(nodes, order);
+  }) : _cachedHashCode = _computeHash(nodes, order, stickers);
 
   // 🚀 해시 계산 (생성 시 한 번만)
-  static int _computeHash(Map<String, DocumentNode> nodes, List<String> order) {
+  static int _computeHash(
+    Map<String, DocumentNode> nodes,
+    List<String> order,
+    List<Sticker> stickers,
+  ) {
     // ✅ 히스토리 동일성은 "문서 내용"으로만 판정해야 한다.
     // version(증분 카운터)에 의존하면 "내용은 같은데 버전만 다른" 스냅샷이 쌓여
     // 첫 Undo가 no-op처럼 보이는 문제가 생길 수 있다.
@@ -4070,6 +4147,15 @@ class _DocumentSnapshot {
       if (v is num || v is bool || v is String) return v.hashCode;
       if (v is DateTime) return v.millisecondsSinceEpoch.hashCode;
       if (v is Color) return v.value.hashCode;
+      if (v is Uint8List) {
+        // 너무 큰 바이트는 전부 해시하지 않고, 길이 + 앞부분 샘플로 안정성 확보
+        final int sample = math.min(64, v.length);
+        int h = Object.hash('u8', v.length);
+        for (int i = 0; i < sample; i++) {
+          h = Object.hash(h, v[i]);
+        }
+        return h;
+      }
       if (v is List) {
         return Object.hashAll(v.map((e) => _stableValueHash(e)));
       }
@@ -4226,6 +4312,24 @@ class _DocumentSnapshot {
     int h = Object.hash(order.length, order.isEmpty ? null : order.first);
     for (final id in order) {
       h = Object.hash(h, id, _nodeSignature(nodes[id]));
+    }
+
+    // ✅ 스티커도 히스토리 동일성 판정에 포함 (드로잉 추가/삭제 undo/redo 지원)
+    h = Object.hash(h, 'stickers', stickers.length);
+    for (final s in stickers) {
+      h = Object.hash(
+        h,
+        s.id,
+        s.type.index,
+        s.position.dx,
+        s.position.dy,
+        s.scale,
+        s.rotation,
+        s.opacity,
+        s.zIndex,
+        s.locked,
+        _stableValueHash(s.content),
+      );
     }
     return h;
   }
@@ -4584,5 +4688,47 @@ class _DeleteSelectionAndSpecialNodesCommand extends EditCommand {
       endSuppressHistoryTracking();
       endSuppressRestoration();
     }
+  }
+}
+
+/// caret이 문단 시작일 때 Backspace로 바로 이전 DividerNode를 삭제한다.
+class _DeletePreviousDividerOnBackspaceCommand extends EditCommand {
+  _DeletePreviousDividerOnBackspaceCommand({
+    required this.dividerNodeId,
+    required this.caretNodeId,
+    required this.saveHistoryBeforeDelete,
+  });
+
+  final String dividerNodeId;
+  final String caretNodeId;
+  final VoidCallback saveHistoryBeforeDelete;
+
+  @override
+  HistoryBehavior get historyBehavior => HistoryBehavior.undoable;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final doc = context.document;
+    if (doc.getNodeById(dividerNodeId) == null) return;
+    if (doc.getNodeById(caretNodeId) == null) return;
+
+    // 삭제 전 스냅샷 저장 (커스텀 undo 안정화)
+    saveHistoryBeforeDelete();
+
+    // caret은 현재 문단 시작에 그대로 유지
+    executor.executeCommand(
+      ChangeSelectionCommand(
+        DocumentSelection.collapsed(
+          position: DocumentPosition(
+            nodeId: caretNodeId,
+            nodePosition: const TextNodePosition(offset: 0),
+          ),
+        ),
+        SelectionChangeType.placeCaret,
+        SelectionReason.userInteraction,
+      ),
+    );
+
+    executor.executeCommand(DeleteNodeCommand(nodeId: dividerNodeId));
   }
 }

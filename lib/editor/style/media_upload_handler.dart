@@ -16,6 +16,8 @@ class MediaUploadHandler {
   final BuildContext context;
   final EditorService editorService;
   final VoidCallback? onUploadComplete;
+  // ✅ (UX) "첫 진입"에서만 프리로드 후 피커를 띄워 로딩 화면이 피커 위에 보이지 않게 함
+  static bool _didWarmUpImagePicker = false;
 
   MediaUploadHandler({
     required this.context,
@@ -77,6 +79,36 @@ class MediaUploadHandler {
 
     final upload = context.read<UploadService>();
 
+    // ✅ (UX) 첫 진입이라면: 피커를 띄우기 전에 1페이지를 미리 로드하고,
+    // 로딩 인디케이터는 "현재 화면 위"에서만 보여준다.
+    MediaPickerPreload? preload;
+    if (!_didWarmUpImagePicker) {
+      _didWarmUpImagePicker = true;
+      try {
+        if (context.mounted) {
+          showCupertinoDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder:
+                (_) => const CupertinoAlertDialog(
+                  content: Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: CupertinoActivityIndicator(),
+                  ),
+                ),
+          );
+        }
+        preload = await MediaPickerScreen.preloadInitialPage(
+          mediaType: MediaType.image,
+          pageSize: 50,
+        );
+      } finally {
+        if (context.mounted && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
+      }
+    }
+
     await Navigator.of(context).push<MediaPickerResult>(
       CupertinoPageRoute(
         fullscreenDialog: true,
@@ -85,6 +117,7 @@ class MediaUploadHandler {
               initialMediaType: MediaType.image,
               maxSelectionCount: 6,
               enableToggle: true,
+              initialPreload: preload,
               onMediaSelected: (file) {},
               onCancel: () {},
               // ✅ "노드 먼저 추가 → 잠깐 여유 → pop" 방식으로 UX 안정화

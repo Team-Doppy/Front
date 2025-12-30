@@ -236,6 +236,13 @@ class CommentService extends ChangeNotifier {
   WebSocketService? _webSocketService;
 
   final List<Comment> _comments = [];
+
+  // ✅ 정렬 캐시 (UI에서 sort 금지)
+  // - reverse:false + createdAt 오름차순(오래된 → 최신) 기준
+  // - 댓글 리스트 길이가 바뀌는 순간(추가/삭제/페이지 로드)만 재정렬
+  // - reaction/content 업데이트처럼 길이가 유지되는 경우엔 캐시 재사용 (정렬 순서에도 영향 없음)
+  List<Comment> _sortedCommentsCache = const [];
+  int _sortedCacheLength = -1;
   String? _currentPostId;
   String? _currentPostAuthorUsername; // 🎯 현재 포스트 작성자 username
   String? _cachedCurrentUsername; // 🎯 현재 사용자명 캐시 (성능 최적화)
@@ -309,6 +316,27 @@ class CommentService extends ChangeNotifier {
 
   // Getters
   List<Comment> get comments => List.unmodifiable(_comments);
+  List<Comment> get sortedComments {
+    final len = _comments.length;
+    if (len == 0) {
+      // 빈 리스트면 캐시도 즉시 비움
+      if (_sortedCacheLength != 0) {
+        _sortedCommentsCache = const [];
+        _sortedCacheLength = 0;
+      }
+      return _sortedCommentsCache;
+    }
+
+    // 길이가 바뀐 경우에만 정렬 수행 (핫패스)
+    if (_sortedCacheLength != len) {
+      final sorted = List<Comment>.from(_comments)
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      _sortedCommentsCache = List.unmodifiable(sorted);
+      _sortedCacheLength = len;
+    }
+    return _sortedCommentsCache;
+  }
+
   bool get isLoading => _isLoading;
   bool get hasMoreComments => _hasMoreComments;
   bool get isTimingSheerActive => _isTimingSheerActive;

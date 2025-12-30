@@ -159,6 +159,11 @@ class ErrorHandler {
       }
     }
 
+    // StateError 메시지 추출
+    if (errorString.startsWith('StateError: ')) {
+      return errorString.substring('StateError: '.length);
+    }
+
     // Exception 메시지 추출
     if (errorString.startsWith('Exception: ')) {
       return errorString.substring('Exception: '.length);

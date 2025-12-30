@@ -6,6 +6,7 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
+import 'package:doppy/editor/utils/animated_drop_line.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/foundation.dart';
@@ -986,17 +987,36 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                                             height:
                                                                 _unifiedHeight!,
                                                           ),
-                                                      child: ImageFiltered(
-                                                        imageFilter:
-                                                            isRowSpoiler
-                                                                ? ui.ImageFilter.blur(
-                                                                  sigmaX: 12,
-                                                                  sigmaY: 12,
-                                                                )
-                                                                : ui.ImageFilter.blur(
-                                                                  sigmaX: 0,
-                                                                  sigmaY: 0,
-                                                                ),
+                                                      child: TweenAnimationBuilder<
+                                                        double
+                                                      >(
+                                                        tween: Tween<double>(
+                                                          begin: 0.0,
+                                                          end:
+                                                              isRowSpoiler
+                                                                  ? 12.0
+                                                                  : 0.0,
+                                                        ),
+                                                        duration:
+                                                            const Duration(
+                                                              milliseconds: 180,
+                                                            ),
+                                                        curve:
+                                                            Curves.easeOutCubic,
+                                                        builder: (
+                                                          context,
+                                                          sigma,
+                                                          child,
+                                                        ) {
+                                                          return ImageFiltered(
+                                                            imageFilter: ui
+                                                                .ImageFilter.blur(
+                                                              sigmaX: sigma,
+                                                              sigmaY: sigma,
+                                                            ),
+                                                            child: child,
+                                                          );
+                                                        },
                                                         child:
                                                             _buildRowImageWidget(
                                                               entry.key,
@@ -1023,19 +1043,40 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                                                 height:
                                                                     defaultHeight,
                                                               ),
-                                                          child: ImageFiltered(
-                                                            imageFilter:
-                                                                isRowSpoiler
-                                                                    ? ui.ImageFilter.blur(
-                                                                      sigmaX:
-                                                                          12,
-                                                                      sigmaY:
-                                                                          12,
-                                                                    )
-                                                                    : ui.ImageFilter.blur(
-                                                                      sigmaX: 0,
-                                                                      sigmaY: 0,
-                                                                    ),
+                                                          child: TweenAnimationBuilder<
+                                                            double
+                                                          >(
+                                                            tween: Tween<
+                                                              double
+                                                            >(
+                                                              begin: 0.0,
+                                                              end:
+                                                                  isRowSpoiler
+                                                                      ? 12.0
+                                                                      : 0.0,
+                                                            ),
+                                                            duration:
+                                                                const Duration(
+                                                                  milliseconds:
+                                                                      180,
+                                                                ),
+                                                            curve:
+                                                                Curves
+                                                                    .easeOutCubic,
+                                                            builder: (
+                                                              context,
+                                                              sigma,
+                                                              child,
+                                                            ) {
+                                                              return ImageFiltered(
+                                                                imageFilter: ui
+                                                                    .ImageFilter.blur(
+                                                                  sigmaX: sigma,
+                                                                  sigmaY: sigma,
+                                                                ),
+                                                                child: child,
+                                                              );
+                                                            },
                                                             child:
                                                                 _buildRowImageWidget(
                                                                   entry.key,
@@ -1048,15 +1089,23 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                                       },
                                                     ),
                                                 // ✅ 블러 위 어둡게(0.2) 오버레이
-                                                if (isRowSpoiler)
-                                                  Positioned.fill(
-                                                    child: IgnorePointer(
+                                                Positioned.fill(
+                                                  child: IgnorePointer(
+                                                    child: AnimatedOpacity(
+                                                      opacity:
+                                                          isRowSpoiler ? 1 : 0,
+                                                      duration: const Duration(
+                                                        milliseconds: 160,
+                                                      ),
+                                                      curve:
+                                                          Curves.easeOutCubic,
                                                       child: Container(
                                                         color: Colors.black
                                                             .withOpacity(0.15),
                                                       ),
                                                     ),
                                                   ),
+                                                ),
                                               ],
                                             ),
                                           ),
@@ -1251,9 +1300,11 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                               top: 0,
                               left: 0,
                               right: 0,
-                              child: Container(
-                                height: 5,
-                                color: AppColors.primary,
+                              child: AnimatedDropLine(
+                                child: Container(
+                                  height: 5,
+                                  color: AppColors.primary,
+                                ),
                               ),
                             ),
 
@@ -1263,9 +1314,11 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                               bottom: 0,
                               left: 0,
                               right: 0,
-                              child: Container(
-                                height: 5,
-                                color: AppColors.primary,
+                              child: AnimatedDropLine(
+                                child: Container(
+                                  height: 5,
+                                  color: AppColors.primary,
+                                ),
                               ),
                             ),
 
@@ -1275,9 +1328,11 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                               left: 0,
                               top: marginTop,
                               bottom: marginBottom,
-                              child: Container(
-                                width: 5,
-                                color: AppColors.primary,
+                              child: AnimatedDropLine(
+                                child: Container(
+                                  width: 5,
+                                  color: AppColors.primary,
+                                ),
                               ),
                             ),
 
@@ -1287,9 +1342,11 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                               right: 0,
                               top: marginTop,
                               bottom: marginBottom,
-                              child: Container(
-                                width: 5,
-                                color: AppColors.primary,
+                              child: AnimatedDropLine(
+                                child: Container(
+                                  width: 5,
+                                  color: AppColors.primary,
+                                ),
                               ),
                             ),
                         ],
@@ -1865,13 +1922,12 @@ class _ImageRowComponentState extends State<ImageRowComponent>
 
   /// 🎯 Row 이미지 위젯 빌드 (로컬/네트워크 자동 판단)
   Widget _buildRowImageWidget(int index, String imageUrl, double maxWidth) {
-    final decodeWidth =
-        widget.isEditing
-            ? EditorImageProvider.editingDecodeWidth(
-              context,
-              widget.screenWidth,
-            )
-            : null;
+    // ✅ 읽기 모드에서도 decodeWidth를 줘야 PostReaderService.preloadTopMedia(precacheImage)와
+    // 동일한 ResizeImage(width) 캐시 키로 hit가 난다.
+    final decodeWidth = EditorImageProvider.editingDecodeWidth(
+      context,
+      widget.screenWidth,
+    );
 
     final built = EditorImageProvider.build(
       url: imageUrl,
@@ -1889,7 +1945,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       filterQuality: FilterQuality.low,
       gaplessPlayback: true, // ✅ provider가 바뀌어도 기존 프레임 유지
       frameBuilder: (context, child, frame, wasSyncLoaded) {
-        if (wasSyncLoaded || frame != null) {
+        final ready = wasSyncLoaded || frame != null;
+        if (ready) {
           _lastRenderedByUrl[imageUrl] = child;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!_imageSizes.containsKey(imageUrl) &&
@@ -1903,6 +1960,7 @@ class _ImageRowComponentState extends State<ImageRowComponent>
           });
           return child;
         }
+
         // 로딩 중: 이전 프레임이 있으면 유지해서 "사라짐"을 방지한다.
         final last = _lastRenderedByUrl[imageUrl];
         if (last != null) return last;
