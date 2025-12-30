@@ -127,16 +127,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
   // 댓글 화면은 Route(push)로 분리하여 표시 (오버레이 제거)
 
-  // 좋아요 사용자 목록 오버레이 상태/애니메이션
-  bool _showLikedUsersOverlay = false;
-  late final AnimationController _likedUsersOverlayCtrl;
-  late final Animation<double> _likedUsersFade;
-
-  // 본 사람 목록 오버레이 상태/애니메이션
-  bool _showViewersOverlay = false;
-  late final AnimationController _viewersOverlayCtrl;
-  late final Animation<double> _viewersFade;
-
   // 전체화면 이미지 뷰어 상태/애니메이션
   bool _showImageViewer = false;
   bool _isVideoViewer = false;
@@ -578,11 +568,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   }
 
   void _closeScreen() {
-    if (_showLikedUsersOverlay) {
-      _closeLikedUsersOverlay();
-      return;
-    }
-
     if (_accessLevelChanged) {
       Navigator.of(context).pop({
         'accessLevelChanged': true,
@@ -889,58 +874,37 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
   // NOTE: 댓글 오버레이(close) 로직은 Route(push) 방식으로 전환하면서 제거됨.
 
-  // 🎯 좋아요 사용자 목록 오버레이 표시
-  void _openLikedUsersOverlay() {
-    setState(() {
-      _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
-      _showLikedUsersOverlay = true;
-      _showAppBar = false; // 하단 바 숨김
-      _bottomBarAnimationDuration = 50; // 빠르게 숨김
-    });
+  /// ✅ 좋아요 누른 사람 목록: 표준 Navigator.push 방식으로 이동
+  Future<void> _openLikedUsersOverlay() async {
+    final postId = widget.exported['id']?.toString() ?? '';
+    if (postId.isEmpty) return;
 
-    // 🎯 애니메이션 컨트롤러 리셋 후 forward
-    _likedUsersOverlayCtrl.reset();
-    _likedUsersOverlayCtrl.forward(from: 0.0);
+    final likeCount = _likeService.getPostLikeCount(postId);
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (_) => LikedUsersBottomSheet(postId: postId, likeCount: likeCount),
+      ),
+    );
   }
 
-  // 🎯 좋아요 사용자 목록 오버레이 닫기
-  void _closeLikedUsersOverlay() {
-    _likedUsersOverlayCtrl.reverse().whenComplete(() {
-      if (!mounted) return;
-      setState(() {
-        _showLikedUsersOverlay = false;
-        _showAppBar = _previousAppBarState; // 🎯 이전 상태로 복원
-        _bottomBarAnimationDuration =
-            _previousAppBarState ? 0 : 300; // 🎯 열려있었으면 즉시(0), 닫혀있었으면 일반 속도
-      });
-    });
-  }
+  /// ✅ 본 사람(조회자) 목록: 표준 Navigator.push 방식으로 이동
+  Future<void> _openViewersOverlay() async {
+    final postId = widget.exported['id']?.toString() ?? '';
+    if (postId.isEmpty) return;
 
-  // 🎯 본 사람 목록 오버레이 표시
-  void _openViewersOverlay() {
-    setState(() {
-      _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
-      _showViewersOverlay = true;
-      _showAppBar = false; // 하단 바 숨김
-      _bottomBarAnimationDuration = 50; // 빠르게 숨김
-    });
+    final viewerCount = int.parse(
+      (_currentExportedData?['viewCount'] ?? widget.exported['viewCount'])
+          .toString(),
+    );
 
-    // 🎯 애니메이션 컨트롤러 리셋 후 forward
-    _viewersOverlayCtrl.reset();
-    _viewersOverlayCtrl.forward(from: 0.0);
-  }
-
-  // 🎯 본 사람 목록 오버레이 닫기
-  void _closeViewersOverlay() {
-    _viewersOverlayCtrl.reverse().whenComplete(() {
-      if (!mounted) return;
-      setState(() {
-        _showViewersOverlay = false;
-        _showAppBar = _previousAppBarState; // 🎯 이전 상태로 복원
-        _bottomBarAnimationDuration =
-            _previousAppBarState ? 0 : 300; // 🎯 열려있었으면 즉시(0), 닫혀있었으면 일반 속도
-      });
-    });
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (_) => ViewersBottomSheet(postId: postId, viewerCount: viewerCount),
+      ),
+    );
   }
 
   void _onCommentServiceChanged() {
@@ -1088,26 +1052,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // PostReaderScreen은 StickerService를 사용하지 않고
     // widget.exported에서 stickers를 직접 읽어 PostReaderStickers에 전달
 
-    // 🎯 좋아요 사용자 목록 오버레이 애니메이션 초기화
-    _likedUsersOverlayCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 240),
-    );
-    _likedUsersFade = CurvedAnimation(
-      parent: _likedUsersOverlayCtrl,
-      curve: Curves.easeOutCubic,
-    );
-
-    // 🎯 조회자 목록 오버레이 애니메이션 초기화
-    _viewersOverlayCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 240),
-    );
-    _viewersFade = CurvedAnimation(
-      parent: _viewersOverlayCtrl,
-      curve: Curves.easeOutCubic,
-    );
-
     // 🎯 이미지 뷰어 애니메이션 초기화
     _imageViewerCtrl = AnimationController(
       vsync: this,
@@ -1253,7 +1197,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
     _readOnlyFocus.dispose();
     _scrollCtrl.removeListener(_onScroll);
-    _likedUsersOverlayCtrl.dispose();
     _imageViewerCtrl.dispose();
 
     // ✅ 주의: PostReaderService의 프리로드 캐시는 앱 전역(shared) 캐시다.
@@ -1367,20 +1310,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
     // ✅ iOS "스와이프 백(오른쪽으로 밀어서 뒤로가기)"는 WillPopScope가 있으면 막히는 경우가 많아서,
     // PopScope로 전환하고 필요한 경우에만 pop을 가로챈다.
-    final bool interceptPop = _showLikedUsersOverlay || _accessLevelChanged;
+    final bool interceptPop = _accessLevelChanged;
 
     return PopScope(
       canPop: !interceptPop,
       onPopInvoked: (didPop) {
         if (didPop) return;
 
-        // 1) 오버레이가 열려 있으면 먼저 닫기
-        if (_showLikedUsersOverlay) {
-          _closeLikedUsersOverlay();
-          return;
-        }
-
-        // 2) 공개 범위 변경이 있으면 결과를 포함해서 pop
+        // 1) 공개 범위 변경이 있으면 결과를 포함해서 pop
         if (_accessLevelChanged) {
           Navigator.of(context).pop({
             'accessLevelChanged': true,
@@ -1978,48 +1915,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                           );
                         },
                       ),
-                      // (댓글 오버레이는 viewInsets를 받아야 하므로 바깥 Stack에서 렌더링)
-                      // 좋아요 사용자 목록 오버레이
-                      if (_showLikedUsersOverlay)
-                        Positioned.fill(
-                          child: AnimatedBuilder(
-                            animation: _likedUsersFade,
-                            builder: (context, _) {
-                              return Opacity(
-                                opacity: _likedUsersFade.value,
-                                child: LikedUsersBottomSheet(
-                                  postId:
-                                      widget.exported['id']?.toString() ?? '',
-                                  likeCount: _likeService.getPostLikeCount(
-                                    widget.exported['id']?.toString() ?? '',
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      // 조회자 목록 오버레이
-                      if (_showViewersOverlay)
-                        Positioned.fill(
-                          child: AnimatedBuilder(
-                            animation: _viewersFade,
-                            builder: (context, _) {
-                              return Opacity(
-                                opacity: _viewersFade.value,
-                                child: ViewersBottomSheet(
-                                  postId:
-                                      widget.exported['id']?.toString() ?? '',
-                                  viewerCount: int.parse(
-                                    (_currentExportedData?['viewCount'] ??
-                                            widget.exported['viewCount'])
-                                        .toString(),
-                                  ),
-                                  onClose: _closeViewersOverlay,
-                                ),
-                              );
-                            },
-                          ),
-                        ),
+                      // (좋아요/조회자 목록은 Navigator.push로 분리됨)
                       // 전체화면 이미지/영상 뷰어 (페이드 애니메이션)
                       if (_showImageViewer && _currentImageUrl != null)
                         Positioned.fill(

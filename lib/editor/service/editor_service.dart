@@ -26,7 +26,6 @@ bool _isSpecialNode(DocumentNode? node) {
       node is LinkNode ||
       node is ImageRowNode ||
       node is PageViewImageNode ||
-      node is DividerNode ||
       node is AppImageNode ||
       node is ImageNode;
 }
@@ -47,9 +46,20 @@ class _SpecialNodeInfo {
 }
 
 class EditorService extends ChangeNotifier {
+  // ===== 디버그 로깅 =====
+  // 히스토리/스킵/복구 판정은 매우 미묘한 타이밍 이슈가 많아서,
+  // 문제 재현 시 "왜 스택에 안 쌓였는지"를 로그로 1:1 추적할 수 있도록 한다.
+  static const bool _kHistoryVerboseLogs = kDebugMode;
+
+  void _hlog(String message) {
+    if (!_kHistoryVerboseLogs) return;
+    debugPrint('[HistoryDbg] $message');
+  }
+
   late final Editor editor;
   late final MutableDocument document;
   GlobalKey? _documentLayoutKey;
+  ScrollController? _scrollController;
   // 마지막 유효 selection 캐시 (포커스가 잠시 사라져도 사용)
   DocumentSelection? _lastSelection;
 
@@ -67,7 +77,6 @@ class EditorService extends ChangeNotifier {
 
   // 제목 스타일 전파 방지용 스냅샷(간소화 이후 미사용)
   // ignore: unused_field
-  int _lastTitleTextLength = 0;
 
   // 🎯 Undo/Redo 히스토리 (전체 스냅샷)
   final List<_DocumentSnapshot> _undoStack = [];
@@ -91,28 +100,18 @@ class EditorService extends ChangeNotifier {
   // - undo/redo 직전 flush는 이 값이 true일 때만 수행 (undo 후 무한 flush 방지)
   bool _hasPendingHistoryChanges = false;
 
-  /// 현재 문서의 "제목 노드"(index 0, ParagraphNode && metadata.isTitle == true) id를 캐시한다.
-  ///
-  /// ⚠️ 주의:
-  /// - DocumentChangeListener는 변경이 적용된 "이후"에 호출된다.
-  /// - 따라서 NodeRemovedEvent에서 제목 삭제 여부를 `getEditingIndex()==0` 같은
-  ///   selection 기반으로 판단하면, 임시저장 로드 직후/selection 클리어 상태에서
-  ///   **아무 노드 삭제든** 복구(recovery)로 오판하여 히스토리가 누락될 수 있다.
-  /// - 삭제된 노드 id가 “직전까지 제목이었던 id”인지로만 판별한다.
-  String? _cachedTitleNodeId;
+  // ===== 안정형 삭제 히스토리(트랜잭션) =====
+  // 기존: saveHistoryBeforeDelete()에서 before-state를 스택에 push + NodeRemovedEvent에서 after-state를 (비동기로) push
+  // 문제:
+  // - after-state가 microtask로 늦게 들어오면 "삭제 직후 undo 버튼 비활성"처럼 보인다.
+  // - 삭제가 실제로 일어나지 않은 경우에도 before-state가 스택에 들어가 "유명무실한 undo step"이 생길 수 있다.
+  //
+  // 개선:
+  // - before-state는 스택에 push하지 않고, baseline이 없을 때만 baseline(현재 상태)을 보장한다.
+  // - 실제 삭제가 발생했을 때(NodeRemovedEvent) after-state를 **동기적으로** 1회만 push한다.
+  bool _pendingDeleteHistory = false;
 
-  void _refreshCachedTitleNodeId() {
-    try {
-      final first = document.nodeCount > 0 ? document.getNodeAt(0) : null;
-      if (first is ParagraphNode && first.metadata['isTitle'] == true) {
-        _cachedTitleNodeId = first.id;
-      } else {
-        _cachedTitleNodeId = null;
-      }
-    } catch (_) {
-      _cachedTitleNodeId = null;
-    }
-  }
+  // 제목은 썸네일 편집 화면에서 입력하므로 제목 노드 캐싱 로직 제거됨
 
   // ✅ 레지스트리 복구/자동 정리(빈 문단 삭제, 제목 보호 등)로 인한 문서 변경은
   // 히스토리에 담지 않는다. (유저가 한 변경이 아니며, Undo 스택을 오염시키기 때문)
@@ -151,6 +150,10 @@ class EditorService extends ChangeNotifier {
   void _finalizeBatchDeleteHistory() {
     // saveHistoryBeforeDelete()가 세팅한 플래그가 남아있으면 다음 삭제에서 오동작할 수 있으므로 정리
     _isDeletingNode = false;
+    _pendingDeleteHistory = false;
+    _hlog(
+      'finalizeBatchDeleteHistory: pending=false, isDeletingNode=false, suppressDepth=$_suppressHistoryTrackingDepth',
+    );
     // ✅ 배치 삭제는 여러 NodeRemovedEvent가 연속으로 발생한다.
     // - 중간 단계에서 스냅샷을 계속 쌓으면 undo step이 오염된다.
     // - 그렇다고 비동기(microtask)로 after-state를 저장하면, 사용자가 즉시 Undo/Redo를 눌렀을 때
@@ -286,11 +289,11 @@ class EditorService extends ChangeNotifier {
     required this.document,
     BuildContext? context,
     bool enableInitialStateSave = true, // 🎯 초기 상태 저장 활성화 여부
+    bool useExternalTitleField = false,
   }) : _context = context {
     document.addListener(_onDocumentChanged);
     editor.composer.selectionNotifier.addListener(_onSelectionChanged);
     // 초기 제목 노드 id 캐시
-    _refreshCachedTitleNodeId();
 
     // ✅ 범위 삭제(특수노드 혼합) 보완 핸들러 설치
     // - 기본 DeleteContentRequest 처리 전에 가로채서, 누락된 특수노드까지 함께 삭제
@@ -339,7 +342,7 @@ class EditorService extends ChangeNotifier {
 
     // 🎯 노드 복사를 비동기로 처리 (각 노드 사이에 지연 추가)
     final snapshot = await _copyAllNodesAsync();
-    _undoStack.add(snapshot);
+    _addToHistoryStack(snapshot, '초기 상태 저장');
     _initialStateSaved = true; // 🎯 저장 완료 표시
     debugPrint('[EditorService] 📸 초기 상태 저장 (nodes: ${snapshot.nodes.length})');
   }
@@ -347,10 +350,9 @@ class EditorService extends ChangeNotifier {
   // 🎯 빈 문단인지 확인 (중복 코드 제거)
   bool _shouldSkipNode(DocumentNode node) {
     if (node is ParagraphNode) {
-      final isTitle = node.metadata['isTitle'] == true;
       final isEmpty = node.text.text.trim().isEmpty;
-      // 제목이 아니고 비어있으면 스킵
-      return !isTitle && isEmpty;
+      // 비어있으면 스킵
+      return isEmpty;
     }
     return false;
   }
@@ -388,55 +390,27 @@ class EditorService extends ChangeNotifier {
       order: order,
       version: _documentVersion,
       selection: null, // 🎯 커서 숨기기
+      anchor:
+          (editor.composer.selectionNotifier.value ?? _lastSelection)
+              ?.extent, // ✅ 히스토리 UX용 앵커(스크롤 위치)
     );
   }
 
-  // 🎯 모든 노드를 빠르게 비동기로 deep copy (즉시 저장용, 지연 최소화)
-  Future<_DocumentSnapshot> _copyAllNodesAsyncFast() async {
-    final nodes = <String, DocumentNode>{};
-    final order = <String>[];
-
-    for (int i = 0; i < document.nodeCount; i++) {
-      final node = document.getNodeAt(i);
-      if (node == null) continue;
-
-      // 🎯 빈 문단은 저장하지 않음 (제목 제외) - 중복 코드 제거
-      if (_shouldSkipNode(node)) continue;
-
-      // 🎯 노드 복사를 microtask로 분산하여 UI 블로킹 방지
-      await Future.microtask(() {
-        nodes[node.id] = _copyNode(node);
-        order.add(node.id);
-      });
-
-      // 🎯 각 노드 복사 후 짧은 지연 (UI 업데이트 기회 제공, Hang 방지)
-      // 20개마다만 지연하여 성능 최적화 (100 노드 시 20ms)
-      if (i < document.nodeCount - 1 && i % 20 == 0) {
-        await Future.delayed(const Duration(milliseconds: 1));
-      }
-    }
-
-    return _DocumentSnapshot(
-      nodes: nodes,
-      order: order,
-      version: _documentVersion,
-      selection: null, // 🎯 커서 숨기기
-    );
-  }
+  // (삭제됨) _copyAllNodesAsyncFast:
+  // 과거엔 즉시 저장을 microtask 기반 비동기로 수행했지만, undo/redo 타이밍 경합을 유발했다.
+  // 안정성 우선 정책으로 즉시 저장은 동기 스냅샷(_copyAllNodes)만 사용한다.
 
   // 🎯 현재 상태를 히스토리에 저장
   void _saveCurrentState({bool immediate = false}) {
     if (_isExecutingHistory) return;
 
     if (immediate) {
-      // 즉시 저장 (엔터, 삭제, 이동 등) - 비동기로 처리하여 UI 블로킹 방지
+      // ✅ 안정성 우선: 즉시 저장은 동기 스냅샷으로 저장한다.
+      // (microtask 기반 비동기 저장은 undo/redo 타이밍 경합으로 누락/redo 파손을 만들 수 있음)
       _historyTimer?.cancel();
-
-      // 🎯 비동기로 노드 복사 (UI 블로킹 방지)
-      Future.microtask(() async {
-        final snapshot = await _copyAllNodesAsyncFast();
-        _addToHistoryStack(snapshot, '즉시 저장');
-      });
+      final snapshot = _copyAllNodes();
+      _hlog('saveCurrentState(immediate): pushing snapshot');
+      _addToHistoryStack(snapshot, '즉시 저장');
     } else {
       // 디바운싱 (텍스트 입력/삭제)
       _historyTimer?.cancel();
@@ -454,6 +428,8 @@ class EditorService extends ChangeNotifier {
         if (_undoStack.isNotEmpty &&
             _areSnapshotsEqual(_undoStack.last, snapshot)) {
           debugPrint('[EditorService] ⚠️ 디바운싱 저장 스킵 (중복 스냅샷)');
+          _hlog('debounce: skip push (equal snapshot)');
+          _hasPendingHistoryChanges = false;
           return;
         }
 
@@ -484,9 +460,11 @@ class EditorService extends ChangeNotifier {
     final snapshot = _copyAllNodes();
     if (_undoStack.isNotEmpty &&
         _areSnapshotsEqual(_undoStack.last, snapshot)) {
+      _hlog('flush($reason): skip push (equal snapshot)');
       _hasPendingHistoryChanges = false;
       return;
     }
+    _hlog('flush($reason): pushing snapshot');
     _addToHistoryStack(snapshot, 'flush($reason)');
   }
 
@@ -495,6 +473,12 @@ class EditorService extends ChangeNotifier {
     // ✅ 동일 스냅샷 중복 방지 (디바운스/flush 타이밍 보호)
     if (_undoStack.isNotEmpty &&
         _areSnapshotsEqual(_undoStack.last, snapshot)) {
+      // ✅ 동일 상태라면 "대기 중인 변경"도 해소된 것으로 본다.
+      // (그렇지 않으면 flush가 반복되거나, 불필요한 저장 시도가 계속될 수 있음)
+      _hasPendingHistoryChanges = false;
+      _hlog(
+        'addToHistoryStack("$logLabel"): SKIP (equal)  undo=${_undoStack.length}, redo=${_redoStack.length}, version=${snapshot.version}',
+      );
       return;
     }
     _undoStack.add(snapshot);
@@ -510,6 +494,9 @@ class EditorService extends ChangeNotifier {
 
     debugPrint(
       '[EditorService] 📸 $logLabel (total: ${_undoStack.length}, nodes: ${snapshot.nodes.length})',
+    );
+    _hlog(
+      'addToHistoryStack("$logLabel"): OK  undo=${_undoStack.length}, redo=cleared, version=${snapshot.version}',
     );
 
     // 🎯 Undo/Redo 버튼 상태 업데이트
@@ -539,21 +526,33 @@ class EditorService extends ChangeNotifier {
     // 🎯 히스토리 실행 중이면 저장하지 않음 (무한 루프 방지)
     if (_isExecutingHistory) {
       debugPrint('[EditorService] ⚠️ 히스토리 실행 중 - 변경 추적 스킵: $change');
+      _hlog('trackChange: SKIP (isExecutingHistory=true) change=$change');
       return;
     }
     // ✅ 복구/자동 정리로 인한 변화는 히스토리에 담지 않음
     if (_isRecoveryOperation) {
+      _hlog('trackChange: SKIP (isRecoveryOperation=true) change=$change');
       return;
     }
     // ✅ 범위 삭제(배치 삭제) 중에는 after-state를 커맨드 끝에서 한 번만 저장한다.
     if (_isSuppressingHistoryTracking) {
+      _hlog(
+        'trackChange: SKIP (suppressHistoryTracking=true depth=$_suppressHistoryTrackingDepth) change=$change',
+      );
       return;
     }
+
+    _hlog(
+      'trackChange: ENTER change=${change.runtimeType}, pendingDelete=$_pendingDeleteHistory, isDeletingNode=$_isDeletingNode, pendingHistory=$_hasPendingHistoryChanges',
+    );
 
     try {
       // 🎯 히스토리가 비어있으면 현재 상태를 초기 상태로 저장 (임시저장 불러온 직후에도 동작)
       if (_undoStack.isEmpty) {
         debugPrint('[EditorService] 🎯 히스토리 비어있음 - 현재 상태를 초기 상태로 저장');
+        _hlog(
+          'trackChange: undoStack empty -> saveCurrentState(immediate=true) as baseline',
+        );
         _saveCurrentState(immediate: true);
         // 🎯 초기 상태 저장 후에도 변경 이벤트는 계속 처리해야 함 (return 하지 않음)
       }
@@ -561,7 +560,8 @@ class EditorService extends ChangeNotifier {
       // TextInsertionEvent, TextDeletedEvent - 디바운싱 적용 (1초 후 저장)
       // 🎯 단, 임시저장 불러온 직후 첫 변경사항만 즉시 저장, 그 다음부터는 디바운싱
       if (change is TextInsertionEvent || change is TextDeletedEvent) {
-        if (_firstChangeAfterLoad) {
+        final bool firstAfterLoad = _firstChangeAfterLoad;
+        if (firstAfterLoad) {
           // 🎯 임시저장 불러온 직후 첫 변경사항은 즉시 저장 (히스토리 누락 방지)
           debugPrint('[EditorService] 🎯 임시저장 불러온 직후 첫 변경 - 즉시 저장');
           _saveCurrentState(immediate: true);
@@ -570,21 +570,25 @@ class EditorService extends ChangeNotifier {
           // 🎯 그 다음부터는 디바운싱 적용
           _saveCurrentState(immediate: false);
         }
+        _hlog(
+          'trackChange: TEXT -> ${firstAfterLoad ? "immediate(firstAfterLoad)" : "debounce"}',
+        );
         return;
       }
 
       // 🎯 NodeRemovedEvent는 _deleteNode에서 이미 삭제 전 상태를 저장했으므로 중복 저장 방지
       if (change is NodeRemovedEvent) {
-        // 🎯 삭제 전 상태가 이미 저장되었으면 삭제 후 상태도 저장 (undo/redo를 위해)
-        if (_isDeletingNode) {
-          _isDeletingNode = false; // 플래그 해제
-          // 🎯 삭제 후 상태 저장 (redo를 위해)
-          _saveCurrentState(immediate: true);
+        // ✅ 안정형: 삭제 후 상태(after-state)는 동기적으로 1회만 저장한다.
+        // - _pendingDeleteHistory=true 인 경우: 삭제 버튼/특수노드 범위 삭제 등 "유저 삭제"의 after-state 저장
+        // - 그 외: 다른 경로의 삭제도 즉시 저장(동기)
+        if (_pendingDeleteHistory || _isDeletingNode) {
+          _hlog(
+            'trackChange: NodeRemovedEvent detected user-delete (pendingDelete=$_pendingDeleteHistory,isDeletingNode=$_isDeletingNode) -> after-state push',
+          );
+          _pendingDeleteHistory = false;
+          _isDeletingNode = false;
         }
-        // 🎯 _deleteNode에서 저장하지 않은 경우 (다른 경로로 삭제된 경우)는 즉시 저장
-        else {
-          _saveCurrentState(immediate: true);
-        }
+        _saveCurrentState(immediate: true);
         return;
       }
 
@@ -592,11 +596,13 @@ class EditorService extends ChangeNotifier {
       if (change is NodeInsertedEvent ||
           change is NodeChangeEvent ||
           change is NodeMovedEvent) {
+        _hlog('trackChange: NODE(${change.runtimeType}) -> immediate push');
         _saveCurrentState(immediate: true);
         return;
       }
     } catch (e) {
       debugPrint('[EditorService] 변경 추적 실패: $e');
+      _hlog('trackChange: ERROR $e');
     }
   }
 
@@ -621,6 +627,9 @@ class EditorService extends ChangeNotifier {
       order: order,
       version: _documentVersion,
       selection: null, // 🎯 커서 숨기기
+      anchor:
+          (editor.composer.selectionNotifier.value ?? _lastSelection)
+              ?.extent, // ✅ 히스토리 UX용 앵커(스크롤 위치)
     );
   }
 
@@ -684,6 +693,16 @@ class EditorService extends ChangeNotifier {
 
   void setDocumentLayoutKey(GlobalKey key) {
     _documentLayoutKey = key;
+  }
+
+  /// 글쓰기 화면의 스크롤 컨트롤러를 주입한다.
+  /// (Undo/Redo 시 히스토리 스냅샷에 저장된 문서 위치로 스크롤 UX 제공)
+  void setScrollController(ScrollController controller) {
+    _scrollController = controller;
+  }
+
+  void clearScrollController() {
+    _scrollController = null;
   }
 
   GlobalKey? get documentLayoutKey => _documentLayoutKey;
@@ -836,12 +855,29 @@ class EditorService extends ChangeNotifier {
   void saveHistoryBeforeDelete() {
     if (_isExecutingHistory) return;
 
-    // 🎯 삭제 중 플래그 설정 (NodeRemovedEvent에서 중복 저장 방지)
-    _isDeletingNode = true;
+    _hlog(
+      'saveHistoryBeforeDelete: ENTER undo=${_undoStack.length}, pendingHistory=$_hasPendingHistoryChanges, firstAfterLoad=$_firstChangeAfterLoad',
+    );
 
-    // 🎯 동기적으로 노드 복사 (삭제 전 상태를 확실히 저장)
-    final snapshot = _copyAllNodes();
-    _addToHistoryStack(snapshot, '노드 삭제 전 상태 저장');
+    // ✅ 삭제 직전에는 "현재 상태가 히스토리에 반영되어 있는지"만 보장한다.
+    // - 텍스트 디바운스 중이면 flush해서 baseline을 확정
+    // - 히스토리가 비어있으면 현재 상태를 baseline으로 1회 저장
+    _flushHistoryIfNeeded(reason: 'beforeDelete');
+    if (_undoStack.isEmpty) {
+      final baseline = _copyAllNodes();
+      _addToHistoryStack(baseline, 'baseline(beforeDelete)');
+      _initialStateSaved = true;
+      _hlog(
+        'saveHistoryBeforeDelete: baseline pushed (undo now=${_undoStack.length})',
+      );
+    }
+
+    // 🎯 NodeRemovedEvent에서 after-state를 1회만 저장하도록 표시
+    _pendingDeleteHistory = true;
+    _isDeletingNode = true;
+    _hlog(
+      'saveHistoryBeforeDelete: flags set pendingDelete=true, isDeletingNode=true',
+    );
   }
 
   // 🎯 Undo 실행
@@ -852,12 +888,18 @@ class EditorService extends ChangeNotifier {
       errorMessage: 'Undo 불가 (첫 상태)',
       operation: () {
         // 🎯 현재 상태를 redo 스택에 저장
-        final currentSnapshot = _undoStack.removeLast();
-        _redoStack.add(currentSnapshot);
+        // ✅ UX: Undo 시에는 "복원된(previous) 상태"의 앵커가 아니라,
+        // 방금 되돌린 작업(current)의 앵커로 이동해야 사용자가 기대하는 위치(수정한 곳)를 유지한다.
+        final undoneSnapshot = _undoStack.removeLast();
+        _redoStack.add(undoneSnapshot);
 
         // 🎯 이전 상태로 복원
         final previousSnapshot = _undoStack.last;
         _restoreFromSnapshot(previousSnapshot);
+        _scheduleScrollToSnapshotAnchor(
+          undoneSnapshot,
+          useJumpTo: true, // ✅ 요청: 이 케이스는 jumpTo로 즉시 이동
+        );
       },
       onError: () {
         // 🎯 에러 발생 시 스택 복구 시도
@@ -883,6 +925,10 @@ class EditorService extends ChangeNotifier {
 
         // 🎯 다음 상태로 복원
         _restoreFromSnapshot(nextSnapshot);
+        _scheduleScrollToSnapshotAnchor(
+          nextSnapshot,
+          useJumpTo: true, // ✅ Undo/Redo는 동일한 UX로 즉시 이동
+        );
 
         debugPrint(
           '[EditorService] ➡️ Redo 완료 (남은 redo: ${_redoStack.length})',
@@ -930,6 +976,70 @@ class EditorService extends ChangeNotifier {
     } finally {
       _isExecutingHistory = false;
       notifyListeners();
+    }
+  }
+
+  void _scheduleScrollToSnapshotAnchor(
+    _DocumentSnapshot snapshot, {
+    double thresholdPx = 400.0,
+    bool useJumpTo = false,
+  }) {
+    // ✅ undo/redo 직후 레이아웃이 안정화된 다음 프레임에서 스크롤한다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToSnapshotAnchorIfFar(
+        snapshot,
+        thresholdPx: thresholdPx,
+        useJumpTo: useJumpTo,
+      );
+    });
+  }
+
+  Future<void> _scrollToSnapshotAnchorIfFar(
+    _DocumentSnapshot snapshot, {
+    required double thresholdPx,
+    required bool useJumpTo,
+  }) async {
+    final ctrl = _scrollController;
+    if (ctrl == null || !ctrl.hasClients) return;
+    final anchor = snapshot.anchor;
+    if (anchor == null) return;
+
+    final layout = _documentLayoutKey?.currentState as DocumentLayout?;
+    if (layout == null) return;
+
+    Rect? rect;
+    try {
+      rect = layout.getRectForPosition(anchor);
+    } catch (_) {
+      rect = null;
+    }
+    if (rect == null) return;
+
+    final viewport = ctrl.position.viewportDimension;
+    if (viewport <= 0) return;
+
+    final currentCenterY = ctrl.offset + viewport / 2.0;
+    final targetCenterY = rect.center.dy;
+    final delta = (targetCenterY - currentCenterY).abs();
+    if (delta < thresholdPx) return;
+
+    final targetOffset = (targetCenterY - viewport / 2.0).clamp(
+      0.0,
+      ctrl.position.maxScrollExtent,
+    );
+
+    try {
+      if (useJumpTo) {
+        ctrl.jumpTo(targetOffset);
+      } else {
+        await ctrl.animateTo(
+          targetOffset,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    } catch (_) {
+      // scroll 중 detach 등은 무시
     }
   }
 
@@ -1005,21 +1115,7 @@ class EditorService extends ChangeNotifier {
       }
     }
 
-    // 🎯 4. 제목 보호 - 제목이 없으면 빈 제목 추가
-    if (document.nodeCount == 0 ||
-        (document.getNodeAt(0) is! ParagraphNode) ||
-        ((document.getNodeAt(0) as ParagraphNode).metadata['isTitle'] !=
-            true)) {
-      final titleNode = ParagraphNode(
-        id: '1',
-        text: AttributedText(''),
-        metadata: {'textAlign': 'center', 'isTitle': true},
-      );
-      document.insertNodeAt(0, titleNode);
-      debugPrint('[EditorService] 🛡️ 제목 복원 (빈 제목 추가)');
-    }
-
-    // 🎯 5. 커서 숨기기
+    // 🎯 4. 커서 숨기기
     try {
       editor.composer.clearSelection();
       debugPrint('[EditorService] ✅ 커서 숨김');
@@ -1030,75 +1126,121 @@ class EditorService extends ChangeNotifier {
 
   // 문서 변경 리스너: 구조가 변했을 때만 마진 재계산
   void _onDocumentChanged(DocumentChangeLog changeLog) {
-    final change = changeLog.changes[0];
-    debugPrint('changeLog.changes[0]: $change');
+    if (changeLog.changes.isEmpty) return;
+    final primaryChange = changeLog.changes.first;
+    assert(() {
+      debugPrint(
+        'changeLog.changes: ${changeLog.changes.map((c) => c.runtimeType).toList()}',
+      );
+      return true;
+    }());
 
-    // ✅ 복구/자동 정리(레지스트리 복원, 빈 문단 자동 삭제, 제목 보호 등)는 히스토리에 담지 않는다.
-    bool isRecoveryChange = _isRecoveryOperation;
-    if (change is NodeInsertedEvent) {
-      // ✅ "빈 문단 자동 추가"는 유저에게 숨겨야 하는 내부 보정이므로 히스토리에서 제외
-      // (예: 특수노드 아래 텍스트 입력을 위한 trailing 빈 문단, 구조 안정화용 빈 문단 등)
-      try {
-        final inserted = document.getNodeById(change.nodeId);
-        if (inserted is ParagraphNode) {
-          final bool isTitle = inserted.metadata['isTitle'] == true;
-          final bool isMention = inserted.metadata['mention'] == true;
-          final bool isEmpty = inserted.text.text.trim().isEmpty;
-          if (!isTitle && !isMention && isEmpty) {
-            isRecoveryChange = true;
+    String recoveryReason(DocumentChange change) {
+      // ✅ 전역 recovery 구간이면 무조건 recovery
+      if (_isRecoveryOperation) return 'globalRecovery';
+
+      if (change is NodeInsertedEvent) {
+        // ✅ "빈 문단 자동 추가"는 유저에게 숨겨야 하는 내부 보정이므로 히스토리에서 제외
+        try {
+          final inserted = document.getNodeById(change.nodeId);
+          if (inserted is ParagraphNode) {
+            final bool isTitle = inserted.metadata['isTitle'] == true;
+            final bool isMention = inserted.metadata['mention'] == true;
+            final bool isEmpty = inserted.text.text.trim().isEmpty;
+            if (!isTitle && !isMention && isEmpty) {
+              return 'autoEmptyParagraphInserted';
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (change is NodeRemovedEvent) {
+        final removedId = change.nodeId;
+
+        // 자동 삭제 예약으로 지워지는 빈 ParagraphNode는 복구/정리로 간주
+        if (_pendingDeletionNodeIds.contains(removedId)) {
+          return 'pendingEmptyParagraphDeletion';
+        }
+
+        // ✅ 삭제 버튼/범위 삭제 커맨드에서 시작된 "유저 삭제"는 복구(recovery)로 분류하면 안 된다.
+        // (특수 노드가 레지스트리에 남아있는 순간/타이밍 이슈로 recovery로 오판되면
+        //  삭제 직후 undo 스택이 안 쌓이는 문제가 발생할 수 있다)
+        if (_pendingDeleteHistory || _isDeletingNode) return '';
+
+        // 제목 노드 삭제는 제목 보호 복구로 간주
+
+        // 레지스트리에 등록된 특수 노드가 "명시적 삭제 없이" 사라지면 자동 복구 후보
+        if (_specialNodeRegistry.containsKey(removedId) &&
+            !_explicitlyDeletedNodes.contains(removedId)) {
+          final sel = editor.composer.selectionNotifier.value;
+          final isDownstream =
+              sel != null &&
+              sel.extent.nodeId == removedId &&
+              sel.extent.nodePosition is UpstreamDownstreamNodePosition &&
+              sel.extent.nodePosition ==
+                  const UpstreamDownstreamNodePosition.downstream();
+          if (!isDownstream) {
+            return 'registryRestorationCandidate';
           }
         }
-      } catch (_) {}
+      }
+
+      return '';
     }
-    if (change is NodeRemovedEvent) {
-      final removedId = change.nodeId;
 
-      // 자동 삭제 예약으로 지워지는 빈 ParagraphNode는 복구/정리로 간주
-      if (_pendingDeletionNodeIds.contains(removedId)) {
-        isRecoveryChange = true;
-      }
-
-      // 제목 보호(삭제 방지)도 자동 복구로 간주
-      // ✅ "현재 커서가 제목 영역에 있다"는 정보(getEditingIndex==0)는 제목 삭제 여부와 무관하다.
-      // 임시저장 불러온 직후(커서 숨김/selection null)에는 getEditingIndex가 0으로 떨어져
-      // 어떤 노드 삭제든 recovery로 오판 -> undo 스택 누락이 발생할 수 있다.
-      if (_cachedTitleNodeId != null && removedId == _cachedTitleNodeId) {
-        isRecoveryChange = true;
-      }
-
-      // 레지스트리에 등록된 특수 노드가 백스페이스로 삭제된 경우(복원 대상)도 자동 복구
-      if (!isRecoveryChange &&
-          _specialNodeRegistry.containsKey(removedId) &&
-          !_explicitlyDeletedNodes.contains(removedId)) {
-        final sel = editor.composer.selectionNotifier.value;
-        final isDownstream =
-            sel != null &&
-            sel.extent.nodeId == removedId &&
-            sel.extent.nodePosition is UpstreamDownstreamNodePosition &&
-            sel.extent.nodePosition ==
-                const UpstreamDownstreamNodePosition.downstream();
-        if (!isDownstream) {
-          isRecoveryChange = true;
-        }
+    // ✅ 중요한 변경이 여러 개 묶여서 들어오는 경우가 있다.
+    // 예) 삭제 시 selection 정리 + 노드 삭제 이벤트가 같이 들어오는데,
+    // 현재처럼 changes[0]만 보면 "노드 삭제"가 누락되어 undo 스택이 안 쌓일 수 있다.
+    final nonRecoveryChanges = <DocumentChange>[];
+    for (final c in changeLog.changes) {
+      final reason = recoveryReason(c);
+      if (reason.isEmpty) {
+        nonRecoveryChanges.add(c);
+      } else {
+        _hlog('onDocChanged: recovery change=${c.runtimeType} reason=$reason');
       }
     }
+
+    _hlog(
+      'onDocChanged: primary=${primaryChange.runtimeType} changes=${changeLog.changes.length} nonRecovery=${nonRecoveryChanges.map((c) => c.runtimeType).toList()}',
+    );
 
     // ✅ undo/redo 복원 과정 + 자동 복구는 "사용자 변경"이 아니므로 버전/플래그/히스토리 반영 제외
-    if (!_isExecutingHistory && !isRecoveryChange) {
+    if (!_isExecutingHistory && nonRecoveryChanges.isNotEmpty) {
       _documentVersion++;
       _hasPendingHistoryChanges = true;
     }
 
     // 🎯 변경된 노드 추적 (복구/자동 정리 변화는 스킵)
-    if (!isRecoveryChange) {
-      _trackChangeFromLog(change);
+    // - 한 로그에 여러 변경이 섞여 들어오므로, 히스토리 저장 트리거가 되는 변경을 우선 선택한다.
+    if (nonRecoveryChanges.isNotEmpty) {
+      DocumentChange pick(DocumentChange a, DocumentChange b) {
+        int rank(DocumentChange c) {
+          if (c is NodeRemovedEvent) return 0;
+          if (c is NodeInsertedEvent) return 1;
+          if (c is NodeMovedEvent) return 2;
+          if (c is NodeChangeEvent) return 3;
+          if (c is TextInsertionEvent) return 4;
+          if (c is TextDeletedEvent) return 4;
+          return 10;
+        }
+
+        return rank(a) <= rank(b) ? a : b;
+      }
+
+      var chosen = nonRecoveryChanges.first;
+      for (final c in nonRecoveryChanges.skip(1)) {
+        chosen = pick(chosen, c);
+      }
+
+      _trackChangeFromLog(chosen);
     }
 
     // 제목 id 캐시 갱신 (구조 변경/복구 모두 포함)
-    _refreshCachedTitleNodeId();
 
     // 🎯 텍스트 입력/삭제 시 노드 선택 자동 해제 (가볍게 처리)
-    if ((change is TextInsertionEvent || change is TextDeletedEvent) &&
+    if ((primaryChange is TextInsertionEvent ||
+            primaryChange is TextDeletedEvent) &&
         _context != null) {
       try {
         final nodeService = _context!.read<NodeComponentService>();
@@ -1116,12 +1258,12 @@ class EditorService extends ChangeNotifier {
 
     // 🎯 멘션 문단(ParagraphNode with metadata.mention == true)에서 삭제가 발생하면
     // 노드를 한 번에 삭제하도록 처리
-    if (change is TextDeletedEvent) {
+    if (primaryChange is TextDeletedEvent) {
       try {
         // TextDeletedEvent에서 nodeId 가져오기
         String? targetNodeId;
         try {
-          targetNodeId = (change as dynamic).nodeId as String?;
+          targetNodeId = (primaryChange as dynamic).nodeId as String?;
         } catch (_) {}
 
         // 현재 selection에서 가져오기
@@ -1233,8 +1375,8 @@ class EditorService extends ChangeNotifier {
                 int? deletedOffset;
                 int? deletedLength;
                 try {
-                  deletedOffset = (change as dynamic).offset as int?;
-                  deletedLength = (change as dynamic).length as int?;
+                  deletedOffset = (primaryChange as dynamic).offset as int?;
+                  deletedLength = (primaryChange as dynamic).length as int?;
                 } catch (_) {}
 
                 // 현재 커서 위치 확인 (삭제 후 위치)
@@ -1569,15 +1711,9 @@ class EditorService extends ChangeNotifier {
       }
     }
 
-    if (change is NodeRemovedEvent) {
-      if (getEditingIndex() == 0) {
-        // 타이틀 문단 삭제 방지
-        _runRecoveryOperation(_ensureTitleAtTop);
-        // 🎯 _ensureTitleAtTop()이 document.insertNodeAt()을 호출하므로 notifyListeners() 불필요
-        return;
-      }
+    if (primaryChange is NodeRemovedEvent) {
+      final removedNodeId = primaryChange.nodeId;
 
-      final removedNodeId = change.nodeId;
       debugPrint('[EditorService] NodeRemovedEvent: nodeId=$removedNodeId');
 
       // 🎯 마지막에 한 번만 notifyListeners 호출하기 위한 플래그
@@ -1827,15 +1963,15 @@ class EditorService extends ChangeNotifier {
       return;
     }
 
-    if (change is NodeInsertedEvent) {
+    if (primaryChange is NodeInsertedEvent) {
       // 🎯 멘션 노드 다음에 문단이 생성되면 볼드 attribution 제거
       try {
-        final insertedNode = document.getNodeAt(change.insertionIndex);
+        final insertedNode = document.getNodeAt(primaryChange.insertionIndex);
         if (insertedNode is ParagraphNode &&
             insertedNode.metadata['mention'] != true &&
-            change.insertionIndex > 0) {
+            primaryChange.insertionIndex > 0) {
           // 이전 노드가 멘션 노드인지 확인
-          final prevNode = document.getNodeAt(change.insertionIndex - 1);
+          final prevNode = document.getNodeAt(primaryChange.insertionIndex - 1);
           if (prevNode is ParagraphNode &&
               prevNode.metadata['mention'] == true) {
             // 멘션 노드 다음에 생성된 문단이면 composer의 bold preference 제거
@@ -1902,46 +2038,42 @@ class EditorService extends ChangeNotifier {
 
       // 새 문단의 정렬 승계
       _runRecoveryOperation(() {
-        _ensureParagraphAlignmentForIndex(change.insertionIndex);
+        _ensureParagraphAlignmentForIndex(primaryChange.insertionIndex);
       });
       // 삽입 지점 주변(상/하/본인)만 마진 재계산
-      //_recomputeParagraphMarginsAround(change.insertionIndex);
-      _runRecoveryOperation(_ensureOnlyFirstIsTitle);
+      //_recomputeParagraphMarginsAround(primaryChange.insertionIndex);
       // 문서 구조가 변했으므로 UI 갱신 필요
       notifyListeners();
       return;
     }
 
-    if (change is NodeMovedEvent) {
+    if (primaryChange is NodeMovedEvent) {
       // 이동 전/후 주변만 마진 재계산
-      //_recomputeParagraphMarginsAround(change.from);
-      //_recomputeParagraphMarginsAround(change.to);
-      _runRecoveryOperation(_ensureOnlyFirstIsTitle);
+      //_recomputeParagraphMarginsAround(primaryChange.from);
+      //_recomputeParagraphMarginsAround(primaryChange.to);
       // 문서 구조가 변했으므로 UI 갱신 필요
       notifyListeners();
       return;
     }
 
-    if (change is NodeChangeEvent) {
+    if (primaryChange is NodeChangeEvent) {
       // 타입 변경 등 구조 영향 가능 → 해당 인덱스만 우선 보정, 없으면 전체
-      final idx = document.getNodeIndexById(change.nodeId);
+      final idx = document.getNodeIndexById(primaryChange.nodeId);
       if (idx != -1) {
         //_recomputeParagraphMarginsAround(idx);
         _runRecoveryOperation(() {
           _ensureParagraphAlignmentForIndex(getEditingIndex());
-          _ensureOnlyFirstIsTitle();
         });
       } else {
         // _recomputeParagraphMargins();
-        _runRecoveryOperation(_ensureOnlyFirstIsTitle);
       }
       // 문서 구조/내용이 변했으므로 UI 갱신 필요
       notifyListeners();
       return;
     }
 
-    if (change is TextInsertionEvent || change is TextDeletedEvent) {
-      _runRecoveryOperation(_ensureOnlyFirstIsTitle);
+    if (primaryChange is TextInsertionEvent ||
+        primaryChange is TextDeletedEvent) {
       // 본문 텍스트 변경으로 UI 갱신 통지
       notifyListeners(); // 🎯 한 번만 호출
       return;
@@ -3172,6 +3304,46 @@ class EditorService extends ChangeNotifier {
     }
   }
 
+  /// 🎯 비디오 클립의 localPath 업데이트 (압축 완료 시점 등)
+  /// - 업로드 URL은 그대로 두고, 로컬 재생 소스만 교체할 때 사용
+  void updateVideoLocalPath(String nodeId, String localPath) {
+    _isExecutingHistory = true;
+    try {
+      final node = document.getNodeById(nodeId);
+      if (node is! ClipNode) return;
+
+      final existingMetadata = Map<String, dynamic>.from(node.metadata);
+      // padding 보장
+      if (!existingMetadata.containsKey('padding')) {
+        existingMetadata['padding'] = 'center';
+      }
+      // 원본 로컬 경로 보관 (디버그/추적용)
+      if (node.localPath.isNotEmpty && node.localPath != localPath) {
+        existingMetadata['originalLocalPath'] =
+            existingMetadata['originalLocalPath'] ?? node.localPath;
+      }
+
+      final updated = ClipNode(
+        id: node.id,
+        label: node.label,
+        colorHex: node.colorHex,
+        url: node.url,
+        localPath: localPath,
+        thumbnailPath: node.thumbnailPath,
+        metadata: existingMetadata,
+      );
+
+      editor.execute([
+        ReplaceNodeRequest(existingNodeId: nodeId, newNode: updated),
+      ]);
+    } catch (e) {
+      debugPrint('[EditorService] updateVideoLocalPath error: $e');
+    } finally {
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+    }
+  }
+
   ///  노드 추가: 현재 캐럿 다음 슬롯에  삽입
   void addClipNode({
     String label = '',
@@ -3861,111 +4033,7 @@ class EditorService extends ChangeNotifier {
     });
   }
 
-  // 제목 문단이 항상 존재하고 맨 위(index 0)에 있도록 보정한다.
-  // 변경이 있었으면 true를 반환한다.
-  void _ensureTitleAtTop() {
-    _runRecoveryOperation(() {
-      int titleIndex = -1;
-      ParagraphNode? titleNode;
-
-      // 0,1번까지만 체크
-      for (int i = 0; i < document.length && i < 2; i++) {
-        final node = document.getNodeAt(i);
-        if (node is ParagraphNode && node.metadata['isTitle'] == true) {
-          titleIndex = i;
-          titleNode = node;
-          break;
-        }
-      }
-
-      if (titleIndex == -1) {
-        // 제목 없으면 새로 추가
-        document.insertNodeAt(
-          0,
-          ParagraphNode(
-            id: Editor.createNodeId(),
-            text: AttributedText(),
-            // 기본 정렬을 중앙으로 보정
-            metadata: {'isTitle': true, 'textAlign': 'center'},
-          ),
-        );
-      } else if (titleIndex > 0) {
-        // 이미 맨 위에 있지 않으면 위치만 교체
-        final node = titleNode!;
-        document
-          ..deleteNode(titleNode.id) // 이벤트 발생 막고
-          ..insertNodeAt(0, node); // 최종 이벤트는 1번만
-      }
-
-      // 제목 보정 후, 제목은 다른 텍스트의 정렬에 맞춰 보정
-      final title = document.getNodeAt(0);
-      if (title is ParagraphNode && title.metadata['isTitle'] == true) {
-        // 다른 텍스트 문단의 정렬을 찾아서 제목에 적용
-        String targetAlignment = 'center'; // 기본값(중앙)
-        for (int i = 1; i < document.length; i++) {
-          final node = document.getNodeAt(i);
-          if (node is ParagraphNode) {
-            final String? align = node.metadata['textAlign'] as String?;
-            if (align != null) {
-              targetAlignment = align;
-              break;
-            }
-          }
-        }
-
-        final meta = Map<String, dynamic>.from(title.metadata);
-        meta['textAlign'] = targetAlignment;
-        final updated = ParagraphNode(
-          id: title.id,
-          text: title.text,
-          metadata: meta,
-        );
-        document.replaceNodeById(title.id, updated);
-      }
-    });
-  }
-
-  void _ensureOnlyFirstIsTitle() {
-    try {
-      // 0번째 문단은 제목 유지
-      if (document.isNotEmpty) {
-        final node0 = document.getNodeAt(0);
-        if (node0 is ParagraphNode && node0.metadata['isTitle'] == true) {
-          _lastTitleTextLength = node0.text.text.length;
-        }
-
-        if (node0 is ParagraphNode) {
-          final meta0 = Map<String, dynamic>.from(node0.metadata);
-          if (meta0['isTitle'] != true) {
-            meta0['isTitle'] = true;
-            _runRecoveryOperation(() {
-              document.replaceNodeById(
-                node0.id,
-                ParagraphNode(id: node0.id, text: node0.text, metadata: meta0),
-              );
-            });
-          }
-        }
-      }
-
-      // 1번째 문단부터는 제목 금지(최소 수정: 바로 아래 문단만 확인)
-      if (document.length > 1) {
-        final node1 = document.getNodeAt(1);
-        if (node1 is ParagraphNode) {
-          final meta1 = Map<String, dynamic>.from(node1.metadata);
-          if (meta1['isTitle'] == true) {
-            meta1.remove('isTitle');
-            _runRecoveryOperation(() {
-              document.replaceNodeById(
-                node1.id,
-                ParagraphNode(id: node1.id, text: node1.text, metadata: meta1),
-              );
-            });
-          }
-        }
-      }
-    } catch (_) {}
-  }
+  // 제목은 썸네일 편집 화면에서 입력하므로 제목 위치 유지 로직 제거됨
 
   bool isNodeUploading(String id) {
     if (_context == null) return false;
@@ -3980,6 +4048,7 @@ class _DocumentSnapshot {
   final List<String> order; // 노드 순서
   final int version; // ✅ 변경 버전
   final DocumentSelection? selection; // 커서 위치
+  final DocumentPosition? anchor; // ✅ 히스토리 UX용 스크롤 앵커(복원 시 이동)
   final int _cachedHashCode; // 🚀 캐시된 해시 (O(1) 비교용)
 
   _DocumentSnapshot({
@@ -3987,43 +4056,144 @@ class _DocumentSnapshot {
     required this.order,
     required this.version,
     this.selection,
-  }) : _cachedHashCode = _computeHash(nodes, order, version);
+    this.anchor,
+  }) : _cachedHashCode = _computeHash(nodes, order);
 
   // 🚀 해시 계산 (생성 시 한 번만)
-  static int _computeHash(
-    Map<String, DocumentNode> nodes,
-    List<String> order,
-    int version,
-  ) {
-    // ✅ 이전 해시는 "runtimeType" 위주라서 이미지 URL/메타데이터 변화가 반영되지 않아
-    //    스냅샷이 동일하다고 판단되는 경우가 잦았음(Undo가 안 먹는 듯 보임).
-    //    -> 샘플링은 유지하되, 노드별 "콘텐츠 시그니처"를 포함한다.
+  static int _computeHash(Map<String, DocumentNode> nodes, List<String> order) {
+    // ✅ 히스토리 동일성은 "문서 내용"으로만 판정해야 한다.
+    // version(증분 카운터)에 의존하면 "내용은 같은데 버전만 다른" 스냅샷이 쌓여
+    // 첫 Undo가 no-op처럼 보이는 문제가 생길 수 있다.
+
+    int _stableValueHash(Object? v) {
+      if (v == null) return 0;
+      if (v is num || v is bool || v is String) return v.hashCode;
+      if (v is DateTime) return v.millisecondsSinceEpoch.hashCode;
+      if (v is Color) return v.value.hashCode;
+      if (v is List) {
+        return Object.hashAll(v.map((e) => _stableValueHash(e)));
+      }
+      if (v is Map) {
+        final keys =
+            v.keys.toList()
+              ..sort((a, b) => a.toString().compareTo(b.toString()));
+        final parts = <int>[];
+        for (final k in keys) {
+          final ks = k.toString();
+          parts.add(ks.hashCode);
+          parts.add(_stableValueHash(v[k]));
+        }
+        return Object.hashAll(parts);
+      }
+      // Flutter/SuperEditor 객체 등은 런타임 타입 기반으로만 보수적으로 처리
+      return v.runtimeType.toString().hashCode;
+    }
+
+    Map<String, dynamic>? _tryGetMetadata(DocumentNode node) {
+      try {
+        final dynamic meta = (node as dynamic).metadata;
+        if (meta is Map<String, dynamic>) return meta;
+        if (meta is Map) return meta.cast<String, dynamic>();
+      } catch (_) {}
+      return null;
+    }
+
+    int _attributedTextStableHash(AttributedText text) {
+      // ⚠️ AttributedText.hashCode는 내부 구현/인스턴스에 의존할 수 있어
+      // 스냅샷 간 "내용은 같은데 해시만 달라" 중복 히스토리가 쌓이는 원인이 될 수 있다.
+      // 따라서 "문자열 + attribution span" 기반으로 안정 해시를 만든다.
+      final s = text.text;
+      if (s.isEmpty) return Object.hash('t', '');
+
+      // 1) 전체 문자열
+      int h = Object.hash('t', s);
+
+      // 2) 존재하는 attribution들을 1회 스캔으로 수집
+      final unique = <Attribution>{};
+      for (int i = 0; i < s.length; i++) {
+        unique.addAll(text.getAllAttributionsAt(i));
+      }
+
+      String _attrKey(Attribution a) {
+        // NamedAttribution('spoiler') 같은 케이스
+        try {
+          final dynamic d = a;
+          final dynamic name = d.name;
+          if (name != null) return 'named:${name.toString()}';
+        } catch (_) {}
+
+        // ColorAttribution 계열(HighlightAttribution 등): 색상을 포함해야 한다.
+        try {
+          final dynamic d = a;
+          final dynamic color = d.color;
+          if (color is Color) {
+            return '${a.id}:${color.value}';
+          }
+        } catch (_) {}
+
+        // fallback: id + runtimeType
+        return '${a.id}:${a.runtimeType}';
+      }
+
+      final attrs =
+          unique.toList()..sort((a, b) => _attrKey(a).compareTo(_attrKey(b)));
+
+      final fullRange = SpanRange(0, s.length - 1);
+      for (final a in attrs) {
+        h = Object.hash(h, _attrKey(a));
+        final spans = text.getAttributionSpansInRange(
+          attributionFilter: (attr) => attr == a,
+          range: fullRange,
+        );
+        for (final span in spans) {
+          h = Object.hash(h, span.start, span.end);
+        }
+      }
+
+      return h;
+    }
 
     int _nodeSignature(DocumentNode? node) {
       if (node == null) return 0;
       if (node is ParagraphNode) {
-        // 텍스트 + 정렬/제목/멘션 등 주요 메타
+        // 텍스트 + attribution(형광펜/스포일러/볼드 등) + 주요 메타
         final meta = node.metadata;
         return Object.hash(
           'p',
-          node.text.text,
+          _attributedTextStableHash(node.text),
           meta['textAlign'],
           meta['isTitle'],
           meta['mention'],
-          (meta['usernames'] as List?)?.length,
+          _stableValueHash(meta['usernames']),
           meta['fontFamily'],
         );
       }
       if (node is ImageNode) {
-        // 이미지 URL(로컬/네트워크) 변화가 Undo에 반영되도록 포함
-        return Object.hash('img', node.imageUrl, node.altText);
+        // 이미지 URL(로컬/네트워크) + 메타(스포일러/패딩/업로드 맵 등)
+        final meta = _tryGetMetadata(node);
+        return Object.hash(
+          'img',
+          node.imageUrl,
+          node.altText,
+          _stableValueHash(meta),
+        );
       }
       if (node is ImageRowNode) {
-        return Object.hash('row', node.imageUrls.join('|'), node.spacing);
+        final meta = _tryGetMetadata(node);
+        return Object.hash(
+          'row',
+          Object.hashAll(node.imageUrls),
+          node.spacing,
+          _stableValueHash(meta),
+        );
       }
       if (node is PageViewImageNode) {
-        // PageViewImageNode는 커스텀 노드. urls/메타를 반영
-        return Object.hash('page', node.imageUrls.join('|'));
+        final meta = _tryGetMetadata(node);
+        return Object.hash(
+          'page',
+          Object.hashAll(node.imageUrls),
+          _stableValueHash(meta),
+        );
       }
       if (node is LinkNode) {
         return Object.hash(
@@ -4035,6 +4205,7 @@ class _DocumentSnapshot {
         );
       }
       if (node is ClipNode) {
+        final meta = _tryGetMetadata(node);
         return Object.hash(
           'clip',
           node.url,
@@ -4042,43 +4213,21 @@ class _DocumentSnapshot {
           node.thumbnailPath,
           node.label,
           node.colorHex,
+          _stableValueHash(meta),
         );
       }
       // 기타 노드: 타입 + id 정도
       return Object.hash(node.runtimeType.toString(), node.id);
     }
 
-    // ✅ order.join(',')는 문서가 길어질수록 매번 큰 문자열을 생성(O(n) + alloc)해서 무거울 수 있음.
-    // 히스토리 비교는 아래에서 "order.length + (first/middle/last)" 샘플로도 충분히 안전하게 동작하도록 설계되어 있으므로,
-    // 여기서도 동일한 방식으로 order 시그니처를 만든다.
-    final int orderSignature =
-        order.isEmpty
-            ? 0
-            : Object.hash(
-              order.length,
-              order.first,
-              order.length > 1 ? order[order.length ~/ 2] : null,
-              order.last,
-            );
-
-    // 노드 순서 시그니처 + 버전
-    final values = <int>[orderSignature, version];
-
-    // 샘플링: 첫/중간/마지막 노드만 체크 (성능 최적화)
-    if (order.isNotEmpty) {
-      final indices = <int>[
-        0,
-        if (order.length > 1) order.length ~/ 2,
-        if (order.length > 1) order.length - 1,
-      ];
-
-      for (final i in indices) {
-        final id = order[i];
-        values.add(_nodeSignature(nodes[id]));
-      }
+    // ✅ 스냅샷은 생성 시점에 이미 전체 노드를 deep copy 한다.
+    // 따라서 "전체 order + 전체 nodeSignature"로 해시를 만들어도 추가 비용이 크지 않으며,
+    // 샘플링 기반 누락(특정 노드만 바뀐 케이스)을 줄여 히스토리 안정성이 올라간다.
+    int h = Object.hash(order.length, order.isEmpty ? null : order.first);
+    for (final id in order) {
+      h = Object.hash(h, id, _nodeSignature(nodes[id]));
     }
-
-    return Object.hashAll(values);
+    return h;
   }
 
   @override

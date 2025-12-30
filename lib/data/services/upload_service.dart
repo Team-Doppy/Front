@@ -100,6 +100,13 @@ class UploadService with ChangeNotifier {
     );
   }
 
+  /// 특정 refId(예: Clip 노드 ID)에 대해 "압축(FFmpeg) 진행 중"인지 확인
+  /// - 업로드 태스크가 없어도, 압축 중이면 ClipComponent에서 로딩 UI를 유지할 수 있게 함
+  bool hasActiveCompressionForRef(String refId) {
+    final token = _refIdCompressionTokens[refId];
+    return token != null && !token.isCancelled;
+  }
+
   @override
   void dispose() {
     _disposed = true;
@@ -1082,6 +1089,8 @@ class UploadService with ChangeNotifier {
       String? processedLocalPath, // 🎯 ffmpeg 처리된 비디오 경로
     })
     onUploadComplete,
+    void Function(String nodeId, String processedLocalPath)?
+    onCompressionComplete,
     required void Function(String nodeId) onDeleteNode,
     required bool Function() isMounted,
     required BuildContext? context,
@@ -1187,6 +1196,7 @@ class UploadService with ChangeNotifier {
           file: file,
           nodeId: nodeId,
           onDeleteNode: onDeleteNode,
+          onCompressionComplete: onCompressionComplete,
           onUploadComplete: onUploadComplete,
           isMounted: isMounted,
           context: context,
@@ -1211,6 +1221,8 @@ class UploadService with ChangeNotifier {
     required File file,
     required String nodeId,
     required void Function(String nodeId) onDeleteNode,
+    void Function(String nodeId, String processedLocalPath)?
+    onCompressionComplete,
     required Future<void> Function(
       String nodeId,
       String url, {
@@ -1302,6 +1314,14 @@ class UploadService with ChangeNotifier {
           onDeleteNode(nodeId);
         }
         return;
+      }
+
+      // ✅ 압축 완료 즉시: 노드 localPath를 processed mp4로 교체하여
+      // video_player가 검정 화면 없이 바로 첫 프레임을 디코딩할 수 있게 함
+      try {
+        onCompressionComplete?.call(nodeId, mp4File.path);
+      } catch (e) {
+        debugPrint('[UploadService] onCompressionComplete 콜백 오류: $e');
       }
 
       final mp4FileName = mp4File.path.split('/').last;
@@ -1413,10 +1433,12 @@ class UploadService with ChangeNotifier {
       if (existingRefToken != null && existingRefToken.isCancelled) {
         debugPrint('[UploadService] ⚠️ refId 기반 압축이 이미 취소됨: refId=$refId');
         _refIdCompressionTokens.remove(refId);
+        notifyListeners();
         return null;
       }
       refToken = CancellationToken();
       _refIdCompressionTokens[refId] = refToken;
+      notifyListeners(); // ✅ "압축 시작"을 UI에 즉시 반영
     }
 
     // 🎯 에디터 ID별 토큰 생성 (에디터 전체 취소용)
@@ -1455,6 +1477,7 @@ class UploadService with ChangeNotifier {
       // 완료 후 토큰 제거
       if (refId != null) {
         _refIdCompressionTokens.remove(refId);
+        notifyListeners(); // ✅ "압축 종료"를 UI에 즉시 반영
       }
       // 🎯 에디터 토큰은 유지 (다른 압축이 진행 중일 수 있음)
       // 대신 압축 완료 시 현재 토큰과 비교하여 제거

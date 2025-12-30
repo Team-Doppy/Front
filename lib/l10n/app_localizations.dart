@@ -41,6 +41,7 @@ class AppLocalizations {
       'adjust': '조정',
       'crop': '자르기',
       'filter': '필터',
+      'rotation': '회전',
 
       // 설정 화면
       'settings': '설정',
@@ -623,6 +624,7 @@ class AppLocalizations {
       'adjust': 'Adjust',
       'crop': 'Crop',
       'filter': 'Filter',
+      'rotation': 'Rotation',
 
       // Settings Screen
       'settings': 'Settings',

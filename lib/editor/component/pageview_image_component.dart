@@ -995,9 +995,8 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
 
         if (immediateNeighbor is ParagraphNode) {
           final isEmpty = immediateNeighbor.text.text.trim().isEmpty;
-          final isTitle = immediateNeighbor.metadata['isTitle'] == true;
 
-          if (!isTitle && isEmpty) {
+          if (isEmpty) {
             final nextIndex = immediateIndex + direction;
             if (nextIndex >= 0 && nextIndex < doc.nodeCount) {
               final nextNeighbor = doc.getNodeAt(nextIndex);
@@ -1005,7 +1004,7 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                 return false;
               }
             }
-          } else if (!isTitle && !isEmpty) {
+          } else if (!isEmpty) {
             return false;
           }
         } else {
@@ -1025,8 +1024,7 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
 
       if (neighbor is ParagraphNode) {
         final isEmpty = neighbor.text.text.trim().isEmpty;
-        final isTitle = neighbor.metadata['isTitle'] == true;
-        if (!isTitle && !isEmpty) {
+        if (!isEmpty) {
           return false;
         }
       } else {

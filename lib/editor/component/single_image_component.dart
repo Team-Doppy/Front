@@ -3,10 +3,6 @@ import 'dart:typed_data';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/data/services/upload_service.dart';
-import 'package:doppy/editor/component/row_image_component.dart';
-import 'package:doppy/editor/component/pageview_image_component.dart';
-import 'package:doppy/editor/component/link_component.dart';
-import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
@@ -1172,12 +1168,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     if (immediateIndex >= 0 && immediateIndex < doc.nodeCount) {
       final immediateNeighbor = doc.getNodeAt(immediateIndex);
       if (immediateNeighbor != null) {
-        // 바로 인접한 노드가 특수 노드인 경우
-        if (immediateNeighbor is ImageNode ||
-            immediateNeighbor is ImageRowNode ||
-            immediateNeighbor is PageViewImageNode ||
-            immediateNeighbor is ClipNode ||
-            immediateNeighbor is LinkNode) {
+        // 바로 인접한 노드가 특수 노드인 경우 (정책은 NodeTypeChecker/config에서 단일 관리)
+        if (NodeTypeChecker.isSpecialNode(immediateNeighbor)) {
           return true;
         }
 
@@ -1185,10 +1177,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
         if (immediateNeighbor is ParagraphNode) {
           // ignore: deprecated_member_use
           final isEmpty = immediateNeighbor.text.text.trim().isEmpty;
-          final isTitle = immediateNeighbor.metadata['isTitle'] == true;
 
           // 빈 ParagraphNode면 그 다음 노드를 확인
-          if (!isTitle && isEmpty) {
+          if (isEmpty) {
             // 빈 ParagraphNode 다음 노드 확인
             final nextIndex = immediateIndex + direction;
             if (nextIndex >= 0 && nextIndex < doc.nodeCount) {
@@ -1199,7 +1190,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
               }
             }
             // 빈 ParagraphNode 다음에 특수 노드가 없으면 계속 검색
-          } else if (!isTitle && !isEmpty) {
+          } else if (!isEmpty) {
             // 텍스트가 있는 ParagraphNode → 패딩 필요
             return false;
           }
@@ -1225,9 +1216,8 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       if (neighbor is ParagraphNode) {
         // ignore: deprecated_member_use
         final isEmpty = neighbor.text.text.trim().isEmpty;
-        final isTitle = neighbor.metadata['isTitle'] == true;
-        // 제목이 아니고 비어있지 않으면 텍스트 노드이므로 패딩 필요
-        if (!isTitle && !isEmpty) {
+        // 비어있지 않으면 텍스트 노드이므로 패딩 필요
+        if (!isEmpty) {
           return false; // 텍스트 노드가 있으면 패딩 필요
         }
         // 빈 ParagraphNode면 계속 검색

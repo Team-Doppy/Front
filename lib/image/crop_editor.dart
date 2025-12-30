@@ -101,8 +101,8 @@ class ImageRectUtils {
     );
   }
 
-  /// 크롭 모드용 이미지 rect 계산 (항상 마진 적용)
-  /// 크롭 모드에서는 항상 이 함수를 사용하여 마진이 보장되도록 함
+  /// 크롭 모드용 이미지 rect 계산 (마진은 AnimatedPadding으로 처리)
+  /// 크롭 모드에서는 항상 이 함수를 사용하여 일관된 계산 보장
   static Rect computeImageRectForCrop({
     required Size containerSize,
     required Size imageSize,
@@ -114,10 +114,10 @@ class ImageRectUtils {
       imageSize: imageSize,
       scale: scale,
       offset: offset,
-      topMargin: 4.0,
-      bottomMargin: 4.0,
-      leftMargin: 4.0,
-      rightMargin: 4.0,
+      topMargin: 0.0, // ✅ 마진은 AnimatedPadding으로 처리
+      bottomMargin: 0.0,
+      leftMargin: 0.0,
+      rightMargin: 0.0,
     );
   }
 }
@@ -636,7 +636,7 @@ class RotationRulerSlider extends StatefulWidget {
     required this.textColor,
   });
 
-  final int value; // 0-360
+  final int value; // -45 ~ 45
   final ValueChanged<int> onChanged;
   final VoidCallback onDragStart;
   final VoidCallback onDragEnd;
@@ -661,11 +661,10 @@ class _RotationRulerSliderState extends State<RotationRulerSlider> {
     if (_dragStartX == null || _dragStartValue == null) return;
 
     final deltaX = details.localPosition.dx - _dragStartX!;
-    // ✅ 감도 높이기: 180 -> 240
-    final deltaDegree = (deltaX / width) * 240;
-    final newValue = (_dragStartValue! + deltaDegree.round()) % 360;
-    final normalizedValue = newValue < 0 ? newValue + 360 : newValue;
-    widget.onChanged(normalizedValue);
+    // ✅ ±45도 제한: 감도 조정
+    final deltaDegree = (deltaX / width) * 90; // ±45도 범위에 맞게 감도 조정
+    final newValue = (_dragStartValue! + deltaDegree.round()).clamp(-45, 45);
+    widget.onChanged(newValue);
   }
 
   void _onPanEnd(DragEndDetails details) {
@@ -685,13 +684,13 @@ class _RotationRulerSliderState extends State<RotationRulerSlider> {
               (details) => _onPanUpdate(details, constraints.maxWidth),
           onHorizontalDragEnd: _onPanEnd,
           child: SizedBox(
-            height: 50, // ✅ 필터와 동일한 높이
+            height: 40, // ✅ 슬라이더 높이 축소
             child: CustomPaint(
               painter: _RotationRulerPainter(
                 currentValue: widget.value,
                 textColor: widget.textColor,
               ),
-              size: Size(constraints.maxWidth, 50), // ✅ 필터와 동일한 높이
+              size: Size(constraints.maxWidth, 40), // ✅ 슬라이더 높이 축소
             ),
           ),
         );
@@ -708,12 +707,6 @@ class _RotationRulerPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final tickPaint =
-        Paint()
-          ..color = textColor.withOpacity(0.3) // ✅ 필터와 동일
-          ..strokeWidth = 1.5
-          ..strokeCap = StrokeCap.round;
-
     final majorTickPaint =
         Paint()
           ..color = textColor.withOpacity(0.5) // ✅ 필터와 동일
@@ -729,22 +722,27 @@ class _RotationRulerPainter extends CustomPainter {
     final centerX = size.width / 2;
     final bottomY = size.height - 8; // ✅ 필터와 동일하게 변경
 
-    const visibleRange = 90.0;
+    // ✅ ±45도 범위로 제한
+    const minDegree = -45.0;
+    const maxDegree = 45.0;
+    const visibleRange = 45.0; // 좌우 각각 45도
     final pixelsPerDegree = size.width / (visibleRange * 2);
 
-    // ✅ 가운데 바는 항상 표시
+    // ✅ 가운데 바는 항상 표시 (거의 위에 수치칩과 닿을 정도로 길게)
     canvas.drawLine(
       Offset(centerX, bottomY),
-      Offset(centerX, bottomY - 24), // ✅ 필터와 동일한 높이
+      Offset(centerX, bottomY - 40), // ✅ 더 길게 (24 -> 40)
       centerPaint,
     );
 
-    // ✅ 조정 슬라이더와 동일한 스타일: 더 큰 틱 간격 + 주요 틱 숫자 표시
-    const tickInterval = 5.0; // 5도 단위
-    for (double degree = 0; degree < 360; degree += tickInterval) {
-      var relative = degree - currentValue.toDouble();
-      if (relative > 180) relative -= 360;
-      if (relative < -180) relative += 360;
+    // ✅ 조정 슬라이더와 동일한 스타일: 대칭적인 눈금 표시
+    const tickInterval = 10.0; // ✅ 눈금 간격 축소 (15도 -> 10도)
+    for (
+      double degree = minDegree;
+      degree <= maxDegree;
+      degree += tickInterval
+    ) {
+      final relative = degree - currentValue.toDouble();
       if (relative.abs() > visibleRange) continue;
 
       final x = centerX + relative * pixelsPerDegree;
@@ -752,41 +750,31 @@ class _RotationRulerPainter extends CustomPainter {
       // ✅ 현재 값 위치는 건너뛰기 (가운데 바가 이미 그려졌으므로)
       if (relative.abs() < 0.5) continue;
 
-      final isMajor = (degree.round() % 25 == 0); // 25도 단위마다 주요 틱
+      // ✅ 모든 틱을 주요 틱으로 표시 (15도 간격: -45, -30, -15, 0, 15, 30, 45)
+      canvas.drawLine(
+        Offset(x, bottomY),
+        Offset(x, bottomY - 16),
+        majorTickPaint,
+      );
 
-      if (isMajor) {
-        canvas.drawLine(
-          Offset(x, bottomY),
-          Offset(x, bottomY - 16),
-          majorTickPaint,
-        );
-
-        // 숫자 표시 (현재 각도 기준 -180~180로 표기)
-        final raw = (currentValue + relative.round()) % 360;
-        final normalized = raw < 0 ? raw + 360 : raw;
-        final display = normalized > 180 ? normalized - 360 : normalized;
-        if (display != 0) {
-          final textSpan = TextSpan(
-            text: display.toString(),
-            style: TextStyle(
-              color: textColor.withOpacity(0.5),
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-            ),
-          );
-          final textPainter = TextPainter(
-            text: textSpan,
-            textDirection: TextDirection.ltr,
-          );
-          textPainter.layout();
-          textPainter.paint(
-            canvas,
-            Offset(x - textPainter.width / 2, bottomY - 32),
-          );
-        }
-      } else {
-        canvas.drawLine(Offset(x, bottomY), Offset(x, bottomY - 8), tickPaint);
-      }
+      // 숫자 표시 (대칭적으로)
+      final textSpan = TextSpan(
+        text: degree.toInt().toString(),
+        style: TextStyle(
+          color: textColor.withOpacity(0.5),
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+        ),
+      );
+      final textPainter = TextPainter(
+        text: textSpan,
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      textPainter.paint(
+        canvas,
+        Offset(x - textPainter.width / 2, bottomY - 32),
+      );
     }
   }
 
@@ -868,9 +856,8 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
   }
 
   Widget rotationBubble(BuildContext context) {
-    // 0-360 범위를 -180~180 범위로 변환 (359도 → -1도)
-    final displayRotation =
-        widget.rotation > 180 ? widget.rotation - 360 : widget.rotation;
+    // ✅ ±45도 범위로 제한된 값 그대로 표시
+    final displayRotation = widget.rotation;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bgColor =
         isDark ? AppColors.darkBackground : AppColors.lightBackground;
@@ -938,25 +925,7 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
                       : Row(
                         key: const ValueKey('top_row'),
                         children: [
-                          // 초기화 버튼
-                          circleButton(
-                            context: context,
-                            selected: false,
-                            onTap: widget.onResetAll,
-                            borderColor: fgColor,
-                            child: Icon(
-                              Icons.refresh,
-                              color: fgColor,
-                              size: 26,
-                            ),
-                          ),
-                          // 디바이더
-                          Container(
-                            width: 1,
-                            height: 40,
-                            margin: const EdgeInsets.symmetric(horizontal: 12),
-                            color: fgColor.withOpacity(0.2),
-                          ),
+                          // ✅ 리셋 버튼 제거
                           // 90도 회전 버튼
                           circleButton(
                             context: context,

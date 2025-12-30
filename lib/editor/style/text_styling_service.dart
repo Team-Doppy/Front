@@ -145,6 +145,12 @@ class TextStylingService extends ChangeNotifier {
         documentRange: selection,
         attributions: {spoilerAttribution},
       ),
+      // 🎯 스포일러 적용 후 선택(보라색 영역)을 해제하고 커서만 남김
+      ChangeSelectionRequest(
+        DocumentSelection.collapsed(position: selection.extent),
+        SelectionChangeType.placeCaret,
+        SelectionReason.userInteraction,
+      ),
     ]);
   }
 

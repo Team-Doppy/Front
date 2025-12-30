@@ -1,8 +1,6 @@
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/data/services/upload_service.dart';
-import 'package:doppy/editor/component/clip_component.dart';
-import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/utils/config.dart';
@@ -242,6 +240,9 @@ class ImageRowComponent extends StatefulWidget {
 
 class _ImageRowComponentState extends State<ImageRowComponent>
     with DocumentComponent, TickerProviderStateMixin {
+  // 요청: [ImgLife][Row] 로그는 잠시 숨김
+  static const bool _kImgLifeRowLogs = false;
+
   // ✅ 같은 URL 이미지가 리빌드/재해결 과정에서 잠깐 frame=null이 되어도
   // 마지막으로 성공적으로 렌더된 child를 유지해서 "사라졌다가 다시 뜨는" 깜빡임을 줄인다.
   final Map<String, Widget> _lastRenderedByUrl = <String, Widget>{};
@@ -491,9 +492,11 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   void initState() {
     super.initState();
     assert(() {
-      debugPrint(
-        '[ImgLife][Row] init: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}, urls=${widget.imageUrls.length}',
-      );
+      if (_kImgLifeRowLogs) {
+        debugPrint(
+          '[ImgLife][Row] init: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}, urls=${widget.imageUrls.length}',
+        );
+      }
       return true;
     }());
 
@@ -534,13 +537,15 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     // 🎯 이미지 URL이 변경되면 무조건 재측정 (병합 포함)
     final urlsChanged = !_areUrlsEqual(oldWidget.imageUrls, widget.imageUrls);
     assert(() {
-      debugPrint(
-        '[ImgLife][Row] didUpdateWidget: nodeId=${widget.nodeId}, urlsChanged=$urlsChanged, oldCount=${oldWidget.imageUrls.length}, newCount=${widget.imageUrls.length}',
-      );
-      if (urlsChanged) {
+      if (_kImgLifeRowLogs) {
         debugPrint(
-          '[ImgLife][Row] urls(old)=${oldWidget.imageUrls}\n[ImgLife][Row] urls(new)=${widget.imageUrls}',
+          '[ImgLife][Row] didUpdateWidget: nodeId=${widget.nodeId}, urlsChanged=$urlsChanged, oldCount=${oldWidget.imageUrls.length}, newCount=${widget.imageUrls.length}',
         );
+        if (urlsChanged) {
+          debugPrint(
+            '[ImgLife][Row] urls(old)=${oldWidget.imageUrls}\n[ImgLife][Row] urls(new)=${widget.imageUrls}',
+          );
+        }
       }
       return true;
     }());
@@ -608,9 +613,11 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   @override
   void dispose() {
     assert(() {
-      debugPrint(
-        '[ImgLife][Row] dispose: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}',
-      );
+      if (_kImgLifeRowLogs) {
+        debugPrint(
+          '[ImgLife][Row] dispose: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}',
+        );
+      }
       return true;
     }());
     _controller.dispose();
@@ -1762,35 +1769,28 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     if (immediateIndex >= 0 && immediateIndex < doc.nodeCount) {
       final immediateNeighbor = doc.getNodeAt(immediateIndex);
       if (immediateNeighbor != null) {
-        // 바로 인접한 노드가 특수 노드인 경우
-        if (immediateNeighbor is ImageNode ||
-            immediateNeighbor is ImageRowNode ||
-            immediateNeighbor is ClipNode ||
-            immediateNeighbor is LinkNode) {
+        // 바로 인접한 노드가 특수 노드인 경우 (정책은 NodeTypeChecker/config에서 단일 관리)
+        if (NodeTypeChecker.isSpecialNode(immediateNeighbor)) {
           return true;
         }
 
         // 바로 인접한 노드가 빈 ParagraphNode인 경우
         if (immediateNeighbor is ParagraphNode) {
           final isEmpty = immediateNeighbor.text.text.trim().isEmpty;
-          final isTitle = immediateNeighbor.metadata['isTitle'] == true;
 
           // 빈 ParagraphNode면 그 다음 노드를 확인
-          if (!isTitle && isEmpty) {
+          if (isEmpty) {
             // 빈 ParagraphNode 다음 노드 확인
             final nextIndex = immediateIndex + direction;
             if (nextIndex >= 0 && nextIndex < doc.nodeCount) {
               final nextNeighbor = doc.getNodeAt(nextIndex);
-              if (nextNeighbor is ImageNode ||
-                  nextNeighbor is ImageRowNode ||
-                  nextNeighbor is ClipNode ||
-                  nextNeighbor is LinkNode) {
+              if (NodeTypeChecker.isSpecialNode(nextNeighbor)) {
                 // 빈 ParagraphNode를 사이에 둔 특수 노드 → 패딩 필요 (false 반환)
                 return false;
               }
             }
             // 빈 ParagraphNode 다음에 특수 노드가 없으면 계속 검색
-          } else if (!isTitle && !isEmpty) {
+          } else if (!isEmpty) {
             // 텍스트가 있는 ParagraphNode → 패딩 필요
             return false;
           }
@@ -1808,19 +1808,15 @@ class _ImageRowComponentState extends State<ImageRowComponent>
       if (neighbor == null) break;
 
       // 특수 노드인 경우
-      if (neighbor is ImageNode ||
-          neighbor is ImageRowNode ||
-          neighbor is ClipNode ||
-          neighbor is LinkNode) {
+      if (NodeTypeChecker.isSpecialNode(neighbor)) {
         return true;
       }
 
       // 빈 ParagraphNode가 아니면 (텍스트가 있는 경우) 패딩 필요
       if (neighbor is ParagraphNode) {
         final isEmpty = neighbor.text.text.trim().isEmpty;
-        final isTitle = neighbor.metadata['isTitle'] == true;
-        // 제목이 아니고 비어있지 않으면 텍스트 노드이므로 패딩 필요
-        if (!isTitle && !isEmpty) {
+        // 비어있지 않으면 텍스트 노드이므로 패딩 필요
+        if (!isEmpty) {
           return false; // 텍스트 노드가 있으면 패딩 필요
         }
         // 빈 ParagraphNode면 계속 검색

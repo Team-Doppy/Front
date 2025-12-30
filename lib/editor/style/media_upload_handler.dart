@@ -514,6 +514,10 @@ class MediaUploadHandler {
       onUpdateThumbnail: (nodeId, thumbnailPath) {
         editorService.updateVideoThumbnail(nodeId, thumbnailPath);
       },
+      onCompressionComplete: (nodeId, processedLocalPath) {
+        // ✅ 압축 완료 즉시 노드 localPath를 교체하여 검정 화면 방지
+        editorService.updateVideoLocalPath(nodeId, processedLocalPath);
+      },
       onUploadComplete: (
         nodeId,
         url, {

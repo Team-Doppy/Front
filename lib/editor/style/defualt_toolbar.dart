@@ -1687,8 +1687,12 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder:
-          (context) => Container(
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) {
+        return SizedBox(
+          height: 200,
+          child: Container(
             padding: const EdgeInsets.only(
               top: 20,
               left: 20,
@@ -1702,7 +1706,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
               ),
             ),
             child: Column(
-              mainAxisSize: MainAxisSize.min,
+              mainAxisSize: MainAxisSize.max,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -1775,6 +1780,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
               ],
             ),
           ),
+        );
+      },
     );
   }
 }

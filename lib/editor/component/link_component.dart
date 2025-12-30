@@ -1,7 +1,8 @@
 import 'dart:ui';
 
-import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/utils/config.dart';
+import 'package:doppy/editor/utils/node_type_checker.dart';
+import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -10,7 +11,6 @@ import 'package:doppy/editor/utils/drop_line_config.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
-import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
@@ -22,7 +22,8 @@ class LinkNode extends BlockNode {
     this.title = '',
     this.description = '',
     this.thumbnailUrl = '',
-  });
+    Map<String, dynamic>? metadata,
+  }) : _metadata = metadata ?? const {};
 
   @override
   bool get isDeletable => true;
@@ -34,6 +35,10 @@ class LinkNode extends BlockNode {
   final String title;
   final String description;
   final String thumbnailUrl;
+  final Map<String, dynamic> _metadata;
+
+  @override
+  Map<String, dynamic> get metadata => _metadata;
 
   @override
   bool containsPosition(Object position) =>
@@ -70,6 +75,7 @@ class LinkNode extends BlockNode {
       title: title,
       description: description,
       thumbnailUrl: thumbnailUrl,
+      metadata: newMetadata,
     );
   }
 
@@ -84,6 +90,7 @@ class LinkNode extends BlockNode {
       title: title,
       description: description,
       thumbnailUrl: thumbnailUrl,
+      metadata: {...metadata, ...newProperties},
     );
   }
 }
@@ -193,8 +200,53 @@ class _LinkComponentState extends State<_LinkComponent>
     with TickerProviderStateMixin, DocumentComponent {
   GlobalKey get componentKey => widget._componentKey;
 
-  static const double marginTop = 4;
-  static const double marginBottom = 2;
+  static const double marginTop = 2.5;
+  static const double marginBottom = 2.5;
+
+  // ✅ 링크 썸네일도 이미지 컴포넌트처럼 "마지막 성공 렌더"를 캐시해서 깜빡임을 줄인다.
+  Widget? _lastRenderedThumbnail;
+
+  Widget _buildThumbnail(BoxConstraints constraints) {
+    final decodeWidth =
+        widget.isEditing
+            ? EditorImageProvider.editingDecodeWidth(
+              context,
+              constraints.maxWidth,
+            )
+            : null;
+
+    final built = EditorImageProvider.build(
+      url: widget.thumbnailUrl,
+      isEditing: widget.isEditing,
+      decodeWidth: decodeWidth,
+    );
+
+    return Image(
+      image: built.effectiveProvider,
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.low,
+      gaplessPlayback: true,
+      frameBuilder: (context, child, frame, wasSyncLoaded) {
+        if (wasSyncLoaded || frame != null) {
+          _lastRenderedThumbnail = child;
+          return child;
+        }
+        return _lastRenderedThumbnail ?? _buildIconPlaceholder();
+      },
+      errorBuilder: (_, __, ___) => _buildIconPlaceholder(),
+    );
+  }
+
+  bool _isCompactViewMode(Document? doc) {
+    try {
+      final node = doc?.getNodeById(widget.nodeId);
+      if (node is LinkNode) {
+        final v = node.metadata['viewMode'] as String?;
+        return v == 'compact';
+      }
+    } catch (_) {}
+    return false;
+  }
 
   // 🎯 특수 노드 사이 클릭 감지 플래그
   bool _isSpecialNodeGapTap = false;
@@ -217,13 +269,7 @@ class _LinkComponentState extends State<_LinkComponent>
     if (currentNodeIndex > 0) {
       final prevNode = doc.getNodeAt(currentNodeIndex - 1);
       if (prevNode != null) {
-        final isSpecialPrev =
-            prevNode is ImageNode ||
-            prevNode is ImageRowNode ||
-            prevNode is ClipNode ||
-            prevNode is LinkNode;
-
-        if (isSpecialPrev) {
+        if (NodeTypeChecker.isSpecialNode(prevNode)) {
           final prevRect = dragService.getNodeGlobalRect(prevNode.id);
           if (prevRect != null) {
             // 위쪽 노드와 자신 사이의 간격 확인 (위쪽 노드 아래 20px ~ 자신 위쪽 20px)
@@ -245,13 +291,7 @@ class _LinkComponentState extends State<_LinkComponent>
     if (currentNodeIndex < doc.nodeCount - 1) {
       final nextNode = doc.getNodeAt(currentNodeIndex + 1);
       if (nextNode != null) {
-        final isSpecialNext =
-            nextNode is ImageNode ||
-            nextNode is ImageRowNode ||
-            nextNode is ClipNode ||
-            nextNode is LinkNode;
-
-        if (isSpecialNext) {
+        if (NodeTypeChecker.isSpecialNode(nextNode)) {
           final nextRect = dragService.getNodeGlobalRect(nextNode.id);
           if (nextRect != null) {
             // 자신과 아래쪽 노드 사이의 간격 확인 (자신 아래 20px ~ 아래쪽 노드 위쪽 20px)
@@ -417,10 +457,20 @@ class _LinkComponentState extends State<_LinkComponent>
   @override
   Widget build(BuildContext context) {
     // 🎯 읽기 모드에서도 doc에 접근하여 특수 노드 간격 확인 (포스트 라이트와 동일하게)
-    // ignore: invalid_use_of_visible_for_testing_member
-    final seState = context.findAncestorStateOfType<SuperEditorState>();
-    // ignore: invalid_use_of_visible_for_testing_member
-    final doc = seState?.editContext.editor.document;
+    // ✅ metadata 기반 렌더링(간략/풀)과 이웃 노드 판정은 EditorService의 문서를 기준으로 한다.
+    // (SuperEditorState.editContext 접근은 패키지 내부 제한으로 lint 경고 발생)
+    final editorService = widget.dragService?.editorService;
+    // ✅ 편집 모드에서는 EditorService.document, 읽기 모드(드래그 서비스 없음)에서는 SuperEditorState로 fallback
+    Document? doc = editorService?.document;
+    if (doc == null) {
+      // ignore: invalid_use_of_visible_for_testing_member
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_visible_for_testing_member
+      doc = seState?.editContext.editor.document;
+    }
+
+    final composerSelection =
+        editorService?.editor.composer.selectionNotifier.value;
 
     // 이웃하는 특수 노드 체크 (이미지, 클립, 링크)
     final bool hasImageAbove =
@@ -434,243 +484,236 @@ class _LinkComponentState extends State<_LinkComponent>
 
     // 🎯 downstream 위치에 커서가 있을 때도 selection 효과 표시
     bool isDownstreamSelected = false;
-    if (widget.isEditing && seState != null) {
-      // ignore: invalid_use_of_visible_for_testing_member
-      final selection = seState.editContext.composer.selection;
-      if (selection != null &&
-          selection.isCollapsed &&
-          selection.extent.nodeId == widget.nodeId) {
-        final position = selection.extent.nodePosition;
-        if (position is UpstreamDownstreamNodePosition &&
-            position == const UpstreamDownstreamNodePosition.downstream()) {
-          isDownstreamSelected = true;
-        }
+    if (composerSelection != null &&
+        composerSelection.isCollapsed &&
+        composerSelection.extent.nodeId == widget.nodeId) {
+      final position = composerSelection.extent.nodePosition;
+      if (position is UpstreamDownstreamNodePosition &&
+          position == const UpstreamDownstreamNodePosition.downstream()) {
+        isDownstreamSelected = true;
       }
     }
 
+    // 🎯 selection 핸들이 링크 노드를 포함할 때만, 그리고 경계가 링크인 경우 Downstream일 때만 하이라이트
     bool isSelectionHighlighted = false;
-    if (widget.isEditing && seState != null && doc != null) {
-      // ignore: invalid_use_of_visible_for_testing_member
-      final selection = seState.editContext.composer.selection;
-      if (selection != null && !selection.isCollapsed) {
-        isSelectionHighlighted = _isNodeCoveredBySelection(
-          doc,
-          selection,
-          widget.nodeId,
-        );
-      }
+    if (composerSelection != null &&
+        !composerSelection.isCollapsed &&
+        doc != null) {
+      isSelectionHighlighted = _isNodeCoveredBySelection(
+        doc,
+        composerSelection,
+        widget.nodeId,
+      );
     }
 
-    final card = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque, // 🎯 불투명 영역만 탭 감지
-        onTapDown:
-            widget.isEditing && widget.dragService != null
-                ? (details) {
-                  // 특수 노드 사이/마지막 노드 아래 빈 문단 추가 처리
-                  final isGapTap = _handleSpecialNodeTap(
-                    details.globalPosition,
-                  );
-                  setState(() {
-                    _isSpecialNodeGapTap = isGapTap;
-                  });
-                }
-                : null,
-        onTap:
-            widget.isEditing
-                ? () {
-                  // 🎯 특수 노드 사이 클릭이면 셀렉 보류
-                  if (_isSpecialNodeGapTap) {
-                    setState(() {
-                      _isSpecialNodeGapTap = false;
-                    });
-                    return;
-                  }
-                  imageService.selectImage(widget.nodeId);
-                }
-                : null,
-        onLongPressStart:
-            widget.isEditing
-                ? (details) {
-                  // 편집 모드: 드래그 시작
-                  if (widget.dragService != null) {
-                    // 키보드 내리기
-                    final keyboardVisible =
-                        MediaQuery.of(context).viewInsets.bottom > 0;
-                    if (keyboardVisible) {
-                      FocusScope.of(context).unfocus();
-                    }
-                    // 드래그 시작
-                    widget.dragService!.startDrag(
-                      widget.nodeId,
-                      context,
-                      details.globalPosition,
-                    );
-                  }
-                }
-                : (d) => _showPreview(d.globalPosition),
-        onLongPressMoveUpdate:
-            widget.isEditing
-                ? (details) {
-                  // 편집 모드: 드래그 업데이트
-                  if (widget.dragService != null) {
-                    widget.dragService!.updateDrag(
-                      details.globalPosition,
-                      context,
-                    );
-                  }
-                }
-                : (d) => _updatePreviewPosition(d.globalPosition),
-        onLongPressEnd:
-            widget.isEditing
-                ? (_) {
-                  // 편집 모드: 드래그 종료
-                  if (widget.dragService != null) {
-                    widget.dragService!.endDrag();
-                  }
-                }
-                : (_) => _hidePreview(),
-        child: Container(
-          margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
-          decoration: BoxDecoration(
-            color: widget.isDarkMode ? const Color(0xFF1C1C1E) : Colors.white,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 위: 썸네일
-              if (widget.thumbnailUrl.isNotEmpty)
-                AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: Image.network(
-                    widget.thumbnailUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _buildIconPlaceholder(),
-                  ),
-                )
-              else
-                AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: _buildIconPlaceholder(),
-                ),
-
-              // 아래: 텍스트 정보
-              Container(
+    // 🎯 RepaintBoundary로 감싸서 키보드 애니메이션 시 불필요한 repaint 방지
+    return RepaintBoundary(
+      child: Column(
+        children: [
+          if (!hasImageAbove)
+            SizedBox(height: EditorConfig.specialNodePaddingWithText),
+          // 실제 링크 내용
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // ✅ 좌우 패딩은 stylesheet(`style_sheet.dart`)에서 LinkNode에 이미 적용한다.
+              // 여기서 또 20px 패딩을 주면 내용만 안으로 밀리고 caret/selection은 바깥 기준으로 잡혀
+              // "링크 옆 여백"처럼 보인다.
+              final linkContent = Container(
                 decoration: BoxDecoration(
                   color:
                       widget.isDarkMode
                           ? const Color(0xFF1C1C1E)
-                          : Colors.grey.shade100,
+                          : Colors.white,
                 ),
-                padding: const EdgeInsets.all(16),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // 제목
-                    Text(
-                      widget.title.isNotEmpty ? widget.title : widget.url,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: widget.isDarkMode ? Colors.white : Colors.black,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
-                        height: 1.3,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    // URL
-                    Text(
-                      widget.url,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
+                    // ✅ 표시 모드: full(default)=썸네일까지 표시, compact=썸네일 영역 제거
+                    if (!_isCompactViewMode(doc))
+                      if (widget.thumbnailUrl.isNotEmpty)
+                        AspectRatio(
+                          aspectRatio: 16 / 9,
+                          child: _buildThumbnail(constraints),
+                        )
+                      else
+                        AspectRatio(
+                          aspectRatio: 16 / 9,
+                          child: _buildIconPlaceholder(),
+                        ),
+
+                    // 아래: 텍스트 정보
+                    Container(
+                      decoration: BoxDecoration(
                         color:
                             widget.isDarkMode
-                                ? Colors.white.withOpacity(0.5)
-                                : Colors.black.withOpacity(0.5),
-                        fontSize: 14,
-                        height: 1.2,
+                                ? const Color(0xFF1C1C1E)
+                                : Colors.grey.shade100,
+                      ),
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 제목
+                          Text(
+                            widget.title.isNotEmpty ? widget.title : widget.url,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color:
+                                  widget.isDarkMode
+                                      ? Colors.white
+                                      : Colors.black,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                              height: 1.3,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          // URL
+                          Text(
+                            widget.url,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color:
+                                  widget.isDarkMode
+                                      ? Colors.white.withOpacity(0.5)
+                                      : Colors.black.withOpacity(0.5),
+                              fontSize: 14,
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+              );
 
-    return Column(
-      children: [
-        if (!hasImageAbove)
-          SizedBox(height: EditorConfig.specialNodePaddingWithText),
-        Stack(
-          children: [
-            card,
-            // 선택 하이라이트 오버레이 (편집 모드에서만)
-            if (widget.isEditing && isSelectionHighlighted)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: Container(
-                    margin: EdgeInsets.only(
-                      top: marginTop,
-                      bottom: marginBottom,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.4),
+              return Stack(
+                children: [
+                  // 🎯 편집 모드에서 탭/롱프레스 처리
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown:
+                        widget.isEditing && widget.dragService != null
+                            ? (details) {
+                              // 특수 노드 사이/마지막 노드 아래 빈 문단 추가 처리
+                              final isGapTap = _handleSpecialNodeTap(
+                                details.globalPosition,
+                              );
+                              setState(() {
+                                _isSpecialNodeGapTap = isGapTap;
+                              });
+                            }
+                            : null,
+                    onTap:
+                        widget.isEditing && widget.dragService != null
+                            ? () {
+                              // 🎯 특수 노드 사이 클릭이면 셀렉 보류
+                              if (_isSpecialNodeGapTap) {
+                                setState(() {
+                                  _isSpecialNodeGapTap = false;
+                                });
+                                return;
+                              }
+                              imageService.selectImage(widget.nodeId);
+                            }
+                            : null,
+                    onLongPressStart:
+                        widget.isEditing && widget.dragService != null
+                            ? (details) {
+                              // 🎯 키보드 내리기 + 포커스 해제 (드래그 시작 시)
+                              FocusManager.instance.primaryFocus?.unfocus();
+                              FocusScope.of(context).unfocus();
+                              // 드래그 시작
+                              widget.dragService!.startDrag(
+                                widget.nodeId,
+                                context,
+                                details.globalPosition,
+                              );
+                            }
+                            : (d) => _showPreview(d.globalPosition),
+                    onLongPressMoveUpdate:
+                        widget.isEditing && widget.dragService != null
+                            ? (details) {
+                              // 드래그 업데이트
+                              widget.dragService!.updateDrag(
+                                details.globalPosition,
+                                context,
+                              );
+                            }
+                            : (d) => _updatePreviewPosition(d.globalPosition),
+                    onLongPressEnd:
+                        widget.isEditing && widget.dragService != null
+                            ? (_) {
+                              // 드래그 종료
+                              widget.dragService!.endDrag();
+                            }
+                            : (_) => _hidePreview(),
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        top: marginTop,
+                        bottom: marginBottom,
+                      ),
+                      child: Stack(
+                        children: [
+                          linkContent,
+                          if (isSelectionHighlighted)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: Container(
+                                  color: AppColors.primary.withOpacity(0.4),
+                                ),
+                              ),
+                            ),
+                          if (isSelected || isDownstreamSelected)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                      color: AppColors.primary,
+                                      width: 3,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ),
-            // 선택 테두리 (편집 모드에서만)
-            if (widget.isEditing && (isSelected || isDownstreamSelected))
-              Positioned(
-                top: 0,
-                bottom: 0,
-                left: 20,
-                right: 20,
-                child: IgnorePointer(
-                  child: Container(
-                    margin: EdgeInsets.only(
-                      top: marginTop,
-                      bottom: marginBottom,
+                  // 드래그 삽입 라인 (편집 모드에서만)
+                  if (widget.isEditing && _shouldShowTopDropLine())
+                    Positioned(
+                      top: 0,
+                      left: 20,
+                      right: 20,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Container(height: 5, color: AppColors.primary),
+                      ),
                     ),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: AppColors.primary, width: 3),
+                  if (widget.isEditing && _shouldShowBottomDropLine())
+                    Positioned(
+                      bottom: 0,
+                      left: 20,
+                      right: 20,
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Container(height: 5, color: AppColors.primary),
+                      ),
                     ),
-                  ),
-                ),
-              ),
-            // 드래그 삽입 라인 (편집 모드에서만)
-            if (widget.isEditing && _shouldShowTopDropLine())
-              Positioned(
-                top: 0,
-                left: 20,
-                right: 20,
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Container(height: 5, color: AppColors.primary),
-                ),
-              ),
-            if (widget.isEditing && _shouldShowBottomDropLine())
-              Positioned(
-                bottom: 0,
-                left: 20,
-                right: 20,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Container(height: 5, color: AppColors.primary),
-                ),
-              ),
-          ],
-        ),
-        // 아래쪽 패딩: 링크나 이미지, 멘션이 아래에 있으면 패딩 제거
-        if (!hasImageBelow)
-          SizedBox(height: EditorConfig.specialNodePaddingWithText),
-      ],
+                ],
+              );
+            },
+          ),
+          // 아래쪽 패딩: 링크나 이미지, 멘션이 아래에 있으면 패딩 제거
+          if (!hasImageBelow)
+            SizedBox(height: EditorConfig.specialNodePaddingWithText),
+        ],
+      ),
     );
   }
 
@@ -823,34 +866,27 @@ class _LinkComponentState extends State<_LinkComponent>
       final immediateNeighbor = doc.getNodeAt(immediateIndex);
       if (immediateNeighbor != null) {
         // 바로 인접한 노드가 특수 노드인 경우
-        if (immediateNeighbor is ImageNode ||
-            immediateNeighbor is ImageRowNode ||
-            immediateNeighbor is ClipNode ||
-            immediateNeighbor is LinkNode) {
+        if (isSpecialNode(immediateNeighbor)) {
           return true;
         }
 
         // 바로 인접한 노드가 빈 ParagraphNode인 경우
         if (immediateNeighbor is ParagraphNode) {
           final isEmpty = immediateNeighbor.text.text.trim().isEmpty;
-          final isTitle = immediateNeighbor.metadata['isTitle'] == true;
 
           // 빈 ParagraphNode면 그 다음 노드를 확인
-          if (!isTitle && isEmpty) {
+          if (isEmpty) {
             // 빈 ParagraphNode 다음 노드 확인
             final nextIndex = immediateIndex + direction;
             if (nextIndex >= 0 && nextIndex < doc.nodeCount) {
               final nextNeighbor = doc.getNodeAt(nextIndex);
-              if (nextNeighbor is ImageNode ||
-                  nextNeighbor is ImageRowNode ||
-                  nextNeighbor is ClipNode ||
-                  nextNeighbor is LinkNode) {
+              if (isSpecialNode(nextNeighbor)) {
                 // 빈 ParagraphNode를 사이에 둔 특수 노드 → 패딩 필요 (false 반환)
                 return false;
               }
             }
             // 빈 ParagraphNode 다음에 특수 노드가 없으면 계속 검색
-          } else if (!isTitle && !isEmpty) {
+          } else if (!isEmpty) {
             // 텍스트가 있는 ParagraphNode → 패딩 필요
             return false;
           }
@@ -868,19 +904,15 @@ class _LinkComponentState extends State<_LinkComponent>
       if (neighbor == null) break;
 
       // 특수 노드인 경우
-      if (neighbor is ImageNode ||
-          neighbor is ImageRowNode ||
-          neighbor is ClipNode ||
-          neighbor is LinkNode) {
+      if (isSpecialNode(neighbor)) {
         return true;
       }
 
       // 빈 ParagraphNode가 아니면 (텍스트가 있는 경우) 패딩 필요
       if (neighbor is ParagraphNode) {
         final isEmpty = neighbor.text.text.trim().isEmpty;
-        final isTitle = neighbor.metadata['isTitle'] == true;
-        // 제목이 아니고 비어있지 않으면 텍스트 노드이므로 패딩 필요
-        if (!isTitle && !isEmpty) {
+        // 비어있지 않으면 텍스트 노드이므로 패딩 필요
+        if (!isEmpty) {
           return false; // 텍스트 노드가 있으면 패딩 필요
         }
         // 빈 ParagraphNode면 계속 검색

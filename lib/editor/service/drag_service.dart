@@ -809,26 +809,7 @@ class DragService extends ChangeNotifier {
     // 첫 행(타이틀 아래) 배치 허용: 타이틀을 건드리지 않되, 그 아래로는 허용
     // finalCandidate가 0이면 이후 타이틀 보정에서 +1 처리됨
 
-    // 타이틀 고정: 타이틀(isTitle=true) 위로는 드롭 불가 → 항상 타이틀 바로 아래로 보정
-    try {
-      if (finalCandidate != null) {
-        final doc = editorService.document;
-        // 🎯 문서에 노드가 있는지 확인
-        if (doc.nodeCount > 0) {
-          int titleIndex = -1;
-          final n = doc.getNodeAt(0);
-          if (n is ParagraphNode && (n.metadata['isTitle'] == true)) {
-            titleIndex = 0;
-          }
-          // 타이틀 바로 아래로 최소 보정. 타이틀 없으면 보정 생략
-          if (titleIndex != -1 && finalCandidate <= titleIndex) {
-            finalCandidate = titleIndex + 1;
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('[DragService] ⚠️ 타이틀 노드 체크 중 오류: $e');
-    }
+    // 제목은 썸네일 편집 화면에서 입력하므로 제목 위로 드롭 불가 로직 제거됨
 
     // 가로배치 모드일 때는 dropIndex를 null로 설정 (가로라인 표시 안함)
     if (dragMode == DragType.imageRowMerge) {

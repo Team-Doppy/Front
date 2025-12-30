@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/utils/config.dart';
+import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
@@ -16,8 +17,6 @@ import 'package:doppy/editor/utils/drop_line_config.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
-import 'package:doppy/editor/component/row_image_component.dart';
-import 'package:doppy/editor/component/link_component.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
@@ -378,13 +377,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     if (currentNodeIndex > 0) {
       final prevNode = doc.getNodeAt(currentNodeIndex - 1);
       if (prevNode != null) {
-        final isSpecialPrev =
-            prevNode is ImageNode ||
-            prevNode is ImageRowNode ||
-            prevNode is ClipNode ||
-            prevNode is LinkNode;
-
-        if (isSpecialPrev) {
+        if (NodeTypeChecker.isSpecialNode(prevNode)) {
           final prevRect = dragService.getNodeGlobalRect(prevNode.id);
           if (prevRect != null) {
             // 위쪽 노드와 자신 사이의 간격 확인 (위쪽 노드 아래 20px ~ 자신 위쪽 20px)
@@ -406,13 +399,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     if (currentNodeIndex < doc.nodeCount - 1) {
       final nextNode = doc.getNodeAt(currentNodeIndex + 1);
       if (nextNode != null) {
-        final isSpecialNext =
-            nextNode is ImageNode ||
-            nextNode is ImageRowNode ||
-            nextNode is ClipNode ||
-            nextNode is LinkNode;
-
-        if (isSpecialNext) {
+        if (NodeTypeChecker.isSpecialNode(nextNode)) {
           final nextRect = dragService.getNodeGlobalRect(nextNode.id);
           if (nextRect != null) {
             // 자신과 아래쪽 노드 사이의 간격 확인 (자신 아래 20px ~ 아래쪽 노드 위쪽 20px)
@@ -961,35 +948,28 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     if (immediateIndex >= 0 && immediateIndex < doc.nodeCount) {
       final immediateNeighbor = doc.getNodeAt(immediateIndex);
       if (immediateNeighbor != null) {
-        // 바로 인접한 노드가 특수 노드인 경우
-        if (immediateNeighbor is ImageNode ||
-            immediateNeighbor is ImageRowNode ||
-            immediateNeighbor is ClipNode ||
-            immediateNeighbor is LinkNode) {
+        // 바로 인접한 노드가 특수 노드인 경우 (정책은 NodeTypeChecker/config에서 단일 관리)
+        if (NodeTypeChecker.isSpecialNode(immediateNeighbor)) {
           return true;
         }
 
         // 바로 인접한 노드가 빈 ParagraphNode인 경우
         if (immediateNeighbor is ParagraphNode) {
           final isEmpty = immediateNeighbor.text.text.trim().isEmpty;
-          final isTitle = immediateNeighbor.metadata['isTitle'] == true;
 
           // 빈 ParagraphNode면 그 다음 노드를 확인
-          if (!isTitle && isEmpty) {
+          if (isEmpty) {
             // 빈 ParagraphNode 다음 노드 확인
             final nextIndex = immediateIndex + direction;
             if (nextIndex >= 0 && nextIndex < doc.nodeCount) {
               final nextNeighbor = doc.getNodeAt(nextIndex);
-              if (nextNeighbor is ImageNode ||
-                  nextNeighbor is ImageRowNode ||
-                  nextNeighbor is ClipNode ||
-                  nextNeighbor is LinkNode) {
+              if (NodeTypeChecker.isSpecialNode(nextNeighbor)) {
                 // 빈 ParagraphNode를 사이에 둔 특수 노드 → 패딩 필요 (false 반환)
                 return false;
               }
             }
             // 빈 ParagraphNode 다음에 특수 노드가 없으면 계속 검색
-          } else if (!isTitle && !isEmpty) {
+          } else if (!isEmpty) {
             // 텍스트가 있는 ParagraphNode → 패딩 필요
             return false;
           }
@@ -1007,19 +987,15 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       if (neighbor == null) break;
 
       // 특수 노드인 경우
-      if (neighbor is ImageNode ||
-          neighbor is ImageRowNode ||
-          neighbor is ClipNode ||
-          neighbor is LinkNode) {
+      if (NodeTypeChecker.isSpecialNode(neighbor)) {
         return true;
       }
 
       // 빈 ParagraphNode가 아니면 (텍스트가 있는 경우) 패딩 필요
       if (neighbor is ParagraphNode) {
         final isEmpty = neighbor.text.text.trim().isEmpty;
-        final isTitle = neighbor.metadata['isTitle'] == true;
-        // 제목이 아니고 비어있지 않으면 텍스트 노드이므로 패딩 필요
-        if (!isTitle && !isEmpty) {
+        // 비어있지 않으면 텍스트 노드이므로 패딩 필요
+        if (!isEmpty) {
           return false; // 텍스트 노드가 있으면 패딩 필요
         }
         // 빈 ParagraphNode면 계속 검색
@@ -1039,14 +1015,50 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
 
     // 🎯 업로드 중 상태 확인 (편집 모드에서만, Selector로 최적화)
     bool isUploading = false;
+    bool isCompressing = false;
     if (widget.isEditing) {
       try {
         isUploading = context.select<UploadService, bool>(
           (service) => service.hasActiveUploadForRef(widget.nodeId),
         );
+        isCompressing = context.select<UploadService, bool>(
+          (service) => service.hasActiveCompressionForRef(widget.nodeId),
+        );
       } catch (e) {
         debugPrint('[ClipComponent] UploadService 확인 실패: $e');
       }
+    }
+
+    // ✅ 압축 중에는 원본 영상 컨트롤러를 만들지 않고 썸네일+로딩만 노출 (검정 화면 방지)
+    if (isCompressing) {
+      _loadMetadataAspectRatio();
+      final double aspect = _metadataAspectRatio ?? (16 / 9);
+      return AspectRatio(
+        aspectRatio: aspect,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _VideoPlayerWidget.buildThumbnailFallback(
+              context: context,
+              thumbnailPath: widget.thumbnailPath,
+              isDarkMode: widget.isDarkMode,
+            ),
+            Container(
+              color: Colors.black.withOpacity(0.25),
+              child: const Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 4,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
     // 🎯 로컬 파일 경로가 있으면 바로 비디오 플레이어 표시 (썸네일 X)
@@ -1063,6 +1075,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
           isDarkMode: widget.isDarkMode,
           horizontalPadding: 0.0, // 🎯 더 이상 사용 안 함
           isUploading: isUploading, // 업로드 중 표시
+          isProcessing: false,
           dragService: widget.dragService, // 🎯 dragService 전달
         ),
       );
@@ -1080,6 +1093,8 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
           isEditing: widget.isEditing,
           isDarkMode: widget.isDarkMode,
           horizontalPadding: 0.0, // 🎯 더 이상 사용 안 함
+          isUploading: false,
+          isProcessing: false,
           dragService: widget.dragService, // 🎯 dragService 전달
         ),
       );
@@ -1110,6 +1125,7 @@ class _VisibilityAwareVideoPlayer extends StatefulWidget {
   final bool isDarkMode;
   final double horizontalPadding; // 🎯 더 이상 사용 안 함
   final bool isUploading; // 🎯 업로드 중 표시
+  final bool isProcessing; // 🎯 압축/처리 중 표시
   final DragService? dragService; // 🎯 dragService 추가 (EditorService 접근용)
 
   const _VisibilityAwareVideoPlayer({
@@ -1122,6 +1138,7 @@ class _VisibilityAwareVideoPlayer extends StatefulWidget {
     this.isDarkMode = false,
     required this.horizontalPadding, // 🎯 더 이상 사용 안 함
     this.isUploading = false,
+    this.isProcessing = false,
     this.dragService, // 🎯 dragService 추가
   });
 
@@ -1270,6 +1287,7 @@ class _VisibilityAwareVideoPlayerState
           isDarkMode: widget.isDarkMode,
           horizontalPadding: widget.horizontalPadding,
           isUploading: widget.isUploading,
+          isProcessing: widget.isProcessing,
           dragService: widget.dragService, // 🎯 dragService 전달
         ),
       ),
@@ -1288,6 +1306,7 @@ class _VideoPlayerWidget extends StatefulWidget {
   final bool isDarkMode;
   final double horizontalPadding; // 🎯 더 이상 사용 안 함
   final bool isUploading; // 🎯 업로드 중 표시
+  final bool isProcessing; // 🎯 압축/처리 중 표시
   final DragService? dragService; // 🎯 dragService 추가 (EditorService 접근용)
 
   const _VideoPlayerWidget({
@@ -1300,8 +1319,29 @@ class _VideoPlayerWidget extends StatefulWidget {
     this.isDarkMode = false,
     required this.horizontalPadding, // 🎯 더 이상 사용 안 함
     this.isUploading = false,
+    this.isProcessing = false,
     this.dragService, // 🎯 dragService 추가
   });
+
+  /// ClipComponent 외부/상위에서 재사용하는 썸네일 fallback
+  static Widget buildThumbnailFallback({
+    required BuildContext context,
+    required String thumbnailPath,
+    required bool isDarkMode,
+  }) {
+    if (thumbnailPath.isEmpty) {
+      return ShimmerBox(width: 0.0, height: 0.0, isDarkMode: isDarkMode);
+    }
+    return ClipRRect(
+      child: Image.file(
+        File(thumbnailPath),
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) {
+          return ShimmerBox(width: 0.0, height: 0.0, isDarkMode: isDarkMode);
+        },
+      ),
+    );
+  }
 
   @override
   State<_VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
@@ -1500,9 +1540,12 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   void didUpdateWidget(_VideoPlayerWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // 🎯 URL이 변경된 경우에만 컨트롤러 재초기화
-    if (oldWidget.url != widget.url) {
-      debugPrint('[ClipComponent] URL 변경 감지: ${oldWidget.url} → ${widget.url}');
+    // 🎯 localPath/url(실제 소스)이 변경되면 컨트롤러 재초기화
+    final oldKey =
+        oldWidget.localPath.isNotEmpty ? oldWidget.localPath : oldWidget.url;
+    final newKey = widget.localPath.isNotEmpty ? widget.localPath : widget.url;
+    if (oldKey != newKey) {
+      debugPrint('[ClipComponent] 비디오 소스 변경 감지: $oldKey → $newKey');
       // 기존 컨트롤러 정리
       if (_controller != null) {
         _controller!.removeListener(_onVideoStatusChanged);
@@ -1516,11 +1559,11 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       return;
     }
 
-    // URL이 동일하면 컨트롤러 재사용 (드래그앤드롭 시 깜빡임 방지)
-    if (oldWidget.url == widget.url && _controller == null && !_isInitialized) {
+    // 소스가 동일하면 컨트롤러 재사용 (드래그앤드롭 시 깜빡임 방지)
+    if (oldKey == newKey && _controller == null && !_isInitialized) {
       // 캐시에서 컨트롤러 찾기
-      if (widget.isEditing && editorVideoControllers.containsKey(widget.url)) {
-        final cachedController = editorVideoControllers[widget.url];
+      if (widget.isEditing && editorVideoControllers.containsKey(newKey)) {
+        final cachedController = editorVideoControllers[newKey];
         if (cachedController != null) {
           try {
             // 컨트롤러가 유효한지 확인 (접근 시도)
@@ -1533,7 +1576,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               // 🎯 초기 음소거 상태 동기화
               _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
               debugPrint(
-                '[ClipComponent] didUpdateWidget에서 캐시된 컨트롤러 재사용: ${widget.url}',
+                '[ClipComponent] didUpdateWidget에서 캐시된 컨트롤러 재사용: $newKey',
               );
               if (mounted) {
                 setState(() {});
@@ -1541,15 +1584,15 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
             }
           } catch (e) {
             debugPrint(
-              '[ClipComponent] didUpdateWidget: 캐시된 컨트롤러가 dispose됨, 새로 생성: ${widget.url} - $e',
+              '[ClipComponent] didUpdateWidget: 캐시된 컨트롤러가 dispose됨, 새로 생성: $newKey - $e',
             );
             // dispose된 컨트롤러는 맵에서 제거
-            editorVideoControllers.remove(widget.url);
+            editorVideoControllers.remove(newKey);
           }
         }
       } else if (!widget.isEditing &&
-          readerVideoControllers.containsKey(widget.url)) {
-        final cachedController = readerVideoControllers[widget.url];
+          readerVideoControllers.containsKey(newKey)) {
+        final cachedController = readerVideoControllers[newKey];
         if (cachedController != null) {
           try {
             // 컨트롤러가 유효한지 확인 (접근 시도)
@@ -1562,7 +1605,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               // 🎯 초기 음소거 상태 동기화
               _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
               debugPrint(
-                '[ClipComponent] didUpdateWidget에서 reader 캐시된 컨트롤러 재사용: ${widget.url}',
+                '[ClipComponent] didUpdateWidget에서 reader 캐시된 컨트롤러 재사용: $newKey',
               );
               if (mounted) {
                 setState(() {});
@@ -1570,10 +1613,10 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
             }
           } catch (e) {
             debugPrint(
-              '[ClipComponent] didUpdateWidget: reader 캐시된 컨트롤러가 dispose됨, 새로 생성: ${widget.url} - $e',
+              '[ClipComponent] didUpdateWidget: reader 캐시된 컨트롤러가 dispose됨, 새로 생성: $newKey - $e',
             );
             // dispose된 컨트롤러는 맵에서 제거
-            readerVideoControllers.remove(widget.url);
+            readerVideoControllers.remove(newKey);
           }
         }
       }
@@ -2190,60 +2233,61 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       );
     }
 
-    // 🎯 싱글 이미지와 동일: 부모 constraints를 따름 (스타일시트 패딩 자동 반영)
-
-    // 🎯 초기화 전: 썸네일 또는 쉬머 표시
-    if (!_isInitialized || _controller == null) {
-      // 🎯 편집 모드에서만 metadata 조회 (성능 최적화)
-      double? metadataAspectRatio;
-      if (widget.isEditing) {
-        try {
-          // ignore: invalid_use_of_visible_for_testing_member
-          final seState = context.findAncestorStateOfType<SuperEditorState>();
-          // ignore: invalid_use_of_visible_for_testing_member
-          final doc = seState?.editContext.editor.document;
-          final node = doc?.getNodeById(widget.nodeId);
-          if (node is ClipNode) {
-            final aspectRatioValue = node.metadata['aspectRatio'];
-            if (aspectRatioValue != null) {
-              metadataAspectRatio =
-                  (aspectRatioValue is num)
-                      ? aspectRatioValue.toDouble()
-                      : double.tryParse(aspectRatioValue.toString());
-            }
+    // 🎯 aspectRatio: 컨트롤러가 있으면 그 값, 없으면 metadata 또는 기본값
+    double? metadataAspectRatio;
+    if (widget.isEditing) {
+      try {
+        // ignore: invalid_use_of_visible_for_testing_member
+        final seState = context.findAncestorStateOfType<SuperEditorState>();
+        // ignore: invalid_use_of_visible_for_testing_member
+        final doc = seState?.editContext.editor.document;
+        final node = doc?.getNodeById(widget.nodeId);
+        if (node is ClipNode) {
+          final aspectRatioValue = node.metadata['aspectRatio'];
+          if (aspectRatioValue != null) {
+            metadataAspectRatio =
+                (aspectRatioValue is num)
+                    ? aspectRatioValue.toDouble()
+                    : double.tryParse(aspectRatioValue.toString());
           }
-        } catch (e) {
-          // 무시
         }
-      }
-
-      final aspectRatio = metadataAspectRatio ?? (16 / 9);
-
-      // 🎯 싱글 이미지와 동일: AspectRatio만 사용 (부모 constraints를 따름)
-      return AspectRatio(
-        aspectRatio: aspectRatio,
-        child: ClipRRect(
-          child: _buildThumbnailOrShimmer(
-            thumbnailPath: widget.thumbnailPath,
-            width: 0.0, // 부모 constraints 따름
-            height: 0.0,
-          ),
-        ),
-      );
+      } catch (_) {}
     }
+    final controllerSize = _controller?.value.size;
+    final aspectRatio =
+        (controllerSize != null && controllerSize.height > 0)
+            ? (controllerSize.width / controllerSize.height)
+            : (metadataAspectRatio ?? (16 / 9));
 
-    // 원본 비율 계산
-    final videoSize = _controller!.value.size;
-    final originalAspectRatio =
-        videoSize.height > 0 ? videoSize.width / videoSize.height : 16 / 9;
+    // 로딩 상태: 업로드/압축/초기화/버퍼링 모두 포함
+    final isBuffering = _controller?.value.isBuffering ?? false;
+    final shouldShowSpinner =
+        widget.isUploading ||
+        widget.isProcessing ||
+        !_isReadyToPlay ||
+        isBuffering;
 
-    // 🎯 싱글 이미지와 동일: AspectRatio만 사용 (부모 constraints를 따름)
+    // ✅ 항상 Stack 구조 유지:
+    // Stack[
+    //   썸네일(배경)
+    //   실제 비디오 컨트롤러(준비되면 덮기)
+    //   로딩 스피너(상태에 따라)
+    // ]
     return Stack(
       children: [
         AspectRatio(
-          aspectRatio: originalAspectRatio,
-          child: ClipRRect(child: VideoPlayer(_controller!)),
+          aspectRatio: aspectRatio,
+          child: _buildThumbnailOrShimmer(
+            thumbnailPath: widget.thumbnailPath,
+            width: 0.0,
+            height: 0.0,
+          ),
         ),
+        if (_isInitialized && _controller != null)
+          AspectRatio(
+            aspectRatio: aspectRatio,
+            child: ClipRRect(child: VideoPlayer(_controller!)),
+          ),
         // 다시보기 버튼 배경 (한 번 재생 후 표시 또는 사용자가 일시정지한 경우)
         if (_hasPlayedOnce)
           Positioned.fill(
@@ -2287,25 +2331,25 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
               ),
             ),
           ),
-        // 🎯 업로드 중 오버레이 (로딩 스피너)
-        if (widget.isUploading)
+        // 🎯 업로드/압축/버퍼링 오버레이 (로딩 스피너)
+        if (shouldShowSpinner)
           Positioned.fill(
             child: Container(
               color: Colors.black.withOpacity(0.4),
               child: Center(
                 child: SizedBox(
-                  width: 28,
-                  height: 28,
+                  width: 20,
+                  height: 20,
                   child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    strokeWidth: 4,
+                    color: Colors.white.withOpacity(1),
                   ),
                 ),
               ),
             ),
           ),
         // 음소거 버튼 (업로드 중이 아닐 때만 표시)
-        if (!widget.isUploading)
+        if (!shouldShowSpinner)
           Positioned(
             bottom: 8,
             right: 8,

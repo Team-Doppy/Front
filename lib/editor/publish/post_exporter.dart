@@ -116,10 +116,11 @@ class PostExporter {
     // 제목이 없으면 본문에서 발췌
     final buffer = StringBuffer();
 
-    // 제목 노드(0번)를 제외한 본문 노드들에서 텍스트 수집
-    for (int i = 1; i < document.length; i++) {
+    // 제목 노드(isTitle==true)는 제외하고, 나머지 모든 본문 노드에서 텍스트 수집
+    for (int i = 0; i < document.length; i++) {
       final node = document.getNodeAt(i);
       if (node is ParagraphNode) {
+        if (node.metadata['isTitle'] == true) continue;
         final text = node.text.text.trim();
         if (text.isNotEmpty) {
           buffer.write(text);
@@ -245,17 +246,12 @@ class PostExporter {
         editorService.documentLayoutKey?.currentState as DocumentLayout?;
     final List<Map<String, dynamic>> nodes = <Map<String, dynamic>>[];
 
-    String titleText = '';
-
     for (int i = 0; i < doc.length; i++) {
       final node = doc.getNodeAt(i);
       if (node == null) continue;
 
       if (node is ParagraphNode) {
         final meta = node.metadata;
-        if ((meta['isTitle'] == true) && titleText.isEmpty) {
-          titleText = node.text.text;
-        }
 
         // Paragraph 기반 멘션 노드 처리
         if (meta['mention'] == true) {
@@ -952,7 +948,8 @@ class PostExporter {
       throw StateError('author is required');
     }
 
-    final title = getTitleFromDocument(doc);
+    // 제목은 썸네일 편집 화면에서 입력하므로 빈 문자열로 설정
+    final title = '';
 
     // 🎯 첫 번째 이미지를 썸네일로 자동 설정
     String? thumbnailImageUrl;

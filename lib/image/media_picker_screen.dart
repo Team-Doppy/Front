@@ -64,6 +64,8 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   bool _isLoading = true;
   bool _hasPermission = false;
   final List<String> _selectedMediaIds = []; // 선택된 미디어 ID들 (선택 순서 유지)
+  // ✅ 선택된 AssetEntity 캐시 (리오더/프리뷰에서 안정적으로 썸네일 렌더링하기 위함)
+  final Map<String, AssetEntity> _selectedAssetById = {};
   MediaType _mediaType = MediaType.video; // 현재 선택된 미디어 타입
   int _crossAxisCount = 3; // 그리드 열 수 (5열(최소) -> 3열(기본) -> 1열(최대))
   double _lastScale = 1.0; // 마지막 핀치 스케일
@@ -320,11 +322,15 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         if (alreadySelected) {
           // 다시 탭하면 해제
           _selectedMediaIds.clear();
+          _selectedAssetById.clear();
           return;
         } else {
           // 다른 영상을 선택하면 교체
           _selectedMediaIds.clear();
           _selectedMediaIds.add(asset.id);
+          _selectedAssetById
+            ..clear()
+            ..[asset.id] = asset;
           return;
         }
       }
@@ -344,6 +350,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
           // 다른 이미지를 선택하면 교체
           _selectedMediaIds.clear();
           _selectedMediaIds.add(asset.id);
+          _selectedAssetById
+            ..clear()
+            ..[asset.id] = asset;
           return;
         }
       }
@@ -358,10 +367,14 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         if (_selectedMediaIds.contains(asset.id)) {
           // 선택된 것 다시 누르면 해제됨
           _selectedMediaIds.clear();
+          _selectedAssetById.clear();
         } else {
           // 다른 것 탭하면 교체
           _selectedMediaIds.clear();
           _selectedMediaIds.add(asset.id);
+          _selectedAssetById
+            ..clear()
+            ..[asset.id] = asset;
         }
         return;
       }
@@ -369,12 +382,15 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       // ★ 4) 다중 선택 모드
       if (_selectedMediaIds.contains(asset.id)) {
         _selectedMediaIds.remove(asset.id);
+        _selectedAssetById.remove(asset.id);
       } else {
         if (_selectedMediaIds.length >= _maxSelectionCount) {
           // 가장 오래된 선택 제거 (리스트의 첫 번째 요소)
-          _selectedMediaIds.removeAt(0);
+          final removedId = _selectedMediaIds.removeAt(0);
+          _selectedAssetById.remove(removedId);
         }
         _selectedMediaIds.add(asset.id);
+        _selectedAssetById[asset.id] = asset;
       }
     });
   }
@@ -385,6 +401,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       setState(() {
         _mediaType = type;
         _selectedMediaIds.clear(); // 선택 초기화
+        _selectedAssetById.clear();
         // 미디어 타입에 따라 최대 선택 개수 변경
         if (type == MediaType.image) {
           // 🎯 이미지로 변경 시:
@@ -422,6 +439,133 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
       _loadMedia();
     }
+  }
+
+  bool get _isMultiSelectEnabled =>
+      _mediaType == MediaType.image && _maxSelectionCount > 1;
+
+  List<AssetEntity> _getSelectedAssetsInOrder() {
+    final selectedAssets = <AssetEntity>[];
+    final mediaMap = {for (final a in _media) a.id: a};
+    for (final id in _selectedMediaIds) {
+      final cached = _selectedAssetById[id];
+      if (cached != null) {
+        selectedAssets.add(cached);
+        continue;
+      }
+      final fromMedia = mediaMap[id];
+      if (fromMedia != null) {
+        _selectedAssetById[id] = fromMedia;
+        selectedAssets.add(fromMedia);
+      }
+    }
+    return selectedAssets;
+  }
+
+  void _removeSelectedId(String id) {
+    if (!_selectedMediaIds.contains(id)) return;
+    setState(() {
+      _selectedMediaIds.remove(id);
+      _selectedAssetById.remove(id);
+    });
+  }
+
+  void _reorderSelected(int oldIndex, int newIndex) {
+    setState(() {
+      // ReorderableListView 규칙: 이동 후 인덱스가 한 칸 당겨짐
+      if (newIndex > oldIndex) newIndex -= 1;
+      if (oldIndex < 0 ||
+          oldIndex >= _selectedMediaIds.length ||
+          newIndex < 0 ||
+          newIndex >= _selectedMediaIds.length) {
+        return;
+      }
+      final id = _selectedMediaIds.removeAt(oldIndex);
+      _selectedMediaIds.insert(newIndex, id);
+    });
+  }
+
+  Widget _buildSelectedPreviewSection() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final selectedAssets = _getSelectedAssetsInOrder();
+
+    // 고정 높이: 그리드 위에 항상 노출
+    const double height = 104;
+
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        border: Border(
+          top: BorderSide(
+            color: colorScheme.onSurface.withOpacity(0.08),
+            width: 0.5,
+          ),
+          bottom: BorderSide(
+            color: colorScheme.onSurface.withOpacity(0.08),
+            width: 0.5,
+          ),
+        ),
+      ),
+      child:
+          selectedAssets.isEmpty
+              ? Center(
+                child: Text(
+                  '선택된 이미지가 여기에 표시돼요',
+                  style: TextStyle(
+                    color: colorScheme.onSurface.withOpacity(0.5),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              )
+              : ReorderableListView.builder(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
+                buildDefaultDragHandles: false,
+                onReorder: _reorderSelected,
+                proxyDecorator: (child, index, animation) {
+                  return AnimatedBuilder(
+                    animation: animation,
+                    builder: (context, _) {
+                      final t = Curves.easeOut.transform(animation.value);
+                      final scale = 1.0 + (0.04 * t);
+                      return Transform.scale(
+                        scale: scale,
+                        child: Material(
+                          color: Colors.transparent,
+                          elevation: 6 * t,
+                          borderRadius: BorderRadius.circular(14),
+                          shadowColor: Colors.black.withOpacity(0.15),
+                          child: child,
+                        ),
+                      );
+                    },
+                  );
+                },
+                itemCount: selectedAssets.length,
+                itemBuilder: (context, index) {
+                  final asset = selectedAssets[index];
+                  final id = asset.id;
+                  return ReorderableDelayedDragStartListener(
+                    key: ValueKey('selected_strip_$id'),
+                    index: index,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: _SelectedStripItem(
+                        index: index,
+                        asset: asset,
+                        onRemove: () => _removeSelectedId(id),
+                      ),
+                    ),
+                  );
+                },
+              ),
+    );
   }
 
   Future<void> _handleImageEdit(List<AssetEntity> selectedAssets) async {
@@ -676,14 +820,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
     try {
       // 선택된 미디어들 찾기 (선택 순서대로 유지)
-      final selectedAssets = <AssetEntity>[];
-      final mediaMap = {for (var asset in _media) asset.id: asset};
-      for (final id in _selectedMediaIds) {
-        final asset = mediaMap[id];
-        if (asset != null) {
-          selectedAssets.add(asset);
-        }
-      }
+      final selectedAssets = _getSelectedAssetsInOrder();
 
       if (selectedAssets.isEmpty) return;
 
@@ -900,20 +1037,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
             ],
           ),
         ),
-        child: Stack(
-          children: [
-            SafeArea(child: _buildBody()),
-
-            // 하단 툴바 (선택된 미디어가 있을 때만 표시)
-            if (_selectedMediaIds.length > 1)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: _buildBottomToolbar(),
-              ),
-          ],
-        ),
+        child: SafeArea(child: _buildBody()),
       ),
     );
   }
@@ -921,14 +1045,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   Widget _buildBottomToolbar() {
     final colorScheme = Theme.of(context).colorScheme;
     // 선택된 미디어들 찾기 (선택 순서대로 유지)
-    final selectedAssets = <AssetEntity>[];
-    final mediaMap = {for (var asset in _media) asset.id: asset};
-    for (final id in _selectedMediaIds) {
-      final asset = mediaMap[id];
-      if (asset != null) {
-        selectedAssets.add(asset);
-      }
-    }
+    final selectedAssets = _getSelectedAssetsInOrder();
 
     // 선택된 미디어 타입 확인 (모두 같은 타입이어야 함)
     final isVideo =
@@ -944,29 +1061,33 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             if (!isVideo) ...[
-              // 이미지일 때: 그룹이미지, 이미지 편집
-              Expanded(
-                child: CupertinoButton(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  color: Colors.transparent,
-                  onPressed: () => _handleGroupImage(selectedAssets),
-                  child: Text(
-                    AppLocalizations.of(context).t('group_image'),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: colorScheme.onSurface,
+              // ✅ 그룹이미지: 2개 이상 선택되었을 때만 표시
+              if (_selectedMediaIds.length > 1) ...[
+                Expanded(
+                  child: CupertinoButton(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    color: Colors.transparent,
+                    onPressed: () => _handleGroupImage(selectedAssets),
+                    child: Text(
+                      AppLocalizations.of(context).t('group_image'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: colorScheme.onSurface,
+                      ),
                     ),
                   ),
                 ),
-              ),
-
-              const SizedBox(width: 4),
-              Divider(color: colorScheme.onSurface.withOpacity(1), height: 24),
+                const SizedBox(width: 4),
+                Divider(
+                  color: colorScheme.onSurface.withOpacity(1),
+                  height: 24,
+                ),
+              ],
+              // ✅ 이미지 편집: 이미지가 하나 이상 선택되었을 때 항상 표시
               Expanded(
                 child: CupertinoButton(
                   padding: const EdgeInsets.symmetric(vertical: 12),
-
                   color: Colors.transparent,
                   onPressed: () => _handleImageEdit(selectedAssets),
                   child: Text(
@@ -1062,70 +1183,93 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       );
     }
 
-    return GestureDetector(
-      onScaleStart: (details) {
-        _lastScale = 1.0;
-      },
-      onScaleUpdate: (details) {
-        final currentScale = details.scale;
-        final scaleDelta = currentScale - _lastScale;
+    // ✅ 이미지가 하나 이상 선택되었을 때 툴바 표시 (이미지 편집은 1개일 때도 활성화)
+    final bool showBottomToolbar =
+        _selectedMediaIds.isNotEmpty && _mediaType == MediaType.image;
+    final bool showSelectedStrip =
+        _isMultiSelectEnabled && _selectedMediaIds.isNotEmpty;
 
-        // 핀치 아웃 (늘리기) - 스케일이 증가하면 열 수 감소 (5 -> 3 -> 1)
-        if (scaleDelta > 0.3) {
-          final newCount =
-              _crossAxisCount == 5
-                  ? 3
-                  : (_crossAxisCount == 3 ? 1 : _crossAxisCount);
-          if (newCount != _crossAxisCount) {
-            setState(() {
-              _crossAxisCount = newCount;
-            });
-          }
-          _lastScale = currentScale;
-        }
-        // 핀치 인 (줄이기) - 스케일이 감소하면 열 수 증가 (1 -> 3 -> 5)
-        else if (scaleDelta < -0.3) {
-          final newCount =
-              _crossAxisCount == 1
-                  ? 3
-                  : (_crossAxisCount == 3 ? 5 : _crossAxisCount);
-          if (newCount != _crossAxisCount) {
-            setState(() {
-              _crossAxisCount = newCount;
-            });
-          }
-          _lastScale = currentScale;
-        }
-      },
-      child: Stack(
-        children: [
-          AnimatedSwitcher(
-            duration: _gridAnimationDuration,
-            transitionBuilder: (child, animation) {
-              return FadeTransition(opacity: animation, child: child);
+    return Column(
+      children: [
+        Expanded(
+          child: GestureDetector(
+            onScaleStart: (details) {
+              _lastScale = 1.0;
             },
-            child: GridView.builder(
-              controller: _scrollController, // 🎯 스크롤 컨트롤러 연결
-              key: ValueKey('${_crossAxisCount}_$_mediaType'),
-              padding: const EdgeInsets.all(2),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: _crossAxisCount,
-                crossAxisSpacing: 1,
-                mainAxisSpacing: 1,
-                childAspectRatio:
-                    _mediaType == MediaType.video
-                        ? 2 / 3
-                        : 4 / 5, // 영상: 2:3, 이미지: 4:5
-              ),
-              itemCount: _media.length,
-              itemBuilder: (context, index) {
-                final asset = _media[index];
-                return _buildMediaThumbnail(asset, index);
-              },
+            onScaleUpdate: (details) {
+              final currentScale = details.scale;
+              final scaleDelta = currentScale - _lastScale;
+
+              // 핀치 아웃 (늘리기) - 스케일이 증가하면 열 수 감소 (5 -> 3 -> 1)
+              if (scaleDelta > 0.3) {
+                final newCount =
+                    _crossAxisCount == 5
+                        ? 3
+                        : (_crossAxisCount == 3 ? 1 : _crossAxisCount);
+                if (newCount != _crossAxisCount) {
+                  setState(() {
+                    _crossAxisCount = newCount;
+                  });
+                }
+                _lastScale = currentScale;
+              }
+              // 핀치 인 (줄이기) - 스케일이 감소하면 열 수 증가 (1 -> 3 -> 5)
+              else if (scaleDelta < -0.3) {
+                final newCount =
+                    _crossAxisCount == 1
+                        ? 3
+                        : (_crossAxisCount == 3 ? 5 : _crossAxisCount);
+                if (newCount != _crossAxisCount) {
+                  setState(() {
+                    _crossAxisCount = newCount;
+                  });
+                }
+                _lastScale = currentScale;
+              }
+            },
+            child: Stack(
+              children: [
+                AnimatedSwitcher(
+                  duration: _gridAnimationDuration,
+                  transitionBuilder: (child, animation) {
+                    return FadeTransition(opacity: animation, child: child);
+                  },
+                  child: GridView.builder(
+                    controller: _scrollController, // 🎯 스크롤 컨트롤러 연결
+                    key: ValueKey('${_crossAxisCount}_$_mediaType'),
+                    padding: const EdgeInsets.all(2),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: _crossAxisCount,
+                      crossAxisSpacing: 1,
+                      mainAxisSpacing: 1,
+                      childAspectRatio:
+                          _mediaType == MediaType.video
+                              ? 2 / 3
+                              : 4 / 5, // 영상: 2:3, 이미지: 4:5
+                    ),
+                    itemCount: _media.length,
+                    itemBuilder: (context, index) {
+                      final asset = _media[index];
+                      return _buildMediaThumbnail(asset, index);
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
-      ),
+        ),
+        // ✅ 선택된 이미지 섹션: "그룹이미지 / 이미지 편집" 바로 위 (선택이 있을 때만)
+        // 부드러운 애니메이션으로 나타나고 사라지기
+        AnimatedSize(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+          child:
+              showSelectedStrip
+                  ? _buildSelectedPreviewSection()
+                  : const SizedBox.shrink(),
+        ),
+        if (showBottomToolbar) _buildBottomToolbar(),
+      ],
     );
   }
 
@@ -1348,6 +1492,81 @@ class _ImageThumbnailWidget extends StatelessWidget {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 하단 "선택된 이미지" 스트립 아이템 (1:1 썸네일 + 우측상단 X)
+class _SelectedStripItem extends StatelessWidget {
+  final int index;
+  final AssetEntity asset;
+  final VoidCallback onRemove;
+
+  const _SelectedStripItem({
+    required this.index,
+    required this.asset,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    const double size = 80;
+
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // ✅ 길게 눌러서 순서 변경 (스와이프가 안되니까)
+          // X 버튼은 ReorderableDelayedDragStartListener 바깥에 둬서 탭 시 드래그가 발동되지 않게 함
+          ReorderableDelayedDragStartListener(
+            index: index,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: AssetEntityImage(
+                asset,
+                isOriginal: false,
+                thumbnailSize: const ThumbnailSize(220, 220),
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    color: colorScheme.onSurface.withOpacity(0.06),
+                    child: Icon(
+                      CupertinoIcons.photo,
+                      color: colorScheme.onSurface.withOpacity(0.45),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          Positioned(
+            top: 6,
+            right: 6,
+            child: GestureDetector(
+              onTap: onRemove,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.55),
+                  shape: BoxShape.circle,
+                ),
+                child: const Center(
+                  child: Icon(
+                    CupertinoIcons.xmark,
+                    size: 14,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

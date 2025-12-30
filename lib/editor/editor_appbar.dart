@@ -1195,25 +1195,15 @@ class EditorAppBar extends StatelessWidget {
       return;
     }
 
-    // 제목과 본문(또는 스티커) 검증
-    final hasTitle = editorService.hasNonEmptyTitle();
+    // 본문(또는 스티커) 검증 (제목은 썸네일 편집 화면에서 입력)
     final hasBody = editorService.hasNonEmptyBody(context: context);
 
-    if (!hasTitle || !hasBody) {
-      // 제목 또는 본문이 비어있으면 다이얼로그 표시
-      String message;
-      if (!hasTitle && !hasBody) {
-        message = context.tr('title_and_body_required');
-      } else if (!hasTitle) {
-        message = context.tr('title_required');
-      } else {
-        message = context.tr('body_required');
-      }
-
+    if (!hasBody) {
+      // 본문이 비어있으면 다이얼로그 표시
       await DialogUtils.showInfoDialog(
         context,
         title: context.tr('enter_content_first'),
-        message: message,
+        message: context.tr('body_required'),
       );
       return;
     }

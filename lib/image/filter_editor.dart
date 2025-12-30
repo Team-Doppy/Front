@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -30,16 +31,28 @@ class FilterEditorBottomSheet extends StatefulWidget {
 }
 
 class _FilterEditorBottomSheetState extends State<FilterEditorBottomSheet> {
-  // 썸네일 이미지 캐시 (70x70 크기로 리사이즈된 이미지)
+  // 썸네일 이미지 캐시 (필터 프리뷰용으로 리사이즈된 이미지)
   ui.Image? _thumbnailImage;
   bool _isLoadingThumbnail = false;
   // 슬라이더 드래그 상태 추적
   bool _isSliderDragging = false;
+  // ✅ 필터 선택 시 슬라이더 모드로 자동 전환
+  bool _showSlider = false;
+
+  // ✅ UI 튜닝값
+  static const double _filterChipSize = 72; // 기존 56 → 더 크게
+  static const double _filterChipShiftDown = 8; // 커진 만큼 아래로 내려 상단 라인 유지
+  // 프리뷰가 깨지지 않도록 "표시 크기 * 2.5" 정도로 넉넉히(단 240px 이하로 제한)
+  static const int _thumbnailMaxPx = 240;
 
   @override
   void initState() {
     super.initState();
     _loadThumbnail();
+    // ✅ 초기화 시 필터가 선택되어 있으면 슬라이더 모드로 전환
+    if (widget.selectedFilter != null && widget.selectedFilter!.name != '원본') {
+      _showSlider = true;
+    }
   }
 
   @override
@@ -50,6 +63,25 @@ class _FilterEditorBottomSheetState extends State<FilterEditorBottomSheet> {
       _thumbnailImage = null;
       _loadThumbnail();
     }
+    // ✅ 필터가 선택되면 슬라이더 모드로 전환
+    if (widget.selectedFilter != null &&
+        widget.selectedFilter!.name != '원본' &&
+        !_showSlider) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _showSlider = true;
+          });
+        }
+      });
+    } else if (widget.selectedFilter == null ||
+        widget.selectedFilter!.name == '원본') {
+      if (_showSlider) {
+        setState(() {
+          _showSlider = false;
+        });
+      }
+    }
   }
 
   @override
@@ -58,43 +90,101 @@ class _FilterEditorBottomSheetState extends State<FilterEditorBottomSheet> {
     super.dispose();
   }
 
-  /// 원본 이미지를 70x70 썸네일로 리사이즈
+  /// 수치 칩 위젯 빌드 (조정 편집기와 동일한 디자인)
+  Widget _buildIntensityChip(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor =
+        isDark ? AppColors.darkBackground : AppColors.lightBackground;
+    final fgColor =
+        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
+
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: bgColor.withOpacity(0.85),
+        border: Border.all(color: fgColor.withOpacity(0.3), width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: bgColor.withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Text(
+          '${(widget.filterIntensity * 100).round()}%',
+          style: TextStyle(
+            color: fgColor,
+            fontSize: 16, // ✅ 100% 잘림 방지를 위해 18 -> 16으로 축소
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 원본 이미지를 필터 프리뷰용 썸네일로 리사이즈 (메모리 절약 + 선명도 확보)
   Future<void> _loadThumbnail() async {
     if (_isLoadingThumbnail || _thumbnailImage != null) return;
     _isLoadingThumbnail = true;
 
     try {
-      // 원본 이미지 로드
-      final codec = await ui.instantiateImageCodec(widget.imageBytes);
-      final frame = await codec.getNextFrame();
-      final originalImage = frame.image;
+      // ✅ 고해상도 원본 전체 디코드 방지: descriptor로 사이즈 확인 후 적절한 target으로 디코드
+      final buffer = await ui.ImmutableBuffer.fromUint8List(widget.imageBytes);
+      final descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final srcW = descriptor.width.toDouble();
+      final srcH = descriptor.height.toDouble();
 
-      // 70x70으로 리사이즈
-      const thumbnailWidth = 70.0;
-      const thumbnailHeight = 70.0;
+      final dpr = ui.PlatformDispatcher.instance.views.first.devicePixelRatio;
+      final targetSide = ((_filterChipSize * dpr) * 2.5).round().clamp(
+        120,
+        _thumbnailMaxPx,
+      );
+
+      // shorter side가 targetSide가 되도록 비율 유지 디코드
+      final short = math.min(srcW, srcH);
+      final scale = targetSide / (short <= 0 ? 1.0 : short);
+      final targetW = (srcW * scale).round().clamp(1, 10000);
+      final targetH = (srcH * scale).round().clamp(1, 10000);
+
+      final codec = await descriptor.instantiateCodec(
+        targetWidth: targetW,
+        targetHeight: targetH,
+      );
+      final frame = await codec.getNextFrame();
+      final decoded = frame.image;
+
+      descriptor.dispose();
+      buffer.dispose();
+
+      // ✅ 중앙 기준 정사각형으로 crop 후 targetSide x targetSide로 렌더
+      final decodedW = decoded.width.toDouble();
+      final decodedH = decoded.height.toDouble();
+      final side = math.min(decodedW, decodedH);
+      final srcRect = Rect.fromCenter(
+        center: Offset(decodedW / 2, decodedH / 2),
+        width: side,
+        height: side,
+      );
+
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
-      final paint = Paint()..filterQuality = FilterQuality.low;
+      final paint = Paint()..filterQuality = FilterQuality.high;
 
       canvas.drawImageRect(
-        originalImage,
-        Rect.fromLTWH(
-          0,
-          0,
-          originalImage.width.toDouble(),
-          originalImage.height.toDouble(),
-        ),
-        const Rect.fromLTWH(0, 0, thumbnailWidth, thumbnailHeight),
+        decoded,
+        srcRect,
+        Rect.fromLTWH(0, 0, targetSide.toDouble(), targetSide.toDouble()),
         paint,
       );
 
       final picture = recorder.endRecording();
-      final thumbnail = await picture.toImage(
-        thumbnailWidth.toInt(),
-        thumbnailHeight.toInt(),
-      );
+      final thumbnail = await picture.toImage(targetSide, targetSide);
 
-      originalImage.dispose();
+      decoded.dispose();
       picture.dispose();
 
       if (mounted) {
@@ -122,170 +212,131 @@ class _FilterEditorBottomSheetState extends State<FilterEditorBottomSheet> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 필터 리스트 (슬라이더 드래그 중일 때는 수치 칩 표시)
-        Padding(
-          padding: const EdgeInsets.only(left: 4, right: 4, top: 10, bottom: 4),
-          child:
-              _thumbnailImage == null
-                  ? const SizedBox.shrink() // ✅ 로딩 스피너 제거
-                  : SizedBox(
-                    height: 100, // ✅ 높이 감소
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 200),
-                      child:
-                          _isSliderDragging
-                              ? // ✅ 슬라이더 드래그 중: 수치 칩만 표시 (필터 칩과 같은 위치)
-                              ListView.builder(
-                                key: const ValueKey('intensity_chip'),
-                                shrinkWrap: true,
-                                scrollDirection: Axis.horizontal,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                ),
-                                itemCount: 1,
-                                itemBuilder: (context, index) {
-                                  return Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                    ),
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Container(
-                                          width: 56,
-                                          height: 56,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color:
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.primary,
-                                              width: 2,
-                                            ),
-                                          ),
-                                          child: Center(
-                                            child: Text(
-                                              '${(widget.filterIntensity * 100).round()}%',
-                                              style: TextStyle(
-                                                color:
-                                                    Theme.of(
-                                                      context,
-                                                    ).colorScheme.primary,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          '강도',
-                                          style: TextStyle(
-                                            color:
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.primary,
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              )
-                              : // ✅ 평소: 필터 칩 리스트 표시
-                              ListView.builder(
-                                key: const ValueKey('filter_list'),
-                                shrinkWrap: true,
-                                scrollDirection: Axis.horizontal,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                ), // ✅ 패딩 추가로 잘림 방지
-                                itemCount: presetFiltersList.length,
-                                itemBuilder: (context, index) {
-                                  final filterModel = presetFiltersList[index];
-                                  final isSelected =
-                                      widget.selectedFilter?.name ==
-                                      filterModel.name;
-                                  // ✅ 필터가 선택되고 강도가 0보다 크면 primary 테두리
-                                  final hasFilterApplied =
-                                      isSelected && widget.filterIntensity > 0;
-                                  return Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                    ),
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        GestureDetector(
-                                          onTap: () {
-                                            widget.onFilterChanged(filterModel);
-                                          },
-                                          child: Container(
-                                            width: 56, // ✅ 작게 변경
-                                            height: 56, // ✅ 작게 변경
-                                            decoration: BoxDecoration(
-                                              shape: BoxShape.circle, // ✅ 원형
-                                              border: Border.all(
-                                                color:
-                                                    hasFilterApplied
-                                                        ? Theme.of(
-                                                          context,
-                                                        ).colorScheme.primary
-                                                        : fgColor.withOpacity(
-                                                          0.2,
-                                                        ),
-                                                width:
-                                                    hasFilterApplied
-                                                        ? 2.5
-                                                        : 1.5,
-                                              ),
-                                            ),
-                                            child: ClipOval(
-                                              // ✅ ClipRRect 대신 ClipOval
-                                              child: ColorFiltered(
-                                                colorFilter: ColorFilter.matrix(
-                                                  filterModel.getMatrix(),
-                                                ),
-                                                child: CustomPaint(
-                                                  painter:
-                                                      _FilterThumbnailPainter(
-                                                        _thumbnailImage!,
-                                                      ),
-                                                  size: Size.infinite,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          filterModel.name,
-                                          style: TextStyle(
-                                            color:
-                                                hasFilterApplied
-                                                    ? Theme.of(
-                                                      context,
-                                                    ).colorScheme.primary
-                                                    : fgColor,
-                                            fontSize: 10, // ✅ 작게
-                                            fontWeight:
-                                                hasFilterApplied
-                                                    ? FontWeight.w600
-                                                    : FontWeight.w400,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
+        // 필터 리스트 (슬라이더 드래그 중이거나 슬라이더 모드일 때는 수치 칩 표시)
+        AnimatedSize(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          child: Padding(
+            padding:
+                (_isSliderDragging || _showSlider) &&
+                        widget.selectedFilter != null &&
+                        widget.selectedFilter!.name != '원본'
+                    ? // ✅ 수치 칩 모드: 조정 편집기와 동일한 패딩
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10)
+                    : // ✅ 필터 칩 리스트 모드: 기존 패딩 유지
+                    const EdgeInsets.only(
+                      left: 4,
+                      right: 4,
+                      top: 10,
+                      bottom: 4,
                     ),
-                  ),
+            child: SizedBox(
+              // ✅ 수치 칩 모드일 때는 조정 편집기와 동일한 높이(80), 필터 칩 리스트일 때는 124
+              height:
+                  (_isSliderDragging || _showSlider) &&
+                          widget.selectedFilter != null &&
+                          widget.selectedFilter!.name != '원본'
+                      ? 80 // ✅ 조정 편집기와 동일한 높이
+                      : 124, // ✅ 칩이 커진만큼 아래로 내려도 잘리지 않게
+              child:
+                  _thumbnailImage == null
+                      ? const SizedBox.shrink() // ✅ 로딩 중에는 빈 공간 유지 (높이는 SizedBox로 고정)
+                      : (_isSliderDragging || _showSlider) &&
+                          widget.selectedFilter != null &&
+                          widget.selectedFilter!.name != '원본'
+                      ? // ✅ 슬라이더 드래그 중이거나 슬라이더 모드: 수치 칩만 표시 (애니메이션 없이 즉시 전환)
+                      Center(child: _buildIntensityChip(context))
+                      : // ✅ 평소: 필터 칩 리스트 표시
+                      ListView.builder(
+                        shrinkWrap: true,
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                        ), // ✅ 패딩 추가로 잘림 방지
+                        itemCount: presetFiltersList.length,
+                        itemBuilder: (context, index) {
+                          final filterModel = presetFiltersList[index];
+                          final isSelected =
+                              widget.selectedFilter?.name == filterModel.name;
+                          // ✅ 필터가 선택되면 primary 테두리 (원본 포함, 처음 들어갔을 때 원본이 선택되어 있음)
+                          final hasFilterApplied = isSelected;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const SizedBox(height: _filterChipShiftDown),
+                                GestureDetector(
+                                  onTap: () {
+                                    widget.onFilterChanged(filterModel);
+                                    // ✅ 필터 선택 시 슬라이더 모드로 전환 (원본이 아닌 경우)
+                                    if (filterModel.name != '원본') {
+                                      setState(() {
+                                        _showSlider = true;
+                                      });
+                                    } else {
+                                      setState(() {
+                                        _showSlider = false;
+                                      });
+                                    }
+                                  },
+                                  child: Container(
+                                    width: _filterChipSize,
+                                    height: _filterChipSize,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle, // ✅ 원형
+                                      border: Border.all(
+                                        color:
+                                            hasFilterApplied
+                                                ? Theme.of(
+                                                  context,
+                                                ).colorScheme.primary
+                                                : fgColor.withOpacity(0.2),
+                                        width: hasFilterApplied ? 2.5 : 1.5,
+                                      ),
+                                    ),
+                                    child: ClipOval(
+                                      // ✅ ClipRRect 대신 ClipOval
+                                      child: ColorFiltered(
+                                        colorFilter: ColorFilter.matrix(
+                                          filterModel.getMatrix(),
+                                        ),
+                                        child: CustomPaint(
+                                          painter: _FilterThumbnailPainter(
+                                            _thumbnailImage!,
+                                          ),
+                                          size: Size.infinite,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  filterModel.name,
+                                  style: TextStyle(
+                                    color:
+                                        hasFilterApplied
+                                            ? Theme.of(
+                                              context,
+                                            ).colorScheme.primary
+                                            : fgColor,
+                                    fontSize: 11,
+                                    fontWeight:
+                                        hasFilterApplied
+                                            ? FontWeight.w600
+                                            : FontWeight.w400,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+            ),
+          ),
         ),
-        // ✅ 필터 강도 슬라이더 (필터가 선택되었을 때만 표시)
+        // ✅ 필터 강도 슬라이더 (조정 편집기와 동일한 레이아웃)
         AnimatedSize(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeInOut,
@@ -295,12 +346,12 @@ class _FilterEditorBottomSheetState extends State<FilterEditorBottomSheet> {
                   ? Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const SizedBox(height: 2), // ✅ 간격 더 줄임
+                      const SizedBox(height: 2), // ✅ 조정 편집기와 동일한 간격
                       Padding(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
                           vertical: 4,
-                        ), // ✅ 패딩 더 줄임
+                        ), // ✅ 조정 편집기와 동일한 패딩
                         child: _FilterIntensitySlider(
                           value: widget.filterIntensity,
                           onChanged: widget.onFilterIntensityChanged,
@@ -319,7 +370,7 @@ class _FilterEditorBottomSheetState extends State<FilterEditorBottomSheet> {
                       ),
                     ],
                   )
-                  : const SizedBox.shrink(),
+                  : const SizedBox.shrink(), // ✅ 조정 편집기와 동일 (슬라이더 없을 때)
         ),
       ],
     );
@@ -442,10 +493,10 @@ class _FilterIntensityRulerPainter extends CustomPainter {
     const min = 0.0;
     const max = 1.0;
 
-    // ✅ 가운데 바는 항상 표시
+    // ✅ 가운데 바는 항상 표시 (거의 위에 수치칩과 닿을 정도로 길게)
     canvas.drawLine(
       Offset(centerX, bottomY),
-      Offset(centerX, bottomY - 24),
+      Offset(centerX, bottomY - 40), // ✅ 더 길게 (24 -> 40)
       centerPaint,
     );
 
@@ -524,7 +575,12 @@ class _FilterThumbnailPainter extends CustomPainter {
     }
 
     final srcRect = Rect.fromLTWH(0, 0, imageSize.width, imageSize.height);
-    canvas.drawImageRect(image, srcRect, dstRect, Paint());
+    canvas.drawImageRect(
+      image,
+      srcRect,
+      dstRect,
+      Paint()..filterQuality = FilterQuality.high,
+    );
   }
 
   @override

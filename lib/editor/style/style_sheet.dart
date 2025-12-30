@@ -1,4 +1,5 @@
 import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/style/text_attributions.dart';
@@ -26,8 +27,6 @@ Stylesheet buildCustomStylesheet(
 }) {
   // 🎯 성능 최적화: watch 대신 read 사용 (테마는 initState에서 감지)
   final bool isDark = context.read<ThemeProvider>().themeMode == ThemeMode.dark;
-  final Color titleColor =
-      isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
   final Color bodyColor =
       isDark
           ? const Color.fromARGB(230, 255, 255, 255)
@@ -39,46 +38,6 @@ Stylesheet buildCustomStylesheet(
       // 텍스트 노드 스타일
       StyleRule(BlockSelector.all, (doc, docNode) {
         if (docNode is ParagraphNode) {
-          // 제목 문단 스타일
-          final isTitle = (docNode.metadata['isTitle'] == true);
-
-          // 제목 스타일은 문서의 0번째 문단에만 적용
-          if (isTitle && doc.getNodeIndexById(docNode.id) == 0) {
-            // 메타데이터에서 폰트 정보 읽기
-            final fontFamily = docNode.metadata['fontFamily'] as String?;
-
-            TextStyle titleStyle = TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w900,
-              color: titleColor,
-              height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
-              leadingDistribution: TextLeadingDistribution.even,
-            );
-
-            if (fontFamily != null && fontFamily.isNotEmpty) {
-              try {
-                // 폰트가 로드되지 않았어도 기본 폰트로 즉시 렌더링 (UI 블로킹 방지)
-                titleStyle = GoogleFonts.getFont(
-                  fontFamily,
-                  textStyle: titleStyle,
-                );
-              } catch (e) {
-                // 폰트 로드 실패 시 기본 폰트 사용
-                titleStyle = titleStyle.copyWith(fontFamily: fontFamily);
-              }
-            }
-
-            return {
-              Styles.textStyle: titleStyle,
-              Styles.padding: CascadingPadding.only(
-                top: 130,
-                bottom: 20,
-                left: 20,
-                right: 20,
-              ),
-            };
-          }
-
           // 멘션 노드는 "일반 텍스트와 동일"하게 렌더링하고, 차이는 bold만 추가한다.
           // (폰트/사이즈/패딩은 본문과 동일하게 유지)
           final isMention = docNode.metadata['mention'] == true;
@@ -154,9 +113,24 @@ Stylesheet buildCustomStylesheet(
           };
         } else if (docNode is ImageRowNode) {
           return {
-            Styles.padding: CascadingPadding.symmetric(
-              vertical: EditorConfig.imagePadding,
-              horizontal: 0,
+            Styles.padding: CascadingPadding.only(
+              top: EditorConfig.imagePadding,
+              bottom: EditorConfig.imagePadding,
+              left: 0,
+              right: 0,
+            ),
+          };
+        } else if (docNode is LinkNode) {
+          // 메타데이터에서 패딩 모드 확인 (기본값: 'center' = 패딩 있음)
+          final paddingMode =
+              docNode.metadata['padding'] as String? ?? 'center';
+          final horizontalPadding = paddingMode == 'full' ? 0.0 : 20.0;
+          return {
+            Styles.padding: CascadingPadding.only(
+              top: EditorConfig.imagePadding,
+              bottom: EditorConfig.imagePadding,
+              left: horizontalPadding,
+              right: horizontalPadding,
             ),
           };
         }
@@ -198,7 +172,9 @@ Stylesheet buildCustomStylesheet(
         } else if (attribution is FontSizeAttribution) {
           style = style.copyWith(
             fontSize: attribution.fontSize,
-            height: 1.4, // 🎯 커서 중앙 정렬 (한글 폰트 최적화)
+            // 🎯 폰트 크기를 줄이면 행간도 자연스럽게 같이 줄어들어야 함
+            // (노드 간 간격/선택 박스 간격이 폰트 크기 변화에 반응)
+            height: 1.4,
             leadingDistribution: TextLeadingDistribution.even,
           );
         } else if (attribution is FontFamilyAttribution) {
@@ -251,28 +227,12 @@ Stylesheet buildCustomStylesheet(
           style = style.copyWith(fontFamily: fontFamily);
         }
       }
-      // 본문/타이틀 기본 색을 테마에 맞춰 적용 (인라인 컬러 지정이 없는 경우)
+      // 본문 기본 색을 테마에 맞춰 적용 (인라인 컬러 지정이 없는 경우)
       if (style.color == null) {
         style = style.copyWith(color: bodyColor);
       }
-      // 제목의 경우 위에서 const TextStyle로 생성했으므로 색상을 후처리로 주입
-      // ParagraphNode의 metadata를 직접 접근할 수 없어서, 기본적으로 bodyColor를 주고
-      // 실제 렌더링에서 첫 문단(isTitle=true)은 아래 규칙으로 타이틀 색을 덮어씀
-      // (SuperEditor는 상위 규칙 → 인라인 규칙 순 적용)
       return style;
     },
-    addRulesBefore: [
-      // 타이틀 문단에 색상을 강제로 덮어씌우기 (테마 반영)
-      StyleRule(BlockSelector.all, (doc, node) {
-        if (node is ParagraphNode) {
-          final isTitle = (node.metadata['isTitle'] == true);
-          if (isTitle && doc.getNodeIndexById(node.id) == 0) {
-            return {Styles.textStyle: TextStyle(color: titleColor)};
-          }
-        }
-        return {};
-      }),
-    ],
   );
 }
 

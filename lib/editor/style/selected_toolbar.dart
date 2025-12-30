@@ -1,4 +1,5 @@
 import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/editor/component/link_component.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:super_editor/super_editor.dart';
@@ -24,7 +25,8 @@ class SelectedToolbar extends StatefulWidget {
   final DocumentNode? node;
   final VoidCallback onEdit;
   final void Function(DocumentNode node, String selectedId) onDelete;
-  final void Function(DocumentNode node, String selectedId)? onChangeAlignment;
+  final Future<void> Function(DocumentNode node, String selectedId)?
+  onChangeAlignment;
   final EditorService? editorService; // 🎯 Provider context 문제 방지
 
   @override
@@ -37,16 +39,24 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
     if (widget.node == null || widget.selectedId == null)
       return const SizedBox.shrink();
 
+    // ✅ 중요: selectedId는 그대로인 채 node metadata만 바뀌는 경우가 많다.
+    // (ReplaceNodeRequest로 같은 id의 노드가 교체됨)
+    // 이때 부모는 selectedId 기준 Selector로만 리빌드되므로 widget.node가 stale일 수 있다.
+    // 따라서 매 build마다 문서에서 최신 노드를 다시 가져와서 UI/아이콘 상태를 정확히 반영한다.
+    final editorService = widget.editorService;
+    final currentNode =
+        editorService?.document.getNodeById(widget.selectedId!) ?? widget.node!;
+
     // 이미지 스포일러 적용 여부
     bool isImageSpoiler = false;
-    if (widget.node is ImageNode || widget.node is ImageRowNode) {
+    if (currentNode is ImageNode || currentNode is ImageRowNode) {
       try {
         final nodeService = NodeComponentService();
         Map<String, dynamic>? meta;
-        if (widget.node is ImageNode) {
-          meta = (widget.node as dynamic).metadata as Map<String, dynamic>?;
-        } else if (widget.node is ImageRowNode) {
-          meta = (widget.node as ImageRowNode).metadata;
+        if (currentNode is ImageNode) {
+          meta = (currentNode as dynamic).metadata as Map<String, dynamic>?;
+        } else if (currentNode is ImageRowNode) {
+          meta = currentNode.metadata;
         }
         isImageSpoiler = nodeService.shouldShowImageSpoiler(
           widget.selectedId ?? '',
@@ -57,15 +67,25 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
 
     // 현재 노드의 padding 상태 확인
     bool isExpanded = false;
-    if (widget.node is ImageNode) {
-      final meta = (widget.node as dynamic).metadata as Map<String, dynamic>?;
+    if (currentNode is ImageNode) {
+      final meta = (currentNode as dynamic).metadata as Map<String, dynamic>?;
       isExpanded = meta?['padding'] == 'full';
-    } else if (widget.node is ImageRowNode) {
-      final meta = (widget.node as ImageRowNode).metadata;
+    } else if (currentNode is ImageRowNode) {
+      final meta = currentNode.metadata;
       isExpanded = meta['padding'] == 'full';
-    } else if (widget.node is ClipNode) {
-      final meta = (widget.node as ClipNode).metadata;
+    } else if (currentNode is ClipNode) {
+      final meta = currentNode.metadata;
       isExpanded = meta['padding'] == 'full';
+    } else if (currentNode is LinkNode) {
+      final meta = currentNode.metadata;
+      isExpanded = meta['padding'] == 'full';
+    }
+
+    // 링크 표시 모드: full(default) / compact
+    bool isCompactLink = false;
+    if (currentNode is LinkNode) {
+      final meta = currentNode.metadata;
+      isCompactLink = meta['viewMode'] == 'compact';
     }
     return Container(
       height: 38,
@@ -89,7 +109,7 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
           ),
          */
           const Spacer(),
-          if (widget.node is ImageNode || widget.node is ImageRowNode) ...[
+          if (currentNode is ImageNode || currentNode is ImageRowNode) ...[
             // 스포일러 토글
             if (widget.node is ImageNode || widget.node is ImageRowNode)
               _buildSvgToggleIcon(
@@ -168,8 +188,10 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
             SizedBox(width: 8),
           ],
 
-          // 패딩 조절 버튼 (이미지와 영상 모두, placeholder가 아닐 때)
-          if (widget.node is ImageNode || widget.node is ClipNode) ...[
+          // 패딩 조절 버튼 (이미지/영상/링크)
+          if (currentNode is ImageNode ||
+              currentNode is ClipNode ||
+              currentNode is LinkNode) ...[
             _buildMainSvgIcon(
               context: context,
               svgPath:
@@ -177,14 +199,57 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                       ? 'assets/icons/arrow-double-shrink.svg' // 확장됨 → 축소 아이콘
                       : 'assets/icons/arrow-double-expand.svg', // 축소됨 → 확장 아이콘
               isActive: true,
-              onTap: () {
+              onTap: () async {
                 if (widget.onChangeAlignment != null &&
                     widget.selectedId != null) {
-                  widget.onChangeAlignment!(widget.node!, widget.selectedId!);
+                  await widget.onChangeAlignment!(
+                    currentNode,
+                    widget.selectedId!,
+                  );
+                  if (mounted) setState(() {});
                 }
               },
             ),
             SizedBox(width: 16),
+          ],
+
+          // 링크: 간략/풀 모드 토글 (간략=썸네일 영역 제거)
+          if (currentNode is LinkNode) ...[
+            _buildMainMaterialIcon(
+              context: context,
+              icon:
+                  isCompactLink ? Icons.image_outlined : Icons.subject_outlined,
+              onTap: () {
+                final nodeId = widget.selectedId;
+                if (nodeId == null) return;
+                final editorService = widget.editorService;
+                if (editorService == null) return;
+                try {
+                  final node = editorService.document.getNodeById(nodeId);
+                  if (node is! LinkNode) return;
+                  final meta = Map<String, dynamic>.from(node.metadata);
+                  meta['viewMode'] = isCompactLink ? 'full' : 'compact';
+                  final updatedNode = LinkNode(
+                    id: node.id,
+                    url: node.url,
+                    title: node.title,
+                    description: node.description,
+                    thumbnailUrl: node.thumbnailUrl,
+                    metadata: meta,
+                  );
+                  editorService.editor.execute([
+                    ReplaceNodeRequest(
+                      existingNodeId: nodeId,
+                      newNode: updatedNode,
+                    ),
+                  ]);
+                  if (mounted) setState(() {});
+                } catch (e) {
+                  debugPrint('[SelectedToolbar] 링크 viewMode 업데이트 실패: $e');
+                }
+              },
+            ),
+            const SizedBox(width: 16),
           ],
 
           // ✅ 수정(크롭/편집) 버튼: 싱글/로우/페이지뷰 모두 활성화
@@ -243,6 +308,29 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
             height: size ?? (isActive ? 28 : 25),
             colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainMaterialIcon({
+    required BuildContext context,
+    required IconData icon,
+    required VoidCallback onTap,
+    double size = 26,
+  }) {
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color color = onSurface.withOpacity(0.5);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 36,
+          height: 40,
+          alignment: Alignment.center,
+          child: Icon(icon, size: size, color: color),
         ),
       ),
     );

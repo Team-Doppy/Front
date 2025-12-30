@@ -167,6 +167,7 @@ class AdjustmentEditorBottomSheet extends StatefulWidget {
     required this.state,
     required this.onStateChanged,
     this.onSliderModeChanged,
+    this.onDragEnd,
   });
 
   final AdjustmentState state;
@@ -174,6 +175,9 @@ class AdjustmentEditorBottomSheet extends StatefulWidget {
 
   /// 슬라이더 모드 변경 콜백 (true: 슬라이더 모드, false: 버튼 모드)
   final ValueChanged<bool>? onSliderModeChanged;
+
+  /// 슬라이더 드래그 종료 시 호출 (히스토리 저장용)
+  final VoidCallback? onDragEnd;
 
   @override
   State<AdjustmentEditorBottomSheet> createState() =>
@@ -348,7 +352,11 @@ class AdjustmentEditorBottomSheetState
         widget.onStateChanged(newState);
       },
       onDragStart: () => setState(() => _isAdjustmentDragging = true),
-      onDragEnd: () => setState(() => _isAdjustmentDragging = false),
+      onDragEnd: () {
+        setState(() => _isAdjustmentDragging = false);
+        // ✅ 슬라이더 드래그 종료 시 히스토리 저장 콜백 호출
+        widget.onDragEnd?.call();
+      },
       isDragging: _isAdjustmentDragging,
     );
   }
@@ -557,10 +565,10 @@ class _AdjustmentRulerPainter extends CustomPainter {
     // ✅ 틱 간격을 더 촘촘하게 (10 -> 5)
     const tickInterval = 5.0;
 
-    // ✅ 가운데 바는 항상 표시
+    // ✅ 가운데 바는 항상 표시 (거의 위에 수치칩과 닿을 정도로 길게)
     canvas.drawLine(
       Offset(centerX, bottomY),
-      Offset(centerX, bottomY - 24),
+      Offset(centerX, bottomY - 40), // ✅ 더 길게 (24 -> 40)
       centerPaint,
     );
 
