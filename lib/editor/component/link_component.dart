@@ -699,11 +699,14 @@ class _LinkComponentState extends State<_LinkComponent>
                           if (isSelected || isDownstreamSelected)
                             Positioned.fill(
                               child: IgnorePointer(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: AppColors.primary,
-                                      width: 3,
+                                child: AnimatedSelectionBorder(
+                                  isVisible: true,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: AppColors.primary,
+                                        width: 4,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -713,29 +716,47 @@ class _LinkComponentState extends State<_LinkComponent>
                       ),
                     ),
                   ),
-                  // 드래그 삽입 라인 (편집 모드에서만)
-                  if (widget.isEditing && _shouldShowTopDropLine())
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 2),
-                        child: AnimatedDropLine(
-                          child: Container(height: 5, color: AppColors.primary),
-                        ),
-                      ),
-                    ),
-                  if (widget.isEditing && _shouldShowBottomDropLine())
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: AnimatedDropLine(
-                          child: Container(height: 5, color: AppColors.primary),
-                        ),
+                  // ✅ 드롭라인: dragService 변경 시 자동 rebuild (single_image_component와 동일한 방식)
+                  if (widget.isEditing && widget.dragService != null)
+                    Positioned.fill(
+                      child: ListenableBuilder(
+                        listenable: widget.dragService!,
+                        builder: (context, _) {
+                          return Stack(
+                            children: [
+                              if (_shouldShowTopDropLine())
+                                Positioned(
+                                  top: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        height: 5,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_shouldShowBottomDropLine())
+                                Positioned(
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        height: 5,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
                       ),
                     ),
                 ],

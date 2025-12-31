@@ -32,236 +32,254 @@ class _SentRequestsListBottomSheetState
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
+
     return Consumer<FriendProvider>(
       builder: (context, friendProvider, child) {
         final sentRequests = friendProvider.sentRequests;
 
-        return Stack(
-          children: [
-            // 🎯 배경 클릭 영역
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: Container(color: Colors.transparent),
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
+          decoration: const BoxDecoration(color: Colors.transparent),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Container(color: Colors.transparent),
+                ),
               ),
-            ),
-            // 🎯 바텀시트
-            DraggableScrollableSheet(
-              initialChildSize: 0.7,
-              minChildSize: 0.5,
-              maxChildSize: 0.95,
-              builder: (context, scrollController) {
-                return GestureDetector(
-                  // 🎯 내부 컨텐츠 클릭 시 이벤트 소비 (외부로 전파 방지)
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: GestureDetector(
                   onTap: () {},
-                  behavior: HitTestBehavior.opaque,
                   child: Container(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(context).size.height * 0.8,
+                    ),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(24),
-                      ),
+                      color: theme.colorScheme.surface,
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 24,
                     ),
                     child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        // 드래그 핸들
-                        Container(
-                          width: 40,
-                          height: 4,
-                          margin: const EdgeInsets.only(top: 12, bottom: 8),
-                          decoration: BoxDecoration(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.3),
-                            borderRadius: BorderRadius.circular(2),
+                        // 제목
+                        Text(
+                          '${l10n.t('sent_requests')} (${sentRequests.length})',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: theme.colorScheme.onSurface,
                           ),
+                          textAlign: TextAlign.center,
                         ),
-
-                        // 헤더
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 8,
-                          ),
-                          child: Row(
-                            children: [
-                              Text(
-                                "${context.tr('sent_requests')} (${sentRequests.length})",
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color:
-                                      Theme.of(context).colorScheme.onSurface,
+                        const SizedBox(height: 24),
+                        // 요청 리스트
+                        if (sentRequests.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 24),
+                            child: Text(
+                              l10n.t('no_sent_requests'),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: theme.colorScheme.onSurface.withOpacity(
+                                  0.6,
                                 ),
                               ),
-                            ],
+                              textAlign: TextAlign.center,
+                            ),
+                          )
+                        else
+                          Flexible(
+                            child: ListView.builder(
+                              shrinkWrap: true,
+                              padding: EdgeInsets.zero,
+                              itemCount:
+                                  sentRequests.length +
+                                  (friendProvider.hasMoreSentRequests ||
+                                          friendProvider
+                                              .isLoadingMoreSentRequests
+                                      ? 1
+                                      : 0),
+                              itemBuilder: (context, index) {
+                                // 🎯 마지막 아이템에 도달하면 더 불러오기
+                                if (index == sentRequests.length - 3 &&
+                                    friendProvider.hasMoreSentRequests &&
+                                    !friendProvider.isLoadingMoreSentRequests) {
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    friendProvider.loadMoreSentRequests();
+                                  });
+                                }
+
+                                // 🎯 로딩 인디케이터
+                                if (index >= sentRequests.length) {
+                                  return Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: Center(
+                                      child:
+                                          friendProvider
+                                                  .isLoadingMoreSentRequests
+                                              ? CircularProgressIndicator(
+                                                strokeWidth: 2.5,
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<
+                                                      Color
+                                                    >(
+                                                      theme
+                                                          .colorScheme
+                                                          .onSurface
+                                                          .withOpacity(0.6),
+                                                    ),
+                                              )
+                                              : const SizedBox.shrink(),
+                                    ),
+                                  );
+                                }
+
+                                final friend = sentRequests[index];
+                                return _buildRequestTile(context, friend);
+                              },
+                            ),
                           ),
-                        ),
-
-                        // 리스트
-                        Expanded(
-                          child:
-                              sentRequests.isEmpty
-                                  ? Center(
-                                    child: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [],
-                                    ),
-                                  )
-                                  : ListView.builder(
-                                    controller: scrollController,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 20,
-                                      vertical: 8,
-                                    ),
-                                    itemCount:
-                                        sentRequests.length +
-                                        (friendProvider.hasMoreSentRequests ||
-                                                friendProvider
-                                                    .isLoadingMoreSentRequests
-                                            ? 1
-                                            : 0),
-                                    itemBuilder: (context, index) {
-                                      // 🎯 마지막 아이템에 도달하면 더 불러오기
-                                      if (index == sentRequests.length - 3 &&
-                                          friendProvider.hasMoreSentRequests &&
-                                          !friendProvider
-                                              .isLoadingMoreSentRequests) {
-                                        WidgetsBinding.instance
-                                            .addPostFrameCallback((_) {
-                                              friendProvider
-                                                  .loadMoreSentRequests();
-                                            });
-                                      }
-
-                                      // 🎯 로딩 인디케이터
-                                      if (index >= sentRequests.length) {
-                                        return Padding(
-                                          padding: const EdgeInsets.all(16.0),
-                                          child: Center(
-                                            child:
-                                                friendProvider
-                                                        .isLoadingMoreSentRequests
-                                                    ? const CircularProgressIndicator()
-                                                    : const SizedBox.shrink(),
-                                          ),
-                                        );
-                                      }
-
-                                      final friend = sentRequests[index];
-                                      return _buildRequestTile(context, friend);
-                                    },
-                                  ),
+                        const SizedBox(height: 24),
+                        // 취소 버튼
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: theme.colorScheme.onSurface
+                                  .withOpacity(0.03),
+                              foregroundColor: theme.colorScheme.onSurface,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              elevation: 0,
+                            ),
+                            child: Text(
+                              l10n.t('cancel'),
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
-                );
-              },
-            ),
-          ],
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
   }
 
   Widget _buildRequestTile(BuildContext context, Friend friend) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final isCancelling = _cancellingRequests.contains(friend.username);
 
-    return InkWell(
-      onTap: () {
-        // 프로필 화면으로 이동
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder:
-                (_) => UserProfileScreen(
-                  otherUser: User(username: friend.username),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          // 프로필 이미지
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (_) => UserProfileScreen(
+                        otherUser: User(username: friend.username),
+                      ),
                 ),
-          ),
-        );
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Row(
-          children: [
-            // 프로필 이미지
-            CommonProfileAvatar(
+              );
+            },
+            child: CommonProfileAvatar(
               imageUrl: friend.profileImageUrl ?? '',
               username: friend.username,
-              size: 56,
-              borderWidth: 0.5,
+              size: 48,
+              borderWidth: 0,
             ),
-            const SizedBox(width: 16),
-
-            // 사용자 정보
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+          ),
+          const SizedBox(width: 12),
+          // 사용자 정보
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  friend.alias.isNotEmpty ? friend.alias : friend.username,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+                if (friend.alias.isNotEmpty) ...[
+                  const SizedBox(height: 2),
                   Text(
                     friend.username,
                     style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(context).colorScheme.onSurface,
+                      fontSize: 13,
+                      color: theme.colorScheme.onSurface.withOpacity(0.6),
                     ),
                   ),
-                  if (friend.alias.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      friend.alias,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.6),
-                      ),
-                    ),
-                  ],
                 ],
-              ),
+              ],
             ),
-
-            // 요청 취소 버튼
-            if (isCancelling)
-              const SizedBox(
-                width: 80,
-                height: 36,
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+          ),
+          // 요청 취소 버튼
+          if (isCancelling)
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  theme.colorScheme.onSurface.withOpacity(0.6),
                 ),
-              )
-            else
-              TextButton(
-                onPressed: () => _cancelRequest(context, friend.username),
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
+              ),
+            )
+          else
+            InkWell(
+              onTap: () => _cancelRequest(context, friend.username),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: theme.colorScheme.onSurface.withOpacity(0.2),
                   ),
-                  minimumSize: const Size(0, 36),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  context.tr('cancel_friend_request'),
+                  l10n.t('cancel_friend_request'),
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.onSurface,
+                    color: theme.colorScheme.onSurface,
                   ),
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }

@@ -98,10 +98,13 @@ class GroupImageLayoutSelector extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   children: [
-                    // 개별 이미지 버튼 (항상 표시)
-                    CupertinoButton(
-                      padding: EdgeInsets.zero,
-                      onPressed: () async {
+                    // ✅ "레이아웃 선택" 섹션: 개별 이미지 프리뷰 (2개 나란히)
+                    _LayoutSection(
+                      title: l10n.t('select_layout'),
+                      previewImages: previewImages,
+                      previewAssets: previewAssets,
+                      previewLayout: GroupImageLayout.individual,
+                      onTap: () async {
                         if (!context.mounted) return;
                         if (onSelected != null) {
                           await onSelected!(GroupImageLayout.individual);
@@ -109,51 +112,13 @@ class GroupImageLayoutSelector extends StatelessWidget {
                         }
                         Navigator.of(context).pop(GroupImageLayout.individual);
                       },
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 16,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: colorScheme.outline.withOpacity(0.1),
-                            width: 1,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  l10n.t('individual_images'),
-                                  style: TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w600,
-                                    color: colorScheme.onSurface,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Icon(
-                              Icons.chevron_right,
-                              color: colorScheme.onSurface.withOpacity(0.3),
-                            ),
-                          ],
-                        ),
-                      ),
                     ),
                     const SizedBox(height: 16),
 
                     // 2열 그리드
                     if (showGrid2)
-                      _LayoutOption(
+                      _LayoutSection(
                         title: l10n.t('grid_2_column'),
-                        description: l10n.t('grid_2_column_description'),
-                        icon: Icons.grid_view,
                         previewImages: previewImages,
                         previewAssets: previewAssets,
                         previewLayout: GroupImageLayout.grid2,
@@ -170,10 +135,8 @@ class GroupImageLayoutSelector extends StatelessWidget {
 
                     // 3열 그리드
                     if (showGrid3)
-                      _LayoutOption(
+                      _LayoutSection(
                         title: l10n.t('grid_3_column'),
-                        description: l10n.t('grid_3_column_description'),
-                        icon: Icons.grid_on,
                         previewImages: previewImages,
                         previewAssets: previewAssets,
                         previewLayout: GroupImageLayout.grid3,
@@ -190,10 +153,8 @@ class GroupImageLayoutSelector extends StatelessWidget {
 
                     // 페이지뷰
                     if (showPageView)
-                      _LayoutOption(
+                      _LayoutSection(
                         title: l10n.t('pageview_layout'),
-                        description: l10n.t('pageview_layout_description'),
-                        icon: Icons.swipe,
                         previewImages: previewImages,
                         previewAssets: previewAssets,
                         previewLayout: GroupImageLayout.pageview,
@@ -243,21 +204,42 @@ class GroupImageLayoutSelector extends StatelessWidget {
     // 모든 경우에 표시 (제한 없음)
     return imageCount >= 2;
   }
+
+  /// ✅ 공통 메서드: 그룹 이미지 레이아웃 선택 모달 바텀시트 표시
+  /// - 반환값 방식으로 통일 (simple_image_editor_screen과 동일)
+  static Future<GroupImageLayout?> showLayoutSelector({
+    required BuildContext context,
+    required List<File> previewImages,
+    List<AssetEntity>? previewAssets,
+  }) async {
+    return await showModalBottomSheet<GroupImageLayout>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      isDismissible: true,
+      enableDrag: true,
+      builder:
+          (context) => FractionallySizedBox(
+            heightFactor: 0.93,
+            child: GroupImageLayoutSelector(
+              previewImages: previewImages,
+              previewAssets: previewAssets,
+            ),
+          ),
+    );
+  }
 }
 
-class _LayoutOption extends StatelessWidget {
+/// ✅ 정형화된 레이아웃 섹션: 타이틀 + 프리뷰 + 우측 화살표
+class _LayoutSection extends StatelessWidget {
   final String title;
-  final String description;
-  final IconData icon;
   final VoidCallback onTap;
   final List<File>? previewImages;
   final List<AssetEntity>? previewAssets;
   final GroupImageLayout previewLayout;
 
-  const _LayoutOption({
+  const _LayoutSection({
     required this.title,
-    required this.description,
-    required this.icon,
     required this.onTap,
     required this.previewLayout,
     this.previewImages,
@@ -307,7 +289,7 @@ class _LayoutOption extends StatelessWidget {
             if ((previewImages != null && previewImages!.isNotEmpty) ||
                 (previewAssets != null && previewAssets!.isNotEmpty)) ...[
               const SizedBox(height: 16),
-              _buildPreview(colorScheme),
+              _buildPreview(),
             ],
           ],
         ),
@@ -315,7 +297,7 @@ class _LayoutOption extends StatelessWidget {
     );
   }
 
-  Widget _buildPreview(ColorScheme colorScheme) {
+  Widget _buildPreview() {
     final hasImages = previewImages != null && previewImages!.isNotEmpty;
     final hasAssets = previewAssets != null && previewAssets!.isNotEmpty;
 
@@ -331,64 +313,76 @@ class _LayoutOption extends StatelessWidget {
       case GroupImageLayout.grid3:
         return _buildGrid3Preview();
       case GroupImageLayout.pageview:
-        return _buildPageViewPreview(colorScheme);
+        return _buildPageViewPreview();
     }
   }
 
   Widget _buildIndividualPreview() {
-    if (previewAssets != null && previewAssets!.isNotEmpty) {
-      final displayAssets = previewAssets!.take(2).toList();
-      return Column(
+    // ✅ UI 통일: 가능하면 항상 File 기반 프리뷰를 사용한다.
+    // (previewAssets는 File이 없을 때만 fallback으로 사용)
+    if (previewImages != null && previewImages!.isNotEmpty) {
+      final displayImages = previewImages!.take(2).toList();
+      return Row(
         children: [
-          for (int i = 0; i < displayAssets.length; i++) ...[
-            if (i > 0) const SizedBox(height: 6),
-            _buildPreviewAsset(displayAssets[i], height: 100),
+          if (displayImages.isNotEmpty)
+            Expanded(child: _buildPreviewImage(displayImages[0], height: 150)),
+          if (displayImages.length > 1) ...[
+            const SizedBox(width: 8),
+            Expanded(child: _buildPreviewImage(displayImages[1], height: 150)),
           ],
         ],
       );
     }
 
-    final displayImages = previewImages!.take(2).toList();
-    return Column(
-      children: [
-        for (int i = 0; i < displayImages.length; i++) ...[
-          if (i > 0) const SizedBox(height: 6),
-          _buildPreviewImage(displayImages[i], height: 100),
+    if (previewAssets != null && previewAssets!.isNotEmpty) {
+      final displayAssets = previewAssets!.take(2).toList();
+      return Row(
+        children: [
+          if (displayAssets.isNotEmpty)
+            Expanded(child: _buildPreviewAsset(displayAssets[0], height: 150)),
+          if (displayAssets.length > 1) ...[
+            const SizedBox(width: 8),
+            Expanded(child: _buildPreviewAsset(displayAssets[1], height: 150)),
+          ],
         ],
-      ],
-    );
+      );
+    }
+
+    return const SizedBox.shrink();
   }
 
   Widget _buildGrid2Preview() {
-    if (previewAssets != null && previewAssets!.isNotEmpty) {
-      final displayAssets = previewAssets!.take(4).toList();
+    // ✅ UI 통일: File 기반 프리뷰를 우선 사용한다.
+    final useFiles = previewImages != null && previewImages!.isNotEmpty;
+    if (useFiles) {
+      final displayImages = previewImages!.take(4).toList();
       return Column(
         children: [
           // 첫 번째 행 (2개)
-          if (displayAssets.length >= 2)
+          if (displayImages.length >= 2)
             Row(
               children: [
                 Expanded(
-                  child: _buildPreviewAsset(displayAssets[0], height: 150),
+                  child: _buildPreviewImage(displayImages[0], height: 150),
                 ),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: _buildPreviewAsset(displayAssets[1], height: 150),
+                  child: _buildPreviewImage(displayImages[1], height: 150),
                 ),
               ],
             ),
           // 두 번째 행 (2개)
-          if (displayAssets.length >= 3) ...[
+          if (displayImages.length >= 3) ...[
             const SizedBox(height: 4),
             Row(
               children: [
                 Expanded(
-                  child: _buildPreviewAsset(displayAssets[2], height: 150),
+                  child: _buildPreviewImage(displayImages[2], height: 150),
                 ),
                 const SizedBox(width: 4),
-                if (displayAssets.length >= 4)
+                if (displayImages.length >= 4)
                   Expanded(
-                    child: _buildPreviewAsset(displayAssets[3], height: 150),
+                    child: _buildPreviewImage(displayImages[3], height: 150),
                   )
                 else
                   const Expanded(child: SizedBox()),
@@ -399,34 +393,35 @@ class _LayoutOption extends StatelessWidget {
       );
     }
 
-    final displayImages = previewImages!.take(4).toList();
+    final displayAssets =
+        (previewAssets ?? const <AssetEntity>[]).take(4).toList();
     return Column(
       children: [
         // 첫 번째 행 (2개)
-        if (displayImages.length >= 2)
+        if (displayAssets.length >= 2)
           Row(
             children: [
               Expanded(
-                child: _buildPreviewImage(displayImages[0], height: 150),
+                child: _buildPreviewAsset(displayAssets[0], height: 150),
               ),
               const SizedBox(width: 4),
               Expanded(
-                child: _buildPreviewImage(displayImages[1], height: 150),
+                child: _buildPreviewAsset(displayAssets[1], height: 150),
               ),
             ],
           ),
         // 두 번째 행 (2개)
-        if (displayImages.length >= 3) ...[
+        if (displayAssets.length >= 3) ...[
           const SizedBox(height: 4),
           Row(
             children: [
               Expanded(
-                child: _buildPreviewImage(displayImages[2], height: 150),
+                child: _buildPreviewAsset(displayAssets[2], height: 150),
               ),
               const SizedBox(width: 4),
-              if (displayImages.length >= 4)
+              if (displayAssets.length >= 4)
                 Expanded(
-                  child: _buildPreviewImage(displayImages[3], height: 150),
+                  child: _buildPreviewAsset(displayAssets[3], height: 150),
                 )
               else
                 const Expanded(child: SizedBox()),
@@ -438,46 +433,48 @@ class _LayoutOption extends StatelessWidget {
   }
 
   Widget _buildGrid3Preview() {
-    if (previewAssets != null && previewAssets!.isNotEmpty) {
-      final displayAssets = previewAssets!.take(6).toList();
+    // ✅ UI 통일: File 기반 프리뷰를 우선 사용한다.
+    final useFiles = previewImages != null && previewImages!.isNotEmpty;
+    if (useFiles) {
+      final displayImages = previewImages!.take(6).toList();
       return Column(
         children: [
           // 첫 번째 행 (3개)
-          if (displayAssets.length >= 3)
+          if (displayImages.length >= 3)
             Row(
               children: [
                 Expanded(
-                  child: _buildPreviewAsset(displayAssets[0], height: 140),
+                  child: _buildPreviewImage(displayImages[0], height: 140),
                 ),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: _buildPreviewAsset(displayAssets[1], height: 140),
+                  child: _buildPreviewImage(displayImages[1], height: 140),
                 ),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: _buildPreviewAsset(displayAssets[2], height: 140),
+                  child: _buildPreviewImage(displayImages[2], height: 140),
                 ),
               ],
             ),
           // 두 번째 행 (3개)
-          if (displayAssets.length >= 4) ...[
+          if (displayImages.length >= 4) ...[
             const SizedBox(height: 4),
             Row(
               children: [
                 Expanded(
-                  child: _buildPreviewAsset(displayAssets[3], height: 140),
+                  child: _buildPreviewImage(displayImages[3], height: 140),
                 ),
                 const SizedBox(width: 4),
-                if (displayAssets.length >= 5)
+                if (displayImages.length >= 5)
                   Expanded(
-                    child: _buildPreviewAsset(displayAssets[4], height: 140),
+                    child: _buildPreviewImage(displayImages[4], height: 140),
                   )
                 else
                   const Expanded(child: SizedBox()),
                 const SizedBox(width: 4),
-                if (displayAssets.length >= 6)
+                if (displayImages.length >= 6)
                   Expanded(
-                    child: _buildPreviewAsset(displayAssets[5], height: 140),
+                    child: _buildPreviewImage(displayImages[5], height: 140),
                   )
                 else
                   const Expanded(child: SizedBox()),
@@ -488,45 +485,46 @@ class _LayoutOption extends StatelessWidget {
       );
     }
 
-    final displayImages = previewImages!.take(6).toList();
+    final displayAssets =
+        (previewAssets ?? const <AssetEntity>[]).take(6).toList();
     return Column(
       children: [
         // 첫 번째 행 (3개)
-        if (displayImages.length >= 3)
+        if (displayAssets.length >= 3)
           Row(
             children: [
               Expanded(
-                child: _buildPreviewImage(displayImages[0], height: 140),
+                child: _buildPreviewAsset(displayAssets[0], height: 140),
               ),
               const SizedBox(width: 4),
               Expanded(
-                child: _buildPreviewImage(displayImages[1], height: 140),
+                child: _buildPreviewAsset(displayAssets[1], height: 140),
               ),
               const SizedBox(width: 4),
               Expanded(
-                child: _buildPreviewImage(displayImages[2], height: 140),
+                child: _buildPreviewAsset(displayAssets[2], height: 140),
               ),
             ],
           ),
         // 두 번째 행 (3개)
-        if (displayImages.length >= 4) ...[
+        if (displayAssets.length >= 4) ...[
           const SizedBox(height: 4),
           Row(
             children: [
               Expanded(
-                child: _buildPreviewImage(displayImages[3], height: 140),
+                child: _buildPreviewAsset(displayAssets[3], height: 140),
               ),
               const SizedBox(width: 4),
-              if (displayImages.length >= 5)
+              if (displayAssets.length >= 5)
                 Expanded(
-                  child: _buildPreviewImage(displayImages[4], height: 140),
+                  child: _buildPreviewAsset(displayAssets[4], height: 140),
                 )
               else
                 const Expanded(child: SizedBox()),
               const SizedBox(width: 4),
-              if (displayImages.length >= 6)
+              if (displayAssets.length >= 6)
                 Expanded(
-                  child: _buildPreviewImage(displayImages[5], height: 140),
+                  child: _buildPreviewAsset(displayAssets[5], height: 140),
                 )
               else
                 const Expanded(child: SizedBox()),
@@ -537,14 +535,14 @@ class _LayoutOption extends StatelessWidget {
     );
   }
 
-  Widget _buildPageViewPreview(ColorScheme colorScheme) {
+  Widget _buildPageViewPreview() {
     return StatefulBuilder(
       builder: (context, setState) {
         int currentPage = 0;
+        // ✅ UI 통일: File 기반 프리뷰를 우선 사용한다.
+        final useFiles = previewImages != null && previewImages!.isNotEmpty;
         final itemCount =
-            previewAssets != null && previewAssets!.isNotEmpty
-                ? previewAssets!.length
-                : previewImages!.length;
+            useFiles ? previewImages!.length : (previewAssets?.length ?? 0);
 
         return SizedBox(
           height: 160,
@@ -570,13 +568,13 @@ class _LayoutOption extends StatelessWidget {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child:
-                          previewAssets != null && previewAssets!.isNotEmpty
-                              ? _buildPreviewAsset(
-                                previewAssets![index],
+                          useFiles
+                              ? _buildPreviewImage(
+                                previewImages![index],
                                 height: 160,
                               )
-                              : _buildPreviewImage(
-                                previewImages![index],
+                              : _buildPreviewAsset(
+                                previewAssets![index],
                                 height: 160,
                               ),
                     ),
@@ -623,39 +621,43 @@ class _LayoutOption extends StatelessWidget {
 
         return ClipRRect(
           borderRadius: BorderRadius.circular(4),
-          child: AssetEntityImage(
-            asset,
-            isOriginal: false,
-            thumbnailSize: ThumbnailSize(thumbnailSize, thumbnailSize),
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) {
-              debugPrint('[GroupImageLayoutSelector] ❌ 썸네일 로드 실패: $error');
-              return Container(
-                height: height,
-                width: double.infinity,
-                color: Colors.grey.shade300,
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.broken_image,
-                        color: Colors.grey,
-                        size: 24,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        l10n.t('load_failed_text'),
-                        style: const TextStyle(
-                          fontSize: 10,
+          child: SizedBox(
+            height: height,
+            width: double.infinity,
+            child: AssetEntityImage(
+              asset,
+              isOriginal: false,
+              thumbnailSize: ThumbnailSize(thumbnailSize, thumbnailSize),
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                debugPrint('[GroupImageLayoutSelector] ❌ 썸네일 로드 실패: $error');
+                return Container(
+                  height: height,
+                  width: double.infinity,
+                  color: Colors.grey.shade300,
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.broken_image,
                           color: Colors.grey,
+                          size: 24,
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 4),
+                        Text(
+                          l10n.t('load_failed_text'),
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         );
       },

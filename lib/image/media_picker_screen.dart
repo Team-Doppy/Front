@@ -2,7 +2,10 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/image/simple_image_editor_screen.dart';
+import 'package:doppy/image/simple_video_editor_screen.dart';
 import 'package:doppy/image/video_trim_screen.dart';
+import 'package:doppy/image/video_trim_spec.dart';
+import 'package:doppy/image/video_edit_spec.dart';
 import 'package:doppy/image/group_image_layout_selector.dart';
 import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -18,8 +21,6 @@ class MediaPickerScreen extends StatefulWidget {
   final MediaType initialMediaType; // 초기 미디어 타입
   final int maxSelectionCount; // 최대 선택 개수
   final bool enableToggle; // 토글 가능 여부
-  // ✅ (UX) 화면을 띄우기 전에 첫 페이지를 미리 로드한 결과를 주입할 수 있음
-  final MediaPickerPreload? initialPreload;
   // ✅ "팝(pop) 전에" 상위 화면(에디터 등)에서 노드 삽입/프리캐시 같은 작업을 수행할 수 있도록 훅 제공
   final Future<void> Function(MediaPickerResult result)? onBeforePop;
   // ✅ onBeforePop 이후, 짧은 여유 시간(디코드/캐시/프레임 안정화)을 주기 위한 딜레이
@@ -32,96 +33,12 @@ class MediaPickerScreen extends StatefulWidget {
     this.initialMediaType = MediaType.video,
     this.maxSelectionCount = 1,
     this.enableToggle = true,
-    this.initialPreload,
     this.onBeforePop,
     this.beforePopDelay = const Duration(milliseconds: 180),
   });
 
-  /// ✅ (UX) MediaPickerScreen을 띄우기 전에 첫 페이지를 미리 로드한다.
-  /// - 권한 요청(필요 시 iOS 권한 팝업 포함)
-  /// - All/Recent 앨범 조회
-  /// - page=0 size=pageSize 로드
-  ///
-  /// 실패 시에도 null 대신 "권한 없음" preload를 반환해서
-  /// 호출부에서 로딩을 끝내고 화면을 일관되게 열 수 있게 한다.
-  static Future<MediaPickerPreload> preloadInitialPage({
-    required MediaType mediaType,
-    int pageSize = 50,
-  }) async {
-    try {
-      final PermissionState ps = await PhotoManager.requestPermissionExtend();
-      if (!ps.isAuth) {
-        return MediaPickerPreload(
-          mediaType: mediaType,
-          hasPermission: false,
-          allAlbum: null,
-          firstPage: const <AssetEntity>[],
-          pageSize: pageSize,
-        );
-      }
-
-      final paths = await PhotoManager.getAssetPathList(
-        type:
-            mediaType == MediaType.video
-                ? RequestType.video
-                : RequestType.image,
-        hasAll: true,
-      );
-      if (paths.isEmpty) {
-        return MediaPickerPreload(
-          mediaType: mediaType,
-          hasPermission: true,
-          allAlbum: null,
-          firstPage: const <AssetEntity>[],
-          pageSize: pageSize,
-        );
-      }
-      final allAlbum = paths.firstWhere(
-        (p) => p.isAll,
-        orElse: () => paths.first,
-      );
-      final firstPage = await allAlbum.getAssetListPaged(
-        page: 0,
-        size: pageSize,
-      );
-      return MediaPickerPreload(
-        mediaType: mediaType,
-        hasPermission: true,
-        allAlbum: allAlbum,
-        firstPage: firstPage,
-        pageSize: pageSize,
-      );
-    } catch (e) {
-      debugPrint('[MediaPicker] preloadInitialPage 실패: $e');
-      return MediaPickerPreload(
-        mediaType: mediaType,
-        hasPermission: false,
-        allAlbum: null,
-        firstPage: const <AssetEntity>[],
-        pageSize: pageSize,
-      );
-    }
-  }
-
   @override
   State<MediaPickerScreen> createState() => _MediaPickerScreenState();
-}
-
-/// MediaPickerScreen 최초 노출 UX 개선을 위한 프리로드 결과
-class MediaPickerPreload {
-  final MediaType mediaType;
-  final bool hasPermission;
-  final AssetPathEntity? allAlbum;
-  final List<AssetEntity> firstPage;
-  final int pageSize;
-
-  const MediaPickerPreload({
-    required this.mediaType,
-    required this.hasPermission,
-    required this.allAlbum,
-    required this.firstPage,
-    required this.pageSize,
-  });
 }
 
 /// MediaPickerScreen에서 반환되는 결과
@@ -133,6 +50,9 @@ class MediaPickerResult {
   // 형태: { "<localPath>": {"width": n, "height": n}, ... }
   final Map<String, dynamic>? imageDimensions;
   final String? thumbnailPath; // 🎯 비디오 썸네일 경로 (비디오인 경우만)
+  // 🎯 비디오 편집/트림 스펙 (FFmpeg 1회 처리를 위해 전달)
+  final VideoTrimSpec? trimSpec;
+  final VideoEditSpec? editSpec;
 
   MediaPickerResult({
     required this.files,
@@ -140,6 +60,8 @@ class MediaPickerResult {
     this.groupLayout,
     this.imageDimensions,
     this.thumbnailPath,
+    this.trimSpec,
+    this.editSpec,
   });
 }
 
@@ -149,18 +71,23 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   List<AssetEntity> _media = [];
   bool _isLoading = true;
   bool _hasPermission = false;
+  bool _permissionChecked = false; // ✅ 권한 확인 전에는 안내 UI 대신 로딩을 보여준다
   final List<String> _selectedMediaIds = []; // 선택된 미디어 ID들 (선택 순서 유지)
   // ✅ 선택된 AssetEntity 캐시 (리오더/프리뷰에서 안정적으로 썸네일 렌더링하기 위함)
   final Map<String, AssetEntity> _selectedAssetById = {};
   MediaType _mediaType = MediaType.video; // 현재 선택된 미디어 타입
   int _crossAxisCount = 3; // 그리드 열 수 (5열(최소) -> 3열(기본) -> 1열(최대))
+  // 🎯 비디오 편집 spec 임시 저장 (편집 → 트림 플로우)
+  VideoEditSpec? _pendingVideoEditSpec;
   double _lastScale = 1.0; // 마지막 핀치 스케일
   final Duration _gridAnimationDuration = const Duration(milliseconds: 300);
   int _maxSelectionCount = 1; // 현재 최대 선택 개수 (미디어 타입에 따라 동적 변경)
 
   // 🎯 페이지네이션
   int _currentPage = 0;
-  final int _pageSize = 50; // 한 번에 로드할 개수
+  // ✅ “첫 화면에서 썸네일이 한꺼번에 디코드되는 순간”을 줄이기 위해
+  // 한 번에 로드할 개수를 줄인다. (photo_manager는 page/size 기반이라 size를 바꾸면 페이지가 꼬일 수 있어 고정)
+  final int _pageSize = 30;
   bool _hasMoreMedia = true;
   bool _isLoadingMore = false;
   final ScrollController _scrollController = ScrollController();
@@ -223,9 +150,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   @override
   void initState() {
     super.initState();
-    // ✅ 외부에서 프리로드된 결과가 있으면 그걸 우선 사용
-    final preload = widget.initialPreload;
-    _mediaType = preload?.mediaType ?? widget.initialMediaType;
+    _mediaType = widget.initialMediaType;
 
     // 미디어 타입에 따라 최대 선택 개수 설정
     if (_mediaType == MediaType.image) {
@@ -244,18 +169,12 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     // 🎯 스크롤 리스너 추가 (페이지네이션)
     _scrollController.addListener(_onScroll);
 
-    if (preload != null) {
-      // ✅ 피커 화면이 뜨는 순간부터 1페이지는 이미 로드된 상태
-      _hasPermission = preload.hasPermission;
-      _cachedAllAlbum = preload.allAlbum;
-      _cachedAllAlbumType = preload.mediaType;
-      _media = preload.firstPage;
-      _currentPage = 0;
-      _hasMoreMedia = preload.firstPage.length >= _pageSize;
-      _isLoading = false;
-    } else {
+    // ✅ 첫 프레임(전환 애니메이션)을 먼저 확보한 뒤 권한/앨범/첫 페이지를 로드한다.
+    // 탭 직후의 "멈춤"을 줄이는 핵심 포인트.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _requestPermissionAndLoadVideos();
-    }
+    });
   }
 
   @override
@@ -272,8 +191,8 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     final maxScroll = _scrollController.position.maxScrollExtent;
     final currentScroll = _scrollController.position.pixels;
 
-    // 80% 지점에서 추가 로드
-    if (currentScroll >= maxScroll * 0.8) {
+    // 60% 지점에서 추가 로드 (더 일찍 프리패치하여 스크롤 부드러움 향상)
+    if (currentScroll >= maxScroll * 0.6) {
       _loadMoreMedia();
     }
   }
@@ -288,12 +207,14 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       if (ps.isAuth) {
         setState(() {
           _hasPermission = true;
+          _permissionChecked = true;
         });
         await _loadMedia();
       } else if (ps == PermissionState.denied) {
         // 권한이 거부된 경우 설정으로 이동
         setState(() {
           _hasPermission = false;
+          _permissionChecked = true;
           _isLoading = false;
         });
         if (mounted) {
@@ -308,6 +229,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         // 권한이 제한된 경우
         setState(() {
           _hasPermission = false;
+          _permissionChecked = true;
           _isLoading = false;
         });
       }
@@ -316,6 +238,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       if (mounted) {
         setState(() {
           _hasPermission = false;
+          _permissionChecked = true;
           _isLoading = false;
         });
       }
@@ -751,10 +674,70 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                   widget.onMediaSelected(f);
                 }
 
+                // ✅ 정책: 이미지가 변경되면 메타데이터의 사이즈 정보를 갱신
+                Map<String, dynamic>? preDimensions;
+                if (selectedLayout != null &&
+                    selectedLayout != GroupImageLayout.individual) {
+                  // simple_image_editor_screen에서 이미 측정한 경우 사용
+                  if (result is Map && result['imageDimensions'] is Map) {
+                    final editorDims =
+                        result['imageDimensions'] as Map<String, dynamic>;
+                    // 인덱스 기반을 파일 경로로 변환
+                    final dims = <String, dynamic>{};
+                    for (int i = 0; i < files.length; i++) {
+                      final path = files[i].path;
+                      final indexKey = 'index_$i';
+                      if (editorDims.containsKey(indexKey)) {
+                        final entry = editorDims[indexKey];
+                        dims[path] = entry;
+                        dims['file://$path'] = entry;
+                      }
+                    }
+                    preDimensions = dims.isNotEmpty ? dims : null;
+                  } else {
+                    // 측정되지 않은 경우 여기서 측정
+                    // 간단한 로딩 오버레이
+                    if (mounted) {
+                      showDialog<void>(
+                        context: context,
+                        barrierDismissible: false,
+                        builder:
+                            (_) => const Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                      );
+                    }
+                    try {
+                      final dims = <String, dynamic>{};
+                      for (final f in files) {
+                        final path = f.path;
+                        final size =
+                            await ImageSizeUtils.extractSizeFromImageProvider(
+                              path,
+                            );
+                        if (size == null) continue;
+                        final entry = {
+                          'width': size.width.round(),
+                          'height': size.height.round(),
+                        };
+                        dims[path] = entry;
+                        dims['file://$path'] = entry;
+                      }
+                      preDimensions = dims.isNotEmpty ? dims : null;
+                    } finally {
+                      if (mounted) {
+                        // 로딩 오버레이 닫기
+                        Navigator.of(context, rootNavigator: true).pop();
+                      }
+                    }
+                  }
+                }
+
                 final pickerResult = MediaPickerResult(
                   files: files,
                   selectedMediaType: MediaType.image,
                   groupLayout: selectedLayout,
+                  imageDimensions: preDimensions,
                 );
 
                 // ✅ 노드 추가/리플레이스 완료 이후에만 닫기 (타이밍 보장)
@@ -791,6 +774,84 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     }
   }
 
+  /// 🎯 비디오 편집 처리 (편집 → 트림 플로우)
+  Future<void> _handleVideoEdit(List<AssetEntity> selectedAssets) async {
+    if (selectedAssets.isEmpty ||
+        selectedAssets.first.type != AssetType.video) {
+      return;
+    }
+
+    try {
+      final asset = selectedAssets.first;
+      final File? file = await asset.originFile;
+      if (file == null || !mounted) return;
+
+      final duration = asset.videoDuration;
+
+      // 1) SimpleVideoEditorScreen으로 이동
+      final editResult = await Navigator.push<VideoEditSpec>(
+        context,
+        MaterialPageRoute(
+          builder:
+              (editorContext) => SimpleVideoEditorScreen(
+                videoFile: file,
+                onDone: (editorContext, result) async {
+                  // VideoEditSpec을 받아서 반환
+                  if (result is VideoEditSpec && editorContext.mounted) {
+                    Navigator.of(editorContext).pop(result);
+                  }
+                },
+              ),
+          fullscreenDialog: true,
+        ),
+      );
+
+      if (editResult == null || !mounted) return;
+
+      // 편집 spec 저장
+      _pendingVideoEditSpec = editResult;
+
+      // 2) VideoTrimScreen으로 이동
+      final trimResult = await Navigator.push<VideoTrimResult>(
+        context,
+        PageRouteBuilder(
+          pageBuilder:
+              (context, animation, secondaryAnimation) =>
+                  VideoTrimScreen(videoFile: file, videoDuration: duration),
+          transitionDuration: Duration.zero,
+          reverseTransitionDuration: Duration.zero,
+        ),
+      );
+
+      if (trimResult != null && mounted) {
+        widget.onMediaSelected(file);
+        await _popWithResult(
+          MediaPickerResult(
+            files: [file],
+            selectedMediaType: MediaType.video,
+            trimSpec: trimResult.trim,
+            editSpec: _pendingVideoEditSpec,
+          ),
+        );
+        // 사용 후 초기화
+        _pendingVideoEditSpec = null;
+      } else {
+        // 트림 취소 시 편집 spec도 초기화
+        _pendingVideoEditSpec = null;
+      }
+    } catch (e) {
+      debugPrint('비디오 편집 오류: $e');
+      _pendingVideoEditSpec = null;
+      if (mounted) {
+        await DialogUtils.showInfoDialog(
+          context,
+          title: AppLocalizations.of(context).t('error'),
+          message: '비디오를 불러올 수 없습니다.',
+        );
+      }
+    }
+  }
+
   Future<void> _handleGroupImage(List<AssetEntity> selectedAssets) async {
     try {
       // 선택된 이미지들을 File로 변환
@@ -807,104 +868,76 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
       debugPrint('그룹이미지: ${imageFiles.length}개 이미지 변환 완료');
 
-      // 🎯 레이아웃 선택 화면을 모달 바텀시트로 표시
-      // - UX: 화면의 95%까지만 올라오게 제한
-      bool didSelectLayout = false;
-
-      await showModalBottomSheet<void>(
+      // 🎯 레이아웃 선택 화면을 모달 바텀시트로 표시 (공통 메서드 사용)
+      final layout = await GroupImageLayoutSelector.showLayoutSelector(
         context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        isDismissible: true,
-        enableDrag: true,
-        builder:
-            (sheetContext) => FractionallySizedBox(
-              heightFactor: 0.93,
-              child: GroupImageLayoutSelector(
-                previewImages: imageFiles,
-                previewAssets:
-                    selectedAssets, // 🎯 썸네일 빠른 표시를 위해 AssetEntity 전달
-                onSelected: (layout) async {
-                  if (didSelectLayout) return;
-                  if (!mounted) return;
-                  if (_isSubmitting) return;
-
-                  didSelectLayout = true;
-                  _isSubmitting = true;
-
-                  debugPrint(
-                    '[MediaPicker] ✅ 그룹이미지 선택 완료: ${imageFiles.length}개, 레이아웃: $layout',
-                  );
-
-                  // ✅ 노드 삽입 전에(=시트 닫히기 전에) 이미지 크기를 미리 측정해서
-                  // Row/PageView가 첫 프레임부터 정확한 높이로 그려지게 한다.
-                  Map<String, dynamic>? preDimensions;
-                  if (layout != GroupImageLayout.individual) {
-                    // 간단한 로딩 오버레이
-                    if (sheetContext.mounted) {
-                      showDialog<void>(
-                        context: sheetContext,
-                        barrierDismissible: false,
-                        builder:
-                            (_) => const Center(
-                              child: CircularProgressIndicator(),
-                            ),
-                      );
-                    }
-                    try {
-                      final dims = <String, dynamic>{};
-                      for (final f in imageFiles) {
-                        final path = f.path;
-                        final size =
-                            await ImageSizeUtils.extractSizeFromImageProvider(
-                              path,
-                            );
-                        if (size == null) continue;
-                        final entry = {
-                          'width': size.width.round(),
-                          'height': size.height.round(),
-                        };
-                        dims[path] = entry;
-                        dims['file://$path'] = entry;
-                      }
-                      preDimensions = dims.isNotEmpty ? dims : null;
-                    } finally {
-                      if (sheetContext.mounted) {
-                        // 로딩 오버레이 닫기
-                        Navigator.of(sheetContext, rootNavigator: true).pop();
-                      }
-                    }
-                  }
-
-                  final result = MediaPickerResult(
-                    files: imageFiles,
-                    selectedMediaType: MediaType.image,
-                    groupLayout: layout,
-                    imageDimensions: preDimensions,
-                  );
-
-                  // ✅ 노드 추가/리플레이스 완료 이후에만 "시트 + 피커" 닫기
-                  final ok = await _runBeforePop(result);
-                  if (!ok) {
-                    // ✅ 실패 시 재시도 가능
-                    didSelectLayout = false;
-                    _isSubmitting = false;
-                    return;
-                  }
-                  if (!mounted) return;
-
-                  Navigator.of(sheetContext).pop(); // 레이아웃 선택 시트 닫기
-                  await Future.delayed(Duration.zero);
-                  if (!mounted) return;
-                  Navigator.of(context).pop(result); // 피커 닫기
-                },
-              ),
-            ),
+        previewImages: imageFiles,
       );
 
-      if (!didSelectLayout) {
+      if (layout == null || !mounted) {
         debugPrint('[MediaPicker] ⚠️ 레이아웃 선택 취소됨');
+        return;
       }
+
+      if (_isSubmitting) return;
+      _isSubmitting = true;
+
+      debugPrint(
+        '[MediaPicker] ✅ 그룹이미지 선택 완료: ${imageFiles.length}개, 레이아웃: $layout',
+      );
+
+      // ✅ 노드 삽입 전에 이미지 크기를 미리 측정해서
+      // Row/PageView가 첫 프레임부터 정확한 높이로 그려지게 한다.
+      Map<String, dynamic>? preDimensions;
+      if (layout != GroupImageLayout.individual) {
+        // 간단한 로딩 오버레이
+        if (mounted) {
+          showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => const Center(child: CircularProgressIndicator()),
+          );
+        }
+        try {
+          final dims = <String, dynamic>{};
+          for (final f in imageFiles) {
+            final path = f.path;
+            final size = await ImageSizeUtils.extractSizeFromImageProvider(
+              path,
+            );
+            if (size == null) continue;
+            final entry = {
+              'width': size.width.round(),
+              'height': size.height.round(),
+            };
+            dims[path] = entry;
+            dims['file://$path'] = entry;
+          }
+          preDimensions = dims.isNotEmpty ? dims : null;
+        } finally {
+          if (mounted) {
+            // 로딩 오버레이 닫기
+            Navigator.of(context, rootNavigator: true).pop();
+          }
+        }
+      }
+
+      final result = MediaPickerResult(
+        files: imageFiles,
+        selectedMediaType: MediaType.image,
+        groupLayout: layout,
+        imageDimensions: preDimensions,
+      );
+
+      // ✅ 노드 추가/리플레이스 완료 이후에만 피커 닫기
+      final ok = await _runBeforePop(result);
+      if (!ok) {
+        // ✅ 실패 시 재시도 가능
+        _isSubmitting = false;
+        return;
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
     } catch (e) {
       debugPrint('그룹이미지 오류: $e');
       if (mounted) {
@@ -936,7 +969,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
             try {
               final duration = asset.videoDuration;
               // 모든 영상에 대해 편집 화면으로 이동 (애니메이션 없이 바로 표시)
-              final trimResult = await Navigator.push<TrimmedVideoResult>(
+              final trimResult = await Navigator.push<VideoTrimResult>(
                 context,
                 PageRouteBuilder(
                   pageBuilder:
@@ -951,15 +984,21 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
               );
 
               if (trimResult != null && mounted) {
-                widget.onMediaSelected(trimResult.videoFile);
+                // ✅ VideoTrimResult는 spec만 포함하므로 원본 파일 사용
+                // 썸네일은 FFmpeg 처리 시 생성되므로 여기서는 null
+                widget.onMediaSelected(file);
                 await _popWithResult(
                   MediaPickerResult(
-                    files: [trimResult.videoFile],
+                    files: [file],
                     // ✅ 실제 선택된 타입은 파일 기준으로 고정 (토글 상태와 무관)
                     selectedMediaType: MediaType.video,
-                    thumbnailPath: trimResult.thumbnailPath, // 🎯 썸네일 경로 포함
+                    // thumbnailPath는 FFmpeg 처리 시 생성됨
+                    trimSpec: trimResult.trim,
+                    editSpec: _pendingVideoEditSpec, // 편집 없이 바로 트림한 경우 null
                   ),
                 );
+                // 사용 후 초기화
+                _pendingVideoEditSpec = null;
               }
               return;
             } catch (e) {
@@ -1208,28 +1247,24 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                 ),
               ),
             ],
-            /*
-             else ...[
-              // 영상일 때: 영상 편집
+            // ✅ 비디오 1개 선택 시: 비디오 편집 버튼 표시
+            if (isVideo && _maxSelectionCount == 1) ...[
               Expanded(
                 child: CupertinoButton(
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  color: colorScheme.primary,
-                  onPressed: () {
-                    // TODO: 영상 편집 처리
-                    debugPrint('영상 편집 선택');
-                  },
+                  color: Colors.transparent,
+                  onPressed: () => _handleVideoEdit(selectedAssets),
                   child: Text(
                     AppLocalizations.of(context).t('edit_video'),
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
-                      color: colorScheme.onPrimary,
+                      color: colorScheme.onSurface,
                     ),
                   ),
                 ),
               ),
-            ],*/
+            ],
           ],
         ),
       ),
@@ -1237,6 +1272,10 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   }
 
   Widget _buildBody() {
+    // ✅ 권한 체크가 끝나기 전에는 "권한 필요" UI가 아니라 로딩을 노출
+    if (!_permissionChecked) {
+      return const Center(child: CupertinoActivityIndicator());
+    }
     if (!_hasPermission) {
       return Center(
         child: Column(
@@ -1291,8 +1330,11 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     }
 
     // ✅ 이미지가 하나 이상 선택되었을 때 툴바 표시 (이미지 편집은 1개일 때도 활성화)
+    // ✅ 비디오 1개 선택 시에도 "비디오 편집" 버튼 표시
     final bool showBottomToolbar =
-        _selectedMediaIds.isNotEmpty && _mediaType == MediaType.image;
+        _selectedMediaIds.isNotEmpty &&
+        (_mediaType == MediaType.image ||
+            (_mediaType == MediaType.video && _maxSelectionCount == 1));
     final bool showSelectedStrip =
         _isMultiSelectEnabled && _selectedMediaIds.isNotEmpty;
 
@@ -1330,6 +1372,12 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                   setState(() {
                     _crossAxisCount = newCount;
                   });
+                  // 🎯 5열로 변경되었고, 현재 로드된 미디어가 한 페이지(30개) 이하이면 추가 로드
+                  if (newCount == 5 &&
+                      _media.length <= _pageSize &&
+                      _hasMoreMedia) {
+                    _loadMoreMedia();
+                  }
                 }
                 _lastScale = currentScale;
               }
@@ -1345,7 +1393,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                     controller: _scrollController, // 🎯 스크롤 컨트롤러 연결
                     key: ValueKey('${_crossAxisCount}_$_mediaType'),
                     padding: const EdgeInsets.all(2),
-                    cacheExtent: 500, // 🎯 캐시 범위 제한 (성능 최적화)
+                    cacheExtent: 260, // 🎯 첫 진입 메모리 피크를 줄여 크래시/버벅임 방지
                     addAutomaticKeepAlives: false, // 🎯 메모리 절약
                     addRepaintBoundaries: true, // 🎯 렌더링 최적화
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -1387,6 +1435,21 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     final isSelected = _selectedMediaIds.contains(asset.id);
     final isVideo = asset.type == AssetType.video;
 
+    // ✅ 썸네일 크기를 화면/그리드에 맞춰 계산해서 과도한 디코딩/메모리 사용을 줄인다.
+    final mq = MediaQuery.of(context);
+    final screenWidth = mq.size.width;
+    final dpr = mq.devicePixelRatio;
+    const gridPadding = 4.0; // EdgeInsets.all(2) * 2
+    const gridSpacing = 1.0;
+    final available = (screenWidth -
+            gridPadding -
+            ((_crossAxisCount - 1) * gridSpacing))
+        .clamp(1.0, double.infinity);
+    final cellLogical = available / _crossAxisCount;
+    final cellPx = (cellLogical * dpr).ceil();
+    final thumbPx = cellPx.clamp(140, 320);
+    final thumbSize = ThumbnailSize(thumbPx, thumbPx);
+
     // 🎯 비활성화 로직:
     // - 영상: 항상 활성화
     // - 단일 이미지 모드 (maxSelectionCount == 1): 항상 활성화 (다른 이미지 선택 시 교체되므로)
@@ -1406,6 +1469,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         isDisabled: false, // 🎯 모든 영상 선택 가능 (2분 초과도 편집 화면에서 자를 수 있음)
         onTap: () => _toggleMediaSelection(asset),
         formatDuration: _formatDuration,
+        thumbnailSize: thumbSize,
       );
     } else {
       return _ImageThumbnailWidget(
@@ -1414,6 +1478,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         isSelected: isSelected,
         isDisabled: isDisabled, // 🎯 비활성화 상태 전달
         onTap: () => _toggleMediaSelection(asset),
+        thumbnailSize: thumbSize,
       );
     }
   }
@@ -1426,6 +1491,7 @@ class _VideoThumbnailWidget extends StatelessWidget {
   final bool isDisabled; // 🎯 비활성화 상태 (3분 초과 영상)
   final VoidCallback onTap;
   final String Function(Duration) formatDuration;
+  final ThumbnailSize thumbnailSize;
 
   const _VideoThumbnailWidget({
     super.key,
@@ -1434,6 +1500,7 @@ class _VideoThumbnailWidget extends StatelessWidget {
     this.isDisabled = false,
     required this.onTap,
     required this.formatDuration,
+    required this.thumbnailSize,
   });
 
   @override
@@ -1447,7 +1514,7 @@ class _VideoThumbnailWidget extends StatelessWidget {
           AssetEntityImage(
             asset,
             isOriginal: false,
-            thumbnailSize: const ThumbnailSize(400, 400),
+            thumbnailSize: thumbnailSize,
             fit: BoxFit.cover,
             errorBuilder: (context, error, stackTrace) {
               return Container(
@@ -1477,33 +1544,19 @@ class _VideoThumbnailWidget extends StatelessWidget {
               ),
             ),
           ),
-          // 🎯 선택된 영상에 흰색 투명 fill 적용
+          // 🎯 선택된 영상에 primary 색상 투명 fill 적용
           if (isSelected)
             Positioned.fill(
               child: Container(
-                color: Colors.white.withOpacity(0.6), // 흰색 30% 투명도
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
               ),
             ),
           // 선택 표시 (우측 상단)
           if (isSelected)
             Positioned(
               top: 8,
-              left: 8,
               right: 8,
-              bottom: 8,
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  width: 24,
-                  height: 24,
-
-                  child: Icon(
-                    Icons.check,
-                    color: Theme.of(context).colorScheme.primary,
-                    size: 50,
-                  ),
-                ),
-              ),
+              child: Icon(Icons.check, color: Colors.white, size: 20),
             ),
         ],
       ),
@@ -1543,6 +1596,7 @@ class _ImageThumbnailWidget extends StatelessWidget {
   final bool isSelected;
   final bool isDisabled; // 🎯 비활성화 상태 (5개 이상 선택된 경우)
   final VoidCallback onTap;
+  final ThumbnailSize thumbnailSize;
 
   const _ImageThumbnailWidget({
     super.key,
@@ -1550,6 +1604,7 @@ class _ImageThumbnailWidget extends StatelessWidget {
     this.isSelected = false,
     this.isDisabled = false,
     required this.onTap,
+    required this.thumbnailSize,
   });
 
   @override
@@ -1563,7 +1618,7 @@ class _ImageThumbnailWidget extends StatelessWidget {
           AssetEntityImage(
             asset,
             isOriginal: false,
-            thumbnailSize: const ThumbnailSize(400, 400),
+            thumbnailSize: thumbnailSize,
             fit: BoxFit.cover,
             errorBuilder: (context, error, stackTrace) {
               return Container(
@@ -1582,11 +1637,11 @@ class _ImageThumbnailWidget extends StatelessWidget {
                 color: Colors.black.withOpacity(0.3), // 비활성화된 이미지만 어둡게
               ),
             ),
-          // 🎯 선택된 이미지에 흰색 반투명 오버레이
+          // 🎯 선택된 이미지에 primary 색상 반투명 오버레이
           if (isSelected)
             Positioned.fill(
               child: Container(
-                color: Colors.white.withOpacity(0.6), // 흰색 30% 투명도
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
               ),
             ),
           // 선택 표시 (우측 상단)
@@ -1594,21 +1649,7 @@ class _ImageThumbnailWidget extends StatelessWidget {
             Positioned(
               top: 8,
               right: 8,
-              bottom: 8,
-              left: 8,
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  width: 26,
-                  height: 26,
-
-                  child: Icon(
-                    Icons.check,
-                    color: Theme.of(context).colorScheme.primary,
-                    size: 50,
-                  ),
-                ),
-              ),
+              child: Icon(Icons.check, color: Colors.white, size: 20),
             ),
         ],
       ),

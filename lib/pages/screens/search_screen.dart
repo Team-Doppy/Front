@@ -13,19 +13,30 @@ import 'package:doppy/pages/components/search_results.dart';
 import 'package:doppy/pages/components/search_video_widgets.dart';
 import 'package:doppy/pages/components/search_trending_section.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 import '../../../data/services/search_service.dart';
 
 class SearchScreenOverlay extends StatefulWidget {
   final VoidCallback? onClose;
   final String? initialQuery; // 초기 검색어 (검색어 칩에서 올 때)
+  // ✅ RootShell에서 "명령"으로 전달 (위젯 파라미터 변경 없이 검색어만 갱신)
+  final ValueListenable<String?>? initialQueryListenable;
+
+  // ✅ IndexedStack에서 비활성 탭이면 즉시 return하여 무거운 subtree 빌드 방지
+  final ValueListenable<int>? activeIndexListenable;
+  final int tabIndex;
   final Function(int)? onTabChange; // 🎯 바텀 바 탭 변경
 
   const SearchScreenOverlay({
     super.key,
     this.onClose,
     this.initialQuery,
+    this.initialQueryListenable,
+    this.activeIndexListenable,
+    this.tabIndex = 1,
     this.onTabChange,
   });
 
@@ -40,6 +51,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   bool _isSearching = false; // 🎯 중복 검색 방지
   bool _isNavigating = false; // 🎯 네비게이션 중 중복 탭 방지
   bool _shouldIgnoreControllerChanges = false; // 🎯 검색 칩 탭 시 리스너 무시 플래그
+  VoidCallback? _initialQueryListener;
 
   // 🎯 검색 결과 상태 (독립적으로 관리)
   List<PostData> _searchResults = [];
@@ -58,11 +70,15 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     super.initState();
 
     // 🎯 초기 검색어가 있으면 바로 포커스 상태로 시작 (trending 렌더링 방지)
+    final externalQuery = widget.initialQueryListenable?.value;
+    final hasExternalQuery = externalQuery != null && externalQuery.isNotEmpty;
     final hasInitialQuery =
-        widget.initialQuery != null && widget.initialQuery!.isNotEmpty;
+        hasExternalQuery ||
+        (widget.initialQuery != null && widget.initialQuery!.isNotEmpty);
 
     if (hasInitialQuery) {
-      _searchController.text = widget.initialQuery!;
+      final q = hasExternalQuery ? externalQuery : (widget.initialQuery ?? '');
+      _searchController.text = q;
     }
 
     _searchController.addListener(() {
@@ -77,6 +93,15 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       context.read<SearchService>().setFocused(_searchFocusNode.hasFocus);
     });
 
+    // ✅ RootShell에서 initialQuery를 notifier로 전달하는 경우, 변경을 직접 반영
+    if (widget.initialQueryListenable != null) {
+      _initialQueryListener = () {
+        if (!mounted) return;
+        _applyIncomingInitialQuery(widget.initialQueryListenable!.value);
+      };
+      widget.initialQueryListenable!.addListener(_initialQueryListener!);
+    }
+
     // 🎯 초기화 및 초기 검색어 처리
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // 🎯 UI 렌더링 완료 후 지연 실행하여 블로킹 방지
@@ -87,9 +112,11 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
 
         // 🎯 초기 검색어가 있으면 포커스 설정
         if (hasInitialQuery) {
-          searchService.onSearchChanged(widget.initialQuery!);
+          final q =
+              hasExternalQuery ? externalQuery : (widget.initialQuery ?? '');
+          searchService.onSearchChanged(q);
           searchService.setFocused(true);
-          debugPrint('[SearchScreen] 초기 검색어로 포커스 설정: ${widget.initialQuery}');
+          debugPrint('[SearchScreen] 초기 검색어로 포커스 설정: $q');
         }
 
         // initialize는 백그라운드에서 실행 (캐시 사용)
@@ -98,6 +125,32 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         debugPrint('[SearchScreen] 초기화 완료');
       });
     });
+  }
+
+  void _applyIncomingInitialQuery(String? q) {
+    final normalized = (q ?? '').trim();
+    final searchService = context.read<SearchService>();
+
+    if (normalized.isNotEmpty) {
+      // 초기 검색어로 진입 시 트렌딩 데이터 즉시 지우기 (기존 정책 유지)
+      searchService.clearTrendingData();
+
+      _shouldIgnoreControllerChanges = true;
+      _searchController.text = normalized;
+      _shouldIgnoreControllerChanges = false;
+
+      searchService.onSearchChanged(normalized);
+      searchService.setFocused(true);
+      _searchFocusNode.requestFocus();
+    } else {
+      _shouldIgnoreControllerChanges = true;
+      _searchController.clear();
+      _shouldIgnoreControllerChanges = false;
+
+      searchService.clearSearch();
+      searchService.setFocused(false);
+      _searchFocusNode.unfocus();
+    }
   }
 
   @override
@@ -154,6 +207,10 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
 
   @override
   void dispose() {
+    if (widget.initialQueryListenable != null &&
+        _initialQueryListener != null) {
+      widget.initialQueryListenable!.removeListener(_initialQueryListener!);
+    }
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -207,127 +264,154 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<SearchService>(
-      builder: (context, searchService, child) {
-        // 🎯 키보드 상태 감지 및 업데이트
-        final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-        final isKeyboardVisible = keyboardHeight > 0;
+    // ✅ IndexedStack에서 Search 탭이 비활성이면
+    // 키보드(MediaQuery) 변화가 와도 여기서 끝내서 무거운 subtree 빌드를 차단한다.
+    if (widget.activeIndexListenable != null) {
+      return ValueListenableBuilder<int>(
+        valueListenable: widget.activeIndexListenable!,
+        builder: (context, idx, _) {
+          if (idx != widget.tabIndex) {
+            return const SizedBox.shrink();
+          }
+          return _buildActive(context);
+        },
+      );
+    }
 
-        // 키보드 상태가 변경되면 SearchService에 업데이트 (즉시 업데이트)
-        if (searchService.isKeyboardVisible != isKeyboardVisible) {
-          searchService.setKeyboardVisible(isKeyboardVisible);
-        }
+    return _buildActive(context);
+  }
 
-        // 🎯 현재 배경 이미지 URL 가져오기
-        final backgroundImageUrl = _getCurrentBackgroundImageUrl(searchService);
+  Widget _buildActive(BuildContext context) {
+    // 🎯 키보드(viewInsets) 변경으로 인한 불필요한 리빌드 방지
+    // PostWriteScreen에서 키보드가 올라와도 SearchScreen이 리빌드되지 않도록 viewInsets 무시
+    // (SearchScreen 내부에서는 키보드를 사용하지 않으므로 viewInsets가 필요 없음)
+    final view = View.of(context);
+    final frozenMq = MediaQueryData.fromView(
+      view,
+    ).copyWith(viewInsets: EdgeInsets.zero);
 
-        return Scaffold(
-          resizeToAvoidBottomInset: false,
-          backgroundColor: Theme.of(context).colorScheme.background,
-          body: Stack(
-            children: [
-              Positioned.fill(
-                child: AnimatedSwitcher(
-                  duration: const Duration(
-                    milliseconds: 400,
-                  ), // 🎯 부드러운 전환 (섹션 전환과 동일한 duration)
-                  switchInCurve: Curves.easeInOut,
-                  switchOutCurve: Curves.easeInOut,
-                  transitionBuilder: (child, animation) {
-                    return FadeTransition(opacity: animation, child: child);
-                  },
-                  child:
-                      backgroundImageUrl != null
-                          ? Builder(
-                            builder: (context) {
-                              // 비디오 URL 체크
-                              final isVideoUrl =
-                                  backgroundImageUrl.toLowerCase().endsWith(
-                                    '.mp4',
-                                  ) ||
-                                  backgroundImageUrl.toLowerCase().endsWith(
-                                    '.mov',
-                                  ) ||
-                                  backgroundImageUrl.toLowerCase().endsWith(
-                                    '.avi',
-                                  ) ||
-                                  backgroundImageUrl.toLowerCase().endsWith(
-                                    '.webm',
-                                  ) ||
-                                  backgroundImageUrl.contains('/videos/');
+    return MediaQuery(
+      data: frozenMq,
+      child: Consumer<SearchService>(
+        builder: (context, searchService, child) {
+          // 🎯 현재 배경 이미지 URL 가져오기
+          final backgroundImageUrl = _getCurrentBackgroundImageUrl(
+            searchService,
+          );
 
-                              // 비디오인 경우 VideoPlayer 사용
-                              if (isVideoUrl) {
-                                return SearchBackgroundVideoWidget(
-                                  videoUrl: backgroundImageUrl,
-                                  key: ValueKey('bg-video-$backgroundImageUrl'),
-                                );
-                              } else {
-                                return CachedNetworkImage(
-                                  imageUrl: backgroundImageUrl,
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                  key: ValueKey('bg-$backgroundImageUrl'),
-                                  fadeInDuration: const Duration(
-                                    milliseconds: 200,
-                                  ), // 🎯 배경 이미지 변경 시 페이드 인 효과
-                                  fadeOutDuration: const Duration(
-                                    milliseconds: 300,
-                                  ), // 🎯 이전 이미지 페이드 아웃
-                                  placeholder:
-                                      (context, url) => ShimmerBox(
-                                        width: double.infinity,
-                                        height: double.infinity,
-                                      ),
-                                  errorWidget:
-                                      (context, url, error) =>
-                                          const SizedBox.shrink(),
-                                );
-                              }
-                            },
-                          )
-                          : const SizedBox.shrink(),
+          return Scaffold(
+            resizeToAvoidBottomInset: false,
+            backgroundColor: Theme.of(context).colorScheme.background,
+            body: Stack(
+              children: [
+                Positioned.fill(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(
+                      milliseconds: 400,
+                    ), // 🎯 부드러운 전환 (섹션 전환과 동일한 duration)
+                    switchInCurve: Curves.easeInOut,
+                    switchOutCurve: Curves.easeInOut,
+                    transitionBuilder: (child, animation) {
+                      return FadeTransition(opacity: animation, child: child);
+                    },
+                    child:
+                        backgroundImageUrl != null
+                            ? Builder(
+                              builder: (context) {
+                                // 비디오 URL 체크
+                                final isVideoUrl =
+                                    backgroundImageUrl.toLowerCase().endsWith(
+                                      '.mp4',
+                                    ) ||
+                                    backgroundImageUrl.toLowerCase().endsWith(
+                                      '.mov',
+                                    ) ||
+                                    backgroundImageUrl.toLowerCase().endsWith(
+                                      '.avi',
+                                    ) ||
+                                    backgroundImageUrl.toLowerCase().endsWith(
+                                      '.webm',
+                                    ) ||
+                                    backgroundImageUrl.contains('/videos/');
+
+                                // 비디오인 경우 VideoPlayer 사용
+                                if (isVideoUrl) {
+                                  return SearchBackgroundVideoWidget(
+                                    videoUrl: backgroundImageUrl,
+                                    key: ValueKey(
+                                      'bg-video-$backgroundImageUrl',
+                                    ),
+                                  );
+                                } else {
+                                  return CachedNetworkImage(
+                                    imageUrl: backgroundImageUrl,
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                    height: double.infinity,
+                                    key: ValueKey('bg-$backgroundImageUrl'),
+                                    fadeInDuration: const Duration(
+                                      milliseconds: 200,
+                                    ), // 🎯 배경 이미지 변경 시 페이드 인 효과
+                                    fadeOutDuration: const Duration(
+                                      milliseconds: 300,
+                                    ), // 🎯 이전 이미지 페이드 아웃
+                                    placeholder:
+                                        (context, url) => ShimmerBox(
+                                          width: double.infinity,
+                                          height: double.infinity,
+                                        ),
+                                    errorWidget:
+                                        (context, url, error) =>
+                                            const SizedBox.shrink(),
+                                  );
+                                }
+                              },
+                            )
+                            : const SizedBox.shrink(),
+                  ),
                 ),
-              ),
-              Positioned.fill(
-                child: Container(
-                  color: Theme.of(context).colorScheme.background,
+                Positioned.fill(
+                  child: Container(
+                    color: Theme.of(context).colorScheme.background,
+                  ),
                 ),
-              ),
-              SafeArea(
-                child: Column(
-                  children: [
-                    // 🎯 검색 결과가 표시될 때는 검색창 숨김
-                    if (!_isShowingSearchResults) ...[
-                      SearchTopBar(
-                        controller: _searchController,
-                        focusNode: _searchFocusNode,
-                        query: searchService.query,
-                        onClear: _clearSearch,
-                        onBack: _resetToInitial,
-                        onClose: widget.onClose,
-                        onSubmitted: _runSearch,
-                        onCancel: () {
-                          _searchFocusNode.unfocus();
-                          context.read<SearchService>().setFocused(false);
-                        },
-                        isSearching: _isSearching, // 🎯 검색 중 여부 전달
+                SafeArea(
+                  child: Column(
+                    children: [
+                      // 🎯 검색 결과가 표시될 때는 검색창 숨김
+                      if (!_isShowingSearchResults) ...[
+                        SearchTopBar(
+                          controller: _searchController,
+                          focusNode: _searchFocusNode,
+                          query: searchService.query,
+                          onClear: _clearSearch,
+                          onBack: _resetToInitial,
+                          onClose: widget.onClose,
+                          onSubmitted: _runSearch,
+                          onCancel: () {
+                            _searchFocusNode.unfocus();
+                            context.read<SearchService>().setFocused(false);
+                          },
+                          isSearching: _isSearching, // 🎯 검색 중 여부 전달
+                        ),
+                      ],
+                      Expanded(
+                        child:
+                            _isShowingSearchResults
+                                ? _buildSearchResultsView(context)
+                                : _buildDefaultSearchBody(
+                                  context,
+                                  searchService,
+                                ),
                       ),
                     ],
-                    Expanded(
-                      child:
-                          _isShowingSearchResults
-                              ? _buildSearchResultsView(context)
-                              : _buildDefaultSearchBody(context, searchService),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 

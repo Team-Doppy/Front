@@ -4,6 +4,7 @@ import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/single_image_component.dart';
+import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/post_reader_header.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
@@ -38,6 +39,7 @@ import 'package:doppy/pages/components/fullscreen_media_viewer.dart';
 import 'package:doppy/pages/components/liked_users_bottom_sheet.dart';
 import 'package:doppy/pages/components/viewers_bottom_sheet.dart';
 import 'package:doppy/pages/components/post_action_bottom_sheet.dart';
+import 'package:doppy/pages/components/mention_bottom_sheet.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -46,6 +48,7 @@ import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 // 읽기 전용에서는 에디터 전용 컴포넌트를 사용하지 않음
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/clip_component.dart'
     show
@@ -372,82 +375,26 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       _imageViewerCtrl.forward(from: 0.0);
     } else if (node is DividerNode) {
       debugPrint('  - Divider');
-    } else if (node is ParagraphNode) {
-      final paragraphNode = node;
-
+    } else if (node is MentionNode) {
       // 멘션 노드 처리: 탭 시 프로필로 이동
-      final isMention = (paragraphNode.metadata['mention'] == true);
-      if (isMention) {
-        // 우선 메타의 usernames 사용; 없으면 텍스트에서 파싱
-        final List<String> names =
-            ((paragraphNode.metadata['usernames'] as List?)
-                ?.map((e) => e.toString())
-                .toList()) ??
-            _extractUsernamesFromText(paragraphNode.text.text);
-
-        if (names.isEmpty) return;
-        if (names.length == 1) {
-          _openUserProfile(names.first);
-          return;
-        }
-
-        if (!mounted) return;
-        // 여러 명이면 선택 바텀시트
-        showModalBottomSheet(
-          context: context,
-          backgroundColor: Colors.transparent,
-          builder: (_) {
-            return Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(16),
-                ),
-              ),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(height: 8),
-                    Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    ...names.map(
-                      (u) => ListTile(
-                        title: Text(
-                          '@$u',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.onSurface,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        onTap: () {
-                          Navigator.of(context).pop();
-                          _openUserProfile(u);
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
+      final usernames = node.usernames;
+      if (usernames.isEmpty) return;
+      if (usernames.length == 1) {
+        _openUserProfile(usernames.first);
         return;
       }
 
+      if (!mounted) return;
+      // 여러 명이면 선택 바텀시트
+      MentionBottomSheet.show(
+        context,
+        usernames: usernames,
+        onUsernameTap: _openUserProfile,
+      );
+      return;
+    } else if (node is ParagraphNode) {
       // 스포일러 확인: 텍스트에 spoiler attribution이 있는지 확인
-      final text = paragraphNode.text;
+      final text = node.text;
       bool hasSpoiler = false;
       try {
         // 텍스트 전체를 확인하여 spoiler attribution이 있는지 체크
@@ -466,7 +413,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
         // NodeComponentService에 "스포일러 해제됨" 상태 저장
         // 문서는 수정하지 않고 UI에서만 일시적으로 해제
-        nodeService.setSpoiler(paragraphNode.id, false);
+        nodeService.setSpoiler(node.id, false);
         // setState를 호출하여 UI 업데이트 (NodeComponentService 변경 감지)
         setState(() {});
       }
@@ -878,20 +825,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
   // NOTE: 댓글 오버레이(close) 로직은 Route(push) 방식으로 전환하면서 제거됨.
 
-  /// ✅ 좋아요 누른 사람 목록: 표준 Navigator.push 방식으로 이동
-  Future<void> _openLikedUsersOverlay() async {
-    final postId = widget.exported['id']?.toString() ?? '';
-    if (postId.isEmpty) return;
-
-    final likeCount = _likeService.getPostLikeCount(postId);
-
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder:
-            (_) => LikedUsersBottomSheet(postId: postId, likeCount: likeCount),
-      ),
-    );
-  }
+  // 🎯 좋아요한 사람 목록 기능은 FullscreenMediaViewer로 이동됨
 
   /// ✅ 본 사람(조회자) 목록: 표준 Navigator.push 방식으로 이동
   Future<void> _openViewersOverlay() async {
@@ -903,10 +837,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           .toString(),
     );
 
+    final likeCount = _likeService.getPostLikeCount(postId);
+
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder:
-            (_) => ViewersBottomSheet(postId: postId, viewerCount: viewerCount),
+            (_) => ViewersBottomSheet(
+              postId: postId,
+              viewerCount: viewerCount,
+              likeCount: likeCount > 0 ? likeCount : null,
+            ),
       ),
     );
   }
@@ -1156,8 +1096,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   _showCommentBottomSheet();
                 } else if (widget.initialAction ==
                     PostReaderInitialAction.showLikes) {
-                  debugPrint('[PostReaderScreen] 🎯 좋아요 시트 즉시 열기');
-                  _openLikedUsersOverlay();
+                  debugPrint('[PostReaderScreen] 🎯 좋아요 시트는 뷰어에서 처리됨');
+                  // 🎯 좋아요 기능은 FullscreenMediaViewer로 이동됨
                 }
               }
             });
@@ -1174,7 +1114,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                     _showCommentBottomSheet();
                   } else if (widget.initialAction ==
                       PostReaderInitialAction.showLikes) {
-                    _openLikedUsersOverlay();
+                    // 🎯 좋아요 기능은 FullscreenMediaViewer로 이동됨
                   }
                 }
               });
@@ -1724,6 +1664,23 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                                 isDarkMode, // 🎯 성능 최적화: 변수 사용
                                           ),
                                           DividerComponentBuilder(),
+                                          MentionComponentBuilder(
+                                            onMentionTap: (names) {
+                                              if (names.isEmpty) return;
+                                              if (names.length == 1) {
+                                                _openUserProfile(names.first);
+                                                return;
+                                              }
+
+                                              if (!mounted) return;
+                                              // 여러 명이면 선택 바텀시트
+                                              MentionBottomSheet.show(
+                                                context,
+                                                usernames: names,
+                                                onUsernameTap: _openUserProfile,
+                                              );
+                                            },
+                                          ),
                                           ClipComponentBuilder(
                                             screenWidth: screenWidth, // 🚀 전달
                                             dragService: _dragService,
@@ -2012,7 +1969,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                           thumbnailImageUrl: thumbnailImageUrl,
                                           likeCount: likeCount,
                                           onShowLikedUsers:
-                                              _openLikedUsersOverlay,
+                                              null, // 🎯 좋아요 기능은 뷰어로 이동됨
                                         );
                                       }
                                       : null,
@@ -2041,10 +1998,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                     _isVideoViewer && _currentImageUrl != null
                                         ? readerVideoControllers[_currentImageUrl!]
                                         : null, // 🎯 ClipComponent에서 생성한 컨트롤러 공유
-                                imageProvider:
-                                    !_isVideoViewer && _currentImageUrl != null
-                                        ? NetworkImage(_currentImageUrl!)
-                                        : null, // 🎯 NetworkImage 인스턴스 직접 생성
+                                // ✅ imageProvider 제거: FullscreenMediaViewer 내부에서 EditorImageProvider 사용
+                                imageProvider: null,
                                 onClose: _closeImageViewer,
                                 postTitle: () {
                                   final title =
@@ -2080,6 +2035,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                   );
                                   return count;
                                 }(),
+                                // 🎯 좋아요 기능 추가
+                                postId: widget.exported['id']?.toString(),
+                                likeService: _likeService,
                               ),
                             ),
                           ),
@@ -2305,7 +2263,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                         if (!isPrivate) ...[
                                           GestureDetector(
                                             onTap: _toggleLike,
-                                            onLongPress: _openLikedUsersOverlay,
+                                            // 🎯 좋아요한 사람 목록은 뷰어에서 처리됨
                                             child: Row(
                                               mainAxisSize: MainAxisSize.min,
                                               children: [

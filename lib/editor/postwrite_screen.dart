@@ -15,6 +15,8 @@ import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/component/mention_component.dart';
+import 'package:doppy/editor/overlay/mention_overlay.dart';
 import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
 import 'package:doppy/editor/overlay/selection_box_caret_overlay.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -47,7 +49,15 @@ import 'package:doppy/providers/theme_provider.dart';
 /// 글 공개 범위 옵션
 enum VisibilityOption { public, partial, private }
 
-enum NodeType { paragraph, image, imageRow, location, unknown }
+enum NodeType {
+  paragraph,
+  image,
+  imageRow,
+  pageViewImage,
+  location,
+  mention,
+  unknown,
+}
 
 class PostwriteScreen extends StatefulWidget {
   final bool isEditingMode;
@@ -83,6 +93,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   //overlay
   OverlayEntry? overlayEntry;
   GlobalKey overlayKey = GlobalKey();
+
+  /// 드래그 오버레이 좌표 변환을 위해 Scaffold body의 Stack 좌표계를 정확히 참조한다.
+  final GlobalKey _editorBodyStackKey = GlobalKey();
   final GlobalKey _documentLayoutKey = GlobalKey();
 
   //manipulation
@@ -156,11 +169,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         sessionKey,
       );
 
+      // ✅ 정책: 제목은 "임시저장/Step1 입력"이 아니면 본문에서 추출하지 않는다.
       final title =
           (_draftTitleOverride != null &&
                   _draftTitleOverride!.trim().isNotEmpty)
               ? _draftTitleOverride!.trim()
-              : PostExporter.getTitleOrExtractFromBody(editor.document);
+              : '';
 
       final summary =
           (_draftSummaryOverride != null &&
@@ -363,8 +377,22 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       () async {
         if (!mounted) return;
 
+        // ✅ "작성하던 글이 있어요" 바텀시트를 띄운 경우,
+        // 바텀시트 dismiss 애니메이션이 완전히 끝난 뒤에 키보드 포커스를 주기 위해
+        // 약간의 여유 시간을 둔다 (안정화 목적).
+        Future<void> delayFocusAfterBottomSheetDismiss() async {
+          // 다음 프레임까지 대기 (route transition 정리)
+          await WidgetsBinding.instance.endOfFrame;
+          // dismiss 애니메이션 + 레이아웃 안정화 여유
+          await Future<void>.delayed(const Duration(milliseconds: 400));
+        }
+
         if (!widget.isEditingMode) {
-          await _promptResumeWritingIfNeeded();
+          final didShowResumeSheet = await _promptResumeWritingIfNeeded();
+          if (didShowResumeSheet) {
+            await delayFocusAfterBottomSheetDismiss();
+            if (!mounted) return;
+          }
         }
 
         // ✅ 0번 노드=제목 가정 제거:
@@ -491,6 +519,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   }
 
   void _cleanupAndExit() {
+    // 🎯 키보드를 먼저 내려서 레이아웃 재계산 문제 방지
+    // 다이얼로그가 닫힌 후 키보드가 내려가면서 빈 공간이 생기는 문제 해결
+    _editorFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    FocusScope.of(context).unfocus();
+
     try {
       dragService.endDrag();
       composer.clearSelection();
@@ -555,27 +589,64 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   /// 마지막 특수 노드 아래 빈 공간 클릭 시 빈 문단 추가
   void _handleTapBelowLastSpecialNode(Offset globalPosition) {
+    debugPrint('[PostWrite] ========== 빈 공간 탭 처리 시작 ==========');
+    debugPrint(
+      '[PostWrite] globalPosition: (${globalPosition.dx}, ${globalPosition.dy})',
+    );
+
+    // ✅ 키보드가 올라오거나(뷰 인셋 변화), 스크롤/레이아웃이 재배치되면
+    // 노드 rect 캐시가 stale 해질 수 있다.
+    // 이 로직은 "마지막 노드 아래"를 판정해야 하므로 매번 최신 rect가 필요하다.
+    dragService.invalidateNodeRectCache();
+
     final lastIndex = document.nodeCount - 1;
-    if (lastIndex < 0) return;
+    debugPrint(
+      '[PostWrite] lastIndex: $lastIndex, nodeCount: ${document.nodeCount}',
+    );
+    if (lastIndex < 0) {
+      debugPrint('[PostWrite] lastIndex < 0, 종료');
+      return;
+    }
 
     final lastNode = document.getNodeAt(lastIndex);
-    if (lastNode == null) return;
+    if (lastNode == null) {
+      debugPrint('[PostWrite] lastNode is null, 종료');
+      return;
+    }
+    debugPrint(
+      '[PostWrite] lastNode: ${lastNode.id}, type: ${lastNode.runtimeType}',
+    );
 
     // 마지막 노드가 특수 노드인지 확인
     final isSpecial = NodeTypeChecker.isSpecialNode(lastNode);
-    if (!isSpecial) return;
+    debugPrint('[PostWrite] isSpecial: $isSpecial');
+    if (!isSpecial) {
+      debugPrint('[PostWrite] 마지막 노드가 특수 노드가 아님, 종료');
+      return;
+    }
 
     // 마지막 노드의 Rect 확인
     final nodeRect = dragService.getNodeGlobalRect(lastNode.id);
-    if (nodeRect == null) return;
+    if (nodeRect == null) {
+      debugPrint('[PostWrite] nodeRect is null, 종료');
+      return;
+    }
+    debugPrint(
+      '[PostWrite] nodeRect: top=${nodeRect.top}, bottom=${nodeRect.bottom}, left=${nodeRect.left}, right=${nodeRect.right}',
+    );
+    debugPrint(
+      '[PostWrite] nodeRect size: width=${nodeRect.width}, height=${nodeRect.height}',
+    );
 
     // 🎯 노드 영역 아래 모든 여백을 클릭 가능 영역으로 확장
     final tapY = globalPosition.dy;
     final isBelowNode = tapY > nodeRect.bottom;
+    final distanceBelow = tapY - nodeRect.bottom;
 
     debugPrint(
-      '[PostWrite] 빈 공간 탭 체크: tapY=$tapY, nodeBottom=${nodeRect.bottom}, isBelowNode=$isBelowNode',
+      '[PostWrite] 좌표 비교: tapY=$tapY, nodeBottom=${nodeRect.bottom}, distanceBelow=$distanceBelow',
     );
+    debugPrint('[PostWrite] isBelowNode: $isBelowNode');
 
     if (isBelowNode) {
       // 🎯 실제로 그 위치가 비어있는지 확인 (다른 노드가 있는지 체크)
@@ -587,6 +658,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       debugPrint(
         '[PostWrite] hitTestResult: ${hitTestResult?.key?.id}, lastNode: ${lastNode.id}',
       );
+      if (hitTestResult != null) {
+        debugPrint(
+          '[PostWrite] hitTestResult.key: ${hitTestResult.key?.id}, value: ${hitTestResult.value}',
+        );
+        if (hitTestResult.value != null) {
+          debugPrint(
+            '[PostWrite] hitTestResult.value (Rect): top=${hitTestResult.value!.top}, bottom=${hitTestResult.value!.bottom}, left=${hitTestResult.value!.left}, right=${hitTestResult.value!.right}',
+          );
+        }
+      }
 
       // hit test 결과가 없거나, 마지막 노드인 경우만 빈 공간으로 간주
       final isEmpty =
@@ -599,10 +680,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       );
 
       if (isEmpty) {
+        debugPrint('[PostWrite] 빈 텍스트 노드 추가 실행: index=${lastIndex + 1}');
         editorService.insertEmptyParagraphAtIndex(lastIndex + 1);
         nodeComponentService.selectNode(null);
+        debugPrint('[PostWrite] 빈 텍스트 노드 추가 완료');
       }
+    } else {
+      debugPrint('[PostWrite] 노드 아래 영역이 아님, 스킵');
     }
+    debugPrint('[PostWrite] ========== 빈 공간 탭 처리 종료 ==========');
   }
 
   Stylesheet _buildStylesheet(BuildContext context) {
@@ -652,12 +738,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     });
 
     try {
-      // 🎯 자동저장 메타데이터는 Step1(썸네일 편집) 값이 있으면 우선 사용
+      // ✅ 정책: 제목은 "임시저장/Step1 입력"이 아니면 본문에서 추출하지 않는다.
+      // 자동저장은 복구 목적이므로, 빈 제목이면 no_title로 저장한다.
       String title =
           (_draftTitleOverride != null &&
                   _draftTitleOverride!.trim().isNotEmpty)
               ? _draftTitleOverride!.trim()
-              : PostExporter.getTitleOrExtractFromBody(editor.document);
+              : '';
       if (title.trim().isEmpty) title = context.tr('no_title');
 
       // 🎯 UUID 기반 draftId 사용 (제목 기반 제거)
@@ -824,14 +911,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   }
 
   /// ✅ 자동저장(최근 1개)이 있으면 "이어 작성/새 글" 선택 바텀시트를 1회 표시
-  Future<void> _promptResumeWritingIfNeeded() async {
-    if (!mounted || widget.isEditingMode) return;
-    if (_didPromptResumeWriting) return;
+  /// 반환값: 바텀시트를 실제로 표시했는지 여부 (포커스 딜레이 판단용)
+  Future<bool> _promptResumeWritingIfNeeded() async {
+    if (!mounted || widget.isEditingMode) return false;
+    if (_didPromptResumeWriting) return false;
     _didPromptResumeWriting = true;
 
+    var didShowSheet = false;
     try {
       final autoDraft = await draftService.getAutoDraft();
-      if (!mounted || autoDraft == null) return;
+      if (!mounted || autoDraft == null) return false;
+      didShowSheet = true;
 
       // 에디터 포커스가 먼저 올라오면 UX가 어색해서 미리 내림
       _editorFocusNode.unfocus();
@@ -842,7 +932,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         title: autoDraft.title,
         subtitle: _formatRelativeTime(autoDraft.updatedAt),
       );
-      if (!mounted || choice == null) return;
+      if (!mounted) return true; // 이미 시트는 표시됨
+      if (choice == null) return true; // 시트 표시 후 사용자가 취소/바깥탭 등으로 닫음
 
       // ✅ 로딩 오버레이 표시 (바텀시트는 이미 닫힘)
       showDialog(
@@ -861,7 +952,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             nodeComponentService: nodeComponentService,
             dragService: dragService,
           );
-          if (!mounted) return;
+          if (!mounted) return true;
           if (ok) {
             setState(() {
               currentDraftId = autoDraft.id; // ✅ 자동저장 UUID 유지
@@ -894,6 +985,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     } catch (e) {
       debugPrint('[PostwriteScreen] resume writing prompt 실패(무시): $e');
     }
+    return didShowSheet;
   }
 
   @override
@@ -913,6 +1005,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 🎯 keyboardVisibleNotifier 값 갱신 (매 build마다 생성하지 않고 값만 변경)
     if (_keyboardVisibleNotifier.value != isKeyboardVisible) {
       _keyboardVisibleNotifier.value = isKeyboardVisible;
+      // ✅ 키보드 등장/퇴장은 문서 레이아웃(스크롤 위치 포함)을 바꾸므로
+      // cached node rect를 반드시 무효화해서 hit-test/빈공간탭 판정이 정확해지게 한다.
+      dragService.invalidateNodeRectCache();
     }
 
     // 🎯 키보드 이벤트로 setState 제거 (스크롤 기반으로만 앱바 제어)
@@ -992,10 +1087,34 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           } else if (shouldSave == false) {
             // 사용자가 "저장 안 함"을 명시적으로 선택한 경우:
             // 자동저장(최근 1개)도 함께 정리해서, 다음 진입 시 "이어 작성"이 뜨지 않게 한다.
-            await _exitEditor(
-              forceAutoDraftIfChanged: false,
-              clearAutoDraft: true,
-            );
+            // 🎯 키보드를 먼저 내리고 안정화된 후 나가기
+            _editorFocusNode.unfocus();
+            FocusManager.instance.primaryFocus?.unfocus();
+            FocusScope.of(context).unfocus();
+
+            // 키보드 애니메이션 완료 대기 (viewInsets가 0이 될 때까지 또는 최대 400ms)
+            final startTime = DateTime.now();
+            while (mounted) {
+              final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
+              if (keyboardHeight == 0) break;
+
+              final elapsed = DateTime.now().difference(startTime);
+              if (elapsed.inMilliseconds > 400) break; // 최대 400ms 대기
+
+              await Future.delayed(const Duration(milliseconds: 50));
+            }
+
+            // 안정화를 위한 추가 대기
+            if (mounted) {
+              await Future.delayed(const Duration(milliseconds: 100));
+            }
+
+            if (mounted) {
+              await _exitEditor(
+                forceAutoDraftIfChanged: false,
+                clearAutoDraft: true,
+              );
+            }
           }
           // null이면 아무 것도 안 함 (다이얼로그만 닫힘)
         } else if (hasAnyContent) {
@@ -1008,11 +1127,35 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             isDestructive: false,
           );
           if (shouldExit == true) {
-            final changedNow = editorService.shouldPromptSaveOnExit(context);
-            await _exitEditor(
-              forceAutoDraftIfChanged: changedNow,
-              clearAutoDraft: false,
-            );
+            // 🎯 키보드를 먼저 내리고 안정화된 후 나가기
+            _editorFocusNode.unfocus();
+            FocusManager.instance.primaryFocus?.unfocus();
+            FocusScope.of(context).unfocus();
+
+            // 키보드 애니메이션 완료 대기 (viewInsets가 0이 될 때까지 또는 최대 400ms)
+            final startTime = DateTime.now();
+            while (mounted) {
+              final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
+              if (keyboardHeight == 0) break;
+
+              final elapsed = DateTime.now().difference(startTime);
+              if (elapsed.inMilliseconds > 400) break; // 최대 400ms 대기
+
+              await Future.delayed(const Duration(milliseconds: 50));
+            }
+
+            // 안정화를 위한 추가 대기
+            if (mounted) {
+              await Future.delayed(const Duration(milliseconds: 100));
+            }
+
+            if (mounted) {
+              final changedNow = editorService.shouldPromptSaveOnExit(context);
+              await _exitEditor(
+                forceAutoDraftIfChanged: changedNow,
+                clearAutoDraft: false,
+              );
+            }
           }
         } else {
           await _exitEditor(
@@ -1095,6 +1238,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   ),
         ),
         body: Stack(
+          key: _editorBodyStackKey,
           clipBehavior: Clip.none,
           children: [
             Theme(
@@ -1176,6 +1320,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                               editor: editor,
                               focusNode: _editorFocusNode,
                             ),
+                            MentionComponentBuilder(
+                              dragService: dragService,
+                              editor: editor,
+                              focusNode: _editorFocusNode,
+                            ),
                             LinkComponentBuilder(
                               dragService: dragService,
                               isDarkMode: isDarkMode,
@@ -1201,16 +1350,31 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             ),
 
             // 드래그 오버레이 (키보드가 내려가 있을 때만 표시)
-            AnimatedBuilder(
-              animation: dragService,
-              builder: (context, _) {
-                final keyboardVisible =
-                    MediaQuery.viewInsetsOf(context).bottom > 0;
-                if (dragService.draggingNodeId != null && !keyboardVisible) {
-                  return _buildDragOverlay();
-                }
-                return const SizedBox.shrink();
-              },
+            //
+            // ⚠️ 중요: DragOverlayWidget은 내부에서 Positioned를 반환한다.
+            // 따라서 "화면 전체 크기의 Stack"을 기준으로 레이아웃되어야 한다.
+            // AnimatedSwitcher 내부의 Stack(자식 크기 기반)으로 들어가면,
+            // Stack 사이즈가 0으로 잡혀 오버레이가 (0,0) 근처(좌상단)에 고정되는 문제가 생길 수 있다.
+            Positioned.fill(
+              child: AnimatedBuilder(
+                animation: dragService,
+                builder: (context, _) {
+                  final keyboardVisible =
+                      MediaQuery.viewInsetsOf(context).bottom > 0;
+                  return AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    switchInCurve: Curves.easeOut,
+                    switchOutCurve: Curves.easeIn,
+                    transitionBuilder: (child, animation) {
+                      return FadeTransition(opacity: animation, child: child);
+                    },
+                    child:
+                        (dragService.draggingNodeId != null && !keyboardVisible)
+                            ? Stack(children: [_buildDragOverlay()])
+                            : const SizedBox.shrink(key: ValueKey('empty')),
+                  );
+                },
+              ),
             ),
 
             // 스티커 캔버스
@@ -1283,6 +1447,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     final nodeId = dragService.draggingNodeId;
     if (pos == null || nodeId == null) return const SizedBox.shrink();
 
+    // 🎯 DragService는 globalPosition을 저장한다.
+    // 하지만 DragOverlayWidget은 현재 Stack(=Scaffold body) 좌표계를 기준으로 Positioned 된다.
+    // 따라서 global -> local 변환을 하지 않으면 손가락을 "안 따라오는 것처럼" 보일 수 있다.
+    final RenderBox? overlayBox =
+        _editorBodyStackKey.currentContext?.findRenderObject() as RenderBox?;
+    final Offset localPos =
+        overlayBox != null ? overlayBox.globalToLocal(pos) : pos;
+
     // 이미지 행 분리 모드
     if (dragService.hasSplitImageInfo) {
       final splitInfo = dragService.getSplitImageInfo();
@@ -1294,9 +1466,28 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           imageIndex != null &&
           imageIndex < rowNode.imageUrls.length) {
         return DragOverlayWidget(
-          position: pos,
+          position: localPos,
           document: document,
           splitImageUrl: rowNode.imageUrls[imageIndex],
+        );
+      }
+    }
+
+    // PageView 이미지 분리 모드
+    if (dragService.isPageViewItemDrag) {
+      final pageViewNode =
+          document.getNodeById(dragService.subjectPageViewId ?? '')
+              as PageViewImageNode?;
+      final imageIndex = dragService.subjectPageViewImageIndex;
+
+      if (pageViewNode != null &&
+          imageIndex != null &&
+          imageIndex >= 0 &&
+          imageIndex < pageViewNode.imageUrls.length) {
+        return DragOverlayWidget(
+          position: localPos,
+          document: document,
+          splitImageUrl: pageViewNode.imageUrls[imageIndex],
         );
       }
     }
@@ -1307,7 +1498,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     return DragOverlayWidget(
       node: node,
-      position: pos,
+      position: localPos,
       document: document,
       previewImageLocalPath:
           dragService.previewImageLocalPath, // 🎯 클립 썸네일 깜빡임 방지
@@ -1416,9 +1607,46 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     try {
       nodeComponentService.selectNode(null);
 
-      // 🎯 노드 삭제 (삭제 전 다시 한 번 존재 확인)
-      if (document.getNodeById(selectedId) != null) {
-        document.deleteNode(selectedId);
+      // ✅ 심각 버그 방지:
+      // 문서에 Paragraph가 하나도 없는 상태에서 "마지막 특수노드"까지 삭제하면
+      // 문서가 완전히 비어 커서를 둘 수 없는 상태가 된다.
+      //
+      // 따라서 "문서에 노드가 1개만 남았고, 그 노드가 지금 삭제 대상"인 경우에는
+      // 삭제 + 빈 Paragraph 추가를 원자적으로 editor.execute로 수행한다.
+      // (실제로는 삭제 대신 빈 Paragraph로 교체하여 결과적으로 문서는 비지 않게 만든다)
+      final onlyNode = (document.nodeCount == 1) ? document.getNodeAt(0) : null;
+      final isDeletingLastRemainingNode =
+          onlyNode != null && onlyNode.id == selectedId;
+
+      if (isDeletingLastRemainingNode) {
+        final paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
+        final trailing = ParagraphNode(
+          id: paragraphId,
+          text: AttributedText(''),
+          metadata: <String, dynamic>{
+            // ✅ 기존 문서/툴바에서 유지하던 "현재 정렬"을 그대로 승계
+            'textAlign': editorService.currentParagraphAlign,
+          },
+        );
+
+        editor.execute([
+          ReplaceNodeRequest(existingNodeId: selectedId, newNode: trailing),
+          ChangeSelectionRequest(
+            DocumentSelection.collapsed(
+              position: DocumentPosition(
+                nodeId: paragraphId,
+                nodePosition: const TextNodePosition(offset: 0),
+              ),
+            ),
+            SelectionChangeType.deleteContent,
+            SelectionReason.userInteraction,
+          ),
+        ]);
+      } else {
+        // 🎯 일반 케이스: 노드 삭제 (삭제 전 다시 한 번 존재 확인)
+        if (document.getNodeById(selectedId) != null) {
+          document.deleteNode(selectedId);
+        }
       }
 
       // ✅ 안정성: 일부 환경/타이밍에서 DocumentChangeLog 리스너가 즉시 히스토리 커밋을 못 하는 케이스가 있어
@@ -1490,19 +1718,19 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       }
 
       // 🎯 제목 검증 (본문 검증 통과 후)
-      // ✅ 0번 노드=제목 가정 제거: 문서 내 isTitle 노드/override 값을 우선 사용
+      // ✅ 정책: 제목은 "임시저장/Step1 입력"이 아니면 본문에서 추출하지 않는다.
       final currentTitle =
           (_draftTitleOverride != null &&
                   _draftTitleOverride!.trim().isNotEmpty)
               ? _draftTitleOverride!.trim()
-              : PostExporter.getTitleFromDocument(editor.document);
+              : '';
 
       if (currentTitle.trim().isEmpty) {
         if (mounted) {
           // 🎯 제목 입력 다이얼로그 표시
           final titleText = await DialogUtils.showTextInputDialog(
             context,
-            title: context.tr('enter_title_first'),
+            title: context.tr('save_draft'),
             hintText: context.tr('title_required_for_draft'),
             confirmText: context.tr('save'),
             cancelText: context.tr('cancel'),
@@ -1542,7 +1770,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           (_draftTitleOverride != null &&
                   _draftTitleOverride!.trim().isNotEmpty)
               ? _draftTitleOverride!.trim()
-              : PostExporter.getTitleFromDocument(editor.document);
+              : '';
 
       // 🎯 UUID 기반 draftId 사용 (제목 기반 제거)
       if (currentDraftId == null) {
@@ -1581,6 +1809,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               ? _draftSummaryOverride!.trim()
               : '';
 
+      // ✅ "작성하던 글이 있어요"로 들어온 경우: 자동저장을 임시저장 리스트로 이동
+      // 현재 currentDraftId가 자동저장 ID인지 확인
+      final autoDraft = await draftService.getAutoDraft();
+      final bool isFromAutoDraft =
+          autoDraft != null &&
+          currentDraftId != null &&
+          autoDraft.id == currentDraftId;
+
       // 🎯 UUID 기반 임시저장 (제목은 자동 추출)
       currentDraftId = await draftService.saveDraft(
         editorService: editorService,
@@ -1594,6 +1830,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         selectedGroupIds: [],
         existingDraftId: currentDraftId, // UUID 기반 ID 사용
       );
+
+      // ✅ 자동저장에서 온 경우, 명시적 임시저장 후 자동저장 삭제
+      if (isFromAutoDraft) {
+        await draftService.clearAutoDraft();
+      }
 
       // 저장 스냅샷 마크
       editorService.markSavedSnapshot();
@@ -1974,6 +2215,53 @@ class _BottomBar extends StatelessWidget {
                         onEdit: () => onEditImage(selectedId, node),
                         onDelete: onDeleteNode,
                         onChangeAlignment: onChangeMediaAlignment,
+                        onEditMention: (nodeId, usernames) {
+                          // 멘션 편집 오버레이 열기
+                          Navigator.of(context).push(
+                            PageRouteBuilder(
+                              opaque: false,
+                              barrierDismissible: true,
+                              transitionDuration: Duration.zero,
+                              reverseTransitionDuration: Duration.zero,
+                              pageBuilder:
+                                  (_, __, ___) => MentionOverlay(
+                                    initialUsernames:
+                                        usernames, // 편집 시 초기 선택된 사용자들 전달
+                                    onClose: () {},
+                                    onSelect: (username) {},
+                                    onSubmit: (newUsernames) {
+                                      editorService.updateMentionNode(
+                                        nodeId,
+                                        newUsernames,
+                                      );
+                                      // 노드가 업데이트되고 렌더링이 완료된 후 부드럽게 닫기
+                                      WidgetsBinding.instance
+                                          .addPostFrameCallback((_) {
+                                            Future.delayed(
+                                              const Duration(milliseconds: 150),
+                                              () {
+                                                final mounted = context.mounted;
+                                                if (!mounted) return;
+                                                try {
+                                                  editorService.editor.composer
+                                                      .clearSelection();
+                                                  context
+                                                      .read<
+                                                        NodeComponentService
+                                                      >()
+                                                      .setSelectedNode(nodeId);
+                                                } catch (_) {}
+                                                Navigator.of(
+                                                  context,
+                                                ).maybePop();
+                                              },
+                                            );
+                                          });
+                                    },
+                                  ),
+                            ),
+                          );
+                        },
                         editorService: editorService,
                       );
                     } else {

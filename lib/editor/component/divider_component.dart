@@ -3,6 +3,7 @@ import 'package:super_editor/super_editor.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/utils/animated_drop_line.dart';
+import 'package:doppy/editor/utils/drop_line_config.dart';
 
 // 언급 블록 노드
 class DividerNode extends BlockNode {
@@ -225,6 +226,15 @@ class _DividerComponentState extends State<_DividerComponent>
                   child: Container(height: 3, color: AppColors.primary),
                 ),
               ),
+            if (_shouldShowBottomDropLine())
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: AnimatedDropLine(
+                  child: Container(height: 3, color: AppColors.primary),
+                ),
+              ),
           ],
         );
       },
@@ -295,11 +305,16 @@ class _DividerComponentState extends State<_DividerComponent>
   bool _shouldShowTopDropLine() {
     final svc = widget.dragService;
     if (svc == null) return false;
-    final di = svc.dropIndex;
-    if (di == null) return false;
-    final current = svc.getNodeIndex(widget.nodeId);
-    if (current == -1) return false;
-    return di == current;
+    return DropLineConfig.resolve(nodeId: widget.nodeId, dragService: svc).top;
+  }
+
+  bool _shouldShowBottomDropLine() {
+    final svc = widget.dragService;
+    if (svc == null) return false;
+    return DropLineConfig.resolve(
+      nodeId: widget.nodeId,
+      dragService: svc,
+    ).bottom;
   }
 
   // DocumentComponent 최소 구현

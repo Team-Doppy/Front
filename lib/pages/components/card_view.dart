@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -32,6 +33,13 @@ class _CardViewState extends State<CardView> {
   VideoPlayerController? _videoController;
   bool _isVideo = false;
   String? _currentVideoUrl; // 현재 사용 중인 비디오 URL
+  bool _videoGaveUp = false;
+  Timer? _videoTimeoutTimer;
+  Timer? _retryTimer;
+  DateTime? _firstAttemptAt;
+  int _retryCount = 0;
+
+  String get _logKey => 'postId=${widget.post.id}';
 
   @override
   void initState() {
@@ -52,6 +60,13 @@ class _CardViewState extends State<CardView> {
 
   @override
   void dispose() {
+    _videoTimeoutTimer?.cancel();
+    _videoTimeoutTimer = null;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    if (_videoController != null) {
+      _videoController!.removeListener(_onVideoStateChanged);
+    }
     _releaseVideoController();
     super.dispose();
   }
@@ -67,8 +82,100 @@ class _CardViewState extends State<CardView> {
     }
   }
 
-  void _checkIfVideo() {
+  bool _isRecentPost({Duration window = const Duration(minutes: 3)}) {
+    final createdAtStr = widget.post.createdAt.trim();
+    final createdAt = DateTime.tryParse(createdAtStr);
+    if (createdAt == null) return false;
+    return DateTime.now().difference(createdAt).abs() <= window;
+  }
+
+  Duration _initializationTimeout() {
+    return _isRecentPost()
+        ? const Duration(seconds: 12)
+        : const Duration(seconds: 12);
+  }
+
+  bool _canAutoRetry() {
+    final now = DateTime.now();
+    _firstAttemptAt ??= now;
+    final elapsed = now.difference(_firstAttemptAt!);
+    if (elapsed > const Duration(seconds: 15)) return false;
+    return _retryCount < 2;
+  }
+
+  void _scheduleTimeoutIfNeeded() {
+    _videoTimeoutTimer?.cancel();
+    _videoTimeoutTimer = Timer(_initializationTimeout(), () {
+      if (!mounted) return;
+      if (_isVideo &&
+          _videoController != null &&
+          !_videoController!.value.isInitialized) {
+        final hasError = _videoController?.value.hasError ?? false;
+        debugPrint(
+          '[CardView] timeout $_logKey '
+          'recent=${_isRecentPost()} '
+          'timeout=${_initializationTimeout().inMilliseconds}ms '
+          'url=$_currentVideoUrl '
+          'isInit=${_videoController?.value.isInitialized} '
+          'hasError=$hasError '
+          'retry=$_retryCount',
+        );
+
+        // ✅ 느린 초기화(에러 없음)는 포기하지 않고 쉬머 유지 + 필요 시 제한적 재시도
+        if (!hasError && _canAutoRetry()) {
+          _scheduleRetry();
+          _scheduleTimeoutIfNeeded();
+          return;
+        }
+
+        _fallbackToVideoPlaceholder();
+      }
+    });
+  }
+
+  void _scheduleRetry() {
     if (!mounted) return;
+    final now = DateTime.now();
+    _firstAttemptAt ??= now;
+    final elapsed = now.difference(_firstAttemptAt!);
+    if (elapsed > const Duration(seconds: 15)) return;
+    if (_retryCount >= 2) return;
+
+    _retryTimer?.cancel();
+    _retryTimer = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted) return;
+      if (_currentVideoUrl == null) return;
+      _retryCount++;
+      debugPrint(
+        '[CardView] retry fire $_logKey '
+        'retry=$_retryCount '
+        'recent=${_isRecentPost()} '
+        'elapsedMs=${DateTime.now().difference(_firstAttemptAt!).inMilliseconds} '
+        'url=$_currentVideoUrl',
+      );
+      VideoCacheService().releaseController(
+        _currentVideoUrl!,
+        namespace: 'profile',
+      );
+      _videoController?.removeListener(_onVideoStateChanged);
+      _videoController = null;
+      _videoGaveUp = false;
+      _attemptInit(resetAttemptWindow: false);
+    });
+  }
+
+  void _attemptInit({required bool resetAttemptWindow}) {
+    if (!mounted) return;
+    _videoTimeoutTimer?.cancel();
+    _videoTimeoutTimer = null;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+
+    if (resetAttemptWindow) {
+      _firstAttemptAt = DateTime.now();
+      _retryCount = 0;
+    }
+    _videoGaveUp = false;
 
     final url = widget.post.thumbnailImageUrl.toLowerCase();
     _isVideo =
@@ -80,53 +187,173 @@ class _CardViewState extends State<CardView> {
 
     if (_isVideo && widget.post.thumbnailImageUrl.isNotEmpty) {
       _currentVideoUrl = widget.post.thumbnailImageUrl;
+      debugPrint(
+        '[CardView] init start $_logKey '
+        'resetWindow=$resetAttemptWindow '
+        'recent=${_isRecentPost()} '
+        'retry=$_retryCount '
+        'url=$_currentVideoUrl',
+      );
 
       try {
         _videoController = VideoCacheService().getOrCreateController(
           _currentVideoUrl!,
           namespace: 'profile',
         );
+        debugPrint(
+          '[CardView] controller acquired $_logKey '
+          'url=$_currentVideoUrl '
+          'isInit=${_videoController?.value.isInitialized} '
+          'hasError=${_videoController?.value.hasError}',
+        );
 
-        // 이미 초기화된 경우 바로 재생, 아니면 리스너 등록 후 재생
-        if (_videoController != null && _videoController!.value.isInitialized) {
-          if (mounted) {
-            try {
-              _videoController!.setVolume(0);
-              _videoController!.setLooping(true);
-              _videoController!.play();
-              setState(() {});
-            } catch (e) {
-              debugPrint('[CardView] 비디오 재생 오류: $e');
+        if (_videoController != null) {
+          // 이미 초기화된 경우 바로 재생
+          if (_videoController!.value.isInitialized) {
+            if (mounted) {
+              try {
+                _videoController!.setVolume(0);
+                _videoController!.setLooping(true);
+                _videoController!.play();
+                debugPrint(
+                  '[CardView] play (already initialized) $_logKey url=$_currentVideoUrl',
+                );
+                setState(() {});
+              } catch (e) {
+                debugPrint(
+                  '[CardView] play error (already initialized) $_logKey url=$_currentVideoUrl err=$e',
+                );
+              }
             }
+          } else {
+            // 초기화 대기 중 - 리스너 추가
+            _videoController!.addListener(_onVideoStateChanged);
+            // 초기화가 이미 진행 중일 수 있으므로 한 번 확인
+            if (_videoController!.value.isInitialized) {
+              _onVideoStateChanged();
+            }
+            _scheduleTimeoutIfNeeded();
           }
-        } else if (_videoController != null) {
-          _videoController!.addListener(_onVideoInitialized);
         }
       } catch (e) {
-        debugPrint('[CardView] 비디오 컨트롤러 생성 오류: $e');
+        debugPrint(
+          '[CardView] controller create error $_logKey url=$_currentVideoUrl err=$e',
+        );
         _videoController = null;
         _currentVideoUrl = null;
+        _isVideo = false;
+        if (mounted) setState(() {});
       }
+    } else {
+      _isVideo = false;
     }
   }
 
-  void _onVideoInitialized() {
-    if (!mounted) {
-      _videoController?.removeListener(_onVideoInitialized);
+  void _checkIfVideo() => _attemptInit(resetAttemptWindow: true);
+
+  void _fallbackToVideoPlaceholder() {
+    _videoTimeoutTimer?.cancel();
+    _videoTimeoutTimer = null;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    if (_videoController != null) {
+      _videoController!.removeListener(_onVideoStateChanged);
+    }
+    _videoController = null;
+    _videoGaveUp = true;
+    debugPrint(
+      '[CardView] giveUp -> placeholder $_logKey '
+      'recent=${_isRecentPost()} url=$_currentVideoUrl',
+    );
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildVideoPlaceholder(BuildContext context) {
+    final theme = Theme.of(context);
+    final showText = _isRecentPost();
+    return GestureDetector(
+      onTap: () {
+        if (!mounted) return;
+        debugPrint(
+          '[CardView] placeholder tap -> retry $_logKey url=$_currentVideoUrl',
+        );
+        _videoGaveUp = false;
+        _attemptInit(resetAttemptWindow: true);
+      },
+      child: Container(
+        color: theme.colorScheme.surface.withOpacity(0.1),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.play_circle_outline,
+                size: 34,
+                color: theme.colorScheme.onSurface.withOpacity(0.65),
+              ),
+              if (showText) ...[
+                const SizedBox(height: 6),
+                Text(
+                  '영상 처리 중',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: theme.colorScheme.onSurface.withOpacity(0.65),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _onVideoStateChanged() {
+    if (!mounted || _videoController == null) {
+      _videoController?.removeListener(_onVideoStateChanged);
       return;
     }
 
-    if (_videoController?.value.isInitialized ?? false) {
-      _videoController?.removeListener(_onVideoInitialized);
+    final controller = _videoController!;
+
+    // 에러가 발생한 경우
+    if (controller.value.hasError) {
+      debugPrint(
+        '[CardView] error $_logKey '
+        'recent=${_isRecentPost()} '
+        'retry=$_retryCount '
+        'url=$_currentVideoUrl '
+        'desc=${controller.value.errorDescription}',
+      );
+      controller.removeListener(_onVideoStateChanged);
+      if (_canAutoRetry()) {
+        _videoController = null;
+        if (mounted) setState(() {});
+        _scheduleRetry();
+      } else {
+        _fallbackToVideoPlaceholder();
+      }
+      return;
+    }
+
+    // 초기화 완료된 경우
+    if (controller.value.isInitialized) {
+      _videoTimeoutTimer?.cancel();
+      _videoTimeoutTimer = null;
+      controller.removeListener(_onVideoStateChanged);
       try {
-        if (_videoController != null && mounted) {
-          _videoController!.setVolume(0);
-          _videoController!.setLooping(true);
-          _videoController!.play();
-          setState(() {});
-        }
+        controller.setVolume(0);
+        controller.setLooping(true);
+        controller.play();
+        debugPrint(
+          '[CardView] initialized -> play $_logKey url=$_currentVideoUrl',
+        );
+        if (mounted) setState(() {});
       } catch (e) {
-        debugPrint('[CardView] 비디오 초기화 후 재생 오류: $e');
+        debugPrint(
+          '[CardView] play error (after init) $_logKey url=$_currentVideoUrl err=$e',
+        );
+        if (mounted) setState(() {});
       }
     }
   }
@@ -182,8 +409,12 @@ class _CardViewState extends State<CardView> {
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(10),
                             child:
-                                _isVideo && _videoController != null
-                                    ? _videoController!.value.isInitialized
+                                _isVideo
+                                    ? (_videoController != null &&
+                                            _videoController!
+                                                .value
+                                                .isInitialized &&
+                                            !_videoController!.value.hasError
                                         ? FittedBox(
                                           fit: BoxFit.cover,
                                           child: SizedBox(
@@ -202,17 +433,21 @@ class _CardViewState extends State<CardView> {
                                             ),
                                           ),
                                         )
-                                        : Container(
-                                          color: theme.colorScheme.surface
-                                              .withOpacity(0.1),
-                                          child: const ShimmerBox(
-                                            width: double.infinity,
-                                            height: 180,
-                                            borderRadius: BorderRadius.zero,
-                                          ),
-                                        )
+                                        : (_videoGaveUp
+                                            ? _buildVideoPlaceholder(context)
+                                            : Container(
+                                              color: theme.colorScheme.surface
+                                                  .withOpacity(0.1),
+                                              child: const ShimmerBox(
+                                                width: double.infinity,
+                                                height: 180,
+                                                borderRadius: BorderRadius.zero,
+                                              ),
+                                            )))
                                     : CachedNetworkImage(
-                                      key: ValueKey('cached-image-${widget.post.id}-${widget.post.thumbnailImageUrl}'),
+                                      key: ValueKey(
+                                        'cached-image-${widget.post.id}-${widget.post.thumbnailImageUrl}',
+                                      ),
                                       imageUrl: widget.post.thumbnailImageUrl,
                                       cacheKey: widget.post.thumbnailImageUrl,
                                       fit: BoxFit.cover,

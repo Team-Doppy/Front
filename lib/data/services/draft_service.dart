@@ -126,8 +126,11 @@ class DraftService {
             skipValidation: true, // 임시저장은 제목 검증 생략
           );
 
-      // 제목이 비어있으면 기본값 사용
-      final effectiveTitle = title.trim().isEmpty ? '제목 없음' : title;
+      // ✅ 제목이 비어있으면 예외 발생 (명시적 임시저장은 제목 필수)
+      if (title.trim().isEmpty) {
+        throw Exception('임시저장에는 제목이 필요합니다.');
+      }
+      final effectiveTitle = title.trim();
 
       final draftId = existingDraftId ?? _generateDraftId(effectiveTitle);
       final now = DateTime.now();

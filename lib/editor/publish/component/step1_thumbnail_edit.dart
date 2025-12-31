@@ -14,6 +14,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:http/http.dart' as http;
+import 'package:doppy/editor/publish/component/thumbnail_edit_bottom_sheet.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:doppy/image/utils/edit_image_cache_manager.dart';
 
 /// Step 1: 썸네일 & 글 편집 컴포넌트
 class Step1ThumbnailEdit extends StatefulWidget {
@@ -76,6 +79,10 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   // 🎯 포커스/키보드에 따른 UI 전환을 더 부드럽게 만들기 위한 내부 상태
   bool _hasTextFocus = false;
 
+  // ✅ 미디어 피커/전환 중 "빈 썸네일 플레이스홀더"가 파르르 깜빡이는 문제 방지용
+  // - push/pop 전환 동안 잠깐 placeholder가 나타났다 사라지는 현상을 막는다.
+  bool _suppressEmptyPlaceholder = false;
+
   // 🎯 비디오 첫 프레임 전 검정 플래시 방지용 "포스터(썸네일) 유지" 상태
   VideoPlayerController? _posterObservedController;
   VoidCallback? _posterListener;
@@ -98,6 +105,11 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     if (oldWidget.videoController != widget.videoController) {
       _attachPosterListener(widget.videoController);
     }
+
+    // ✅ 이미지 URL이 변경되면 미리 캐시
+    if (oldWidget.exportedThumbnailImageUrl !=
+            widget.exportedThumbnailImageUrl &&
+        widget.exportedThumbnailImageUrl.isNotEmpty) {}
   }
 
   @override
@@ -164,13 +176,13 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   void _syncThumbnailAnimation({required bool shouldHide}) {
     // controller 값 0.0: 썸네일 fully shown, 1.0: hidden
     // 여기서는 포커스 진입/이탈에 맞춰 부드럽게 animateTo로 동기화한다.
-    // ✅ 더 빠르고 타이트한 애니메이션: 120ms + easeOut (쫀쫀/반응성 우선)
+    // ✅ 애니메이션 최적화: 더 빠른 duration과 부드러운 curve
     final target = shouldHide ? 1.0 : 0.0;
     try {
       widget.controller.animateTo(
         target,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeInOut,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic, // ✅ 더 부드러운 애니메이션
       );
     } catch (_) {
       // controller가 dispose된 타이밍 등은 무시
@@ -318,8 +330,8 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                         color: Colors.black.withOpacity(0.3),
                         child: const Center(
                           child: SizedBox(
-                            width: 12,
-                            height: 12,
+                            width: 20,
+                            height: 20,
                             child: CircularProgressIndicator(
                               valueColor: AlwaysStoppedAnimation<Color>(
                                 Colors.white,
@@ -371,15 +383,16 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                       ),
                     ),
 
-                  // 편집/변경 버튼
-                  Positioned(
-                    left: 6,
-                    bottom: 6,
-                    child: GestureDetector(
-                      onTap: _editThumbnail,
-                      child: _buildEditButton(),
+                  // 편집/변경 버튼 (포커스 시 숨김)
+                  if (!widget.editMode && !_hasTextFocus)
+                    Positioned(
+                      left: 6,
+                      bottom: 6,
+                      child: GestureDetector(
+                        onTap: _editThumbnail,
+                        child: _buildEditButton(),
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -432,24 +445,46 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         child: Image.file(widget.localThumbnailFile!, fit: BoxFit.cover),
       );
     } else if (widget.exportedThumbnailImageUrl.isEmpty) {
-      // 🎯 포커스가 있는 동안은 자리표시자 숨김
-      if (_hasTextFocus) {
-        return const SizedBox.expand(
-          key: ValueKey('empty_hidden'),
-          child: SizedBox.shrink(),
-        );
-      }
-      return const SizedBox.expand(
-        key: ValueKey('empty'),
-        child: _EmptyImagePlaceholder(),
+      // ✅ 빈 썸네일 상태:
+      // - 포커스 중이거나, 피커 전환 중에는 placeholder를 숨긴다.
+      // - "empty ↔ hidden"을 서로 다른 key로 스위칭하면 AnimatedSwitcher가
+      //   짧은 시간에 여러 번 트리거되어 번쩍임이 생길 수 있으므로 key를 고정한다.
+      final shouldShow = !_hasTextFocus && !_suppressEmptyPlaceholder;
+      return SizedBox.expand(
+        key: const ValueKey('empty'),
+        child: IgnorePointer(
+          ignoring: !shouldShow,
+          child: AnimatedOpacity(
+            opacity: shouldShow ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 80),
+            curve: Curves.easeOut,
+            child: const _EmptyImagePlaceholder(),
+          ),
+        ),
       );
     } else {
       return SizedBox.expand(
         key: ValueKey('network_${widget.exportedThumbnailImageUrl}'),
-        child: Image.network(
-          widget.exportedThumbnailImageUrl,
+        child: CachedNetworkImage(
+          imageUrl: widget.exportedThumbnailImageUrl,
+          cacheKey: widget.exportedThumbnailImageUrl,
+          cacheManager: EditImageCacheManager.instance,
           fit: BoxFit.cover,
-          errorBuilder: (c, e, s) => const _EmptyImagePlaceholder(),
+          placeholder:
+              (context, url) => Container(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              ),
+          errorWidget: (context, url, error) {
+            assert(() {
+              debugPrint(
+                '[Step1ThumbnailEdit] ❌ 썸네일 로드 실패: url=$url, error=$error',
+              );
+              return true;
+            }());
+            return const _EmptyImagePlaceholder();
+          },
+          fadeInDuration: Duration.zero,
+          fadeOutDuration: Duration.zero,
         ),
       );
     }
@@ -574,6 +609,10 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   }
 
   Future<void> _openGalleryPicker() async {
+    // ✅ 전환 중 placeholder 번쩍임 방지: 피커가 떠있는 동안 empty placeholder 숨김
+    if (mounted) {
+      setState(() => _suppressEmptyPlaceholder = true);
+    }
     // 🎯 이미지 선택 시 즉시 포커스 해제 및 편집 모드 비활성화
     FocusScope.of(context).unfocus();
     widget.onEditModeChanged(false);
@@ -583,7 +622,13 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     await Future.delayed(const Duration(milliseconds: 50));
 
     // ✅ 바텀시트 없이 바로 미디어 피커로 연결 (이미지 타입, 1개 제한)
-    await _pickAndUploadImage();
+    try {
+      await _pickAndUploadImage();
+    } finally {
+      if (mounted) {
+        setState(() => _suppressEmptyPlaceholder = false);
+      }
+    }
   }
 
   Future<void> _pickAndUploadImage() async {
@@ -693,8 +738,6 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         final hasUrl = (t.url ?? '').isNotEmpty;
         if (t.state == UploadState.success && hasUrl) {
           widget.onThumbnailUrlChanged(t.url!);
-
-          await precacheImage(NetworkImage(t.url!), context);
 
           if (mounted) {
             widget.onLocalThumbnailChanged(null);
@@ -949,16 +992,24 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     widget.controller.reverse();
     FocusScope.of(context).unfocus();
 
-    // ✅ 바텀시트 없이 바로 처리
-    // 비디오가 있거나 썸네일이 없으면 갤러리 피커로, 아니면 편집 화면으로
+    // ✅ 이미지가 없거나 비디오가 있으면 바로 미디어 피커로
     if (widget.exportedThumbnailImageUrl.isEmpty ||
         widget.localVideoFile != null) {
       await _openGalleryPicker();
       return;
     }
 
-    // 이미지가 있으면 바로 편집 화면으로
-    await _editThumbnailImage();
+    // ✅ 이미지가 있으면 바텀시트로 선택
+    final choice = await ThumbnailEditBottomSheet.show(context);
+    if (!mounted) return;
+
+    if (choice == ThumbnailEditChoice.edit) {
+      // 편집 화면으로
+      await _editThumbnailImage();
+    } else if (choice == ThumbnailEditChoice.change) {
+      // 썸네일 변경 (미디어 피커)
+      await _openGalleryPicker();
+    }
   }
 
   Future<void> _editThumbnailImage() async {

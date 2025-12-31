@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:flutter/rendering.dart';
+import 'package:doppy/image/utils/editor_image_provider.dart';
 
 /// 스티커 오버레이 (리더/에디터 공용)
 class PostReaderStickers extends StatelessWidget {
@@ -149,17 +150,30 @@ class PostReaderStickers extends StatelessWidget {
                   final height = (content['height'] as num?)?.toDouble();
 
                   // 🎯 PNG 드로잉 (URL + 크기 정보)
+                  // ✅ 프리로드와 동일한 EditorImageProvider 사용으로 캐시 히트 보장
+                  final screenWidth = constraints.maxWidth;
+                  final dpr = MediaQuery.of(context).devicePixelRatio;
+                  final decodeWidth = (screenWidth * dpr).round().clamp(
+                    1,
+                    1000000,
+                  );
+
+                  final imageProviderResult = EditorImageProvider.build(
+                    url: url,
+                    isEditing: false, // 읽기 모드
+                    decodeWidth: decodeWidth,
+                  );
+
                   if (width != null && height != null) {
                     bodySize = Size(width, height); // 크기 정보 사용
                     body = RepaintBoundary(
                       child: SizedBox(
                         width: width,
                         height: height,
-                        child: Image.network(
-                          url,
+                        child: Image(
+                          image: imageProviderResult.effectiveProvider,
                           fit: BoxFit.fill, // 정확한 크기
                           filterQuality: FilterQuality.high,
-                          isAntiAlias: true,
                           errorBuilder: (context, error, stackTrace) {
                             return Container(
                               width: width,
@@ -173,11 +187,10 @@ class PostReaderStickers extends StatelessWidget {
                   } else {
                     // 레거시: 크기 정보 없음
                     body = RepaintBoundary(
-                      child: Image.network(
-                        url,
+                      child: Image(
+                        image: imageProviderResult.effectiveProvider,
                         fit: BoxFit.contain,
                         filterQuality: FilterQuality.high,
-                        isAntiAlias: true,
                         errorBuilder: (context, error, stackTrace) {
                           return Container(
                             width: 140,

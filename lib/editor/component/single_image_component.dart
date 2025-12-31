@@ -237,12 +237,22 @@ class _SingleImageComponentState extends State<SingleImageComponent>
   Widget build(BuildContext context) {
     // 🎯 편집 모드에서만 selection 체크 (성능 최적화)
     // 🎯 읽기 모드에서도 doc에 접근하여 특수 노드 간격 확인 (포스트 라이트와 동일하게)
-    final editorService = _getEditorService();
-    final Document? doc = editorService?.document;
-    final DocumentSelection? composerSelection =
-        widget.isEditing
-            ? editorService?.editor.composer.selectionNotifier.value
-            : null;
+    Document? doc;
+    DocumentSelection? composerSelection;
+
+    if (widget.isEditing) {
+      final editorService = _getEditorService();
+      doc = editorService?.document;
+      composerSelection =
+          editorService?.editor.composer.selectionNotifier.value;
+    } else {
+      // 읽기 모드: SuperEditorState를 통해 document 가져오기 (PageViewImageComponent와 동일)
+      // ignore: invalid_use_of_visible_for_testing_member
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_visible_for_testing_member
+      doc = seState?.editContext.editor.document;
+    }
+
     final bool hasImageAbove =
         doc == null ? false : _hasNeighborImage(doc, widget.nodeId, -1);
     final bool hasImageBelow =
@@ -285,7 +295,6 @@ class _SingleImageComponentState extends State<SingleImageComponent>
               );
 
               // 🎯 업로드 중 상태 판정 (메타데이터 + 실제 업로드 태스크 존재 여부)
-              final doc = editorService?.document;
               // 🎯 업로드 중 상태 확인 (편집 모드에서만, 읽기 전용 모드에서는 항상 false)
               bool isUploading = false;
               if (widget.isEditing) {
@@ -359,6 +368,10 @@ class _SingleImageComponentState extends State<SingleImageComponent>
               } catch (_) {}
 
               // 해제 직전 → 직후 전환 감지하여 스캐터 실행
+              final wasSpoilerBefore = _wasSpoilerVisible;
+              // 🎯 초기 렌더링 감지: _wasSpoilerVisible이 false이고 isSpoilerFlag가 true면 초기 상태
+              final isInitialSpoilerRender =
+                  !_wasSpoilerVisible && isSpoilerFlag;
               if (_wasSpoilerVisible &&
                   !isSpoilerFlag &&
                   _scatterCtrl.status != AnimationStatus.forward) {
@@ -501,14 +514,19 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                               ),
                             ),
                           // ✅ 스포일러 토글(ON/OFF) 시 "블러/오버레이"가 부드럽게 변하도록 애니메이션 처리
+                          // 🎯 초기 렌더링 시 스포일러 깜빡임 방지: 초기 상태일 때는 즉시 표시
                           Positioned.fill(
                             child: IgnorePointer(
                               child: TweenAnimationBuilder<double>(
                                 tween: Tween<double>(
-                                  begin: 0.0,
+                                  begin: wasSpoilerBefore ? 1.0 : 0.0,
                                   end: isSpoilerFlag ? 1.0 : 0.0,
                                 ),
-                                duration: const Duration(milliseconds: 180),
+                                duration:
+                                    isInitialSpoilerRender ||
+                                            wasSpoilerBefore == isSpoilerFlag
+                                        ? Duration.zero
+                                        : const Duration(milliseconds: 180),
                                 curve: Curves.easeOutCubic,
                                 builder: (context, t, _) {
                                   if (t <= 0.001) {
@@ -622,11 +640,14 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                           if (isSelected || isDownstreamSelected)
                             Positioned.fill(
                               child: IgnorePointer(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: AppColors.primary,
-                                      width: 3,
+                                child: AnimatedSelectionBorder(
+                                  isVisible: true,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: AppColors.primary,
+                                        width: 4,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -636,53 +657,77 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       ),
                     ),
                   ),
-                  if (!isUploading && _shouldShowTopDropLine())
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 2),
-                        child: AnimatedDropLine(
-                          child: Container(height: 5, color: AppColors.primary),
-                        ),
-                      ),
-                    ),
-
-                  if (!isUploading && _shouldShowLeftVerticalLine())
-                    Positioned(
-                      top: marginTop,
-                      bottom: marginBottom,
-                      left: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.only(right: 2),
-                        child: AnimatedDropLine(
-                          child: Container(width: 5, color: AppColors.primary),
-                        ),
-                      ),
-                    ),
-                  if (!isUploading && _shouldShowRightVerticalLine())
-                    Positioned(
-                      top: marginTop,
-                      bottom: marginBottom,
-                      right: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 2),
-                        child: AnimatedDropLine(
-                          child: Container(width: 5, color: AppColors.primary),
-                        ),
-                      ),
-                    ),
-                  if (!isUploading && _shouldShowBottomDropLine())
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: AnimatedDropLine(
-                          child: Container(height: 5, color: AppColors.primary),
-                        ),
+                  // ✅ 드롭라인: dragService 변경 시 자동 rebuild (로우 이미지와 동일한 방식)
+                  if (widget.dragService != null && !isUploading)
+                    Positioned.fill(
+                      child: ListenableBuilder(
+                        listenable: widget.dragService!,
+                        builder: (context, _) {
+                          return Stack(
+                            children: [
+                              if (_shouldShowTopDropLine())
+                                Positioned(
+                                  top: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        height: 5,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_shouldShowLeftVerticalLine())
+                                Positioned(
+                                  top: marginTop,
+                                  bottom: marginBottom,
+                                  left: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(right: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        width: 5,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_shouldShowRightVerticalLine())
+                                Positioned(
+                                  top: marginTop,
+                                  bottom: marginBottom,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(left: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        width: 5,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_shouldShowBottomDropLine())
+                                Positioned(
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        height: 5,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
                       ),
                     ),
                 ],
@@ -1059,34 +1104,17 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     }
   }
 
-  /// 🎯 성능 최적화: EditorService 캐싱 조회 (RowImage 스타일)
+  /// 🎯 성능 최적화: EditorService 캐싱 조회 (ClipComponent 스타일)
   EditorService? _getEditorService() {
     // 🎯 dragService를 통해 editorService 접근 (Provider context 문제 방지)
-    if (widget.dragService != null) {
-      try {
-        final editorService =
-            (widget.dragService as dynamic).editorService as EditorService?;
-        if (editorService != null) {
-          return editorService;
-        }
-      } catch (e) {
-        assert(() {
-          debugPrint('[SingleImage] dragService로 EditorService 접근 실패: $e');
-          return true;
+    return widget.dragService?.editorService ??
+        (() {
+          try {
+            return Provider.of<EditorService>(context, listen: false);
+          } catch (_) {
+            return null;
+          }
         }());
-      }
-    }
-
-    // 🎯 dragService가 없으면 Provider로 접근 시도 (fallback)
-    try {
-      return Provider.of<EditorService>(context, listen: false);
-    } catch (e) {
-      assert(() {
-        debugPrint('[SingleImage] Provider로 EditorService 접근 실패: $e');
-        return true;
-      }());
-      return null;
-    }
   }
 
   // 이미지 위젯 생성: editedBytes > (업로드중: metadata.localPath) > 로컬 파일 경로 > 네트워크 URL 순서

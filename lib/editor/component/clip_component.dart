@@ -461,7 +461,14 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
             return null;
           }
         }());
-    final Document? doc = editorService?.document;
+    Document? doc = editorService?.document;
+    if (doc == null) {
+      // 읽기 모드: SuperEditorState를 통해 document 가져오기 (LinkComponent와 동일)
+      // ignore: invalid_use_of_visible_for_testing_member
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_visible_for_testing_member
+      doc = seState?.editContext.editor.document;
+    }
     final DocumentSelection? composerSelection =
         widget.isEditing
             ? editorService?.editor.composer.selectionNotifier.value
@@ -731,11 +738,14 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                           if (isSelected || isDownstreamSelected)
                             Positioned.fill(
                               child: IgnorePointer(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: AppColors.primary,
-                                      width: 3,
+                                child: AnimatedSelectionBorder(
+                                  isVisible: true,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: AppColors.primary,
+                                        width: 4,
+                                      ),
                                     ),
                                   ),
                                 ),

@@ -41,8 +41,6 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
   Offset? _dragPosition; // 🎯 드래그 중인 위치
   int? _dragTargetIndex; // 🎯 드래그 중 드롭 타겟 인덱스 (시각적 표시용)
   bool _isRefreshing = false; // 🎯 새로고침 중인지 여부
-  double _swipeOffset = 0.0; // 🎯 가로 스와이프 오프셋
-  double _swipeStartX = 0.0; // 🎯 스와이프 시작 X 위치
 
   @override
   void initState() {
@@ -165,37 +163,7 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
       resizeToAvoidBottomInset: false,
 
       body: SafeArea(
-        child: GestureDetector(
-          // 🎯 가로 스와이프로 닫기 기능
-          onHorizontalDragStart: (details) {
-            _swipeStartX = details.globalPosition.dx;
-            _swipeOffset = 0.0;
-          },
-          onHorizontalDragUpdate: (details) {
-            // 오른쪽으로 스와이프만 감지 (닫기)
-            if (details.delta.dx > 0) {
-              setState(() {
-                _swipeOffset = details.globalPosition.dx - _swipeStartX;
-              });
-            }
-          },
-          onHorizontalDragEnd: (details) {
-            final screenWidth = MediaQuery.of(context).size.width;
-            final dragDistance = _swipeOffset;
-            final velocity = details.primaryVelocity ?? 0;
-
-            // 🎯 스와이프 거리가 화면의 30% 이상이거나 빠른 속도로 스와이프하면 닫기
-            if (dragDistance > screenWidth * 0.3 || velocity > 500) {
-              Navigator.of(context).pop();
-            } else {
-              // 원래 위치로 복귀
-              setState(() {
-                _swipeOffset = 0.0;
-                _swipeStartX = 0.0;
-              });
-            }
-          },
-          child: Stack(
+        child: Stack(
             children: [
               Consumer<GroupProvider>(
                 builder: (context, groupProv, child) {
@@ -279,7 +247,6 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
               ),
               Positioned(top: 6, left: 0, right: 0, child: _buildAppBar()),
             ],
-          ),
         ),
       ),
     );

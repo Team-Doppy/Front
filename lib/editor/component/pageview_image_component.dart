@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/data/services/upload_service.dart';
+import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
@@ -8,6 +11,7 @@ import 'package:doppy/editor/utils/animated_drop_line.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
@@ -16,13 +20,13 @@ import 'dart:ui' as ui;
 import 'package:super_editor/super_editor.dart';
 import 'dart:math' as math;
 
-/// 여러 이미지를 PageView로 표시하는 커스텀 노드 (최대 6개)
+/// 여러 이미지를 PageView로 표시하는 커스텀 노드
 class PageViewImageNode extends BlockNode {
   PageViewImageNode({
     required this.id,
     required List<String> imageUrls,
     Map<String, dynamic>? metadata,
-  }) : imageUrls = imageUrls.take(6).toList(), // 최대 6개로 제한
+  }) : imageUrls = imageUrls.toList(),
        _metadata = metadata ?? <String, dynamic>{};
 
   @override
@@ -47,7 +51,7 @@ class PageViewImageNode extends BlockNode {
   }) {
     return PageViewImageNode(
       id: id ?? this.id,
-      imageUrls: imageUrls?.take(6).toList() ?? this.imageUrls,
+      imageUrls: imageUrls?.toList() ?? this.imageUrls,
       metadata: metadata ?? _metadata,
     );
   }
@@ -224,6 +228,9 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
   final Map<String, Widget> _lastRenderedByUrl = <String, Widget>{};
   late PageController _pageController;
   int _currentPage = 0;
+
+  Timer? _edgeAutoPageTimer;
+  int _edgeAutoPageDir = 0;
 
   late final AnimationController _controller;
   late final AnimationController _scatterCtrl;
@@ -441,8 +448,19 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
       return true;
     }());
     _pageController = PageController(
-      viewportFraction: 0.8, // 🎯 화면의 80% 사용
+      viewportFraction: 0.9, // 🎯 화면의 90% 사용 (padEnds 영역 줄이기)
     );
+
+    // PageView 현재 페이지를 DragService에 전달(드롭 인덱스 계산용)
+    final ds = widget.dragService;
+    if (ds is DragService) {
+      ds.setPageViewCurrentPage(widget.nodeId, _currentPage);
+    }
+
+    // 드래그 중 엣지 홀드 오토페이징을 위해 dragService 변경 감지
+    if (widget.dragService is Listenable) {
+      (widget.dragService as Listenable).addListener(_onDragServiceChanged);
+    }
 
     _controller = AnimationController.unbounded(vsync: this)
       ..repeat(min: 0, max: 1, period: const Duration(milliseconds: 900));
@@ -465,6 +483,10 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
       );
       return true;
     }());
+    _stopEdgeAutoPaging();
+    if (widget.dragService is Listenable) {
+      (widget.dragService as Listenable).removeListener(_onDragServiceChanged);
+    }
     _pageController.dispose();
     _controller.dispose();
     _scatterCtrl.dispose();
@@ -475,8 +497,65 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
   void didUpdateWidget(covariant PageViewImageComponent oldWidget) {
     super.didUpdateWidget(oldWidget);
     final urlsChanged = !_areUrlsEqual(oldWidget.imageUrls, widget.imageUrls);
+    final oldCount = oldWidget.imageUrls.length;
+    final newCount = widget.imageUrls.length;
+    final countIncreased = newCount > oldCount;
+
     if (urlsChanged) {
       _lastRenderedByUrl.clear();
+    }
+
+    // 🎯 이미지가 삽입된 경우 해당 인덱스로 부드럽게 스크롤
+    if (countIncreased &&
+        widget.isEditing &&
+        widget.dragService is DragService) {
+      final ds = widget.dragService as DragService;
+      // DragService의 dropTarget에서 insertIndex 확인
+      final insertIndex =
+          (ds.dropTarget.kind == DropTargetKind.mergeIntoPageView &&
+                  ds.dropTarget.targetRowId == widget.nodeId)
+              ? ds.dropTarget.insertIndex
+              : null;
+
+      if (insertIndex != null &&
+          insertIndex >= 0 &&
+          insertIndex < newCount &&
+          _pageController.hasClients) {
+        // 🎯 삽입된 이미지가 가운데 보이도록 부드럽게 스크롤
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _pageController.hasClients) {
+            _pageController.animateToPage(
+              insertIndex,
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeInOutCubic,
+            );
+            setState(() {
+              _currentPage = insertIndex;
+            });
+          }
+        });
+      }
+    }
+
+    // 현재 페이지가 범위를 넘어가면 안전하게 보정
+    final maxPage = (widget.imageUrls.length - 1).clamp(0, 999999);
+    if (_currentPage > maxPage) {
+      _currentPage = maxPage;
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(_currentPage);
+      }
+    }
+
+    // dragService 인스턴스가 바뀌면 리스너 재연결
+    if (oldWidget.dragService != widget.dragService) {
+      if (oldWidget.dragService is Listenable) {
+        (oldWidget.dragService as Listenable).removeListener(
+          _onDragServiceChanged,
+        );
+      }
+      if (widget.dragService is Listenable) {
+        (widget.dragService as Listenable).addListener(_onDragServiceChanged);
+      }
     }
     assert(() {
       debugPrint(
@@ -489,6 +568,92 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
       }
       return true;
     }());
+  }
+
+  void _onDragServiceChanged() {
+    // 🎯 편집 모드에서만 자동 페이징 동작
+    if (!widget.isEditing) {
+      _stopEdgeAutoPaging();
+      return;
+    }
+    final ds = widget.dragService;
+    if (ds is! DragService) return;
+    _updateEdgeAutoPaging(ds);
+  }
+
+  void _updateEdgeAutoPaging(DragService ds) {
+    // 🎯 편집 모드에서만 자동 페이징 동작
+    if (!widget.isEditing) {
+      _stopEdgeAutoPaging();
+      return;
+    }
+    // PageView가 드롭 타겟일 때만 자동 페이징
+    final isTarget =
+        ds.dropTarget.kind == DropTargetKind.mergeIntoPageView &&
+        ds.dropTarget.targetRowId == widget.nodeId;
+    final globalPos = ds.dragPosition;
+
+    if (!isTarget || globalPos == null || widget.imageUrls.length <= 1) {
+      _stopEdgeAutoPaging();
+      return;
+    }
+
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) {
+      _stopEdgeAutoPaging();
+      return;
+    }
+    final local = box.globalToLocal(globalPos);
+    const edgeThreshold = 30.0;
+    final w = box.size.width;
+
+    int dir = 0;
+    if (local.dx <= edgeThreshold) {
+      dir = -1;
+    } else if (local.dx >= w - edgeThreshold) {
+      dir = 1;
+    }
+
+    if (dir == 0) {
+      _stopEdgeAutoPaging();
+      return;
+    }
+
+    if (_edgeAutoPageTimer != null && _edgeAutoPageDir == dir) {
+      return; // 같은 방향으로 이미 동작 중
+    }
+
+    _edgeAutoPageDir = dir;
+    _edgeAutoPageTimer?.cancel();
+    _edgeAutoPageTimer = Timer.periodic(
+      const Duration(milliseconds: 420),
+      (_) => _pageOnce(dir),
+    );
+
+    // 첫 페이징은 즉시 한 번 실행
+    _pageOnce(dir);
+  }
+
+  void _stopEdgeAutoPaging() {
+    _edgeAutoPageTimer?.cancel();
+    _edgeAutoPageTimer = null;
+    _edgeAutoPageDir = 0;
+  }
+
+  void _pageOnce(int dir) {
+    if (!mounted || widget.imageUrls.isEmpty) return;
+    if (!_pageController.hasClients) return;
+
+    final current = _pageController.page?.round() ?? _currentPage;
+    final next = (current + dir).clamp(0, widget.imageUrls.length - 1);
+    if (next == current) return;
+
+    // 🎯 더 부드러운 페이징 애니메이션
+    _pageController.animateToPage(
+      next,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeInOutCubic,
+    );
   }
 
   bool _areUrlsEqual(List<String> a, List<String> b) {
@@ -575,6 +740,9 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
     } catch (_) {}
 
     // 스포일러 해제 시 scatter 애니메이션 트리거
+    final wasSpoilerBefore = _wasSpoilerVisible;
+    // 🎯 초기 렌더링 감지: _wasSpoilerVisible이 false이고 isSpoilerFlag가 true면 초기 상태
+    final isInitialSpoilerRender = !_wasSpoilerVisible && isSpoilerFlag;
     if (_wasSpoilerVisible &&
         !isSpoilerFlag &&
         _scatterCtrl.status != AnimationStatus.forward) {
@@ -638,11 +806,34 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                           // 🎯 키보드 내리기 + 포커스 해제 (드래그 시작 시)
                           FocusManager.instance.primaryFocus?.unfocus();
                           FocusScope.of(context).unfocus();
-                          widget.dragService?.startDrag(
-                            widget.nodeId,
-                            context,
-                            details.globalPosition,
-                          );
+
+                          // 이미지 서비스 확인
+                          final imageService =
+                              context.read<NodeComponentService>();
+                          final isPageViewSelected =
+                              imageService.selectedImageId == widget.nodeId;
+
+                          if (isPageViewSelected) {
+                            // 선택되어 있으면 전체 PageView를 드래그
+                            widget.dragService?.startDrag(
+                              widget.nodeId,
+                              context,
+                              details.globalPosition,
+                            );
+                          } else {
+                            // 선택 안 되어 있으면 현재 페이지 인덱스를 찾아 분리 정보 설정
+                            // 🎯 중요: setSplitPageViewInfo를 먼저 호출해야 _extractImageUrl에서 올바른 이미지를 사용할 수 있음
+                            final pageIndex = _currentPage;
+                            widget.dragService?.setSplitPageViewInfo(
+                              widget.nodeId,
+                              pageIndex,
+                            );
+                            widget.dragService?.startDrag(
+                              widget.nodeId,
+                              context,
+                              details.globalPosition,
+                            );
+                          }
                         }
                         : null,
                 onLongPressMoveUpdate:
@@ -670,73 +861,218 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                       // 🎯 PageView로 이미지 표시 (0.8 fraction)
                       SizedBox(
                         height: 400, // 고정 높이
-                        child: PageView.builder(
-                          padEnds: false,
-                          controller: _pageController,
-                          itemCount: widget.imageUrls.length,
-                          onPageChanged: (index) {
-                            setState(() {
-                              _currentPage = index;
-                            });
-                          },
-                          itemBuilder: (context, index) {
-                            final imageUrl = widget.imageUrls[index];
+                        child: AnimatedBuilder(
+                          animation:
+                              widget.dragService is Listenable
+                                  ? (widget.dragService as Listenable)
+                                  : Listenable.merge(const []),
+                          builder: (context, _) {
+                            // 🎯 편집 모드에서만 삽입 슬롯 표시
+                            // 🎯 실제로 드래그가 움직였을 때만 표시 (길게 눌렀다가 놓는 경우 방지)
+                            final int? highlightInsertIndex =
+                                (widget.isEditing &&
+                                        widget.dragService is DragService)
+                                    ? () {
+                                      final ds =
+                                          widget.dragService as DragService;
+                                      // 드래그가 일정 거리 이상 움직였을 때만 표시
+                                      return (ds.hasDraggedSignificantly &&
+                                              ds.dropTarget.kind ==
+                                                  DropTargetKind
+                                                      .mergeIntoPageView &&
+                                              ds.dropTarget.targetRowId ==
+                                                  widget.nodeId)
+                                          ? ds.dropTarget.insertIndex
+                                          : null;
+                                    }()
+                                    : null;
 
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Stack(
-                                  children: [
-                                    // ✅ 스포일러 토글(ON/OFF) 시 블러를 부드럽게
-                                    TweenAnimationBuilder<double>(
-                                      tween: Tween<double>(
-                                        begin: 0.0,
-                                        end: isSpoilerFlag ? 12.0 : 0.0,
+                            return Stack(
+                              children: [
+                                PageView.builder(
+                                  padEnds: true,
+                                  controller: _pageController,
+                                  itemCount: widget.imageUrls.length,
+                                  onPageChanged: (index) {
+                                    setState(() {
+                                      _currentPage = index;
+                                    });
+                                    final ds = widget.dragService;
+                                    if (ds is DragService) {
+                                      ds.setPageViewCurrentPage(
+                                        widget.nodeId,
+                                        index,
+                                      );
+                                    }
+                                  },
+                                  itemBuilder: (context, index) {
+                                    final imageUrl = widget.imageUrls[index];
+                                    final isFirst = index == 0;
+                                    final isLast =
+                                        index == widget.imageUrls.length - 1;
+
+                                    final bool showSlotBefore =
+                                        highlightInsertIndex != null &&
+                                        highlightInsertIndex == index;
+                                    final bool showSlotAfter =
+                                        highlightInsertIndex != null &&
+                                        highlightInsertIndex ==
+                                            widget.imageUrls.length &&
+                                        isLast;
+
+                                    return Padding(
+                                      padding: EdgeInsets.only(
+                                        left: isFirst ? 0 : 4,
+                                        right: isLast ? 0 : 4,
                                       ),
-                                      duration: const Duration(
-                                        milliseconds: 180,
+                                      child: Row(
+                                        children: [
+                                          AnimatedSize(
+                                            duration: const Duration(
+                                              milliseconds: 250,
+                                            ),
+                                            curve: Curves.easeInOutCubic,
+                                            child:
+                                                showSlotBefore
+                                                    ? const _PageViewInsertSlot()
+                                                    : const SizedBox.shrink(),
+                                          ),
+                                          Expanded(
+                                            child: ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              child: Stack(
+                                                children: [
+                                                  // ✅ 스포일러 토글(ON/OFF) 시 블러를 부드럽게
+                                                  // 🎯 초기 렌더링 시 스포일러 깜빡임 방지: 초기 상태일 때는 즉시 표시
+                                                  TweenAnimationBuilder<double>(
+                                                    tween: Tween<double>(
+                                                      begin:
+                                                          wasSpoilerBefore
+                                                              ? 12.0
+                                                              : 0.0,
+                                                      end:
+                                                          isSpoilerFlag
+                                                              ? 12.0
+                                                              : 0.0,
+                                                    ),
+                                                    duration:
+                                                        isInitialSpoilerRender ||
+                                                                wasSpoilerBefore ==
+                                                                    isSpoilerFlag
+                                                            ? Duration.zero
+                                                            : const Duration(
+                                                              milliseconds: 180,
+                                                            ),
+                                                    curve: Curves.easeOutCubic,
+                                                    builder: (
+                                                      context,
+                                                      sigma,
+                                                      child,
+                                                    ) {
+                                                      return ImageFiltered(
+                                                        imageFilter: ui
+                                                            .ImageFilter.blur(
+                                                          sigmaX: sigma,
+                                                          sigmaY: sigma,
+                                                        ),
+                                                        child: child,
+                                                      );
+                                                    },
+                                                    child: _buildImageWidget(
+                                                      index,
+                                                      imageUrl,
+                                                    ),
+                                                  ),
+                                                  // ✅ 블러 위 어둡게 오버레이도 페이드
+                                                  // 🎯 초기 렌더링 시 스포일러 깜빡임 방지: 초기 상태일 때는 즉시 표시
+                                                  Positioned.fill(
+                                                    child: IgnorePointer(
+                                                      child: AnimatedOpacity(
+                                                        opacity:
+                                                            isSpoilerFlag
+                                                                ? 1
+                                                                : 0,
+                                                        duration:
+                                                            isInitialSpoilerRender ||
+                                                                    wasSpoilerBefore ==
+                                                                        isSpoilerFlag
+                                                                ? Duration.zero
+                                                                : const Duration(
+                                                                  milliseconds:
+                                                                      160,
+                                                                ),
+                                                        curve:
+                                                            Curves.easeOutCubic,
+                                                        child: Container(
+                                                          color: Colors.black
+                                                              .withOpacity(
+                                                                0.15,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                          AnimatedSize(
+                                            duration: const Duration(
+                                              milliseconds: 250,
+                                            ),
+                                            curve: Curves.easeInOutCubic,
+                                            child:
+                                                showSlotAfter
+                                                    ? const _PageViewInsertSlot()
+                                                    : const SizedBox.shrink(),
+                                          ),
+                                        ],
                                       ),
-                                      curve: Curves.easeOutCubic,
-                                      builder: (context, sigma, child) {
-                                        return ImageFiltered(
-                                          imageFilter: ui.ImageFilter.blur(
-                                            sigmaX: sigma,
-                                            sigmaY: sigma,
+                                    );
+                                  },
+                                ),
+                                if (highlightInsertIndex != null)
+                                  Positioned(
+                                    top: 10,
+                                    left: 0,
+                                    right: 0,
+                                    child: IgnorePointer(
+                                      child: Center(
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 6,
                                           ),
-                                          child: child,
-                                        );
-                                      },
-                                      child: _buildImageWidget(index, imageUrl),
-                                    ),
-                                    // ✅ 블러 위 어둡게 오버레이도 페이드
-                                    Positioned.fill(
-                                      child: IgnorePointer(
-                                        child: AnimatedOpacity(
-                                          opacity: isSpoilerFlag ? 1 : 0,
-                                          duration: const Duration(
-                                            milliseconds: 160,
-                                          ),
-                                          curve: Curves.easeOutCubic,
-                                          child: Container(
+                                          decoration: BoxDecoration(
                                             color: Colors.black.withOpacity(
-                                              0.15,
+                                              0.55,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              14,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            AppLocalizations.of(
+                                              context,
+                                            ).t('drop_here'),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
                                             ),
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ],
-                                ),
-                              ),
+                                  ),
+                              ],
                             );
                           },
                         ),
                       ),
 
-                      // 🎯 하단 인디케이터 (1/6 형식)
+                      // 🎯 하단 인디케이터 (현재 페이지/전체 페이지 형식)
                       Positioned(
                         bottom: 8,
                         left: 0,
@@ -869,11 +1205,14 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                       if (isSelected || isDownstreamSelected)
                         Positioned.fill(
                           child: IgnorePointer(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                  color: AppColors.primary,
-                                  width: 3,
+                            child: AnimatedSelectionBorder(
+                              isVisible: true,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: AppColors.primary,
+                                    width: 4,
+                                  ),
                                 ),
                               ),
                             ),
@@ -1225,6 +1564,20 @@ class _PageViewImageSpoilerScatterPainter extends CustomPainter {
     covariant _PageViewImageSpoilerScatterPainter oldDelegate,
   ) {
     return oldDelegate.progress != progress;
+  }
+}
+
+class _PageViewInsertSlot extends StatelessWidget {
+  const _PageViewInsertSlot();
+
+  @override
+  Widget build(BuildContext context) {
+    // 🎯 패딩만 표시 (가운데 보라색 라인 제거)
+    return Container(
+      width: 18,
+      height: double.infinity,
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+    );
   }
 }
 

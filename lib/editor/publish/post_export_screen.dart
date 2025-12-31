@@ -24,6 +24,7 @@ import 'dart:io';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 void printLarge(String text, {int chunkSize = 800}) {
   final int len = text.length;
@@ -52,6 +53,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // 더미 데이터
   String _exportedThumbnailImageUrl = '';
+  String _firstBodyImageUrl = '';
   String _title = '';
   String _excerpt = '';
   late final TextEditingController _titleController = TextEditingController();
@@ -101,8 +103,6 @@ class _PostExportScreenState extends State<PostExportScreen>
     debugPrint('[PostExport] ═══════════════════════════════════════');
     _hydrateFromExported(jsonDecode(widget.exported));
     _intro.forward();
-    _titleFocusNode.addListener(_onEditFocusChange);
-    _excerptFocusNode.addListener(_onEditFocusChange);
 
     // 카테고리는 Step3 컴포넌트에서 로드함
   }
@@ -110,9 +110,6 @@ class _PostExportScreenState extends State<PostExportScreen>
   @override
   void dispose() {
     try {
-      _titleFocusNode.removeListener(_onEditFocusChange);
-      _excerptFocusNode.removeListener(_onEditFocusChange);
-
       _titleController.dispose();
       _titleFocusNode.dispose();
       _excerptController.dispose();
@@ -136,23 +133,6 @@ class _PostExportScreenState extends State<PostExportScreen>
     super.dispose();
   }
 
-  void _onEditFocusChange() {
-    // Step 1에서만 편집 모드 활성화
-    if (_currentStep != 0) return;
-
-    final bool nowEditing =
-        _titleFocusNode.hasFocus || _excerptFocusNode.hasFocus;
-    if (_editMode != nowEditing) {
-      setState(() => _editMode = nowEditing);
-      // 🎯 포커스 변화에 따라 애니메이션 실행
-      if (nowEditing) {
-        _controller.forward();
-      } else {
-        _controller.reverse();
-      }
-    }
-  }
-
   void _hydrateFromExported(Map<String, dynamic> exported) {
     _exportedBase = exported;
     // 제목
@@ -168,8 +148,63 @@ class _PostExportScreenState extends State<PostExportScreen>
     // 🎯 썸네일: exported에서 가져오기 (임시저장 사용 안 함)
     final exportedThumbnailUrl = exported['thumbnailImageUrl'] as String? ?? '';
 
-    _exportedThumbnailImageUrl = exportedThumbnailUrl;
-    debugPrint('[PostExport] 썸네일 초기화: $_exportedThumbnailImageUrl');
+    // ✅ 본문 첫 이미지 URL (Step1 카드/배경 기본값)
+    _firstBodyImageUrl = PostContentUtils.findFirstBodyImageUrl(exported);
+
+    assert(() {
+      final nodes =
+          (exported['content'] is Map)
+              ? List<dynamic>.from(
+                ((exported['content'] as Map)['nodes'] as List?) ?? const [],
+              )
+              : const [];
+      debugPrint(
+        '[ThumbAuto][PostExportScreen] exportedThumbnailUrl="$exportedThumbnailUrl", firstBody="$_firstBodyImageUrl", nodes=${nodes.length}',
+      );
+      if (nodes.isNotEmpty) {
+        for (int i = 0; i < nodes.length && i < 6; i++) {
+          final n = nodes[i];
+          if (n is! Map) continue;
+          debugPrint('[ThumbAuto][PostExportScreen] node[$i] = ${n['type']}');
+        }
+      }
+      debugPrint(
+        '[ThumbAuto][PostExportScreen] usedImageUrls=${(exported['usedImageUrls'] as List?)?.length ?? 0}',
+      );
+      return true;
+    }());
+
+    // ✅ 썸네일이 비어있으면 "본문 첫 이미지"를 기본값으로 사용한다.
+    // - 카드 + 배경 이미지가 즉시 보여야 함
+    // - http(s)만 채택
+    _exportedThumbnailImageUrl =
+        exportedThumbnailUrl.trim().isNotEmpty
+            ? exportedThumbnailUrl.trim()
+            : _firstBodyImageUrl.trim();
+
+    debugPrint(
+      '[PostExport] 썸네일 초기화: $_exportedThumbnailImageUrl (firstBody=$_firstBodyImageUrl)',
+    );
+
+    // ✅ 같은 캐시 매니저(EditImageCacheManager)로 precache해서 "즉시 표시" 확률을 높인다.
+    final thumb = _exportedThumbnailImageUrl.trim();
+    if (thumb.isNotEmpty &&
+        (thumb.startsWith('http://') || thumb.startsWith('https://'))) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        try {
+          final provider = ResizeImage(
+            CachedNetworkImageProvider(
+              thumb,
+              cacheManager: EditImageCacheManager.instance,
+              cacheKey: thumb,
+            ),
+            width: 600,
+          );
+          precacheImage(provider, context).catchError((_) {});
+        } catch (_) {}
+      });
+    }
 
     // 영상 파일만 복원 (persist 사용)
     final svc = NodeComponentService();
@@ -480,9 +515,25 @@ class _PostExportScreenState extends State<PostExportScreen>
             } else {
               debugPrint('[PostExport] ⚠️ 임시저장 삭제 실패: $draftId');
             }
+
+            // 4. 자동저장 삭제 (발행 성공 시 항상 삭제)
+            await draftService.clearAutoDraft();
+            debugPrint('[PostExport] ✅ 자동저장 삭제 완료');
           } catch (e) {
             debugPrint('[PostExport] ⚠️ 임시저장/캐시 삭제 중 오류 (무시): $e');
             // 발행은 성공했으므로 오류를 무시하고 계속 진행
+          }
+        });
+      } else {
+        // ✅ sessionKey가 없거나 draft_로 시작하지 않아도 자동저장은 삭제
+        // (자동저장에서 발행한 경우를 대비)
+        Future.microtask(() async {
+          try {
+            final draftService = DraftService();
+            await draftService.clearAutoDraft();
+            debugPrint('[PostExport] ✅ 자동저장 삭제 완료 (임시저장 없음)');
+          } catch (e) {
+            debugPrint('[PostExport] ⚠️ 자동저장 삭제 중 오류 (무시): $e');
           }
         });
       }
@@ -711,12 +762,25 @@ class _PostExportScreenState extends State<PostExportScreen>
                 _localThumbnailFile != null
                     ? Image.file(_localThumbnailFile!, fit: BoxFit.cover)
                     : _exportedThumbnailImageUrl.isNotEmpty
-                    ? Image.network(
-                      _exportedThumbnailImageUrl,
+                    ? CachedNetworkImage(
+                      imageUrl: _exportedThumbnailImageUrl,
                       fit: BoxFit.cover,
-                      errorBuilder:
-                          (context, error, stackTrace) =>
+                      placeholder:
+                          (context, url) =>
                               Container(color: AppColors.darkSurface),
+                      errorWidget: (context, url, error) {
+                        assert(() {
+                          debugPrint(
+                            '[PostExportScreen] ❌ 배경 이미지 로드 실패: url=$url, error=$error',
+                          );
+                          return true;
+                        }());
+                        return Container(color: AppColors.darkSurface);
+                      },
+                      cacheKey: _exportedThumbnailImageUrl,
+                      cacheManager: EditImageCacheManager.instance,
+                      fadeInDuration: Duration.zero,
+                      fadeOutDuration: Duration.zero,
                     )
                     : Container(color: Theme.of(context).colorScheme.surface),
           ),
@@ -824,8 +888,8 @@ class _PostExportScreenState extends State<PostExportScreen>
 
     return WillPopScope(
       onWillPop: () async {
-        // 업로드 중에는 뒤로 가기 방지
-        if (_isUploading) {
+        // 🎯 업로드 중에는 뒤로 가기 완전 차단
+        if (_isUploading || _isUploadingThumb) {
           return false;
         }
 
@@ -894,14 +958,11 @@ class _PostExportScreenState extends State<PostExportScreen>
                       onEditModeChanged: (value) {
                         setState(() {
                           _editMode = value;
-                          if (value) {
-                            _controller.forward();
-                          } else {
-                            _controller.reverse();
-                          }
                         });
                       },
-                      onEditFocusChange: _onEditFocusChange,
+                      // ✅ Step1 내부에서 포커스/애니메이션을 관리한다.
+                      // (중복 리스너로 인한 불필요한 setState 루프 방지)
+                      onEditFocusChange: () {},
                     ),
                     Step2AudienceSelection(
                       selectedAudienceGroupIds: _selectedAudienceGroupIds,
@@ -960,9 +1021,11 @@ class _PostExportScreenState extends State<PostExportScreen>
                     Step3CategorySelection(
                       selectedCategoryId: _selectedCategoryId,
                       onSelectedCategoryIdChanged: (id) {
-                        setState(() {
-                          _selectedCategoryId = id;
-                        });
+                        if (!_isUploading) {
+                          setState(() {
+                            _selectedCategoryId = id;
+                          });
+                        }
                       },
                       cachedCategories: _cachedCategories,
                       onCachedCategoriesChanged: (categories) {
@@ -982,6 +1045,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                           _showCategoryLoading = value;
                         });
                       },
+                      isUploading: _isUploading, // 🎯 발행 중 상태 전달
                     ),
                   ],
                 ),
@@ -1037,7 +1101,11 @@ class _PostExportScreenState extends State<PostExportScreen>
             },
             child: Text(
               context.tr('modify_complete'),
-              style: TextStyle(color: textColor, fontWeight: FontWeight.w500),
+              style: TextStyle(
+                color: textColor,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -1131,10 +1199,10 @@ class _PostExportScreenState extends State<PostExportScreen>
                     _isUploading
                         ? Container(
                           key: const ValueKey('loading'),
-                          width: 20,
-                          height: 20,
+                          width: 26,
+                          height: 26,
                           child: const CircularProgressIndicator(
-                            strokeWidth: 2.5,
+                            strokeWidth: 4,
                             valueColor: AlwaysStoppedAnimation<Color>(
                               Colors.white,
                             ),

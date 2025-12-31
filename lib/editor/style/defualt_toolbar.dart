@@ -11,6 +11,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/overlay/mention_overlay.dart';
 import 'package:doppy/editor/utils/config.dart';
+import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/providers/locale_provider.dart';
@@ -151,9 +152,19 @@ extension _TopExpandedRow on _DefaultToolbarState {
                                 description: description,
                                 thumbnailUrl: thumbnailUrl,
                               );
-                              // 링크 추가 후 상단 두번째 툴바 자동 닫기
-                              _toggle(ToolbarSection.none);
-                              Navigator.of(context).maybePop();
+                              // 노드가 추가되고 렌더링이 완료된 후 부드럽게 닫기
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                Future.delayed(
+                                  const Duration(milliseconds: 150),
+                                  () {
+                                    if (context.mounted) {
+                                      // 링크 추가 후 상단 두번째 툴바 자동 닫기
+                                      // 🎯 LinkOverlay가 이미 Navigator.pop()을 호출하므로 여기서는 툴바만 닫기
+                                      _toggle(ToolbarSection.none);
+                                    }
+                                  },
+                                );
+                              });
                             },
                           ),
                     ),
@@ -178,9 +189,19 @@ extension _TopExpandedRow on _DefaultToolbarState {
                             onSelect: (username) {},
                             onSubmit: (usernames) {
                               widget.editorService.addMentionNode(usernames);
-                              // 언급 추가 후 상단 두번째 툴바 자동 닫기
-                              _toggle(ToolbarSection.none);
-                              Navigator.of(context).maybePop();
+                              // 노드가 추가되고 렌더링이 완료된 후 부드럽게 닫기
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                Future.delayed(
+                                  const Duration(milliseconds: 150),
+                                  () {
+                                    if (context.mounted) {
+                                      // 언급 추가 후 상단 두번째 툴바 자동 닫기
+                                      _toggle(ToolbarSection.none);
+                                      Navigator.of(context).maybePop();
+                                    }
+                                  },
+                                );
+                              });
                             },
                           ),
                     ),
@@ -210,6 +231,9 @@ extension _TopExpandedRow on _DefaultToolbarState {
               onTap: () {
                 final offset = widget.scrollController?.offset;
                 widget.stylingService.applyTextAlignment(TextAlign.left);
+                widget.editorService.setCurrentParagraphAlignment(
+                  TextAlign.left,
+                );
                 _updateStyles(
                   updateAlignment: true,
                 ); // 🎯 정렬 버튼 클릭 시에만 alignment 업데이트
@@ -227,6 +251,9 @@ extension _TopExpandedRow on _DefaultToolbarState {
               onTap: () {
                 final offset = widget.scrollController?.offset;
                 widget.stylingService.applyTextAlignment(TextAlign.center);
+                widget.editorService.setCurrentParagraphAlignment(
+                  TextAlign.center,
+                );
                 _updateStyles(
                   updateAlignment: true,
                 ); // 🎯 정렬 버튼 클릭 시에만 alignment 업데이트
@@ -244,6 +271,9 @@ extension _TopExpandedRow on _DefaultToolbarState {
               onTap: () {
                 final offset = widget.scrollController?.offset;
                 widget.stylingService.applyTextAlignment(TextAlign.right);
+                widget.editorService.setCurrentParagraphAlignment(
+                  TextAlign.right,
+                );
                 _updateStyles(
                   updateAlignment: true,
                 ); // 🎯 정렬 버튼 클릭 시에만 alignment 업데이트
@@ -411,9 +441,8 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
       try {
         final nodeId = selection.extent.nodeId;
         final node = widget.editorService.document.getNodeById(nodeId);
-        if (node is ParagraphNode) {
-          isMentionNode = node.metadata['mention'] == true;
-        }
+        // 🎯 NodeTypeChecker를 사용하여 멘션 노드 확인
+        isMentionNode = NodeTypeChecker.isMentionNode(node);
       } catch (_) {}
     }
 
@@ -471,6 +500,9 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
     TextAlign? newAlignment;
     if (updateAlignment) {
       newAlignment = widget.stylingService.getCurrentAlignment();
+      // ✅ EditorService도 "현재 정렬"을 인지하도록 동기화한다.
+      // (삭제 후 정렬 보정 fallback에서 사용)
+      widget.editorService.setCurrentParagraphAlignment(newAlignment);
     }
 
     // 🎯 캐시와 비교하여 실제 변경 여부 확인
@@ -702,6 +734,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             }
             final offset = widget.scrollController?.offset;
             widget.stylingService.applyTextAlignment(nextAlignment);
+            widget.editorService.setCurrentParagraphAlignment(nextAlignment);
             _updateStyles(
               updateAlignment: true,
             ); // 🎯 정렬 버튼 클릭 시에만 alignment 업데이트
@@ -756,7 +789,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             icon: Icons.close,
             isActive: false,
             onTap: _forceCloseToolbar,
-            size: 20,
+            size: 26,
           ),
           const SizedBox(width: 2),
           _buildDivider(),
@@ -1800,7 +1833,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                         child: Center(
                           child: Icon(
                             Icons.close,
-                            size: 20,
+                            size: 26,
                             color: Theme.of(
                               context,
                             ).colorScheme.onSurface.withOpacity(0.7),

@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
@@ -5,18 +6,24 @@ import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/profile_action_bottom_sheet.dart';
 import 'package:doppy/data/services/blog_service.dart';
+import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/utils/time_utils.dart';
+import 'package:dio/dio.dart';
+import 'package:provider/provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 
-/// 🎯 포스트를 본 사용자 목록 오버레이
+/// 🎯 포스트를 본 사용자 목록 및 좋아요 사용자 목록 오버레이
 class ViewersBottomSheet extends StatefulWidget {
   final String postId;
   final int viewerCount; // 🎯 포스트의 전체 조회수 (페이지네이션과 무관)
+  final int? likeCount; // 🎯 포스트의 전체 좋아요 수 (페이지네이션과 무관, nullable)
   final VoidCallback? onClose; // 🎯 오버레이 닫기 콜백 (오버레이로 사용할 때)
 
   const ViewersBottomSheet({
     super.key,
     required this.postId,
     required this.viewerCount,
+    this.likeCount,
     this.onClose,
   });
 
@@ -24,20 +31,25 @@ class ViewersBottomSheet extends StatefulWidget {
   State<ViewersBottomSheet> createState() => _ViewersBottomSheetState();
 
   // 🎯 정적 캐시: postId별로 조회자 목록 저장 (클래스 레벨에서 관리)
-  static final Map<String, List<Map<String, dynamic>>> _cache = {};
-  static final Map<String, bool> _isLoadingCache = {};
+  static final Map<String, List<Map<String, dynamic>>> _viewersCache = {};
+  static final Map<String, bool> _viewersLoadingCache = {};
 
-  /// 🎯 조회자 목록 미리 로드 (비동기, 정적 메서드)
+  // 🎯 정적 캐시: postId별로 좋아요 사용자 목록 저장 (클래스 레벨에서 관리)
+  static final Map<String, List<Map<String, dynamic>>> _likesCache = {};
+  static final Map<String, bool> _likesLoadingCache = {};
+
+  /// 🎯 조회자 및 좋아요 목록 미리 로드 (병렬 처리, 비동기, 정적 메서드)
   static Future<void> preloadViewers(String postId) async {
     // 이미 캐시에 있거나 로딩 중이면 스킵
-    if (_cache.containsKey(postId) && _cache[postId]!.isNotEmpty) {
+    if (_viewersCache.containsKey(postId) &&
+        _viewersCache[postId]!.isNotEmpty) {
       return;
     }
-    if (_isLoadingCache[postId] == true) {
+    if (_viewersLoadingCache[postId] == true) {
       return;
     }
 
-    _isLoadingCache[postId] = true;
+    _viewersLoadingCache[postId] = true;
     final blogService = BlogService();
 
     try {
@@ -59,7 +71,7 @@ class ViewersBottomSheet extends StatefulWidget {
             }).toList();
 
         // 🎯 캐시에 저장 (0페이지만)
-        _cache[postId] = readers;
+        _viewersCache[postId] = readers;
         debugPrint(
           '[ViewersBottomSheet] 조회자 목록 미리 로드 완료: $postId (${readers.length}명)',
         );
@@ -67,21 +79,176 @@ class ViewersBottomSheet extends StatefulWidget {
     } catch (e) {
       debugPrint('[ViewersBottomSheet] 조회자 목록 미리 로드 실패: $e');
     } finally {
-      _isLoadingCache[postId] = false;
+      _viewersLoadingCache[postId] = false;
     }
+  }
+
+  /// 🎯 좋아요 사용자 목록 미리 로드 (병렬 처리용)
+  static Future<void> preloadLikes(String postId) async {
+    // 이미 캐시에 있거나 로딩 중이면 스킵
+    if (_likesCache.containsKey(postId) && _likesCache[postId]!.isNotEmpty) {
+      return;
+    }
+    if (_likesLoadingCache[postId] == true) {
+      return;
+    }
+
+    _likesLoadingCache[postId] = true;
+    final Dio dio = BaseApiService().dio;
+
+    try {
+      final response = await dio.get(
+        '/api/posts/$postId/likes?page=0&size=20',
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        List<Map<String, dynamic>> users = [];
+
+        // 🎯 페이지네이션 응답 파싱
+        if (data is Map) {
+          if (data.containsKey('content')) {
+            users =
+                (data['content'] as List?)
+                    ?.map((e) => Map<String, dynamic>.from(e))
+                    .toList() ??
+                [];
+          } else if (data.containsKey('users')) {
+            users =
+                (data['users'] as List?)
+                    ?.map((e) => Map<String, dynamic>.from(e))
+                    .toList() ??
+                [];
+          }
+        } else if (data is List) {
+          users = data.map((e) => Map<String, dynamic>.from(e)).toList();
+        }
+
+        // 🎯 캐시에 저장 (0페이지만)
+        _likesCache[postId] = users;
+        debugPrint(
+          '[ViewersBottomSheet] 좋아요 목록 미리 로드 완료: $postId (${users.length}명)',
+        );
+      }
+    } catch (e) {
+      debugPrint('[ViewersBottomSheet] 좋아요 목록 미리 로드 실패: $e');
+    } finally {
+      _likesLoadingCache[postId] = false;
+    }
+  }
+
+  /// 🎯 조회자와 좋아요 목록을 병렬로 미리 로드
+  static Future<void> preloadAll(String postId) async {
+    await Future.wait([preloadViewers(postId), preloadLikes(postId)]);
   }
 }
 
 class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
+  // 🎯 조회자 관련 상태
   List<Map<String, dynamic>> _viewers = [];
-  bool _isLoading = true;
-  bool _isLoadingMore = false; // 🎯 로드 모어 중인지
-  bool _hasMore = true; // 🎯 더 있는지
-  int _currentPage = 0; // 🎯 현재 페이지
-  String? _error;
+  bool _isLoadingViewers = true;
+  bool _isLoadingMoreViewers = false;
+  bool _hasMoreViewers = true;
+  int _currentViewersPage = 0;
+  String? _viewersError;
+
+  // 🎯 좋아요 관련 상태
+  List<Map<String, dynamic>> _likedUsers = [];
+  bool _isLoadingLikes = true;
+  bool _isLoadingMoreLikes = false;
+  bool _hasMoreLikes = true;
+  int _currentLikesPage = 0;
+  String? _likesError;
+
   final BlogService _blogService = BlogService();
+  final Dio _dio = BaseApiService().dio;
   late final ScrollController _scrollController;
   double _pullProgress = 0.0; // 🎯 당기는 진행률 (0.0 ~ 1.0)
+
+  // 🎯 좋아요한 사용자 username Set (빠른 확인용)
+  Set<String> get _likedUsernames =>
+      _likedUsers
+          .map((u) => u['username']?.toString() ?? '')
+          .where((username) => username.isNotEmpty)
+          .toSet();
+
+  // 🎯 통합 리스트: 조회자와 좋아요 사용자를 하나로 합침
+  // 정렬 기준: 1) 좋아요 여부 (좋아요 누른 사람 우선), 2) 조회 시간 (최근 조회 순)
+  List<Map<String, dynamic>> get _mergedList {
+    final Map<String, Map<String, dynamic>> mergedMap = {};
+
+    // 조회자 추가
+    for (final viewer in _viewers) {
+      final username = viewer['username']?.toString() ?? '';
+      if (username.isNotEmpty) {
+        mergedMap[username] = {
+          ...viewer,
+          'isLiked': _likedUsernames.contains(username),
+        };
+      }
+    }
+
+    // 좋아요 사용자 추가 (조회자에 없는 경우)
+    for (final likedUser in _likedUsers) {
+      final username = likedUser['username']?.toString() ?? '';
+      if (username.isNotEmpty && !mergedMap.containsKey(username)) {
+        mergedMap[username] = {...likedUser, 'isLiked': true};
+      }
+    }
+
+    // 🎯 정렬: 좋아요 누른 사람을 위로, 그 다음 조회 시간 최근 순
+    final sortedList = mergedMap.values.toList();
+    sortedList.sort((a, b) {
+      final aIsLiked = a['isLiked'] == true;
+      final bIsLiked = b['isLiked'] == true;
+
+      // 1순위: 좋아요 여부 (좋아요 누른 사람이 위로)
+      if (aIsLiked && !bIsLiked) return -1;
+      if (!aIsLiked && bIsLiked) return 1;
+
+      // 2순위: 조회 시간 (최근 조회 순) - viewedAt이 있는 경우만 비교
+      final aViewedAt = a['viewedAt']?.toString();
+      final bViewedAt = b['viewedAt']?.toString();
+
+      if (aViewedAt != null &&
+          aViewedAt.isNotEmpty &&
+          bViewedAt != null &&
+          bViewedAt.isNotEmpty) {
+        try {
+          final aTime = TimeUtils.toLocalTime(aViewedAt);
+          final bTime = TimeUtils.toLocalTime(bViewedAt);
+          // 최근 시간이 앞에 오도록 (내림차순)
+          return bTime.compareTo(aTime);
+        } catch (e) {
+          // 파싱 실패 시 무시
+        }
+      }
+
+      // viewedAt이 하나만 있는 경우, 있는 것이 앞으로
+      if (aViewedAt != null &&
+          aViewedAt.isNotEmpty &&
+          (bViewedAt == null || bViewedAt.isEmpty)) {
+        return -1;
+      }
+      if ((aViewedAt == null || aViewedAt.isEmpty) &&
+          bViewedAt != null &&
+          bViewedAt.isNotEmpty) {
+        return 1;
+      }
+
+      // 동일하면 유지
+      return 0;
+    });
+
+    return sortedList;
+  }
+
+  // 🎯 로딩 상태
+  bool get _isLoading => _isLoadingViewers || _isLoadingLikes;
+  bool get _isLoadingMore => _isLoadingMoreViewers || _isLoadingMoreLikes;
+  bool get _hasMore => _hasMoreViewers || _hasMoreLikes;
+  String? get _error => _viewersError ?? _likesError;
 
   @override
   void initState() {
@@ -89,50 +256,81 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
 
-    // 🎯 캐시된 데이터가 있으면 즉시 표시 (shimmer 안 뜨게)
-    final cached = ViewersBottomSheet._cache[widget.postId];
-    if (cached != null && cached.isNotEmpty) {
+    // 🎯 조회자 캐시 확인 및 초기 로드
+    final viewersCached = ViewersBottomSheet._viewersCache[widget.postId];
+    if (viewersCached != null && viewersCached.isNotEmpty) {
       setState(() {
-        _viewers = cached;
-        _isLoading = false;
-        _currentPage = 1; // 캐시된 데이터가 있으면 다음은 page=1부터
+        _viewers = viewersCached;
+        _isLoadingViewers = false;
+        _currentViewersPage = 1;
       });
     } else {
-      // 캐시된 데이터가 없거나 로딩 중이면 로드 시작
-      // 이미 로딩 중이면 기다림 (로딩이 완료되면 캐시에 저장됨)
-      if (ViewersBottomSheet._isLoadingCache[widget.postId] == true) {
-        // 로딩 중이면 상태만 설정 (shimmer 표시)
-        setState(() {
-          _isLoading = true;
-        });
-        // 로딩이 완료될 때까지 대기 (폴링 방식 대신 바로 로드 시도)
-        _waitForCacheOrLoad();
+      if (ViewersBottomSheet._viewersLoadingCache[widget.postId] == true) {
+        _waitForViewersCacheOrLoad();
       } else {
-        // 로딩 시작
         _loadViewers(forceRefresh: false);
       }
     }
+
+    // 🎯 좋아요 캐시 확인 및 초기 로드 (likeCount가 있을 때만)
+    if (widget.likeCount != null) {
+      final likesCached = ViewersBottomSheet._likesCache[widget.postId];
+      if (likesCached != null && likesCached.isNotEmpty) {
+        setState(() {
+          _likedUsers = likesCached;
+          _isLoadingLikes = false;
+          _currentLikesPage = 1;
+        });
+      } else {
+        if (ViewersBottomSheet._likesLoadingCache[widget.postId] == true) {
+          _waitForLikesCacheOrLoad();
+        } else {
+          _loadLikedUsers(forceRefresh: false);
+        }
+      }
+    } else {
+      // likeCount가 없으면 좋아요 로딩 완료로 표시
+      setState(() {
+        _isLoadingLikes = false;
+      });
+    }
   }
 
-  /// 🎯 캐시가 준비될 때까지 대기하거나 바로 로드
-  void _waitForCacheOrLoad() async {
-    // 짧은 딜레이 후 캐시 확인
+  /// 🎯 조회자 캐시가 준비될 때까지 대기하거나 바로 로드
+  void _waitForViewersCacheOrLoad() async {
     await Future.delayed(const Duration(milliseconds: 100));
     if (!mounted) return;
 
-    final cached = ViewersBottomSheet._cache[widget.postId];
+    final cached = ViewersBottomSheet._viewersCache[widget.postId];
     if (cached != null && cached.isNotEmpty) {
       setState(() {
         _viewers = cached;
-        _isLoading = false;
-        _currentPage = 1; // 캐시된 데이터가 있으면 다음은 page=1부터
+        _isLoadingViewers = false;
+        _currentViewersPage = 1;
       });
-    } else if (ViewersBottomSheet._isLoadingCache[widget.postId] != true) {
-      // 로딩이 끝났는데 캐시가 없으면 다시 로드
+    } else if (ViewersBottomSheet._viewersLoadingCache[widget.postId] != true) {
       _loadViewers(forceRefresh: false);
     } else {
-      // 아직 로딩 중이면 다시 확인
-      _waitForCacheOrLoad();
+      _waitForViewersCacheOrLoad();
+    }
+  }
+
+  /// 🎯 좋아요 캐시가 준비될 때까지 대기하거나 바로 로드
+  void _waitForLikesCacheOrLoad() async {
+    await Future.delayed(const Duration(milliseconds: 100));
+    if (!mounted) return;
+
+    final cached = ViewersBottomSheet._likesCache[widget.postId];
+    if (cached != null && cached.isNotEmpty) {
+      setState(() {
+        _likedUsers = cached;
+        _isLoadingLikes = false;
+        _currentLikesPage = 1;
+      });
+    } else if (ViewersBottomSheet._likesLoadingCache[widget.postId] != true) {
+      _loadLikedUsers(forceRefresh: false);
+    } else {
+      _waitForLikesCacheOrLoad();
     }
   }
 
@@ -147,41 +345,48 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
 
     // 하단 근처에 도달하면 로드 모어
     if (maxScroll - offset < threshold) {
-      _loadMoreViewers();
+      // 조회자와 좋아요 사용자 모두 로드 모어 시도
+      if (_hasMoreViewers && !_isLoadingMoreViewers) {
+        _loadMoreViewers();
+      }
+      if (_hasMoreLikes && !_isLoadingMoreLikes && widget.likeCount != null) {
+        _loadMoreLikedUsers();
+      }
     }
   }
 
   // 🎯 조회자 정보 로드 (페이지네이션 지원)
   Future<void> _loadViewers({bool forceRefresh = false}) async {
     // 🎯 이미 로드 중이면 스킵 (중복 요청 방지)
-    if (ViewersBottomSheet._isLoadingCache[widget.postId] == true &&
+    if (ViewersBottomSheet._viewersLoadingCache[widget.postId] == true &&
         !forceRefresh) {
       return;
     }
 
     // 🎯 캐시된 데이터가 있고 강제 새로고침이 아니면 스킵
-    if (ViewersBottomSheet._cache[widget.postId] != null && !forceRefresh) {
+    if (ViewersBottomSheet._viewersCache[widget.postId] != null &&
+        !forceRefresh) {
       setState(() {
-        _viewers = ViewersBottomSheet._cache[widget.postId]!;
-        _isLoading = false;
-        _currentPage = 1; // 캐시된 데이터가 있으면 다음은 page=1부터
+        _viewers = ViewersBottomSheet._viewersCache[widget.postId]!;
+        _isLoadingViewers = false;
+        _currentViewersPage = 1;
       });
       return;
     }
 
     setState(() {
-      _isLoading = true;
-      _error = null;
+      _isLoadingViewers = true;
+      _viewersError = null;
       if (forceRefresh) {
-        _currentPage = 0;
-        _hasMore = true;
+        _currentViewersPage = 0;
+        _hasMoreViewers = true;
         _viewers.clear();
       }
     });
 
-    ViewersBottomSheet._isLoadingCache[widget.postId] = true;
+    ViewersBottomSheet._viewersLoadingCache[widget.postId] = true;
     try {
-      final pageToLoad = forceRefresh ? 0 : _currentPage;
+      final pageToLoad = forceRefresh ? 0 : _currentViewersPage;
       final response = await _blogService.getPostViewers(
         widget.postId,
         page: pageToLoad,
@@ -211,7 +416,7 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
 
       // 🎯 캐시에 저장 (첫 페이지만)
       if (pageToLoad == 0) {
-        ViewersBottomSheet._cache[widget.postId] = readers;
+        ViewersBottomSheet._viewersCache[widget.postId] = readers;
       }
 
       if (mounted) {
@@ -233,36 +438,36 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
                     .toList();
             _viewers.addAll(uniqueReaders);
           }
-          _isLoading = false;
-          _hasMore = hasNext;
-          _currentPage = pageToLoad + 1;
+          _isLoadingViewers = false;
+          _hasMoreViewers = hasNext;
+          _currentViewersPage = pageToLoad + 1;
         });
       }
     } catch (e) {
       debugPrint('[ViewersBottomSheet] 조회자 로드 실패: $e');
       if (mounted) {
         setState(() {
-          _error = '조회자 목록을 불러올 수 없습니다.';
-          _isLoading = false;
+          _viewersError = '조회자 목록을 불러올 수 없습니다.';
+          _isLoadingViewers = false;
         });
       }
     } finally {
-      ViewersBottomSheet._isLoadingCache[widget.postId] = false;
+      ViewersBottomSheet._viewersLoadingCache[widget.postId] = false;
     }
   }
 
   // 🎯 더 많은 조회자 로드 (페이지네이션)
   Future<void> _loadMoreViewers() async {
-    if (_isLoadingMore || !_hasMore || _isLoading) return;
+    if (_isLoadingMoreViewers || !_hasMoreViewers || _isLoadingViewers) return;
 
     setState(() {
-      _isLoadingMore = true;
+      _isLoadingMoreViewers = true;
     });
 
     try {
       final response = await _blogService.getPostViewers(
         widget.postId,
-        page: _currentPage,
+        page: _currentViewersPage,
         size: 20,
       );
 
@@ -285,7 +490,7 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
           data['hasNext'] as bool? ??
           data['hasNextPage'] as bool? ??
           (data['totalPages'] != null &&
-              (data['totalPages'] as int) > _currentPage + 1);
+              (data['totalPages'] as int) > _currentViewersPage + 1);
 
       if (mounted) {
         // 중복 제거
@@ -300,16 +505,200 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
 
         setState(() {
           _viewers.addAll(uniqueReaders);
-          _hasMore = hasNext;
-          _currentPage++;
-          _isLoadingMore = false;
+          _hasMoreViewers = hasNext;
+          _currentViewersPage++;
+          _isLoadingMoreViewers = false;
         });
       }
     } catch (e) {
-      debugPrint('[ViewersBottomSheet] 로드 모어 실패: $e');
+      debugPrint('[ViewersBottomSheet] 조회자 로드 모어 실패: $e');
       if (mounted) {
         setState(() {
-          _isLoadingMore = false;
+          _isLoadingMoreViewers = false;
+        });
+      }
+    }
+  }
+
+  // 🎯 좋아요 사용자 정보 로드 (페이지네이션 지원)
+  Future<void> _loadLikedUsers({bool forceRefresh = false}) async {
+    if (widget.likeCount == null) return;
+
+    // 🎯 이미 로드 중이면 스킵 (중복 요청 방지)
+    if (ViewersBottomSheet._likesLoadingCache[widget.postId] == true &&
+        !forceRefresh) {
+      return;
+    }
+
+    // 🎯 캐시된 데이터가 있고 강제 새로고침이 아니면 스킵
+    if (ViewersBottomSheet._likesCache[widget.postId] != null &&
+        !forceRefresh) {
+      setState(() {
+        _likedUsers = ViewersBottomSheet._likesCache[widget.postId]!;
+        _isLoadingLikes = false;
+        _currentLikesPage = 1;
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoadingLikes = true;
+      _likesError = null;
+      if (forceRefresh) {
+        _currentLikesPage = 0;
+        _hasMoreLikes = true;
+        _likedUsers.clear();
+      }
+    });
+
+    ViewersBottomSheet._likesLoadingCache[widget.postId] = true;
+    try {
+      final pageToLoad = forceRefresh ? 0 : _currentLikesPage;
+      final response = await _dio.get(
+        '/api/posts/${widget.postId}/likes?page=$pageToLoad&size=20',
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        List<Map<String, dynamic>> users = [];
+        bool hasNext = false;
+
+        // 🎯 페이지네이션 응답 파싱
+        if (data is Map) {
+          if (data.containsKey('content')) {
+            users =
+                (data['content'] as List?)
+                    ?.map((e) => Map<String, dynamic>.from(e))
+                    .toList() ??
+                [];
+          } else if (data.containsKey('users')) {
+            users =
+                (data['users'] as List?)
+                    ?.map((e) => Map<String, dynamic>.from(e))
+                    .toList() ??
+                [];
+          }
+          // hasNext 확인
+          hasNext =
+              data['hasNext'] as bool? ??
+              data['hasNextPage'] as bool? ??
+              (data['totalPages'] != null &&
+                  (data['totalPages'] as int) > pageToLoad + 1);
+        } else if (data is List) {
+          users = data.map((e) => Map<String, dynamic>.from(e)).toList();
+          hasNext = false;
+        }
+
+        // 🎯 캐시에 저장 (첫 페이지만)
+        if (pageToLoad == 0) {
+          ViewersBottomSheet._likesCache[widget.postId] = users;
+        }
+
+        if (mounted) {
+          setState(() {
+            if (forceRefresh) {
+              _likedUsers = users;
+            } else {
+              // 중복 제거
+              final existingIds =
+                  _likedUsers.map((u) => u['username']?.toString()).toSet();
+              final uniqueUsers =
+                  users
+                      .where(
+                        (u) => !existingIds.contains(u['username']?.toString()),
+                      )
+                      .toList();
+              _likedUsers.addAll(uniqueUsers);
+            }
+            _isLoadingLikes = false;
+            _hasMoreLikes = hasNext;
+            _currentLikesPage = pageToLoad + 1;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('[ViewersBottomSheet] 좋아요 사용자 로드 실패: $e');
+      if (mounted) {
+        setState(() {
+          _likesError = '좋아요 사용자 목록을 불러올 수 없습니다.';
+          _isLoadingLikes = false;
+        });
+      }
+    } finally {
+      ViewersBottomSheet._likesLoadingCache[widget.postId] = false;
+    }
+  }
+
+  /// 🎯 로드 모어 (좋아요 사용자)
+  Future<void> _loadMoreLikedUsers() async {
+    if (_isLoadingMoreLikes || !_hasMoreLikes || _isLoadingLikes) return;
+    if (widget.likeCount == null) return;
+
+    setState(() {
+      _isLoadingMoreLikes = true;
+    });
+
+    try {
+      final response = await _dio.get(
+        '/api/posts/${widget.postId}/likes?page=$_currentLikesPage&size=20',
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        List<Map<String, dynamic>> users = [];
+        bool hasNext = false;
+
+        // 🎯 페이지네이션 응답 파싱
+        if (data is Map) {
+          if (data.containsKey('content')) {
+            users =
+                (data['content'] as List?)
+                    ?.map((e) => Map<String, dynamic>.from(e))
+                    .toList() ??
+                [];
+          } else if (data.containsKey('users')) {
+            users =
+                (data['users'] as List?)
+                    ?.map((e) => Map<String, dynamic>.from(e))
+                    .toList() ??
+                [];
+          }
+          hasNext =
+              data['hasNext'] as bool? ??
+              data['hasNextPage'] as bool? ??
+              (data['totalPages'] != null &&
+                  (data['totalPages'] as int) > _currentLikesPage + 1);
+        } else if (data is List) {
+          users = data.map((e) => Map<String, dynamic>.from(e)).toList();
+          hasNext = false;
+        }
+
+        if (mounted) {
+          // 중복 제거
+          final existingIds =
+              _likedUsers.map((u) => u['username']?.toString()).toSet();
+          final uniqueUsers =
+              users
+                  .where(
+                    (u) => !existingIds.contains(u['username']?.toString()),
+                  )
+                  .toList();
+
+          setState(() {
+            _likedUsers.addAll(uniqueUsers);
+            _hasMoreLikes = hasNext;
+            _currentLikesPage++;
+            _isLoadingMoreLikes = false;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('[ViewersBottomSheet] 좋아요 로드 모어 실패: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingMoreLikes = false;
         });
       }
     }
@@ -378,13 +767,243 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
     super.dispose();
   }
 
+  /// 🎯 사용자 아이템 빌드 (조회자와 좋아요 사용자 통합)
+  Widget _buildUserItem(Map<String, dynamic> user) {
+    final username = user['username']?.toString() ?? '';
+    final profileImageUrl = user['profileImageUrl']?.toString();
+    final alias = user['alias']?.toString();
+    final viewedAt = user['viewedAt']?.toString();
+    final isLiked = user['isLiked'] == true;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12, bottom: 12, left: 12),
+      child: Builder(
+        builder: (context) {
+          final currentUser = context.read<UserProvider>().currentUser;
+          final isMe = currentUser != null && currentUser.username == username;
+
+          return GestureDetector(
+            onTap: () {
+              ProfileActionBottomSheet.show(
+                context,
+                username: username,
+                alias: alias,
+                profileImageUrl: profileImageUrl,
+              );
+            },
+            behavior: HitTestBehavior.opaque,
+            child: Row(
+              children: [
+                // 프로필 이미지 (좋아요 아이콘 포함)
+                Stack(
+                  children: [
+                    CommonProfileAvatar(
+                      imageUrl: profileImageUrl,
+                      username: username,
+                      size: 56,
+                      borderWidth: 1,
+                    ),
+                    if (isLiked)
+                      Positioned(
+                        bottom: -2,
+                        right: 0,
+                        child: Container(
+                          decoration: const BoxDecoration(),
+                          child: const Icon(
+                            Icons.favorite,
+                            size: 20,
+                            color: ui.Color.fromARGB(255, 255, 89, 89),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        alias ?? username,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onBackground,
+                        ),
+                      ),
+                      if (alias != null && alias != username) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          '@$username',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onBackground.withOpacity(0.6),
+                          ),
+                        ),
+                      ] else if (viewedAt != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatRelativeTime(viewedAt),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onBackground.withOpacity(0.6),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                // 🎯 more_vert 아이콘 (본인이 아닐 때만)
+                if (!isMe)
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Icon(
+                      Icons.more_vert,
+                      size: 20,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onBackground.withOpacity(0.6),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// 🎯 통합 리스트 빌드
+  Widget _buildListContent() {
+    if (_isLoading) {
+      return RawScrollbar(
+        controller: _scrollController,
+        thumbColor: Theme.of(context).colorScheme.onBackground.withOpacity(0.3),
+        thickness: 4,
+        radius: const Radius.circular(2),
+        thumbVisibility: false,
+        child: ListView.separated(
+          controller: _scrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          itemCount: 8,
+          separatorBuilder:
+              (context, index) => Divider(
+                height: 1,
+                thickness: 0.5,
+                indent: 72,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onBackground.withOpacity(0.1),
+              ),
+          itemBuilder: (context, index) => _buildUserShimmer(),
+        ),
+      );
+    }
+
+    if (_error != null) {
+      return RawScrollbar(
+        controller: _scrollController,
+        thumbColor: Theme.of(context).colorScheme.onBackground.withOpacity(0.3),
+        thickness: 4,
+        radius: const Radius.circular(2),
+        thumbVisibility: false,
+        child: ListView(
+          controller: _scrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.only(
+            top: MediaQuery.of(context).size.height * 0.3,
+          ),
+          children: [
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 48,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onBackground.withOpacity(0.5),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  _error!,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onBackground.withOpacity(0.7),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    final mergedList = _mergedList;
+    if (mergedList.isEmpty) {
+      return RawScrollbar(
+        controller: _scrollController,
+        thumbColor: Theme.of(context).colorScheme.onBackground.withOpacity(0.3),
+        thickness: 4,
+        radius: const Radius.circular(2),
+        thumbVisibility: false,
+        child: ListView(
+          controller: _scrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.only(
+            top: MediaQuery.of(context).size.height * 0.3,
+          ),
+          children: const [],
+        ),
+      );
+    }
+
+    return RawScrollbar(
+      controller: _scrollController,
+      thumbColor: Theme.of(context).colorScheme.onBackground.withOpacity(0.3),
+      thickness: 4,
+      radius: const Radius.circular(2),
+      thumbVisibility: false,
+      child: ListView.separated(
+        controller: _scrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        itemCount: mergedList.length + (_isLoadingMore ? 1 : 0),
+        separatorBuilder: (context, index) {
+          if (index >= mergedList.length - 1) {
+            return const SizedBox.shrink();
+          }
+          return Divider(
+            height: 1,
+            thickness: 0.5,
+            indent: 72,
+            color: Theme.of(context).colorScheme.onBackground.withOpacity(0.1),
+          );
+        },
+        itemBuilder: (context, index) {
+          if (index >= mergedList.length) {
+            return _buildUserShimmer();
+          }
+
+          return _buildUserItem(mergedList[index]);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return
-    // 🎯 스와이프로 닫기 및 배경 탭 감지
-    GestureDetector(
+    final titleText = AppLocalizations.of(context).translate('viewers');
+
+    return GestureDetector(
       onHorizontalDragEnd: (details) {
-        // 오른쪽으로 스와이프 (velocity.dx > 0)
         if (details.primaryVelocity != null && details.primaryVelocity! > 300) {
           if (widget.onClose != null) {
             widget.onClose!();
@@ -403,7 +1022,6 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
           elevation: 0,
           leading: GestureDetector(
             onTap: () {
-              // 부모 화면으로 돌아가기 (오버레이 닫기)
               if (widget.onClose != null) {
                 widget.onClose!();
               } else {
@@ -422,7 +1040,7 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
             ),
           ),
           title: Opacity(
-            opacity: 1.0 - _pullProgress.clamp(0.0, 1.0), // 🎯 당기는 만큼 투명해짐
+            opacity: 1.0 - _pullProgress.clamp(0.0, 1.0),
             child: Row(
               children: [
                 const SizedBox(width: 12),
@@ -431,27 +1049,11 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        AppLocalizations.of(context).translate('viewers'),
+                        titleText,
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.onBackground,
-                          fontSize: 16,
+                          fontSize: 20,
                           fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _isLoading
-                            ? ''
-                            : _error != null
-                            ? _error!
-                            : AppLocalizations.of(context)
-                                .translate('viewed_times')
-                                .replaceAll('{count}', '${widget.viewerCount}'),
-                        style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onBackground.withOpacity(0.7),
-                          fontSize: 12,
                         ),
                       ),
                     ],
@@ -463,7 +1065,10 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
         ),
         body: CustomRefreshIndicator(
           onRefresh: () async {
-            await _loadViewers(forceRefresh: true);
+            await Future.wait([
+              _loadViewers(forceRefresh: true),
+              if (widget.likeCount != null) _loadLikedUsers(forceRefresh: true),
+            ]);
           },
           onPullProgress: (progress) {
             setState(() {
@@ -471,214 +1076,7 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
             });
           },
           top: 20,
-          child:
-              _isLoading
-                  ? RawScrollbar(
-                    controller: _scrollController,
-                    thumbColor: Theme.of(
-                      context,
-                    ).colorScheme.onBackground.withOpacity(0.3),
-                    thickness: 4,
-                    radius: const Radius.circular(2),
-                    thumbVisibility: false,
-                    child: ListView.separated(
-                      controller: _scrollController,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 8,
-                      ),
-                      itemCount: 8, // 🎯 shimmer 아이템 8개
-                      separatorBuilder:
-                          (context, index) => Divider(
-                            height: 1,
-                            thickness: 0.5,
-                            indent: 72,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onBackground.withOpacity(0.1),
-                          ),
-                      itemBuilder: (context, index) {
-                        return _buildUserShimmer();
-                      },
-                    ),
-                  )
-                  : _error != null
-                  ? RawScrollbar(
-                    controller: _scrollController,
-                    thumbColor: Theme.of(
-                      context,
-                    ).colorScheme.onBackground.withOpacity(0.3),
-                    thickness: 4,
-                    radius: const Radius.circular(2),
-                    thumbVisibility: false,
-                    child: ListView(
-                      controller: _scrollController,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: EdgeInsets.only(
-                        top: MediaQuery.of(context).size.height * 0.3,
-                      ),
-                      children: [
-                        Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.error_outline,
-                              size: 48,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onBackground.withOpacity(0.5),
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              _error!,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onBackground.withOpacity(0.7),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  )
-                  : _viewers.isEmpty
-                  ? RawScrollbar(
-                    controller: _scrollController,
-                    thumbColor: Theme.of(
-                      context,
-                    ).colorScheme.onBackground.withOpacity(0.3),
-                    thickness: 4,
-                    radius: const Radius.circular(2),
-                    thumbVisibility: false,
-                    child: ListView(
-                      controller: _scrollController,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: EdgeInsets.only(
-                        top: MediaQuery.of(context).size.height * 0.3,
-                      ),
-                      children: [],
-                    ),
-                  )
-                  : RawScrollbar(
-                    controller: _scrollController,
-                    thumbColor: Theme.of(
-                      context,
-                    ).colorScheme.onBackground.withOpacity(0.3),
-                    thickness: 4,
-                    radius: const Radius.circular(2),
-                    thumbVisibility: false,
-                    child: ListView.separated(
-                      controller: _scrollController,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 8,
-                      ),
-                      itemCount: _viewers.length + (_isLoadingMore ? 1 : 0),
-                      separatorBuilder: (context, index) {
-                        // 마지막 아이템(로드 모어 인디케이터) 전에는 디바이더 없음
-                        if (index >= _viewers.length - 1) {
-                          return const SizedBox.shrink();
-                        }
-                        return Divider(
-                          height: 1,
-                          thickness: 0.5,
-                          indent: 72,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onBackground.withOpacity(0.1),
-                        );
-                      },
-                      itemBuilder: (context, index) {
-                        // 🎯 로드 모어 Shimmer
-                        if (index >= _viewers.length) {
-                          return _buildUserShimmer();
-                        }
-
-                        final viewer = _viewers[index];
-                        final username = viewer['username']?.toString() ?? '';
-                        final profileImageUrl =
-                            viewer['profileImageUrl']?.toString();
-                        final viewedAt = viewer['viewedAt']?.toString();
-
-                        return Padding(
-                          padding: const EdgeInsets.only(
-                            top: 12,
-                            bottom: 12,
-                            left: 12,
-                          ),
-                          child: GestureDetector(
-                            onTap: () {
-                              ProfileActionBottomSheet.show(
-                                context,
-                                username: username,
-                                profileImageUrl: profileImageUrl,
-                              );
-                            },
-                            behavior: HitTestBehavior.opaque,
-                            child: Row(
-                              children: [
-                                // 프로필 이미지
-                                CommonProfileAvatar(
-                                  imageUrl: profileImageUrl,
-                                  username: username,
-                                  size: 56,
-                                  borderWidth: 1,
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        username,
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onBackground,
-                                        ),
-                                      ),
-                                      if (viewedAt != null) ...[
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          _formatRelativeTime(viewedAt),
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onBackground
-                                                .withOpacity(0.6),
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                                // 🎯 more_vert 아이콘 (프로필 액션)
-                                Padding(
-                                  padding: const EdgeInsets.all(8.0),
-                                  child: Icon(
-                                    Icons.more_vert,
-                                    size: 20,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onBackground.withOpacity(0.6),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
+          child: _buildListContent(),
         ),
       ),
     );

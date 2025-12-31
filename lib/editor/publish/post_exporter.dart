@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/component/mention_component.dart';
+import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:flutter/material.dart';
@@ -252,15 +254,6 @@ class PostExporter {
 
       if (node is ParagraphNode) {
         final meta = node.metadata;
-
-        // Paragraph 기반 멘션 노드 처리
-        if (meta['mention'] == true) {
-          final List<dynamic> namesDyn =
-              (meta['usernames'] as List?) ?? const [];
-          final List<String> names = namesDyn.map((e) => e.toString()).toList();
-          nodes.add({'id': node.id, 'type': 'mention', 'usernames': names});
-          continue;
-        }
 
         final align = meta['textAlign'] as String?;
         final isTitle = meta['isTitle'] == true;
@@ -802,6 +795,18 @@ class PostExporter {
             }
           }
           // 이미 네트워크 URL이면 변환 불필요 (기존 발행된 비디오)
+
+          // 🎯 최종 검증: forPublishing일 때는 반드시 네트워크 URL이어야 함
+          if (forPublishing && !_isNetworkUrl(videoUrl)) {
+            debugPrint(
+              '[PostExporter] ⚠️ 비디오 URL이 여전히 로컬 경로입니다: $videoUrl (노드 ID: ${node.id})',
+            );
+            throw StateError(
+              '발행 불가: 비디오 URL이 로컬 경로입니다. '
+              '비디오 업로드가 완료되지 않았거나 변환에 실패했습니다. '
+              '(노드 ID: ${node.id}, URL: $videoUrl)',
+            );
+          }
         }
 
         final dataMap = <String, dynamic>{'url': videoUrl};
@@ -859,6 +864,29 @@ class PostExporter {
           'description': node.description,
           'thumbnailUrl': node.thumbnailUrl,
         });
+        continue;
+      }
+
+      // MentionNode
+      if (node is MentionNode) {
+        final meta = node.metadata;
+        final textAlign = meta['textAlign'] as String?;
+        final fontSize = meta['fontSize'] as num?;
+
+        final nodeMap = <String, dynamic>{
+          'id': node.id,
+          'type': 'mention',
+          'usernames': node.usernames,
+        };
+
+        if (textAlign != null && textAlign != 'center') {
+          nodeMap['align'] = textAlign;
+        }
+        if (fontSize != null) {
+          nodeMap['fontSize'] = fontSize;
+        }
+
+        nodes.add(nodeMap);
         continue;
       }
 
@@ -948,40 +976,14 @@ class PostExporter {
       throw StateError('author is required');
     }
 
-    // 제목은 썸네일 편집 화면에서 입력하므로 빈 문자열로 설정
+    // 제목은 Step1(썸네일 편집 화면)에서 입력하므로 빈 문자열로 설정
     final title = '';
-
-    // 🎯 첫 번째 이미지를 썸네일로 자동 설정
-    String? thumbnailImageUrl;
-    for (final nodeMap in nodes) {
-      final type = nodeMap['type']?.toString() ?? '';
-      if (type == 'image') {
-        final data = nodeMap['data'] as Map<String, dynamic>?;
-        final url = (data?['url'] ?? nodeMap['url'] ?? '').toString();
-        if (url.isNotEmpty &&
-            (url.startsWith('http://') || url.startsWith('https://'))) {
-          thumbnailImageUrl = url;
-          break;
-        }
-      } else if (type == 'imageRow') {
-        final urls = List<dynamic>.from(nodeMap['urls'] ?? []);
-        if (urls.isNotEmpty) {
-          final url = urls.first.toString();
-          if (url.isNotEmpty &&
-              (url.startsWith('http://') || url.startsWith('https://'))) {
-            thumbnailImageUrl = url;
-            break;
-          }
-        }
-      }
-    }
 
     //초안 뽑기
     final Map<String, dynamic> result = {
       'title': title,
       'author': author,
       'content': {'nodes': nodes, 'stickers': stickers},
-      if (thumbnailImageUrl != null) 'thumbnailImageUrl': thumbnailImageUrl,
     };
 
     return result;

@@ -1,13 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
@@ -28,7 +28,9 @@ bool _isSpecialNode(DocumentNode? node) {
       node is ImageRowNode ||
       node is PageViewImageNode ||
       node is AppImageNode ||
-      node is ImageNode;
+      node is ImageNode ||
+      node is MentionNode;
+  // MentionNode는 삭제 시 함께 삭제되지만 레지스트리에는 등록하지 않음
 }
 
 /// 특수 노드 정보 저장 구조체
@@ -91,12 +93,6 @@ class EditorService extends ChangeNotifier {
   bool _firstChangeAfterLoad = false; // 🎯 임시저장 불러온 직후 첫 변경사항 플래그
   bool _isSanitizingInvalidSelection =
       false; // 🎯 삭제된 노드를 가리키는 selection 강제 정리 중(재진입 방지)
-
-  // ✅ 멘션 노드는 "전체가 하나의 특수 텍스트 블록"처럼 취급하지만,
-  // 선택 핸들로 범위 삭제(DeleteSelection) 시에는 super_editor가 한 번에 많은 TextDeletedEvent를 낼 수 있다.
-  // 이때 기존 멘션 삭제 로직이 노드 삭제/selection 이동까지 수행하면 re-entrancy로 편집기가 불안정해질 수 있어,
-  // 범위 삭제에서는 멘션 메타데이터를 'post-frame'으로 안전하게 제거(일반 문단으로 강등)한다.
-  final Set<String> _pendingMentionDemotions = <String>{};
 
   // ✅ "실제 변경이 있었으면 반드시 히스토리에 들어가야 한다"를 보장하기 위한 버전 값
   // - 문서에 의미있는 변경이 발생할 때마다 증가
@@ -178,7 +174,15 @@ class EditorService extends ChangeNotifier {
   void _ensureParagraphAlignmentForNodeId(String nodeId) {
     final idx = document.getNodeIndexById(nodeId);
     if (idx == -1) return;
-    _ensureParagraphAlignmentForIndex(idx);
+    // caretAfterDeletion이 특수노드/비문단 노드로 잡히거나,
+    // 삭제 직후 주변에 특수노드가 연속으로 있는 경우가 있어 가까운 문단을 탐색하며 보정한다.
+    const int maxHops = 6;
+    for (int hop = 0; hop <= maxHops; hop++) {
+      _ensureParagraphAlignmentForIndex(idx + hop);
+      if (hop != 0) {
+        _ensureParagraphAlignmentForIndex(idx - hop);
+      }
+    }
   }
 
   void _logSelectionDeletionDebug(String message) {
@@ -186,36 +190,8 @@ class EditorService extends ChangeNotifier {
     debugPrint(message);
   }
 
-  ({DocumentSelection selection, Set<String> coveredSpecialNodeIds})?
-  _selectionAndSpecialNodesFromSelection(
-    Document document,
-    DocumentSelection selection,
-  ) {
-    if (selection.isCollapsed) return null;
-
-    final coveredSpecialNodeIds = _getSpecialNodeIdsCoveredBySelection(
-      document,
-      selection,
-    );
-    if (coveredSpecialNodeIds.isEmpty) return null;
-
-    return (selection: selection, coveredSpecialNodeIds: coveredSpecialNodeIds);
-  }
-
-  ({DocumentSelection selection, Set<String> coveredSpecialNodeIds})?
-  _selectionAndSpecialNodesFromDocumentRange(
-    Document document,
-    DocumentRange range,
-  ) {
-    if (range.isCollapsed) return null;
-
-    final selection =
-        range is DocumentSelection
-            ? range
-            : DocumentSelection(base: range.start, extent: range.end);
-
-    return _selectionAndSpecialNodesFromSelection(document, selection);
-  }
+  // NOTE: 이전에는 "특수노드가 포함된 범위 삭제"에서만 커스텀 삭제 커맨드를 사용했지만,
+  // 현재는 범위 선택 삭제를 통일 커맨드 경로로 처리하므로 selection+specialNodes 파서 헬퍼는 제거했다.
 
   // ignore: prefer_function_declarations_over_variables
   late final EditRequestHandler _deleteSelectionWithSpecialNodesHandler = (
@@ -227,11 +203,14 @@ class EditorService extends ChangeNotifier {
     final selection = ed.composer.selection;
     if (selection == null || selection.isCollapsed) return null;
 
+    // ✅ 범위 선택 삭제는 특수노드 포함 여부와 무관하게 "통일된" 커맨드 경로로 처리한다.
+    // - iOS IME/컨트롤 레이어가 삭제된 nodeId를 가리키는 순간 크래시가 날 수 있어,
+    //   삭제 전에 selection을 안전한 위치로 먼저 collapse/clear 하는 것이 중요하다.
+    // - 특수노드가 포함된 경우에는 추가 삭제/복원 충돌 방지까지 함께 처리한다.
     final coveredSpecialNodeIds = _getSpecialNodeIdsCoveredBySelection(
       ed.document,
       selection,
     );
-    if (coveredSpecialNodeIds.isEmpty) return null;
 
     _logSelectionDeletionDebug(
       '[EditorService] 🧹 Intercept DeleteSelectionRequest: affinity=${request.affinity}, selection=$selection, coveredSpecialNodeIds=$coveredSpecialNodeIds',
@@ -250,6 +229,8 @@ class EditorService extends ChangeNotifier {
       ensureParagraphAlignmentForNodeId: _ensureParagraphAlignmentForNodeId,
       markSpecialNodeExplicitlyDeleted:
           (id) => removeSpecialNodeFromRegistry(id, explicitlyDeleted: true),
+      isSpecialNode: _isSpecialNode,
+      currentParagraphAlign: _currentParagraphAlign,
     );
   };
 
@@ -260,27 +241,42 @@ class EditorService extends ChangeNotifier {
   ) {
     if (request is! DeleteContentRequest) return null;
 
-    // 🎯 DeleteContentRequest의 실제 삭제 범위를 기준으로 "보라색으로 포함된" 특수노드들을 계산한다.
-    // (IME/하드웨어 키보드 모두 DeleteContentRequest로 들어오므로 여기서 처리하면 플랫폼 무관)
-    final range = request.documentRange;
+    // ✅ DeleteContentRequest는 "범위 삭제"로 들어오며, 특수노드 포함 여부와 무관하게
+    // 통일된 커맨드 경로로 처리한다. (일반 텍스트만 선택 삭제할 때 커서 튐/불안정 방지)
+    //
     // ✅ 중요: 드래그 방향(아래→위 vs 위→아래)에 따라 `composer.selection`의 base/extent가 달라진다.
-    // 반면 `documentRange.start/end`는 "문서상 앞/뒤"로 정규화될 수 있어 방향 정보가 사라질 수 있음.
-    // 보라색 하이라이트 판정(특수노드 포함/미포함)과 동일한 기준을 유지하려면 composer.selection을 우선한다.
-    final composerSel = ed.composer.selection;
-    final parsed =
-        (composerSel != null && !composerSel.isCollapsed)
-            ? _selectionAndSpecialNodesFromSelection(ed.document, composerSel)
-            : _selectionAndSpecialNodesFromDocumentRange(ed.document, range);
-    if (parsed == null) return null;
+    // `documentRange.start/end`는 정규화될 수 있어 방향 정보가 사라질 수 있으므로,
+    // caret 계산/UX 일관성을 위해 composer.selection을 우선한다.
+    final range = request.documentRange;
+    final DocumentSelection? selectionForDeletion =
+        (() {
+          final composerSel = ed.composer.selection;
+          if (composerSel != null && !composerSel.isCollapsed)
+            return composerSel;
+          if (range is DocumentSelection && !range.isCollapsed) return range;
+          if (!range.isCollapsed) {
+            return DocumentSelection(base: range.start, extent: range.end);
+          }
+          return null;
+        })();
+    if (selectionForDeletion == null || selectionForDeletion.isCollapsed) {
+      return null;
+    }
+
+    // "보라색 하이라이트" 기준으로 포함된 특수노드 계산 (없을 수도 있음)
+    final coveredSpecialNodeIds = _getSpecialNodeIdsCoveredBySelection(
+      ed.document,
+      selectionForDeletion,
+    );
 
     _logSelectionDeletionDebug(
-      '[EditorService] 🧹 Intercept DeleteContentRequest: range=$range, selection=${parsed.selection}, coveredSpecialNodeIds=${parsed.coveredSpecialNodeIds}',
+      '[EditorService] 🧹 Intercept DeleteContentRequest: range=$range, selection=$selectionForDeletion, coveredSpecialNodeIds=$coveredSpecialNodeIds',
     );
 
     return _DeleteContentAndSpecialNodesCommand(
       documentRange: request.documentRange,
-      selectionForCaretCalculation: parsed.selection,
-      coveredSpecialNodeIds: parsed.coveredSpecialNodeIds,
+      selectionForCaretCalculation: selectionForDeletion,
+      coveredSpecialNodeIds: coveredSpecialNodeIds,
       saveHistoryBeforeDelete: saveHistoryBeforeDelete,
       beginSuppressRestoration: _beginSuppressSpecialNodeRestoration,
       endSuppressRestoration: _endSuppressSpecialNodeRestoration,
@@ -290,8 +286,174 @@ class EditorService extends ChangeNotifier {
       ensureParagraphAlignmentForNodeId: _ensureParagraphAlignmentForNodeId,
       markSpecialNodeExplicitlyDeleted:
           (id) => removeSpecialNodeFromRegistry(id, explicitlyDeleted: true),
+      isSpecialNode: _isSpecialNode,
+      currentParagraphAlign: _currentParagraphAlign,
     );
   };
+
+  // ===== Mention API =====
+  void addMentionNode(List<String> usernames) {
+    if (usernames.isEmpty) return;
+
+    // 삽입될 위치 계산 (_insertComponentNodeAtNextLine과 동일한 로직)
+    final doc = editor.document;
+    final safeIndex = _getCaretNodeIndexSafe();
+    int insertIndex = safeIndex;
+
+    // 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입
+    if (insertIndex < doc.nodeCount) {
+      final currentNode = doc.getNodeAt(insertIndex);
+      if (currentNode is ParagraphNode) {
+        final hasText = currentNode.text.text.trim().isNotEmpty;
+        if (hasText) {
+          insertIndex = insertIndex + 1;
+        }
+      }
+    }
+
+    if (insertIndex > doc.nodeCount) insertIndex = doc.nodeCount;
+
+    // ✅ 삽입될 위치의 위/아래에 멘션 노드가 있으면 병합
+    final prev = insertIndex > 0 ? doc.getNodeAt(insertIndex - 1) : null;
+    final next =
+        insertIndex < doc.nodeCount ? doc.getNodeAt(insertIndex) : null;
+
+    // 위/아래 멘션 노드 수집
+    final List<MentionNode> adjacentMentions = [];
+    if (prev is MentionNode) adjacentMentions.add(prev);
+    if (next is MentionNode) adjacentMentions.add(next);
+
+    if (adjacentMentions.isNotEmpty) {
+      // 🎯 인접 멘션 노드가 있으면 모두 병합
+      // 우선순위: 위 멘션 > 아래 멘션 (위가 있으면 위에, 위가 없으면 아래에 병합)
+      final MentionNode targetMention;
+      if (prev is MentionNode) {
+        targetMention = prev;
+      } else {
+        targetMention =
+            next
+                as MentionNode; // adjacentMentions.isNotEmpty이므로 next는 반드시 MentionNode
+      }
+
+      // usernames 병합 (문서 순서 유지 + 중복 제거)
+      final mergedUsernames = <String>[];
+      final seen = <String>{};
+      // 기존 멘션 usernames 먼저 추가
+      for (final u in targetMention.usernames) {
+        if (seen.add(u)) mergedUsernames.add(u);
+      }
+      // 새 usernames 추가
+      for (final u in usernames) {
+        if (seen.add(u)) mergedUsernames.add(u);
+      }
+      // 다른 인접 멘션이 있으면 그것도 병합
+      for (final mention in adjacentMentions) {
+        if (mention.id != targetMention.id) {
+          for (final u in mention.usernames) {
+            if (seen.add(u)) mergedUsernames.add(u);
+          }
+        }
+      }
+
+      // metadata는 타겟 노드 기준
+      Map<String, dynamic> mergedMeta;
+      try {
+        mergedMeta = Map<String, dynamic>.from(targetMention.metadata);
+      } catch (_) {
+        mergedMeta = <String, dynamic>{};
+      }
+
+      // fontSize는 우선순위: 새 멘션 -> 타겟 멘션 -> 다른 인접 멘션
+      double? fontSize;
+      final allMentionsForFontSize = <MentionNode>[
+        MentionNode(id: 'temp', usernames: usernames), // 새 멘션
+        targetMention,
+        ...adjacentMentions.where((m) => m.id != targetMention.id),
+      ];
+      for (final m in allMentionsForFontSize) {
+        final v = m.metadata['fontSize'];
+        if (v is num) {
+          fontSize = v.toDouble();
+          break;
+        }
+      }
+      if (fontSize != null) mergedMeta['fontSize'] = fontSize;
+
+      // 🎯 멘션 병합 작업 중에는 히스토리 추적 일시 중단
+      _isExecutingHistory = true;
+
+      try {
+        final mergedNode = MentionNode(
+          id: targetMention.id,
+          usernames: mergedUsernames,
+          metadata: mergedMeta,
+        );
+
+        // 타겟이 아닌 다른 인접 멘션 노드들 삭제
+        for (final mention in adjacentMentions) {
+          if (mention.id != targetMention.id) {
+            document.deleteNode(mention.id);
+          }
+        }
+
+        // 타겟 노드를 병합된 노드로 교체
+        document.replaceNodeById(targetMention.id, mergedNode);
+      } catch (e) {
+        debugPrint('[EditorService] ⚠️ 멘션 병합 실패: $e');
+        rethrow;
+      } finally {
+        _isExecutingHistory = false;
+        _saveCurrentState(immediate: true);
+        debugPrint(
+          '[EditorService] ✅ 멘션 병합 완료: ${adjacentMentions.length + 1}개 → 1개',
+        );
+        notifyListeners();
+      }
+      return;
+    }
+
+    // 인접 멘션 노드가 없으면 새로 추가
+    final node = MentionNode(
+      id: 'mention_${DateTime.now().millisecondsSinceEpoch}',
+      usernames: usernames,
+    );
+    _insertComponentNodeAtNextLine(node);
+  }
+
+  void updateMentionNode(String nodeId, List<String> usernames) {
+    if (usernames.isEmpty) return;
+
+    final existingNode = document.getNodeById(nodeId);
+    if (existingNode is! MentionNode) return;
+
+    final updatedNode = MentionNode(
+      id: nodeId,
+      usernames: usernames,
+      metadata: existingNode.metadata,
+    );
+
+    editor.execute([
+      ReplaceNodeRequest(existingNodeId: nodeId, newNode: updatedNode),
+    ]);
+  }
+
+  void updateMentionFontSize(String nodeId, double fontSize) {
+    final existingNode = document.getNodeById(nodeId);
+    if (existingNode is! MentionNode) return;
+
+    final updatedMetadata = Map<String, dynamic>.from(existingNode.metadata);
+    updatedMetadata['fontSize'] = fontSize;
+
+    final updatedNode = MentionNode(
+      id: nodeId,
+      usernames: existingNode.usernames,
+      metadata: updatedMetadata,
+    );
+
+    editor.execute([
+      ReplaceNodeRequest(existingNodeId: nodeId, newNode: updatedNode),
+    ]);
+  }
 
   // ignore: prefer_function_declarations_over_variables
   late final EditRequestHandler _deletePreviousDividerOnBackspaceHandler = (
@@ -335,6 +497,10 @@ class EditorService extends ChangeNotifier {
     editor.composer.selectionNotifier.addListener(_onSelectionChanged);
     // 초기 제목 노드 id 캐시
 
+    // ✅ 초기 문서의 정렬 메타가 있으면 "현재 정렬" 상태를 문서 기준으로 동기화한다.
+    // (드래프트 로드 직후/초기 진입 시점에 toolbar가 아직 alignment를 갱신하지 않은 경우 대비)
+    _syncCurrentParagraphAlignmentFromDocument();
+
     // ✅ 범위 삭제(특수노드 혼합) 보완 핸들러 설치
     // - 기본 DeleteContentRequest 처리 전에 가로채서, 누락된 특수노드까지 함께 삭제
     // - 레지스트리 복원 로직과 충돌하지 않도록 명시적 삭제로 표시
@@ -357,6 +523,8 @@ class EditorService extends ChangeNotifier {
         _deletePreviousDividerOnBackspaceHandler,
       );
     }
+
+    // 멘션 핸들러는 MentionNode로 전환 후 추가 예정
 
     if (enableInitialStateSave) {
       // 초기 상태 저장 (여러 프레임 후 실행하여 UI 블로킹 방지)
@@ -785,6 +953,9 @@ class EditorService extends ChangeNotifier {
     }
     if (node is DividerNode) {
       return DividerNode(id: node.id);
+    }
+    if (node is MentionNode) {
+      return MentionNode(id: node.id, usernames: node.usernames);
     }
     // 기본: 그대로 반환
     return node;
@@ -1222,6 +1393,10 @@ class EditorService extends ChangeNotifier {
       }
     }
 
+    // ✅ 복원된 문서의 첫 문단 정렬 메타를 기준으로 "현재 정렬"을 재동기화한다.
+    // (삭제 후 정렬 보정 fallback이 복원 이전 상태를 들고 있는 문제 방지)
+    _syncCurrentParagraphAlignmentFromDocument();
+
     // 🎯 4. 커서 숨기기
     try {
       editor.composer.clearSelection();
@@ -1252,9 +1427,8 @@ class EditorService extends ChangeNotifier {
           final inserted = document.getNodeById(change.nodeId);
           if (inserted is ParagraphNode) {
             final bool isTitle = inserted.metadata['isTitle'] == true;
-            final bool isMention = inserted.metadata['mention'] == true;
             final bool isEmpty = inserted.text.text.trim().isEmpty;
-            if (!isTitle && !isMention && isEmpty) {
+            if (!isTitle && isEmpty) {
               return 'autoEmptyParagraphInserted';
             }
           }
@@ -1360,11 +1534,6 @@ class EditorService extends ChangeNotifier {
       }
     }
 
-    // ✅ 멘션 스타일은 stylesheet에서 "본문 + bold"로 렌더링한다.
-    // 따라서 멘션 노드의 bold attribution을 강제/부분 제거하는 로직은 제거한다.
-
-    // 🎯 멘션 문단(ParagraphNode with metadata.mention == true)에서 삭제가 발생하면
-    // 노드를 한 번에 삭제하도록 처리
     if (primaryChange is TextDeletedEvent) {
       try {
         // TextDeletedEvent에서 nodeId 가져오기
@@ -1460,301 +1629,10 @@ class EditorService extends ChangeNotifier {
             } else {
               debugPrint('[EditorService] nodeIndex가 0 이하: $nodeIndex');
             }
-
-            // 🎯 멘션 노드 처리 (같은 ParagraphNode 블록 내에서 처리)
-            final isMention = node.metadata['mention'] == true;
-            final List<dynamic> usernames =
-                (node.metadata['usernames'] as List?) ?? const [];
-
-            // 멘션이고 usernames가 있으면 처리
-            if (isMention && usernames.isNotEmpty) {
-              final isMention = node.metadata['mention'] == true;
-              final List<dynamic> usernames =
-                  (node.metadata['usernames'] as List?) ?? const [];
-
-              // 멘션이고 usernames가 있으면 처리
-              if (isMention && usernames.isNotEmpty) {
-                // 멘션 텍스트 길이 계산 (@username)
-                final mentionText = '@${usernames.first}';
-                final mentionLength = mentionText.length;
-
-                // 삭제 이벤트에서 삭제된 정보 확인
-                int? deletedOffset;
-                int? deletedLength;
-                try {
-                  deletedOffset = (primaryChange as dynamic).offset as int?;
-                  deletedLength = (primaryChange as dynamic).length as int?;
-                } catch (_) {}
-
-                // ✅ 범위 삭제(선택 핸들 백스페이스) 방어:
-                // - deletedLength > 1 이면 "드래그로 선택된 구간 삭제"일 가능성이 높다.
-                // - 이 경우 멘션 전용 삭제/노드삭제/selection 이동 로직이 re-entrancy를 일으켜
-                //   키보드/selection이 꼬이고 편집기가 먹통이 되는 케이스가 있다.
-                // - 따라서 범위 삭제에서는 멘션을 '일반 문단'으로 강등만 하고 나머지는 기본 삭제에 맡긴다.
-                if ((deletedLength ?? 1) > 1) {
-                  _scheduleDemoteMentionNode(targetNodeId);
-                  return;
-                }
-
-                // 현재 커서 위치 확인 (삭제 후 위치)
-                final selection = editor.composer.selectionNotifier.value;
-                int? cursorOffset;
-                if (selection != null &&
-                    selection.extent.nodeId == targetNodeId) {
-                  try {
-                    cursorOffset =
-                        (selection.extent.nodePosition as TextNodePosition)
-                            .offset;
-                  } catch (_) {}
-                }
-
-                // 현재 텍스트 길이 확인 (삭제 후)
-                final currentText = node.text.text;
-
-                // ✅ 멘션 텍스트가 더 이상 온전하지 않으면(부분 삭제/편집) 멘션 메타데이터만 제거한다.
-                // (이 상태에서 멘션 전용 로직을 계속 적용하면 selection 이동/노드 삭제가 꼬일 수 있음)
-                if (!currentText.startsWith(mentionText)) {
-                  _scheduleDemoteMentionNode(targetNodeId);
-                  return;
-                }
-
-                // 삭제 전 텍스트 길이 추정
-                final previousTextLength =
-                    currentText.length + (deletedLength ?? 1);
-
-                // 삭제 위치 확인
-                // 삭제된 위치가 멘션 텍스트 이후에 있으면 일반적인 텍스트 삭제 동작 허용
-                // 또는 삭제 전 텍스트가 멘션보다 길었고, 삭제 후 커서가 멘션 텍스트 길이와 같거나 크면 일반 삭제
-                final isDeletingAfterMention =
-                    (deletedOffset != null && deletedOffset >= mentionLength) ||
-                    (previousTextLength > mentionLength &&
-                        cursorOffset != null &&
-                        cursorOffset >= mentionLength);
-
-                if (isDeletingAfterMention) {
-                  // 멘션 텍스트 이후에서 삭제하는 경우 일반 삭제 동작 허용
-                  debugPrint(
-                    '[EditorService] 멘션 텍스트 이후에서 삭제: deletedOffset=$deletedOffset, cursorOffset=$cursorOffset, mentionLength=$mentionLength',
-                  );
-                  return;
-                }
-
-                // 멘션 텍스트 내부에서 삭제가 발생한 경우
-                // 멘션 이후에 텍스트가 남아있으면 멘션 부분만 제거하고 나머지 유지
-                // 멘션 텍스트만 있으면 노드 전체 삭제
-                if (currentText.length > mentionLength) {
-                  // 멘션 이후에 텍스트가 남아있음 → 멘션 부분만 제거하고 나머지 유지
-                  final remainingText = currentText.substring(mentionLength);
-
-                  final nodeIndex = document.getNodeIndexById(targetNodeId);
-                  if (nodeIndex == -1) {
-                    debugPrint('[EditorService] 멘션 부분 삭제: 유효하지 않은 노드 인덱스');
-                    return;
-                  }
-
-                  // 나머지 텍스트의 attribution 복사 (볼드 제외)
-                  final newText = AttributedText(remainingText);
-                  final originalText = node.text;
-
-                  for (
-                    int i = mentionLength;
-                    i < originalText.text.length;
-                    i++
-                  ) {
-                    final attributions = originalText.getAllAttributionsAt(i);
-                    for (final attr in attributions) {
-                      // 볼드가 아닌 attribution만 추가
-                      if (attr != boldAttribution) {
-                        final newIndex = i - mentionLength;
-                        if (newIndex >= 0 && newIndex < remainingText.length) {
-                          newText.addAttribution(
-                            attr,
-                            SpanRange(newIndex, newIndex),
-                          );
-                        }
-                      }
-                    }
-                  }
-
-                  // 일반 문단으로 변환 (mention 메타데이터 제거)
-                  final dynamic rawAlign = node.metadata['textAlign'];
-                  final newParagraph = ParagraphNode(
-                    id: targetNodeId,
-                    text: newText,
-                    metadata: <String, dynamic>{
-                      if (rawAlign is String) 'textAlign': rawAlign,
-                    },
-                  );
-
-                  // 노드 교체
-                  editor.execute([
-                    ReplaceNodeRequest(
-                      existingNodeId: targetNodeId,
-                      newNode: newParagraph,
-                    ),
-                  ]);
-
-                  // 커서를 나머지 텍스트의 시작 위치로 이동
-                  final savedNodeId = targetNodeId;
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    try {
-                      editor.execute([
-                        ChangeSelectionRequest(
-                          DocumentSelection.collapsed(
-                            position: DocumentPosition(
-                              nodeId: savedNodeId,
-                              nodePosition: const TextNodePosition(offset: 0),
-                            ),
-                          ),
-                          SelectionChangeType.placeCaret,
-                          SelectionReason.userInteraction,
-                        ),
-                      ]);
-                    } catch (e) {
-                      debugPrint('[EditorService] 커서 이동 실패: $e');
-                    }
-                  });
-
-                  // 🎯 editor.execute()가 이미 document 리스너를 호출하므로 notifyListeners() 불필요
-                  return;
-                }
-                // 멘션 텍스트만 있으면 (currentText.length <= mentionLength)
-                // 아래의 노드 전체 삭제 로직으로 진행
-
-                // 멘션 노드 전체 삭제 로직 (나머지 텍스트가 없을 때만)
-                final nodeIndex = document.getNodeIndexById(targetNodeId);
-
-                // 유효한 인덱스인지 확인
-                if (nodeIndex == -1) {
-                  debugPrint('[EditorService] 멘션 삭제: 유효하지 않은 노드 인덱스');
-                  return;
-                }
-
-                // 다음 노드로 커서 이동할 위치 찾기
-                DocumentPosition? targetPosition;
-
-                // 다음 노드 확인
-                if (nodeIndex + 1 < document.nodeCount) {
-                  try {
-                    final nextNode = document.getNodeAt(nodeIndex + 1);
-                    if (nextNode != null &&
-                        nextNode is ParagraphNode &&
-                        nextNode.metadata['isTitle'] != true) {
-                      targetPosition = DocumentPosition(
-                        nodeId: nextNode.id,
-                        nodePosition: const TextNodePosition(offset: 0),
-                      );
-                    }
-                  } catch (e) {
-                    debugPrint('[EditorService] 다음 노드 확인 실패: $e');
-                  }
-                }
-
-                // 이전 노드로 이동
-                if (targetPosition == null && nodeIndex > 1) {
-                  try {
-                    final prevNode = document.getNodeAt(nodeIndex - 1);
-                    if (prevNode != null &&
-                        prevNode is ParagraphNode &&
-                        prevNode.metadata['isTitle'] != true) {
-                      final prevText = prevNode.text.text;
-                      targetPosition = DocumentPosition(
-                        nodeId: prevNode.id,
-                        nodePosition: TextNodePosition(
-                          offset: prevText.length.clamp(0, prevText.length),
-                        ),
-                      );
-                    }
-                  } catch (e) {
-                    debugPrint('[EditorService] 이전 노드 확인 실패: $e');
-                  }
-                }
-
-                // 노드 삭제 전에 커서 위치 저장
-                final savedTargetPosition = targetPosition;
-
-                // 🎯 노드가 여전히 존재하는지 확인 (이중 삭제 방지)
-                if (document.getNodeById(targetNodeId) == null) {
-                  debugPrint('[EditorService] ⚠️ 멘션 노드가 이미 삭제됨: $targetNodeId');
-                  return;
-                }
-
-                // ✅ 키보드가 내려갔다가 올라오는 원인:
-                // - clearSelection()은 IME 연결/selection 정책에 의해 키보드를 닫게 만들 수 있다.
-                // - 멘션 노드를 삭제하기 전에 "다른 노드로 caret을 먼저 이동"해서
-                //   selection이 삭제될 노드를 가리키지 않게 만들면, IME 매핑 오류도 피하면서
-                //   키보드 플리커도 방지할 수 있다.
-                if (savedTargetPosition != null) {
-                  try {
-                    editor.execute([
-                      ChangeSelectionRequest(
-                        DocumentSelection.collapsed(
-                          position: savedTargetPosition,
-                        ),
-                        SelectionChangeType.placeCaret,
-                        SelectionReason.userInteraction,
-                      ),
-                      const ClearComposingRegionRequest(),
-                    ]);
-                  } catch (e) {
-                    debugPrint('[EditorService] 멘션 삭제 전 커서 이동 실패: $e');
-                  }
-                } else {
-                  // 이동할 대상 노드가 없다면, 노드를 삭제하지 말고 일반 빈 문단으로 교체한다.
-                  // (문서가 비는 순간 selection이 null이 되어 IME가 닫힐 수 있음)
-                  try {
-                    final dynamic rawAlign = node.metadata['textAlign'];
-                    final newParagraph = ParagraphNode(
-                      id: targetNodeId,
-                      text: AttributedText(''),
-                      metadata: <String, dynamic>{
-                        if (rawAlign is String) 'textAlign': rawAlign,
-                      },
-                    );
-                    editor.execute([
-                      ReplaceNodeRequest(
-                        existingNodeId: targetNodeId,
-                        newNode: newParagraph,
-                      ),
-                      ChangeSelectionRequest(
-                        DocumentSelection.collapsed(
-                          position: DocumentPosition(
-                            nodeId: targetNodeId,
-                            nodePosition: const TextNodePosition(offset: 0),
-                          ),
-                        ),
-                        SelectionChangeType.placeCaret,
-                        SelectionReason.userInteraction,
-                      ),
-                      const ClearComposingRegionRequest(),
-                    ]);
-                  } catch (e) {
-                    debugPrint('[EditorService] 멘션 노드 빈 문단 교체 실패: $e');
-                  }
-                  return;
-                }
-
-                // 노드 삭제
-                try {
-                  final idToDelete = targetNodeId;
-                  _runRecoveryOperation(() {
-                    document.deleteNode(idToDelete);
-                  });
-                  debugPrint('[EditorService] 멘션 노드 삭제 완료: $targetNodeId');
-                } catch (e) {
-                  debugPrint('[EditorService] 멘션 노드 삭제 실패: $e');
-                  return;
-                }
-
-                // 삭제 직후, caret은 이미 다른 노드로 이동해 있으므로 추가 조작은 하지 않는다.
-                // (불필요한 post-frame selection 변경은 IME/키보드 플리커를 유발할 수 있음)
-                return;
-              }
-            }
           }
         }
       } catch (e, stackTrace) {
-        debugPrint('[EditorService] 멘션 삭제 처리 중 오류: $e');
+        debugPrint('[EditorService] 텍스트 삭제 처리 중 오류: $e');
         debugPrint('[EditorService] 스택 트레이스: $stackTrace');
       }
     }
@@ -2012,78 +1890,6 @@ class EditorService extends ChangeNotifier {
     }
 
     if (primaryChange is NodeInsertedEvent) {
-      // 🎯 멘션 노드 다음에 문단이 생성되면 볼드 attribution 제거
-      try {
-        final insertedNode = document.getNodeAt(primaryChange.insertionIndex);
-        if (insertedNode is ParagraphNode &&
-            insertedNode.metadata['mention'] != true &&
-            primaryChange.insertionIndex > 0) {
-          // 이전 노드가 멘션 노드인지 확인
-          final prevNode = document.getNodeAt(primaryChange.insertionIndex - 1);
-          if (prevNode is ParagraphNode &&
-              prevNode.metadata['mention'] == true) {
-            // 멘션 노드 다음에 생성된 문단이면 composer의 bold preference 제거
-            if (editor.composer.preferences.currentAttributions.contains(
-              boldAttribution,
-            )) {
-              editor.composer.preferences.removeStyle(boldAttribution);
-              debugPrint('[EditorService] 멘션 노드 다음 문단 생성: 볼드 preference 제거');
-            }
-
-            // 🎯 새로 생성된 문단의 텍스트에서도 볼드 attribution 제거
-            final text = insertedNode.text;
-            if (text.text.isNotEmpty) {
-              // 텍스트에 볼드 attribution이 있는지 확인
-              bool hasBold = false;
-              for (int i = 0; i < text.text.length; i++) {
-                if (text.getAllAttributionsAt(i).contains(boldAttribution)) {
-                  hasBold = true;
-                  break;
-                }
-              }
-
-              if (hasBold) {
-                // 볼드 attribution 제거
-                final newText = AttributedText(text.text);
-                // 볼드가 아닌 다른 attribution만 복사
-                for (int i = 0; i < text.text.length; i++) {
-                  final attributions = text.getAllAttributionsAt(i);
-                  for (final attr in attributions) {
-                    if (attr != boldAttribution) {
-                      newText.addAttribution(attr, SpanRange(i, i));
-                    }
-                  }
-                }
-
-                // 노드 업데이트
-                final newNode = ParagraphNode(
-                  id: insertedNode.id,
-                  text: newText,
-                  metadata: Map<String, dynamic>.from(insertedNode.metadata),
-                );
-
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  try {
-                    _runRecoveryOperation(() {
-                      editor.execute([
-                        ReplaceNodeRequest(
-                          existingNodeId: insertedNode.id,
-                          newNode: newNode,
-                        ),
-                      ]);
-                    });
-                  } catch (e) {
-                    debugPrint('[EditorService] 멘션 노드 다음 문단 볼드 제거 실패: $e');
-                  }
-                });
-              }
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('[EditorService] 멘션 노드 다음 문단 볼드 제거 실패: $e');
-      }
-
       // 새 문단의 정렬 승계
       _runRecoveryOperation(() {
         _ensureParagraphAlignmentForIndex(primaryChange.insertionIndex);
@@ -2176,6 +1982,7 @@ class EditorService extends ChangeNotifier {
             nodeService.clearHighlightedSelectionSilently();
           } catch (_) {}
         }
+
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _isSanitizingInvalidSelection = false;
         });
@@ -2313,7 +2120,6 @@ class EditorService extends ChangeNotifier {
                         nextNode is ParagraphNode &&
                         nextNode.text.text.trim().isEmpty &&
                         nextNode.metadata['isTitle'] != true &&
-                        nextNode.metadata['mention'] != true &&
                         !_pendingDeletionNodeIds.contains(nextNode.id)) {
                       // 🎯 이미 삭제 예약되지 않았는지 확인
                       // 🎯 이전에 downstream이 아니었다가 지금 downstream으로 이동한 경우
@@ -2379,10 +2185,11 @@ class EditorService extends ChangeNotifier {
               }
             } else {
               // upstream/downstream 위치가 아니면 선택 해제
+              // 멘션 노드를 포함한 모든 특수 노드 선택 해제
               if (nodeService.selectedImageId == nodeId) {
                 nodeService.selectNode(null);
                 debugPrint(
-                  '[EditorService] upstream/downstream 위치가 아니어서 NodeComponentService 선택 해제: nodeId=$nodeId',
+                  '[EditorService] upstream/downstream 위치가 아니어서 NodeComponentService 선택 해제: nodeId=$nodeId (멘션 포함)',
                 );
               }
             }
@@ -2391,79 +2198,104 @@ class EditorService extends ChangeNotifier {
             debugPrint('[EditorService] NodeComponentService 접근 실패: $e');
           }
         }
-      } else if (node is ParagraphNode && node.text.text.trim().isEmpty) {
-        // 🎯 빈 ParagraphNode에 커서가 있을 때, 위/아래 특수 노드 정보를 항상 저장
-        // 이렇게 하면 빈 ParagraphNode가 삭제되기 전에 특수 노드 정보가 레지스트리에 저장됨
-        final nodeIndex = document.getNodeIndexById(nodeId);
-
-        // 🎯 인덱스 유효성 확인
-        if (nodeIndex < 0 || nodeIndex >= document.nodeCount) {
-          debugPrint('[EditorService] ⚠️ 빈 ParagraphNode: 잘못된 인덱스: $nodeIndex');
-          return;
-        }
-
-        // 위쪽 특수 노드 확인
-        if (nodeIndex > 0) {
-          final prevNode = document.getNodeAt(nodeIndex - 1);
-          if (prevNode != null &&
-              _isSpecialNode(prevNode) &&
-              !_explicitlyDeletedNodes.contains(prevNode.id) &&
-              !_pendingDeletionNodeIds.contains(prevNode.id)) {
-            // selection이 특수 노드를 가리키고 있는지 확인
-            final isAtDownstream =
-                sel.extent.nodeId == prevNode.id &&
-                sel.extent.nodePosition is UpstreamDownstreamNodePosition &&
-                sel.extent.nodePosition ==
-                    const UpstreamDownstreamNodePosition.downstream();
-
-            _specialNodeRegistry[prevNode.id] = _SpecialNodeInfo(
-              node: _copyNode(prevNode),
-              index: nodeIndex - 1,
-              selection: sel,
-              isAtDownstream: isAtDownstream,
-            );
-
-            debugPrint(
-              '[EditorService] ✅ 빈 ParagraphNode 위 특수 노드 정보 저장: nodeId=${prevNode.id}, index=${nodeIndex - 1}, isAtDownstream=$isAtDownstream',
-            );
+      } else if (node is ParagraphNode) {
+        // 🎯 ParagraphNode(텍스트)에 포커스(=collapsed selection)가 가면
+        // 멘션을 포함한 모든 특수 노드 선택/하이라이트를 해제한다.
+        if (_context != null && sel.isCollapsed) {
+          try {
+            final nodeService = _context!.read<NodeComponentService>();
+            final bool hasAnyNodeSelection =
+                nodeService.selectedNodeId != null ||
+                nodeService.selectionHighlightedIds.isNotEmpty;
+            if (hasAnyNodeSelection) {
+              // notify 2번(선택/하이라이트) 나가는 걸 피하기 위해 조용히 비우고 1회 notify
+              nodeService.clearSelectionSilently();
+              nodeService.clearHighlightedSelectionSilently();
+              nodeService.notifyListeners();
+              debugPrint('[EditorService] 텍스트 포커스 → 특수 노드 선택/하이라이트 해제');
+            }
+          } catch (_) {
+            // NodeComponentService가 없을 수 있음 (무시)
           }
         }
 
-        // 아래쪽 특수 노드 확인
-        if (nodeIndex < document.nodeCount - 1) {
-          final nextNode = document.getNodeAt(nodeIndex + 1);
-          if (nextNode != null &&
-              _isSpecialNode(nextNode) &&
-              !_explicitlyDeletedNodes.contains(nextNode.id) &&
-              !_pendingDeletionNodeIds.contains(nextNode.id)) {
-            // selection이 특수 노드를 가리키고 있는지 확인
-            final isAtDownstream =
-                sel.extent.nodeId == nextNode.id &&
-                sel.extent.nodePosition is UpstreamDownstreamNodePosition &&
-                sel.extent.nodePosition ==
-                    const UpstreamDownstreamNodePosition.downstream();
+        // 🎯 빈 ParagraphNode에 커서가 있을 때, 위/아래 특수 노드 정보를 항상 저장
+        // 이렇게 하면 빈 ParagraphNode가 삭제되기 전에 특수 노드 정보가 레지스트리에 저장됨
+        if (node.text.text.trim().isEmpty) {
+          final nodeIndex = document.getNodeIndexById(nodeId);
 
-            _specialNodeRegistry[nextNode.id] = _SpecialNodeInfo(
-              node: _copyNode(nextNode),
-              index: nodeIndex + 1,
-              selection: sel,
-              isAtDownstream: isAtDownstream,
-            );
-
+          // 🎯 인덱스 유효성 확인
+          if (nodeIndex < 0 || nodeIndex >= document.nodeCount) {
             debugPrint(
-              '[EditorService] ✅ 빈 ParagraphNode 아래 특수 노드 정보 저장: nodeId=${nextNode.id}, index=${nodeIndex + 1}, isAtDownstream=$isAtDownstream',
+              '[EditorService] ⚠️ 빈 ParagraphNode: 잘못된 인덱스: $nodeIndex',
             );
+            return;
+          }
+
+          // 위쪽 특수 노드 확인
+          if (nodeIndex > 0) {
+            final prevNode = document.getNodeAt(nodeIndex - 1);
+            if (prevNode != null &&
+                _isSpecialNode(prevNode) &&
+                !_explicitlyDeletedNodes.contains(prevNode.id) &&
+                !_pendingDeletionNodeIds.contains(prevNode.id)) {
+              // selection이 특수 노드를 가리키고 있는지 확인
+              final isAtDownstream =
+                  sel.extent.nodeId == prevNode.id &&
+                  sel.extent.nodePosition is UpstreamDownstreamNodePosition &&
+                  sel.extent.nodePosition ==
+                      const UpstreamDownstreamNodePosition.downstream();
+
+              _specialNodeRegistry[prevNode.id] = _SpecialNodeInfo(
+                node: _copyNode(prevNode),
+                index: nodeIndex - 1,
+                selection: sel,
+                isAtDownstream: isAtDownstream,
+              );
+
+              debugPrint(
+                '[EditorService] ✅ 빈 ParagraphNode 위 특수 노드 정보 저장: nodeId=${prevNode.id}, index=${nodeIndex - 1}, isAtDownstream=$isAtDownstream',
+              );
+            }
+          }
+
+          // 아래쪽 특수 노드 확인
+          if (nodeIndex < document.nodeCount - 1) {
+            final nextNode = document.getNodeAt(nodeIndex + 1);
+            if (nextNode != null &&
+                _isSpecialNode(nextNode) &&
+                !_explicitlyDeletedNodes.contains(nextNode.id) &&
+                !_pendingDeletionNodeIds.contains(nextNode.id)) {
+              // selection이 특수 노드를 가리키고 있는지 확인
+              final isAtDownstream =
+                  sel.extent.nodeId == nextNode.id &&
+                  sel.extent.nodePosition is UpstreamDownstreamNodePosition &&
+                  sel.extent.nodePosition ==
+                      const UpstreamDownstreamNodePosition.downstream();
+
+              _specialNodeRegistry[nextNode.id] = _SpecialNodeInfo(
+                node: _copyNode(nextNode),
+                index: nodeIndex + 1,
+                selection: sel,
+                isAtDownstream: isAtDownstream,
+              );
+
+              debugPrint(
+                '[EditorService] ✅ 빈 ParagraphNode 아래 특수 노드 정보 저장: nodeId=${nextNode.id}, index=${nodeIndex + 1}, isAtDownstream=$isAtDownstream',
+              );
+            }
           }
         }
       } else {
         // 🎯 특수 노드가 아니고 빈 ParagraphNode도 아니면 NodeComponentService 선택 해제
+        // 멘션 노드를 포함한 모든 특수 노드 선택 해제
         if (_context != null) {
           try {
             final nodeService = _context!.read<NodeComponentService>();
             if (nodeService.selectedImageId != null) {
               nodeService.selectNode(null);
               debugPrint(
-                '[EditorService] 일반 노드로 이동하여 NodeComponentService 선택 해제',
+                '[EditorService] 일반 노드로 이동하여 NodeComponentService 선택 해제 (멘션 포함)',
               );
             }
           } catch (e) {
@@ -2505,8 +2337,6 @@ class EditorService extends ChangeNotifier {
         if (node.metadata['isTitle'] == true) continue;
         if (node.text.text.trim().isNotEmpty) return true;
       } else if (_isSpecialNode(node)) {
-        return true;
-      } else if (node is ParagraphNode && node.metadata['mention'] == true) {
         return true;
       } else {
         // 기타 노드가 존재하면 본문이 있다고 간주
@@ -2561,13 +2391,6 @@ class EditorService extends ChangeNotifier {
         nodes.add({'t': 'row', 'urls': List<String>.from(node.imageUrls)});
       } else if (node is LinkNode) {
         nodes.add({'t': 'link', 'url': node.url, 'title': node.title});
-      } else if (node is ParagraphNode && node.metadata['mention'] == true) {
-        final List<dynamic> namesDyn =
-            (node.metadata['usernames'] as List?) ?? const [];
-        nodes.add({
-          't': 'mention',
-          'users': namesDyn.map((e) => e.toString()).toList(),
-        });
       } else {
         nodes.add({'t': node.runtimeType.toString(), 'id': node.id});
       }
@@ -2628,12 +2451,100 @@ class EditorService extends ChangeNotifier {
             targetIndex > currentIndex ? targetIndex - 1 : targetIndex;
         document.insertNodeAt(insertIndex, node);
       }
+
+      // ✅ 멘션 노드를 드롭(reorder)한 직후, 인접 멘션(위/아래)이 있으면 2개/3개를 하나로 병합한다.
+      // 요구사항: 드롭한 위치의 위/아래에 다른 멘션 컴포넌트가 있으면 병합하여 하나로 만든다.
+      if (node is MentionNode) {
+        _mergeAdjacentMentionNodesAround(nodeId);
+      }
       // 🎯 notifyListeners는 finally 이후에 한 번만
     } finally {
       _isExecutingHistory = false;
       _saveCurrentState(immediate: true);
       debugPrint(
         '[EditorService] 🔄 노드 순서 변경 완료 (${currentIndex} → ${targetIndex})',
+      );
+      notifyListeners(); // 🎯 최종: 한 번만 호출
+    }
+  }
+
+  void _mergeAdjacentMentionNodesAround(String nodeId) {
+    final idx = document.getNodeIndexById(nodeId);
+    if (idx < 0) return;
+
+    final cur = document.getNodeAt(idx);
+    if (cur is! MentionNode) return;
+
+    final prev = idx - 1 >= 0 ? document.getNodeAt(idx - 1) : null;
+    final next = idx + 1 < document.length ? document.getNodeAt(idx + 1) : null;
+
+    final List<MapEntry<int, MentionNode>> cluster = [];
+    if (prev is MentionNode) cluster.add(MapEntry(idx - 1, prev));
+    cluster.add(MapEntry(idx, cur));
+    if (next is MentionNode) cluster.add(MapEntry(idx + 1, next));
+
+    if (cluster.length <= 1) return;
+
+    cluster.sort((a, b) => a.key.compareTo(b.key));
+    final keepIndex = cluster.first.key;
+    final keepId = cluster.first.value.id;
+
+    // usernames 병합 (문서 순서 유지 + 중복 제거)
+    final mergedUsernames = <String>[];
+    final seen = <String>{};
+    for (final entry in cluster) {
+      for (final u in entry.value.usernames) {
+        if (seen.add(u)) mergedUsernames.add(u);
+      }
+    }
+
+    // metadata: 기본은 "최상단 노드" 기준으로 유지하되, fontSize는 있으면 보정
+    Map<String, dynamic> mergedMeta;
+    try {
+      mergedMeta = Map<String, dynamic>.from(cluster.first.value.metadata);
+    } catch (_) {
+      mergedMeta = <String, dynamic>{};
+    }
+
+    double? fontSize;
+    // 우선순위: 드롭된 노드(cur) -> 최상단 -> 나머지
+    for (final m in <MentionNode>[
+      cur,
+      cluster.first.value,
+      ...cluster.skip(1).map((e) => e.value),
+    ]) {
+      final v = m.metadata['fontSize'];
+      if (v is num) {
+        fontSize = v.toDouble();
+        break;
+      }
+    }
+    if (fontSize != null) mergedMeta['fontSize'] = fontSize;
+
+    final mergedNode = MentionNode(
+      id: keepId,
+      usernames: mergedUsernames,
+      metadata: mergedMeta,
+    );
+
+    // 🎯 멘션 병합 작업 중에는 히스토리 추적 일시 중단
+    _isExecutingHistory = true;
+
+    try {
+      // 삭제 → 삽입: 클러스터의 최상단 위치에 하나만 남긴다.
+      for (final entry in cluster.reversed) {
+        document.deleteNode(entry.value.id);
+      }
+      document.insertNodeAt(keepIndex, mergedNode);
+      // 🎯 notifyListeners는 finally 이후에 한 번만
+    } catch (e) {
+      debugPrint('[EditorService] ⚠️ 멘션 병합 실패: $e');
+      rethrow;
+    } finally {
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+      debugPrint(
+        '[EditorService] ✅ 멘션 병합 완료: ${cluster.length}개 → 1개 (keepIndex=$keepIndex)',
       );
       notifyListeners(); // 🎯 최종: 한 번만 호출
     }
@@ -2968,6 +2879,290 @@ class EditorService extends ChangeNotifier {
     }
   }
 
+  /// 이미지를 PageView에 병합하는 함수
+  void mergeImageIntoPageView(
+    String draggingImageId,
+    String targetPageViewId, {
+    required int insertIndex,
+  }) {
+    debugPrint(
+      '[EditorService] 🔀 PageView 병합 시작: dragging=$draggingImageId, target=$targetPageViewId, insertIndex=$insertIndex',
+    );
+
+    final draggingNode = document.getNodeById(draggingImageId);
+    final targetNode = document.getNodeById(targetPageViewId);
+
+    if (draggingNode == null || targetNode == null) {
+      debugPrint(
+        '[EditorService] ❌ 병합 실패: 노드를 찾을 수 없음 (dragging: ${draggingNode != null}, target: ${targetNode != null})',
+      );
+      return;
+    }
+
+    debugPrint(
+      '[EditorService] 📋 병합 대상 노드 타입: dragging=${draggingNode.runtimeType}, target=${targetNode.runtimeType}',
+    );
+
+    // 타겟 노드가 PageViewImageNode인 경우
+    if (targetNode is PageViewImageNode) {
+      _addImageToPageView(draggingImageId, targetPageViewId, insertIndex);
+      return;
+    }
+
+    // 드래그 중인 노드가 PageViewImageNode인 경우 (역방향 병합)
+    if (draggingNode is PageViewImageNode) {
+      // PageView를 드래그해서 단일 이미지에 병합하는 경우는 지원하지 않음
+      debugPrint('[EditorService] ⚠️ PageView를 단일 이미지에 병합하는 것은 지원하지 않습니다');
+      return;
+    }
+
+    // 둘 다 단일 이미지인 경우: 새 PageViewImageNode 생성
+    if (draggingNode is! ImageNode || targetNode is! ImageNode) return;
+
+    // ✅ 병합 가능한 URL 확인
+    bool _isMergeableImageUrl(String u) {
+      if (u.isEmpty) return false;
+      return u.startsWith('http://') ||
+          u.startsWith('https://') ||
+          u.startsWith('file://') ||
+          u.startsWith('/');
+    }
+
+    if (!_isMergeableImageUrl(draggingNode.imageUrl) ||
+        !_isMergeableImageUrl(targetNode.imageUrl)) {
+      debugPrint('[EditorService] ❌ 병합 실패: URL이 병합 불가');
+      return;
+    }
+
+    // 이미지 URL 리스트 생성
+    final imageUrls = <String>[];
+    final draggingIndex = document.getNodeIndexById(draggingImageId);
+    final targetIndex = document.getNodeIndexById(targetPageViewId);
+
+    // 메타데이터 추출
+    Map<String, dynamic>? draggingMeta;
+    Map<String, dynamic>? targetMeta;
+    String? draggingMediaId;
+    String? targetMediaId;
+
+    try {
+      draggingMeta =
+          (draggingNode as dynamic).metadata as Map<String, dynamic>?;
+      draggingMediaId = draggingMeta?['mediaId']?.toString();
+    } catch (e) {
+      debugPrint('[EditorService] ⚠️ 드래그 이미지 메타데이터 추출 실패: $e');
+    }
+    try {
+      targetMeta = (targetNode as dynamic).metadata as Map<String, dynamic>?;
+      targetMediaId = targetMeta?['mediaId']?.toString();
+    } catch (e) {
+      debugPrint('[EditorService] ⚠️ 타겟 이미지 메타데이터 추출 실패: $e');
+    }
+
+    // 인덱스 순서에 따라 이미지 순서 결정
+    List<String> mediaIds = [];
+    if (draggingIndex < targetIndex) {
+      imageUrls.add(draggingNode.imageUrl);
+      imageUrls.add(targetNode.imageUrl);
+      if (draggingMediaId != null) mediaIds.add(draggingMediaId);
+      if (targetMediaId != null) mediaIds.add(targetMediaId);
+    } else {
+      imageUrls.add(targetNode.imageUrl);
+      imageUrls.add(draggingNode.imageUrl);
+      if (targetMediaId != null) mediaIds.add(targetMediaId);
+      if (draggingMediaId != null) mediaIds.add(draggingMediaId);
+    }
+
+    debugPrint('[EditorService] 📋 PageView 생성 - imageUrls: $imageUrls');
+    debugPrint('[EditorService] 📋 PageView 생성 - mediaIds: $mediaIds');
+
+    // 🎯 imageCommentInfo 맵 생성
+    final imageCommentInfo = <String, Map<String, dynamic>>{};
+    for (int i = 0; i < imageUrls.length; i++) {
+      final url = imageUrls[i];
+      if (i < mediaIds.length && mediaIds[i].isNotEmpty) {
+        imageCommentInfo[url] = {
+          'mediaId': mediaIds[i],
+          'hasComments': false,
+          'commentCount': 0,
+        };
+      }
+    }
+
+    // 🎯 기존 이미지들의 메타데이터 병합 (공통 함수 사용)
+    final mergedMetadata = _mergeImageMetadata([draggingMeta, targetMeta]);
+
+    // 메타데이터 구성
+    final metadata = <String, dynamic>{};
+    if (imageCommentInfo.isNotEmpty) {
+      metadata['imageCommentInfo'] = imageCommentInfo;
+    }
+    // 병합된 메타데이터 추가 (imageDimensions, uploadedUrls)
+    metadata.addAll(mergedMetadata);
+
+    // PageViewImageNode 생성 (최대 6개 제한)
+    final pageViewImageNode = PageViewImageNode(
+      id: 'pageViewImage_${DateTime.now().millisecondsSinceEpoch}',
+      imageUrls: imageUrls,
+      metadata: metadata.isNotEmpty ? metadata : null,
+    );
+
+    debugPrint(
+      '[EditorService] 🆕 생성된 PageViewImageNode: id=${pageViewImageNode.id}, imageUrls=${pageViewImageNode.imageUrls.length}개',
+    );
+
+    // 🎯 이미지 병합 작업 중에는 히스토리 추적 일시 중단
+    _isExecutingHistory = true;
+
+    // PageViewImageNode 삽입 (더 작은 인덱스 위치에)
+    final insertIdx = draggingIndex < targetIndex ? draggingIndex : targetIndex;
+
+    try {
+      // 기존 이미지들 삭제
+      document.deleteNode(draggingImageId);
+      document.deleteNode(targetPageViewId);
+
+      document.insertNodeAt(insertIdx, pageViewImageNode);
+      // 🎯 notifyListeners는 finally 이후에 한 번만
+    } finally {
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+      debugPrint(
+        '[EditorService] ✅ 이미지 병합 완료: insertIndex=$insertIdx, newNodeId=${pageViewImageNode.id}',
+      );
+      notifyListeners(); // 🎯 최종: 한 번만 호출
+    }
+  }
+
+  void _addImageToPageView(String imageId, String pageViewId, int insertIndex) {
+    debugPrint(
+      '[EditorService] ➕ PageView에 이미지 추가 시작: imageId=$imageId, pageViewId=$pageViewId, insertIndex=$insertIndex',
+    );
+
+    final imageNode = document.getNodeById(imageId);
+    final pageViewNode = document.getNodeById(pageViewId);
+
+    if (imageNode == null || pageViewNode == null) {
+      debugPrint(
+        '[EditorService] ❌ PageView에 이미지 추가 실패: 노드를 찾을 수 없음 (image: ${imageNode != null}, pageView: ${pageViewNode != null})',
+      );
+      return;
+    }
+    if (imageNode is! ImageNode || pageViewNode is! PageViewImageNode) {
+      debugPrint(
+        '[EditorService] ❌ PageView에 이미지 추가 실패: 타입 불일치 (image: ${imageNode.runtimeType}, pageView: ${pageViewNode.runtimeType})',
+      );
+      return;
+    }
+
+    debugPrint(
+      '[EditorService] 📋 기존 PageView 이미지 개수: ${pageViewNode.imageUrls.length}, 이미지 URL: ${pageViewNode.imageUrls}',
+    );
+
+    // ✅ PageView에 추가 가능한 URL (네트워크 + 로컬)
+    bool _isMergeableImageUrl(String u) {
+      if (u.isEmpty) return false;
+      return u.startsWith('http://') ||
+          u.startsWith('https://') ||
+          u.startsWith('file://') ||
+          u.startsWith('/');
+    }
+
+    if (!_isMergeableImageUrl(imageNode.imageUrl)) {
+      debugPrint(
+        '[EditorService] ❌ PageView 추가 스킵: URL이 병합 불가 (imageUrl=${imageNode.imageUrl})',
+      );
+      return;
+    }
+
+    // 이미 6개가 있으면 추가하지 않음
+    if (pageViewNode.imageUrls.length >= 6) return;
+
+    // 🎯 메타데이터 추출 (한 번만)
+    final imageMeta = (imageNode as dynamic).metadata as Map<String, dynamic>?;
+    final pageViewMeta = pageViewNode.metadata;
+
+    // 🎯 추가되는 이미지의 mediaId 추출
+    String? newImageMediaId;
+    try {
+      newImageMediaId = imageMeta?['mediaId']?.toString();
+    } catch (_) {}
+
+    // 🎯 기존 pageView의 imageCommentInfo 추출
+    Map<String, Map<String, dynamic>> existingCommentInfo = {};
+    try {
+      final commentInfo =
+          pageViewMeta['imageCommentInfo'] as Map<String, dynamic>?;
+      if (commentInfo != null) {
+        existingCommentInfo = commentInfo.map(
+          (key, value) => MapEntry(key, (value as Map).cast<String, dynamic>()),
+        );
+      }
+    } catch (_) {}
+
+    // 🎯 메타데이터 병합 (공통 함수 사용)
+    final mergedMetadata = _mergeImageMetadata([pageViewMeta, imageMeta]);
+
+    // 새로운 이미지 URL 리스트 생성
+    final newImageUrls = List<String>.from(pageViewNode.imageUrls);
+    final newImageCommentInfo = Map<String, Map<String, dynamic>>.from(
+      existingCommentInfo,
+    );
+
+    // insertIndex에 맞게 삽입
+    final clampedIndex = insertIndex.clamp(0, newImageUrls.length);
+    newImageUrls.insert(clampedIndex, imageNode.imageUrl);
+    if (newImageMediaId != null && newImageMediaId.isNotEmpty) {
+      newImageCommentInfo[imageNode.imageUrl] = {
+        'mediaId': newImageMediaId,
+        'hasComments': false,
+        'commentCount': 0,
+      };
+    }
+
+    // 🎯 이미지 행 추가 작업 중에는 히스토리 추적 일시 중단
+    _isExecutingHistory = true;
+
+    try {
+      // 메타데이터 구성
+      final metadata = <String, dynamic>{};
+      if (newImageCommentInfo.isNotEmpty) {
+        metadata['imageCommentInfo'] = newImageCommentInfo;
+      }
+      // 병합된 메타데이터 추가 (imageDimensions, uploadedUrls)
+      metadata.addAll(mergedMetadata);
+
+      debugPrint(
+        '[EditorService] 📦 업데이트된 메타데이터: imageCommentInfo=${newImageCommentInfo.isNotEmpty}, imageDimensions=${mergedMetadata['imageDimensions'] != null}, uploadedUrls=${mergedMetadata['uploadedUrls'] != null}',
+      );
+      debugPrint(
+        '[EditorService] 📋 새로운 이미지 URL 리스트: $newImageUrls (${newImageUrls.length}개)',
+      );
+
+      // PageViewImageNode 업데이트 (이미 6개 제한이 적용됨)
+      final updatedPageViewNode = pageViewNode.copyWith(
+        imageUrls: newImageUrls,
+        metadata: metadata.isNotEmpty ? metadata : null,
+      );
+      document.replaceNodeById(pageViewId, updatedPageViewNode);
+
+      debugPrint(
+        '[EditorService] ✅ PageView 업데이트 완료: pageViewId=$pageViewId, imageUrls=${updatedPageViewNode.imageUrls.length}개, metadata keys=${updatedPageViewNode.metadata.keys.toList()}',
+      );
+
+      // 기존 이미지 삭제
+      document.deleteNode(imageId);
+      // 🎯 notifyListeners는 finally 이후에 한 번만
+    } finally {
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+      debugPrint(
+        '[EditorService] ✅ PageViewImage에 이미지 추가 완료: pageViewId=$pageViewId',
+      );
+      notifyListeners(); // 🎯 최종: 한 번만 호출
+    }
+  }
+
   NodeType getNodeType(String nodeId) {
     final node = document.getNodeById(nodeId);
     switch (node) {
@@ -2977,6 +3172,10 @@ class EditorService extends ChangeNotifier {
         return NodeType.image;
       case ImageRowNode():
         return NodeType.imageRow;
+      case PageViewImageNode():
+        return NodeType.pageViewImage;
+      case MentionNode():
+        return NodeType.mention;
       default:
         return NodeType.unknown;
     }
@@ -3016,13 +3215,13 @@ class EditorService extends ChangeNotifier {
       if (insertIndex < 0) insertIndex = 0;
       if (insertIndex > doc.nodeCount) insertIndex = doc.nodeCount;
 
-      final String? align = _getPreviousParagraphAlign(insertIndex);
+      final String align = _getInheritedParagraphAlignOrDefault(insertIndex);
       final String paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
 
       final ParagraphNode newParagraph = ParagraphNode(
         id: paragraphId,
         text: AttributedText(''),
-        metadata: <String, dynamic>{if (align != null) 'textAlign': align},
+        metadata: <String, dynamic>{'textAlign': align},
       );
 
       editor.execute([
@@ -3070,178 +3269,20 @@ class EditorService extends ChangeNotifier {
       if (last is ParagraphNode) return;
 
       // 특수 노드로 끝날 때만 trailing paragraph 추가
-      final isSpecial =
-          _isSpecialNode(last) ||
-          (last is ParagraphNode && last.metadata['mention'] == true);
-      if (!isSpecial) return;
+      if (!_isSpecialNode(last)) return;
 
       final paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
-      final String? inheritedAlign = _getPreviousParagraphAlign(doc.nodeCount);
+      final String inheritedAlign = _getInheritedParagraphAlignOrDefault(
+        doc.nodeCount,
+      );
       final trailing = ParagraphNode(
         id: paragraphId,
         text: AttributedText(''),
-        metadata: <String, dynamic>{
-          if (inheritedAlign != null) 'textAlign': inheritedAlign,
-        },
+        metadata: <String, dynamic>{'textAlign': inheritedAlign},
       );
 
       doc.insertNodeAt(doc.nodeCount, trailing);
       // selection/포커스는 사용자 탭으로 유도 (로드 직후 강제 포커스 방지)
-    });
-  }
-
-  /// 언급 노드를 문단(Paragraph) 기반으로 삽입한다.
-  /// - 전체 텍스트는 굵게(bold)
-  /// - 메타데이터로 mention 플래그와 usernames를 보관
-  /// - 컴포넌트처럼 현재 라인 다음 슬롯에 삽입(필요 시 끝에 빈 문단 생성)
-  /// - 각 멘션은 개별 노드로 생성되어 세로로 표시됨
-  void addMentionNode(List<String> usernames) {
-    if (usernames.isEmpty) return;
-
-    // 🎯 멘션 추가 작업 중에는 히스토리 추적 일시 중단
-    _isExecutingHistory = true;
-
-    try {
-      final doc = editor.document;
-      final safeIndex = _getCaretNodeIndexSafe();
-      int insertIndex = safeIndex;
-
-      // ✅ "첫 번째 노드=제목" 가정 제거:
-      // 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입한다.
-      if (insertIndex < doc.nodeCount) {
-        final currentNode = doc.getNodeAt(insertIndex);
-        if (currentNode is ParagraphNode) {
-          final hasText = currentNode.text.text.trim().isNotEmpty;
-          if (hasText) {
-            insertIndex = insertIndex + 1;
-            debugPrint(
-              '🎯 [Mention] 현재 문단에 텍스트가 있음, 다음 줄(index $insertIndex)에 삽입',
-            );
-          }
-        }
-      }
-
-      if (insertIndex > doc.nodeCount) insertIndex = doc.nodeCount;
-
-      // 이전 문단 정렬을 승계
-      final String? inheritedAlign = _getPreviousParagraphAlign(insertIndex);
-
-      // 🎯 각 username마다 별도의 ParagraphNode 생성 (metadata로 멘션 표시)
-      final edits = <EditRequest>[];
-
-      for (int i = 0; i < usernames.length; i++) {
-        final username = usernames[i];
-        final mentionId =
-            'p_mention_${DateTime.now().millisecondsSinceEpoch}_$i';
-        final mentionText = '@$username';
-
-        // 🎯 볼드 attribution 추가
-        final AttributedText attributed = AttributedText(mentionText);
-        if (mentionText.isNotEmpty) {
-          attributed.addAttribution(
-            boldAttribution,
-            SpanRange(0, mentionText.length - 1),
-          );
-        }
-
-        final mentionParagraph = ParagraphNode(
-          id: mentionId,
-          text: attributed,
-          metadata: {
-            if (inheritedAlign != null) 'textAlign': inheritedAlign,
-            'mention': true,
-            'usernames': [username], // 한 사람당 하나의 노드
-          },
-        );
-
-        edits.add(
-          InsertNodeAtIndexRequest(
-            nodeIndex: insertIndex + i,
-            newNode: mentionParagraph,
-          ),
-        );
-      }
-
-      // 🎯 멘션 노드 다음에 항상 빈 문단 추가 (텍스트 이어서 쓰기 위해)
-      final String paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
-      final ParagraphNode newParagraph = ParagraphNode(
-        id: paragraphId,
-        text: AttributedText(''),
-        metadata: <String, dynamic>{
-          if (inheritedAlign != null) 'textAlign': inheritedAlign,
-        },
-      );
-      edits.add(
-        InsertNodeAtIndexRequest(
-          nodeIndex: insertIndex + usernames.length,
-          newNode: newParagraph,
-        ),
-      );
-
-      editor.execute(edits);
-
-      // 🎯 항상 멘션 노드 다음 빈 문단으로 커서 이동 (텍스트 이어서 쓰기)
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        editor.execute([
-          ChangeSelectionRequest(
-            DocumentSelection.collapsed(
-              position: DocumentPosition(
-                nodeId: paragraphId,
-                nodePosition: const TextNodePosition(offset: 0),
-              ),
-            ),
-            SelectionChangeType.placeCaret,
-            SelectionReason.userInteraction,
-          ),
-        ]);
-      });
-    } catch (e) {
-      debugPrint('[EditorService] 멘션 추가 실패: $e');
-    } finally {
-      // 🎯 작업 완료 후 히스토리 추적 재개 + 한 번만 저장
-      _isExecutingHistory = false;
-      _saveCurrentState(immediate: true);
-      debugPrint('[EditorService] 📝 멘션 추가 완료');
-    }
-  }
-
-  /// ✅ 멘션 문단을 일반 문단으로 '강등'한다.
-  /// - 범위 삭제(선택 핸들 백스페이스)처럼 TextDeletedEvent가 크게 들어오는 케이스에서
-  ///   멘션 전용 삭제 로직(노드 삭제/selection 이동)이 re-entrancy를 일으켜 편집기가 먹통이 될 수 있어,
-  ///   post-frame으로 안전하게 metadata만 제거한다.
-  void _scheduleDemoteMentionNode(String nodeId) {
-    if (_pendingMentionDemotions.contains(nodeId)) return;
-    _pendingMentionDemotions.add(nodeId);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _pendingMentionDemotions.remove(nodeId);
-      try {
-        final node = document.getNodeById(nodeId);
-        if (node is! ParagraphNode) return;
-        if (node.metadata['mention'] != true) return;
-
-        final dynamic rawAlign = node.metadata['textAlign'];
-        final newMetadata = <String, dynamic>{
-          if (rawAlign is String) 'textAlign': rawAlign,
-        };
-
-        // 멘션 노드는 보통 bold만 강제되어 있으므로, 강등 시에는 plain text로 정리한다.
-        // (기존 attributions까지 유지하면 다시 멘션처럼 보일 수 있어 UX도 혼란)
-        final newText = AttributedText(node.text.text);
-
-        editor.execute([
-          ReplaceNodeRequest(
-            existingNodeId: nodeId,
-            newNode: ParagraphNode(
-              id: nodeId,
-              text: newText,
-              metadata: newMetadata,
-            ),
-          ),
-        ]);
-      } catch (e) {
-        debugPrint('[EditorService] 멘션 강등 실패(무시): $e');
-      }
     });
   }
 
@@ -3507,9 +3548,7 @@ class EditorService extends ChangeNotifier {
         if (node == null) continue;
 
         // 🎯 텍스트 노드를 먼저 확인
-        if (node is ParagraphNode &&
-            node.metadata['mention'] != true &&
-            node.metadata['isTitle'] != true) {
+        if (node is ParagraphNode && node.metadata['isTitle'] != true) {
           final rect = dragService.getNodeGlobalRect(node.id);
           if (rect != null && rect.contains(globalPosition)) {
             // 텍스트 노드가 감지되면 즉시 반환 (특수 노드보다 우선)
@@ -3524,9 +3563,7 @@ class EditorService extends ChangeNotifier {
         final node = document.getNodeAt(i);
         if (node == null) continue;
 
-        final bool isSpecial =
-            _isSpecialNode(node) ||
-            (node is ParagraphNode && node.metadata['mention'] == true);
+        final bool isSpecial = _isSpecialNode(node);
 
         if (isSpecial) {
           final rect = dragService.getNodeGlobalRect(node.id);
@@ -3688,6 +3725,20 @@ class EditorService extends ChangeNotifier {
       '[EditorService] ✂️ 이미지 분리 시작: rowId=$rowId, imageIndex=$imageIndex, insertIndex=$insertIndex',
     );
 
+    // 🎯 업로드 중인 경우 분리 차단 (메모리 누수 방지)
+    try {
+      final uploadService = _context?.read<UploadService>();
+      if (uploadService != null && uploadService.hasActiveUploadForRef(rowId)) {
+        debugPrint(
+          '[EditorService] ⚠️ 이미지 분리 차단: rowId=$rowId에 대한 업로드가 진행 중입니다',
+        );
+        return null;
+      }
+    } catch (e) {
+      debugPrint('[EditorService] ⚠️ 업로드 상태 확인 실패 (분리 계속 진행): $e');
+      // 업로드 서비스 접근 실패 시에도 분리는 진행 (안전을 위해)
+    }
+
     final rowNode = document.getNodeById(rowId);
     if (rowNode == null || rowNode is! ImageRowNode) {
       debugPrint('[EditorService] ❌ 분리 실패: Row 노드를 찾을 수 없음');
@@ -3808,6 +3859,142 @@ class EditorService extends ChangeNotifier {
 
       debugPrint(
         '[EditorService] ✅ 이미지 분리 완료: newImageId=$newImageId, insertIndex=${insertIndex ?? rowIndex}',
+      );
+      return newImageId;
+    } finally {
+      _isExecutingHistory = false;
+      _saveCurrentState(immediate: true);
+      notifyListeners(); // 🎯 최종: 한 번만 호출
+    }
+  }
+
+  /// PageView 이미지 행에서 특정 이미지를 분리하고 분리된 이미지 ID 반환
+  /// insertIndex가 주어지면 해당 위치에 바로 삽입한다. 주어지지 않으면 PageView의 위치에 삽입.
+  String? splitImageFromPageView(
+    String pageViewId,
+    int imageIndex, {
+    int? insertIndex,
+  }) {
+    debugPrint(
+      '[EditorService] ✂️ PageView 이미지 분리 시작: pageViewId=$pageViewId, imageIndex=$imageIndex, insertIndex=$insertIndex',
+    );
+
+    // 🎯 업로드 중인 경우 분리 차단 (메모리 누수 방지)
+    try {
+      final uploadService = _context?.read<UploadService>();
+      if (uploadService != null &&
+          uploadService.hasActiveUploadForRef(pageViewId)) {
+        debugPrint(
+          '[EditorService] ⚠️ 이미지 분리 차단: pageViewId=$pageViewId에 대한 업로드가 진행 중입니다',
+        );
+        return null;
+      }
+    } catch (e) {
+      debugPrint('[EditorService] ⚠️ 업로드 상태 확인 실패 (분리 계속 진행): $e');
+      // 업로드 서비스 접근 실패 시에도 분리는 진행 (안전을 위해)
+    }
+
+    final pageViewNode = document.getNodeById(pageViewId);
+    if (pageViewNode == null || pageViewNode is! PageViewImageNode) {
+      debugPrint('[EditorService] ❌ 분리 실패: PageView 노드를 찾을 수 없음');
+      return null;
+    }
+    if (imageIndex < 0 || imageIndex >= pageViewNode.imageUrls.length) {
+      debugPrint(
+        '[EditorService] ❌ 분리 실패: 이미지 인덱스 범위 초과 (imageIndex=$imageIndex, pageViewLength=${pageViewNode.imageUrls.length})',
+      );
+      return null;
+    }
+
+    // 분리할 이미지 URL
+    final imageUrl = pageViewNode.imageUrls[imageIndex];
+    debugPrint('[EditorService] 📋 분리할 이미지 URL: $imageUrl');
+    debugPrint('[EditorService] 📋 기존 PageView 이미지: ${pageViewNode.imageUrls}');
+
+    // 🎯 분리할 이미지의 메타데이터 추출 (공통 함수 사용)
+    final pageViewMeta = pageViewNode.metadata;
+    final splitImageMetadata = _filterMetadataForUrls(pageViewMeta, [imageUrl]);
+    debugPrint(
+      '[EditorService] 📦 분리할 이미지 메타데이터: keys=${splitImageMetadata.keys.toList()}',
+    );
+
+    // PageView의 인덱스 찾기
+    int pageViewIndex = -1;
+    for (int i = 0; i < document.length; i++) {
+      if (document.getNodeAt(i)?.id == pageViewId) {
+        pageViewIndex = i;
+        break;
+      }
+    }
+    if (pageViewIndex == -1) return null;
+
+    // 분리할 이미지의 새 ID 생성
+    final newImageId = 'image_${DateTime.now().millisecondsSinceEpoch}';
+    final newImageNode = AppImageNode(
+      id: newImageId,
+      imageUrl: imageUrl,
+      metadata: splitImageMetadata,
+    );
+    debugPrint(
+      '[EditorService] 🆕 분리된 이미지 노드 생성: id=$newImageId, metadata=${splitImageMetadata.keys.toList()}',
+    );
+
+    // PageView에서 해당 이미지 제거
+    final remainingUrls = List<String>.from(pageViewNode.imageUrls);
+    remainingUrls.removeAt(imageIndex);
+    debugPrint(
+      '[EditorService] 📋 분리 후 남은 이미지: $remainingUrls (${remainingUrls.length}개)',
+    );
+
+    // 🎯 이미지 분리 작업 중에는 히스토리 추적 일시 중단
+    _isExecutingHistory = true;
+
+    try {
+      // 🎯 남은 이미지들의 메타데이터 필터링
+      final remainingMetadata = _filterMetadataForUrls(
+        pageViewMeta,
+        remainingUrls,
+      );
+      debugPrint(
+        '[EditorService] 📦 남은 이미지 메타데이터: keys=${remainingMetadata.keys.toList()}',
+      );
+
+      if (remainingUrls.isEmpty) {
+        // 이미지가 없으면 PageView 삭제
+        document.deleteNode(pageViewId);
+        debugPrint('[EditorService] 🗑️ 빈 PageView 삭제: pageViewId=$pageViewId');
+      } else {
+        // PageView 업데이트 (메타데이터도 함께 업데이트)
+        // 🎯 PageView는 최소 1개 이상이어야 하므로 1개만 남아도 PageView 유지
+        final updatedPageViewNode = pageViewNode.copyWith(
+          imageUrls: remainingUrls,
+          metadata: remainingMetadata.isNotEmpty ? remainingMetadata : null,
+        );
+        debugPrint(
+          '[EditorService] ✅ PageView 업데이트: pageViewId=$pageViewId, imageUrls=${remainingUrls.length}개, metadata keys=${remainingMetadata.keys.toList()}',
+        );
+
+        final int targetInsertIndex = insertIndex ?? pageViewIndex;
+        editor.execute([
+          ReplaceNodeRequest(
+            existingNodeId: pageViewId,
+            newNode: updatedPageViewNode,
+          ),
+          InsertNodeAtIndexRequest(
+            nodeIndex: targetInsertIndex,
+            newNode: newImageNode,
+          ),
+        ]);
+      }
+
+      // ✅ remainingUrls.isEmpty인 케이스(삭제)만 기존 경로 유지: 여기서는 insert만 수행
+      if (remainingUrls.isEmpty) {
+        final int targetInsertIndex = insertIndex ?? pageViewIndex;
+        document.insertNodeAt(targetInsertIndex, newImageNode);
+      }
+
+      debugPrint(
+        '[EditorService] ✅ PageView 이미지 분리 완료: newImageId=$newImageId, insertIndex=${insertIndex ?? pageViewIndex}',
       );
       return newImageId;
     } finally {
@@ -4010,13 +4197,13 @@ class EditorService extends ChangeNotifier {
     if (insertingAtEnd) {
       final String paragraphId = 'p_${DateTime.now().millisecondsSinceEpoch}';
       // 직전 문단의 정렬을 승계
-      final String? inheritedAlign = _getPreviousParagraphAlign(insertIndex);
+      final String inheritedAlign = _getInheritedParagraphAlignOrDefault(
+        insertIndex,
+      );
       final ParagraphNode trailingParagraph = ParagraphNode(
         id: paragraphId,
         text: AttributedText(''),
-        metadata: <String, dynamic>{
-          if (inheritedAlign != null) 'textAlign': inheritedAlign,
-        },
+        metadata: <String, dynamic>{'textAlign': inheritedAlign},
       );
       edits.add(
         InsertNodeAtIndexRequest(
@@ -4053,6 +4240,15 @@ class EditorService extends ChangeNotifier {
     }
   }
 
+  static const String _kDefaultParagraphAlign = 'center';
+
+  /// ✅ 새로 삽입되는 문단/트레일링 문단의 textAlign이 비면,
+  /// `CustomParagraphComponentBuilder`가 기본값(=left)으로 렌더링한다.
+  /// "첫 줄에서 갑자기 왼쪽으로 튐"을 막기 위해 삽입 시에는 기본(center)을 명시한다.
+  String _getInheritedParagraphAlignOrDefault(int beforeIndex) {
+    return _getPreviousParagraphAlign(beforeIndex) ?? _kDefaultParagraphAlign;
+  }
+
   String? _getPreviousParagraphAlign(int beforeIndex) {
     for (int i = beforeIndex - 1; i >= 0; i--) {
       final node = editor.document.getNodeAt(i);
@@ -4067,6 +4263,34 @@ class EditorService extends ChangeNotifier {
   }
 
   // ===== 게시 가능 여부 판정 =====
+
+  // ✅ 문서 메타데이터(textAlign)가 비어있는 순간에도 "현재 정렬"을 유지하기 위한 상태.
+  // - 툴바에서 정렬 버튼을 누르면 이 값이 갱신된다.
+  // - 삭제/복구로 인해 새 Paragraph가 생기며 textAlign이 비어있을 때 fallback으로 사용한다.
+  String _currentParagraphAlign = _kDefaultParagraphAlign;
+  String get currentParagraphAlign => _currentParagraphAlign;
+
+  void setCurrentParagraphAlignment(TextAlign alignment) {
+    _currentParagraphAlign = alignment.name;
+  }
+
+  /// 문서에서 첫 ParagraphNode의 textAlign 메타를 읽어 "현재 정렬"을 동기화한다.
+  /// - 드래프트 로드/스냅샷 복원 직후처럼 문서가 갈아끼워진 경우에도 정렬 fallback이 어긋나지 않도록.
+  /// - textAlign 메타가 전혀 없으면(=기본 렌더링 의존) 기존 값을 유지한다.
+  void _syncCurrentParagraphAlignmentFromDocument() {
+    try {
+      for (int i = 0; i < document.nodeCount; i++) {
+        final node = document.getNodeAt(i);
+        if (node is ParagraphNode) {
+          final v = node.metadata['textAlign'];
+          if (v is String && v.isNotEmpty) {
+            _currentParagraphAlign = v;
+          }
+          return;
+        }
+      }
+    } catch (_) {}
+  }
 
   // 삽입된 문단 한 건만 이전 문단 정렬을 승계(O(1))
   void _ensureParagraphAlignmentForIndex(int index) {
@@ -4083,15 +4307,21 @@ class EditorService extends ChangeNotifier {
       final prev = document.getNodeAt(i);
       if (prev is ParagraphNode) {
         final String? prevAlign = prev.metadata['textAlign'] as String?;
+        // ✅ 바로 위 문단이 기본 정렬(=metadata null)인 경우가 많아서,
+        // null이면 계속 위로 올라가며 "실제 설정된(textAlign!=null)" 정렬을 찾는다.
         if (prevAlign != null) {
           previousAlign = prevAlign;
+          break;
         }
-        break;
       }
     }
 
     // ✅ 이전 문단이 없으면 첫 문단까지 강제로 center를 넣지 않는다.
-    if (previousAlign == null) return;
+    if (previousAlign == null) {
+      // ✅ 문서에 textAlign 메타가 하나도 없으면 추론이 불가능하므로,
+      // 에디터가 인지하고 있는 "현재 정렬"을 fallback으로 사용한다.
+      previousAlign = _currentParagraphAlign;
+    }
 
     meta['textAlign'] = previousAlign;
     final replaced = ParagraphNode(
@@ -4249,8 +4479,6 @@ class _DocumentSnapshot {
           _attributedTextStableHash(node.text),
           meta['textAlign'],
           meta['isTitle'],
-          meta['mention'],
-          _stableValueHash(meta['usernames']),
           meta['fontFamily'],
         );
       }
@@ -4338,6 +4566,87 @@ class _DocumentSnapshot {
   int get hashCode => _cachedHashCode;
 }
 
+/// 범위 삭제 시 caret/selection 보정을 위한 공용 유틸.
+///
+/// - iOS IME/컨트롤 레이어가 "삭제된 nodeId를 가리키는 selection"을 관찰하면 크래시/커서 튐이 날 수 있어
+///   삭제 전에 selection을 안전한 위치로 collapse/clear 하는 것이 중요하다.
+/// - 삭제 후 caret이 특수노드에 걸리는 경우, 가장 가까운 Paragraph로 이동시키고,
+///   필요하면 trailing 빈 문단을 추가한다.
+class _DeletionCaretUtils {
+  const _DeletionCaretUtils._();
+
+  static DocumentPosition? pickSafeCaretBeforeDeletion(
+    Document doc, {
+    required DocumentSelection selection,
+    required Set<String> coveredSpecialNodeIds,
+    required DocumentPosition? caretAfterDeletion,
+  }) {
+    // 1) caretAfterDeletion이 이미 계산되어 있고, 그 node가 삭제 대상이 아니면 최우선
+    if (caretAfterDeletion != null) {
+      final n = doc.getNodeById(caretAfterDeletion.nodeId);
+      if (n != null &&
+          !coveredSpecialNodeIds.contains(caretAfterDeletion.nodeId)) {
+        return caretAfterDeletion;
+      }
+    }
+
+    // 2) extent가 삭제 대상이 아니면 extent로 collapse
+    final extentNode = doc.getNodeById(selection.extent.nodeId);
+    if (extentNode != null &&
+        !coveredSpecialNodeIds.contains(selection.extent.nodeId)) {
+      return selection.extent;
+    }
+
+    // 3) base가 삭제 대상이 아니면 base
+    final baseNode = doc.getNodeById(selection.base.nodeId);
+    if (baseNode != null &&
+        !coveredSpecialNodeIds.contains(selection.base.nodeId)) {
+      return selection.base;
+    }
+
+    return null;
+  }
+
+  static DocumentPosition resolveCaretIntoParagraph(
+    Document doc,
+    DocumentPosition caret, {
+    required bool Function(DocumentNode node) isSpecialNode,
+    required String currentParagraphAlign,
+  }) {
+    final node = doc.getNodeById(caret.nodeId);
+    if (node == null) return caret;
+    if (node is ParagraphNode) return caret;
+    if (!isSpecialNode(node)) return caret;
+
+    final idx = doc.getNodeIndexById(node.id);
+    if (idx != -1) {
+      for (int i = idx + 1; i < doc.nodeCount; i++) {
+        final n = doc.getNodeAt(i);
+        if (n is ParagraphNode) {
+          return DocumentPosition(
+            nodeId: n.id,
+            nodePosition: const TextNodePosition(offset: 0),
+          );
+        }
+      }
+    }
+
+    // 문서 뒤에 문단이 하나도 없으면 trailing 빈 문단을 추가하고 그쪽으로 caret 이동
+    if (doc is! MutableDocument) return caret;
+    final paragraphId = 'p_${DateTime.now().microsecondsSinceEpoch}';
+    final trailing = ParagraphNode(
+      id: paragraphId,
+      text: AttributedText(''),
+      metadata: <String, dynamic>{'textAlign': currentParagraphAlign},
+    );
+    doc.insertNodeAt(doc.nodeCount, trailing);
+    return DocumentPosition(
+      nodeId: paragraphId,
+      nodePosition: const TextNodePosition(offset: 0),
+    );
+  }
+}
+
 /// DeleteContentRequest(범위 삭제)에서 특수노드가 누락되는 케이스를 보완하기 위한 커맨드.
 ///
 /// - 기본 DeleteContentCommand를 먼저 실행하여 텍스트/일반 노드를 삭제한다.
@@ -4356,6 +4665,8 @@ class _DeleteContentAndSpecialNodesCommand extends EditCommand {
     required this.finalizeBatchDeleteHistory,
     required this.ensureParagraphAlignmentForNodeId,
     required this.markSpecialNodeExplicitlyDeleted,
+    required this.isSpecialNode,
+    required this.currentParagraphAlign,
   });
 
   final DocumentRange documentRange;
@@ -4369,6 +4680,8 @@ class _DeleteContentAndSpecialNodesCommand extends EditCommand {
   final VoidCallback finalizeBatchDeleteHistory;
   final void Function(String nodeId) ensureParagraphAlignmentForNodeId;
   final void Function(String nodeId) markSpecialNodeExplicitlyDeleted;
+  final bool Function(DocumentNode node) isSpecialNode;
+  final String currentParagraphAlign;
 
   @override
   HistoryBehavior get historyBehavior => HistoryBehavior.undoable;
@@ -4395,6 +4708,34 @@ class _DeleteContentAndSpecialNodesCommand extends EditCommand {
             document: doc,
             selection: selectionForCaretCalculation,
           );
+
+      // ✅ iOS IME/컨트롤 레이어가 "삭제된 노드를 가리키는 selection"을 직렬화/레이아웃하는 순간
+      // super_editor 내부에서 null-assertion 크래시가 발생할 수 있다.
+      // 따라서 실제 삭제 전에 selection을 안전한 위치로 먼저 collapse/clear 한다.
+      final safeCaretBeforeDeletion =
+          _DeletionCaretUtils.pickSafeCaretBeforeDeletion(
+            doc,
+            selection: selectionForCaretCalculation,
+            coveredSpecialNodeIds: coveredSpecialNodeIds,
+            caretAfterDeletion: caretAfterDeletion,
+          );
+      if (safeCaretBeforeDeletion != null) {
+        executor.executeCommand(
+          ChangeSelectionCommand(
+            DocumentSelection.collapsed(position: safeCaretBeforeDeletion),
+            SelectionChangeType.placeCaret,
+            SelectionReason.userInteraction,
+          ),
+        );
+      } else {
+        executor.executeCommand(
+          const ChangeSelectionCommand(
+            null,
+            SelectionChangeType.clearSelection,
+            SelectionReason.userInteraction,
+          ),
+        );
+      }
 
       // 🎯 DeleteContentCommand로 삭제될 수 있는(=deletable) 특수노드는 미리 명시적 삭제 표시
       // (NodeRemovedEvent에서 복원 로직이 먼저 실행되는 걸 방지)
@@ -4427,9 +4768,15 @@ class _DeleteContentAndSpecialNodesCommand extends EditCommand {
 
       // 3) selection 정리
       if (caretAfterDeletion != null) {
+        final resolvedCaret = _DeletionCaretUtils.resolveCaretIntoParagraph(
+          doc,
+          caretAfterDeletion,
+          isSpecialNode: isSpecialNode,
+          currentParagraphAlign: currentParagraphAlign,
+        );
         executor.executeCommand(
           ChangeSelectionCommand(
-            DocumentSelection.collapsed(position: caretAfterDeletion),
+            DocumentSelection.collapsed(position: resolvedCaret),
             SelectionChangeType.deleteContent,
             SelectionReason.userInteraction,
           ),
@@ -4437,7 +4784,7 @@ class _DeleteContentAndSpecialNodesCommand extends EditCommand {
 
         // ✅ 삭제 직후 커서가 앉는 문단의 정렬 메타데이터가 비어있으면 즉시 보정
         // (입력 1글자 후에야 정렬이 "원래대로" 돌아오는 현상 방지)
-        ensureParagraphAlignmentForNodeId(caretAfterDeletion.nodeId);
+        ensureParagraphAlignmentForNodeId(resolvedCaret.nodeId);
       } else {
         executor.executeCommand(
           const ChangeSelectionCommand(
@@ -4473,6 +4820,8 @@ class _DeleteSelectionAndSpecialNodesCommand extends EditCommand {
     required this.finalizeBatchDeleteHistory,
     required this.ensureParagraphAlignmentForNodeId,
     required this.markSpecialNodeExplicitlyDeleted,
+    required this.isSpecialNode,
+    required this.currentParagraphAlign,
   });
 
   final TextAffinity affinity;
@@ -4486,38 +4835,8 @@ class _DeleteSelectionAndSpecialNodesCommand extends EditCommand {
   final VoidCallback finalizeBatchDeleteHistory;
   final void Function(String nodeId) ensureParagraphAlignmentForNodeId;
   final void Function(String nodeId) markSpecialNodeExplicitlyDeleted;
-
-  DocumentPosition? _pickSafeCaretBeforeDeletion(
-    Document doc, {
-    required DocumentSelection selection,
-    required Set<String> coveredSpecialNodeIds,
-    required DocumentPosition? caretAfterDeletion,
-  }) {
-    // 1) caretAfterDeletion이 이미 계산되어 있고, 그 node가 삭제 대상이 아니면 최우선
-    if (caretAfterDeletion != null) {
-      final n = doc.getNodeById(caretAfterDeletion.nodeId);
-      if (n != null &&
-          !coveredSpecialNodeIds.contains(caretAfterDeletion.nodeId)) {
-        return caretAfterDeletion;
-      }
-    }
-
-    // 2) extent가 텍스트 노드 쪽이라면(대부분의 케이스), extent로 collapse (삭제 range는 별도로 유지)
-    final extentNode = doc.getNodeById(selection.extent.nodeId);
-    if (extentNode != null &&
-        !coveredSpecialNodeIds.contains(selection.extent.nodeId)) {
-      return selection.extent;
-    }
-
-    // 3) base가 삭제 대상이 아니면 base
-    final baseNode = doc.getNodeById(selection.base.nodeId);
-    if (baseNode != null &&
-        !coveredSpecialNodeIds.contains(selection.base.nodeId)) {
-      return selection.base;
-    }
-
-    return null;
-  }
+  final bool Function(DocumentNode node) isSpecialNode;
+  final String currentParagraphAlign;
 
   // DeleteSelectionRequest는 affinity 방향(아래→위 vs 위→아래)에 따라 내부 로직이 달라지고,
   // 특수 노드(start 경계 포함) 케이스에서 DeleteSelectionCommand가 null-assertion 크래시를 내는 경우가 있어
@@ -4614,12 +4933,13 @@ class _DeleteSelectionAndSpecialNodesCommand extends EditCommand {
       // ✅ iOS IME/컨트롤 레이어가 "삭제된 노드를 가리키는 selection"을 직렬화/레이아웃하는 순간
       // super_editor 내부에서 null-assertion 크래시가 발생할 수 있다.
       // 따라서 실제 삭제 전에 selection을 안전한 위치로 먼저 collapse/clear 한다.
-      final safeCaretBeforeDeletion = _pickSafeCaretBeforeDeletion(
-        doc,
-        selection: selectionForDeletion,
-        coveredSpecialNodeIds: coveredSpecialNodeIds,
-        caretAfterDeletion: caretAfterDeletion,
-      );
+      final safeCaretBeforeDeletion =
+          _DeletionCaretUtils.pickSafeCaretBeforeDeletion(
+            doc,
+            selection: selectionForDeletion,
+            coveredSpecialNodeIds: coveredSpecialNodeIds,
+            caretAfterDeletion: caretAfterDeletion,
+          );
       if (safeCaretBeforeDeletion != null) {
         executor.executeCommand(
           ChangeSelectionCommand(
@@ -4666,14 +4986,20 @@ class _DeleteSelectionAndSpecialNodesCommand extends EditCommand {
 
       // 3) selection 정리
       if (caretAfterDeletion != null) {
+        final resolvedCaret = _DeletionCaretUtils.resolveCaretIntoParagraph(
+          doc,
+          caretAfterDeletion,
+          isSpecialNode: isSpecialNode,
+          currentParagraphAlign: currentParagraphAlign,
+        );
         executor.executeCommand(
           ChangeSelectionCommand(
-            DocumentSelection.collapsed(position: caretAfterDeletion),
+            DocumentSelection.collapsed(position: resolvedCaret),
             SelectionChangeType.deleteContent,
             SelectionReason.userInteraction,
           ),
         );
-        ensureParagraphAlignmentForNodeId(caretAfterDeletion.nodeId);
+        ensureParagraphAlignmentForNodeId(resolvedCaret.nodeId);
       } else {
         executor.executeCommand(
           const ChangeSelectionCommand(

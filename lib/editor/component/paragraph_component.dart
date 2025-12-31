@@ -1,4 +1,3 @@
-import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/animated_drop_line.dart';
 import 'package:doppy/theme/app_colors.dart';
@@ -10,6 +9,7 @@ import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:doppy/editor/utils/drop_line_config.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/editor/style/text_attributions.dart';
 
@@ -58,11 +58,13 @@ class CustomParagraphComponentBuilder implements ComponentBuilder {
       final node = editorService.editor.document.getNodeById(
         componentViewModel.nodeId,
       );
-      if (node is ParagraphNode && node.metadata['isDivider'] == true) {
-        return _DividerDocumentComponent(
-          nodeId: componentViewModel.nodeId,
-          componentKey: componentContext.componentKey,
-        );
+      if (node is ParagraphNode) {
+        if (node.metadata['isDivider'] == true) {
+          return _DividerDocumentComponent(
+            nodeId: componentViewModel.nodeId,
+            componentKey: componentContext.componentKey,
+          );
+        }
       }
     } catch (_) {}
 
@@ -291,37 +293,13 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
       builder: (context, _) {
         // 🎯 builder 내부에서 계산해야(값 캡처 방지) 토글 직후 바로 반영됨
         final hasSpoiler = _hasSpoilerAttribution();
-        // 🎯 편집 모드에서만 드래그 라인 계산 (성능 최적화)
-        bool showTop = false;
-        bool showBottom = false;
-
-        final currentIndex = widget.dragService.getNodeIndex(widget.nodeId);
-        final dropIndex = widget.dragService.dropIndex;
-        final isSelf = widget.dragService.draggingNodeId == widget.nodeId;
-        final documentLength = widget.editorService.document.length;
-        final isLastNode = currentIndex == documentLength - 1;
-
-        showTop =
-            dropIndex != null &&
-            !isSelf &&
-            currentIndex != -1 &&
-            dropIndex == currentIndex;
-
-        if (isLastNode && dropIndex != null && !isSelf && currentIndex != -1) {
-          showBottom = dropIndex == documentLength;
-        }
-
-        if (showTop) {
-          try {
-            final doc = widget.editorService.document;
-            if (currentIndex - 1 >= 0) {
-              final prev = doc.getNodeAt(currentIndex - 1);
-              if (NodeTypeChecker.isSpecialNode(prev)) {
-                showTop = false;
-              }
-            }
-          } catch (_) {}
-        }
+        // ✅ 드롭라인 표시는 공통 정책(DropLineConfig)으로 통일
+        final flags = DropLineConfig.resolve(
+          nodeId: widget.nodeId,
+          dragService: widget.dragService,
+        );
+        final bool showTop = flags.top;
+        final bool showBottom = flags.bottom;
 
         Widget content = DefaultTextStyle.merge(
           textAlign: _resolveTextAlign(),
@@ -527,11 +505,11 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
             if (showTop)
               Positioned(
                 top: 0,
-                left: 20,
-                right: 20,
+                left: 50,
+                right: 50,
                 child: AnimatedDropLine(
                   child: const SizedBox(
-                    height: 4,
+                    height: 5,
                     child: ColoredBox(color: AppColors.primary),
                   ),
                 ),
@@ -539,11 +517,11 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
             if (showBottom)
               Positioned(
                 bottom: 0,
-                left: 20,
-                right: 20,
+                left: 50,
+                right: 50,
                 child: AnimatedDropLine(
                   child: const SizedBox(
-                    height: 4,
+                    height: 5,
                     child: ColoredBox(color: AppColors.primary),
                   ),
                 ),
@@ -566,27 +544,8 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
       child: KeyedSubtree(key: _subtreeKey, child: widget.child),
     );
 
-    // 멘션 탭 처리
+    // TODO: MentionNode로 전환 후 탭 처리 예정
     Widget wrappedContent = content;
-    try {
-      final node = widget.editorService.editor.document.getNodeById(
-        widget.nodeId,
-      );
-      if (node is ParagraphNode &&
-          node.metadata['mention'] == true &&
-          widget.onMentionTap != null) {
-        final List<String> names =
-            ((node.metadata['usernames'] as List?)
-                ?.map((e) => e.toString())
-                .toList()) ??
-            _extractUsernamesFromText(node.text.text);
-        wrappedContent = GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => widget.onMentionTap?.call(names),
-          child: content,
-        );
-      }
-    } catch (_) {}
 
     // ✅ 보기 모드에서도 형광펜(HighlightAttribution)은 렌더링해야 한다.
     // 기존 구현은 스포일러만 처리해서 형광펜이 "아예" 안 보였음.
@@ -894,15 +853,7 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
     }
   }
 
-  List<String> _extractUsernamesFromText(String text) {
-    if (text.isEmpty) return const [];
-    return text
-        .split('\n')
-        .map((e) => e.trim())
-        .where((e) => e.startsWith('@') && e.length > 1)
-        .map((e) => e.substring(1))
-        .toList();
-  }
+  // NOTE: 예전 멘션 처리 로직의 잔재. 현재는 사용하지 않으므로 제거.
 }
 
 /// 🎯 스포일러가 있는 읽기 모드 패러그래프 전용 위젯

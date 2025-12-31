@@ -5,6 +5,8 @@ import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/data/services/r2_upload_service.dart';
 import 'package:doppy/editor/utils/video_upload_utils.dart';
+import 'package:doppy/image/video_trim_spec.dart';
+import 'package:doppy/image/video_edit_spec.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
@@ -1099,6 +1101,8 @@ class UploadService with ChangeNotifier {
     String? existingNodeId, // 🎯 이미 생성된 노드 ID (선택적)
     String? editorId, // 🎯 에디터 ID (압축 취소용)
     String? initialThumbnailPath, // 🎯 트림 시 추출한 썸네일 경로 (선택적)
+    VideoTrimSpec? trimSpec, // 🎯 트림 스펙 (FFmpeg 1회 처리를 위해)
+    VideoEditSpec? editSpec, // 🎯 편집 스펙 (FFmpeg 1회 처리를 위해)
   }) async {
     // 🎯 즉시 로그 출력 (메서드 진입 시점 확인)
     debugPrint('[UploadService] 🎬 에디터 영상 업로드 시작: ${file.path}');
@@ -1180,12 +1184,15 @@ class UploadService with ChangeNotifier {
 
         // 3. 썸네일 생성 (비동기, 완료되면 노드 업데이트)
         // 🎯 트림 시 이미 썸네일이 추출되었으면 스킵
+        // 🎯 FFmpeg 전에 빠르게 썸네일 생성 (trim 구간 프레임 + 이미지 필터/크롭 적용)
         if (initialThumbnailPath == null || initialThumbnailPath.isEmpty) {
           _generateThumbnailAsync(
             file.path,
             nodeId,
             onUpdateThumbnail,
             isMounted,
+            trimSpec: trimSpec,
+            editSpec: editSpec,
           );
         } else {
           debugPrint('[UploadService] ⏭️ 썸네일 이미 있음 - 생성 스킵');
@@ -1217,6 +1224,7 @@ class UploadService with ChangeNotifier {
 
   /// 비디오 압축 및 업로드 (비동기 처리)
   /// 🎯 노드가 유효한 경우에만 압축/업로드 진행
+  /// 🎯 trim+edit+압축을 한 번의 FFmpeg로 처리
   Future<void> _compressAndUploadVideo({
     required File file,
     required String nodeId,
@@ -1235,6 +1243,8 @@ class UploadService with ChangeNotifier {
     required Future<void> Function(String title, String message)
     showErrorDialog,
     String? editorId, // 🎯 에디터 ID (압축 취소용)
+    VideoTrimSpec? trimSpec, // 🎯 트림 스펙
+    VideoEditSpec? editSpec, // 🎯 편집 스펙
   }) async {
     // 🎯 노드 유효성 확인
     if (nodeId.isEmpty) {
@@ -1272,6 +1282,8 @@ class UploadService with ChangeNotifier {
         file.path,
         editorId: editorId,
         refId: nodeId, // 🎯 refId 전달하여 개별 취소 가능하도록
+        trimSpec: trimSpec,
+        editSpec: editSpec,
       );
 
       // 🎯 취소 확인 (압축 완료 후)
@@ -1404,9 +1416,15 @@ class UploadService with ChangeNotifier {
     String videoPath,
     String placeholderId,
     void Function(String placeholderId, String thumbnailPath) onUpdateThumbnail,
-    bool Function() isMounted,
-  ) {
-    VideoUploadUtils.generateThumbnail(videoPath)
+    bool Function() isMounted, {
+    VideoTrimSpec? trimSpec,
+    VideoEditSpec? editSpec,
+  }) {
+    VideoUploadUtils.generateThumbnail(
+          videoPath,
+          trimSpec: trimSpec,
+          editSpec: editSpec,
+        )
         .then((thumbnail) {
           if (thumbnail != null && isMounted()) {
             onUpdateThumbnail(placeholderId, thumbnail.path);
@@ -1424,6 +1442,8 @@ class UploadService with ChangeNotifier {
     String videoPath, {
     String? editorId,
     String? refId,
+    VideoTrimSpec? trimSpec,
+    VideoEditSpec? editSpec,
   }) async {
     // 🎯 refId별 토큰 생성 (개별 취소용)
     // 이미 취소된 토큰이 있으면 즉시 null 반환
@@ -1472,6 +1492,8 @@ class UploadService with ChangeNotifier {
       return await VideoUploadUtils.compressVideo(
         videoPath,
         cancellationToken: effectiveToken,
+        trimSpec: trimSpec,
+        editSpec: editSpec,
       );
     } finally {
       // 완료 후 토큰 제거

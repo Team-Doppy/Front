@@ -1,6 +1,9 @@
 import 'package:doppy/editor/service/drag_service.dart';
-import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
+import 'package:doppy/editor/component/pageview_image_component.dart';
+import 'package:doppy/editor/utils/node_type_checker.dart';
+import 'package:doppy/editor/nodes/mention_node.dart';
+import 'package:super_editor/super_editor.dart';
 
 /// 🎯 드롭 라인 표시 규칙을 중앙에서 관리하는 Config
 /// 모든 컴포넌트(SingleImage, RowImage, PageViewImage, Clip, Link)가 이 규칙을 주입받아 사용
@@ -20,233 +23,211 @@ import 'package:doppy/editor/component/row_image_component.dart';
 class DropLineConfig {
   DropLineConfig._();
 
-  /// ===== 위쪽 드롭 라인 =====
+  /// MentionNode는 드롭라인 규칙에서는 "텍스트(Paragraph)"처럼 취급한다.
+  /// - 즉, MentionNode 자체는 특수노드가 아니지만
+  /// - 특수노드↔텍스트 경계에서 라인을 "특수노드의 bottom"으로 옮기는 예외 규칙에는 포함된다.
+  static bool _isTextLikeForDropLine(DocumentNode? node) {
+    return node is ParagraphNode || node is MentionNode;
+  }
 
-  /// 위쪽 드롭 라인을 표시해야 하는지 확인
+  /// 🎯 드롭라인 판단용 특수노드 체크
+  /// MentionNode는 특수노드이지만 드롭라인 규칙에서는 일반 텍스트 노드처럼 처리
+  static bool _isSpecialNodeForDropLine(DocumentNode? node) {
+    if (node == null) return false;
+    // MentionNode는 특수노드에서 제외 (일반 텍스트 노드처럼 처리)
+    if (node is MentionNode) return false;
+    return NodeTypeChecker.isSpecialNode(node);
+  }
+
+  /// 드롭 라인 표시 결과(한 노드 기준).
+  ///
+  /// - 핵심 입력은 `dragService.dropTarget` 하나다.
+  /// - 나머지(현재 노드 인덱스/문서 길이/row fullness)는 렌더링을 위해 필요한 파생 정보.
+  static ({bool top, bool bottom, bool left, bool right}) resolve({
+    required String nodeId,
+    required DragService? dragService,
+  }) {
+    if (dragService == null) {
+      return (top: false, bottom: false, left: false, right: false);
+    }
+
+    final dt = dragService.dropTarget;
+    switch (dt.kind) {
+      case DropTargetKind.none:
+        return (top: false, bottom: false, left: false, right: false);
+
+      case DropTargetKind.insertBetweenNodes:
+        final currentNodeIndex = dragService.getNodeIndex(nodeId);
+        if (currentNodeIndex == -1) {
+          return (top: false, bottom: false, left: false, right: false);
+        }
+
+        final insertIndex = dt.insertIndex;
+        if (insertIndex == null) {
+          return (top: false, bottom: false, left: false, right: false);
+        }
+
+        final doc = dragService.editorService.document;
+        final docLen = doc.length;
+
+        // 🎯 자기 자신을 드래그할 때 자기 위치의 드롭라인 숨김
+        // - insertIndex == draggingNodeIndex: 자기 노드 위에 삽입 (원래 위치 위) → 자기 노드의 top 드롭라인 숨김
+        // - insertIndex == draggingNodeIndex + 1: 자기 노드 아래에 삽입 (원래 위치 아래) → 자기 노드의 bottom 드롭라인 숨김
+        // 🎯 예외: 로우 이미지 분리나 페이지뷰 분리 중에는 자기 위치에서도 드롭라인 표시 허용
+        final draggingNodeId = dragService.draggingNodeId;
+        if (draggingNodeId != null) {
+          // 분리 작업 중이 아닐 때만 자기 위치 드롭라인 숨김
+          final isSplitting =
+              dragService.hasSplitImageInfo || dragService.hasSplitPageViewInfo;
+          if (!isSplitting) {
+            final draggingNodeIndex = dragService.getNodeIndex(draggingNodeId);
+            if (draggingNodeIndex != -1) {
+              // ✅ "자기 위치" 드롭라인 숨김의 기준은 "드롭라인이 실제로 표시되는 노드"다.
+              // 현재 정책은 insertIndex == currentNodeIndex 인 노드의 top에 라인을 띄우므로,
+              // insertIndex가 "원래 자리"(draggingIndex 또는 draggingIndex+1)일 때는
+              // currentNodeIndex == insertIndex 인 노드에서 라인을 숨겨야 한다.
+              final isOriginalSlot =
+                  insertIndex == draggingNodeIndex ||
+                  insertIndex == draggingNodeIndex + 1;
+              if (isOriginalSlot) {
+                // ✅ "원래 자리" 드롭라인 숨김은 라인이 어느 노드에 표시되든(텍스트 top / 특수노드 bottom)
+                // 동일하게 적용되어야 한다.
+                //
+                // - 기본 정책: insertIndex==currentNodeIndex 인 노드의 top
+                // - 예외 정책(특수노드 아래 텍스트): insertIndex==currentNodeIndex+1 인 특수노드의 bottom
+                final bool isLineHostForThisInsertIndex =
+                    // top 라인 host
+                    currentNodeIndex == insertIndex ||
+                    // bottom 라인 host (특수노드 bottom으로 옮겨 그리는 케이스)
+                    (currentNodeIndex == insertIndex - 1 &&
+                        currentNodeIndex + 1 < docLen &&
+                        _isSpecialNodeForDropLine(
+                          doc.getNodeAt(currentNodeIndex),
+                        ) &&
+                        _isTextLikeForDropLine(
+                          doc.getNodeAt(currentNodeIndex + 1),
+                        )) ||
+                    // 문서 끝 삽입: 마지막 노드 bottom
+                    (insertIndex == docLen && currentNodeIndex == docLen - 1);
+
+                if (isLineHostForThisInsertIndex) {
+                  return (top: false, bottom: false, left: false, right: false);
+                }
+              }
+            }
+          }
+        }
+
+        // 🎯 드롭라인 표시는 insertIndex 기준으로 계산
+        // - computeDropInfo()에서 finalCandidate != null이면 DropTarget.insertBetweenNodes(validDropIndex) 설정
+        // - split cancel zone에서는 finalCandidate = null이 되어 insertIndex가 설정되지 않음
+        // - endDrag()에서 dragMode == DragType.reorder && validDropIndex != null이면 insertIndex 전달하여 분리
+        // 따라서 insertIndex가 있으면 드롭라인 표시하고, endDrag()에서도 분리됨
+
+        // ✅ 정책: "삽입 지점"에는 항상 수평 라인 1개만 표시한다.
+        // - 일반 케이스: insertIndex == currentNodeIndex 인 노드의 "top"에만 표시 (다음 노드의 상단)
+        // - 문서 끝 삽입(insertIndex == docLen): 마지막 노드의 "bottom"에만 표시
+        bool top = insertIndex == currentNodeIndex;
+        bool bottom = (currentNodeIndex == docLen - 1 && insertIndex == docLen);
+
+        // ✅ 예외(요구사항):
+        // 특수노드 바로 아래에 텍스트(Paragraph)가 붙어있을 때,
+        // 라인을 텍스트의 top이 아니라 "특수노드의 bottom"으로 띄운다.
+        //
+        // 1) insertIndex == currentNodeIndex(=현재 노드 위 삽입)인데,
+        //    직전 노드가 특수노드이고, 현재 노드가 텍스트(Paragraph/Mention)일 때만
+        //    현재 노드의 top 라인을 숨긴다. (특수노드의 bottom 라인으로 대체될 예정)
+        //    🎯 단, 현재 노드가 특수노드(이미지 등)이면 top 라인을 유지한다.
+        //    🎯 MentionNode는 특수노드에서 제외 (일반 텍스트 노드처럼 처리)
+        if (top && currentNodeIndex - 1 >= 0) {
+          final prev = doc.getNodeAt(currentNodeIndex - 1);
+          final currentNode = doc.getNodeAt(currentNodeIndex);
+          // 직전이 특수노드(드롭라인 판단용)이고, 현재가 텍스트(Paragraph/Mention)일 때만 top 숨김
+          if (_isSpecialNodeForDropLine(prev) &&
+              _isTextLikeForDropLine(currentNode)) {
+            top = false;
+          }
+        }
+
+        // 2) 현재 노드가 특수노드(드롭라인 판단용)이고 insertIndex == currentNodeIndex + 1(=현재 노드 아래 삽입)이며,
+        //    아래 노드가 "텍스트(Paragraph/Mention)"면 현재 특수노드 bottom 라인을 띄운다.
+        //    (빈 문단도 포함 - 사용자 요구사항)
+        //    🎯 MentionNode는 특수노드에서 제외 (일반 텍스트 노드처럼 처리)
+        if (!bottom &&
+            insertIndex == currentNodeIndex + 1 &&
+            _isSpecialNodeForDropLine(doc.getNodeAt(currentNodeIndex))) {
+          final next =
+              (currentNodeIndex + 1 < docLen)
+                  ? doc.getNodeAt(currentNodeIndex + 1)
+                  : null;
+          if (_isTextLikeForDropLine(next)) {
+            bottom = true;
+          }
+        }
+
+        return (top: top, bottom: bottom, left: false, right: false);
+
+      case DropTargetKind.mergeIntoRow:
+        // 🎯 mergeIntoRow는 싱글 이미지/로우 모두에서 쓰이므로 targetNodeId 우선, 없으면 targetRowId로 폴백
+        final targetId = dt.targetNodeId ?? dt.targetRowId;
+        if (targetId != nodeId) {
+          return (top: false, bottom: false, left: false, right: false);
+        }
+
+        // 🎯 이미 3개가 다 차있는 로우 이미지에는 양옆 드롭라인 숨김
+        final targetNode = dragService.editorService.document.getNodeById(
+          nodeId,
+        );
+        if (targetNode is ImageRowNode && targetNode.imageUrls.length >= 3) {
+          return (top: false, bottom: false, left: false, right: false);
+        }
+
+        final isFromLeft = dt.isFromLeft;
+        return (
+          top: false,
+          bottom: false,
+          left: isFromLeft == true,
+          right: isFromLeft == false,
+        );
+      case DropTargetKind.mergeIntoPageView:
+        // PageView 병합 모드: 드롭 라인 표시 안 함 (병합은 내부 인덱스로 처리)
+        if (dt.targetRowId != nodeId) {
+          return (top: false, bottom: false, left: false, right: false);
+        }
+        // 🎯 이미 6개가 다 차있는 PageView에는 드롭라인 숨김
+        final targetNode = dragService.editorService.document.getNodeById(
+          nodeId,
+        );
+        if (targetNode is PageViewImageNode &&
+            targetNode.imageUrls.length >= 6) {
+          return (top: false, bottom: false, left: false, right: false);
+        }
+        // PageView 병합 모드는 시각적 드롭 라인 없이 처리
+        return (top: false, bottom: false, left: false, right: false);
+      case DropTargetKind.mergeMentions:
+        // 멘션 병합 미리보기: 수평 드롭라인 대신 멘션 컴포넌트 하이라이트로 처리
+        return (top: false, bottom: false, left: false, right: false);
+    }
+  }
+
+  /// ===== 위쪽 드롭 라인 =====
   static bool shouldShowTopDropLine({
     required String nodeId,
     required DragService? dragService,
-    bool isRowImage = false, // 🎯 RowImageComponent인 경우 true
+    // ignore: unused_parameter
+    bool isRowImage = false, // 🎯 기존 시그니처 유지
   }) {
-    if (dragService == null) return false;
-    final dropIndex = dragService.dropIndex;
-    if (dropIndex == null) return false;
-
-    final currentNodeIndex = dragService.getNodeIndex(nodeId);
-    if (currentNodeIndex == -1) return false;
-
-    // 🎯 로우 이미지 분리 시: **분리 대상 노드만** 예외 처리
-    if (isRowImage && dragService.hasSplitImageInfo) {
-      // 🎯 분리 대상 노드인지 확인 (draggingNodeId == 현재 nodeId)
-      final isSplitTarget = dragService.draggingNodeId == nodeId;
-      if (isSplitTarget && dropIndex == currentNodeIndex) {
-        return true; // 분리 대상 노드의 위쪽 라인 표시
-      }
-      // 🎯 분리 모드일 때 분리 대상 노드가 아니면 일반 드래그 로직 적용
-      // (다른 로우 이미지 위아래에도 드롭라인 표시 가능)
-    }
-
-    // 🎯 드래그 중인 노드가 바로 이웃한 위치에 있으면 라인 숨김
-    final draggingNodeId = dragService.draggingNodeId;
-    if (draggingNodeId != null) {
-      final draggingNodeIndex = dragService.getNodeIndex(draggingNodeId);
-      if (draggingNodeIndex != -1) {
-        // 드래그 중인 노드가 바로 위에 있으면 (현재 노드가 드래그 노드 바로 아래)
-        if (currentNodeIndex == draggingNodeIndex + 1) {
-          return false; // 이웃한 위치이므로 라인 숨김
-        }
-        // 드래그 중인 노드가 현재 노드와 같은 위치면
-        if (currentNodeIndex == draggingNodeIndex) {
-          return false; // 자기 자신이므로 라인 숨김
-        }
-      }
-    }
-
-    // 이 노드 위에 삽입하는 경우
-    if (dropIndex == currentNodeIndex) {
-      return _shouldShowTopInsertionLine(
-        currentNodeIndex: currentNodeIndex,
-        dragService: dragService,
-        nodeId: nodeId,
-      );
-    }
-    return false;
-  }
-
-  /// 위쪽 삽입 라인 표시 여부
-  static bool _shouldShowTopInsertionLine({
-    required int currentNodeIndex,
-    required DragService dragService,
-    required String nodeId,
-  }) {
-    final doc = dragService.editorService.document;
-
-    // 🎯 규칙 0: 드래그 중인 노드가 바로 위에 있으면 숨김
-    final draggingNodeId = dragService.draggingNodeId;
-    if (draggingNodeId != null) {
-      final draggingNodeIndex = dragService.getNodeIndex(draggingNodeId);
-      if (draggingNodeIndex != -1) {
-        // 드래그 중인 노드가 바로 위에 있으면
-        if (currentNodeIndex == draggingNodeIndex + 1) {
-          return false; // 이웃한 위치이므로 라인 숨김
-        }
-      }
-    }
-
-    // 🎯 규칙 1: 이전 노드가 특수 노드인 경우
-    if (currentNodeIndex > 0) {
-      final prevNode = doc.getNodeAt(currentNodeIndex - 1);
-      if (prevNode == null) return false;
-
-      // 🎯 연속된 특수 노드 사이 드롭라인 표시 허용
-      // 드래그 중인 노드가 특수 노드이고, 드롭 인덱스가 현재 노드 위치일 때는 표시
-      if (NodeTypeChecker.isSpecialNode(prevNode)) {
-        final draggingNodeId = dragService.draggingNodeId;
-        if (draggingNodeId != null) {
-          final draggingNode = doc.getNodeById(draggingNodeId);
-          // 드래그 중인 노드가 특수 노드이고, 드롭 인덱스가 현재 위치면 표시
-          if (NodeTypeChecker.isSpecialNode(draggingNode) &&
-              dragService.dropIndex == currentNodeIndex) {
-            return true; // 연속된 특수 노드 사이 드롭라인 표시
-          }
-        }
-        return false; // 그 외의 경우는 중복 방지를 위해 숨김
-      }
-    }
-
-    return true;
+    return resolve(nodeId: nodeId, dragService: dragService).top;
   }
 
   /// ===== 아래쪽 드롭 라인 =====
-
-  /// 아래쪽 드롭 라인을 표시해야 하는지 확인
   static bool shouldShowBottomDropLine({
     required String nodeId,
     required DragService? dragService,
-    bool isRowImage = false, // 🎯 RowImageComponent인 경우 true
+    // ignore: unused_parameter
+    bool isRowImage = false, // 🎯 기존 시그니처 유지
   }) {
-    if (dragService == null) return false;
-    final dropIndex = dragService.dropIndex;
-    if (dropIndex == null) return false;
-
-    final currentNodeIndex = dragService.getNodeIndex(nodeId);
-    if (currentNodeIndex == -1) return false;
-
-    final documentLength = dragService.editorService.document.length;
-    final isLastNode = currentNodeIndex == documentLength - 1;
-
-    // 🎯 로우 이미지 분리 시: **분리 대상 노드의 하단 라인도 표시**
-    if (isRowImage && dragService.hasSplitImageInfo) {
-      final isSplitTarget = dragService.draggingNodeId == nodeId;
-      if (isSplitTarget && dropIndex == currentNodeIndex + 1) {
-        return true; // 분리 대상 노드의 하단 라인 표시
-      }
-      // 🎯 분리 모드일 때 분리 대상 노드가 아니면 일반 드래그 로직 적용
-      // (다른 로우 이미지 위아래에도 드롭라인 표시 가능)
-    }
-
-    // 🎯 드래그 중인 노드가 바로 이웃한 위치에 있으면 라인 숨김
-    final draggingNodeId = dragService.draggingNodeId;
-    if (draggingNodeId != null) {
-      final draggingNodeIndex = dragService.getNodeIndex(draggingNodeId);
-      if (draggingNodeIndex != -1) {
-        // 드래그 중인 노드가 바로 아래에 있으면 (현재 노드가 드래그 노드 바로 위)
-        if (currentNodeIndex == draggingNodeIndex - 1) {
-          return false; // 이웃한 위치이므로 라인 숨김
-        }
-        // 드래그 중인 노드가 현재 노드와 같은 위치면
-        if (currentNodeIndex == draggingNodeIndex) {
-          return false; // 자기 자신이므로 라인 숨김
-        }
-        // 드래그 중인 노드가 바로 아래에 있고, 드롭 인덱스가 그 위치면
-        if (currentNodeIndex + 1 == draggingNodeIndex &&
-            dropIndex == draggingNodeIndex) {
-          return false; // 자기 자신 바로 아래로 드롭하는 경우
-        }
-      }
-    }
-
-    if (isLastNode) {
-      // 마지막 노드일 때는 문서 끝에 삽입하는 경우
-      return dropIndex == documentLength;
-    } else {
-      // 다음 인덱스에 삽입하는 경우
-      if (dropIndex == currentNodeIndex + 1) {
-        return _shouldShowBottomInsertionLine(
-          currentNodeIndex: currentNodeIndex,
-          dragService: dragService,
-          nodeId: nodeId,
-        );
-      }
-    }
-    return false;
-  }
-
-  /// 아래쪽 삽입 라인 표시 여부
-  static bool _shouldShowBottomInsertionLine({
-    required int currentNodeIndex,
-    required DragService dragService,
-    required String nodeId,
-  }) {
-    final doc = dragService.editorService.document;
-    final documentLength = doc.length;
-
-    // 🎯 규칙 0: 로우 이미지 분리 중 - 분리 대상 바로 위 노드만 특수 처리
-    final hasSplitImageInfo = dragService.hasSplitImageInfo;
-    if (hasSplitImageInfo) {
-      final draggingNodeId = dragService.draggingNodeId;
-      if (draggingNodeId != null) {
-        final draggingNodeIndex = doc.getNodeIndexById(draggingNodeId);
-
-        // 🎯 분리 대상 노드의 바로 위 노드면 숨김
-        // (분리 대상 노드가 상단 라인을 표시하므로 중복 방지)
-        if (draggingNodeIndex != -1 &&
-            currentNodeIndex == draggingNodeIndex - 1) {
-          return false;
-        }
-        // 나머지 노드들은 일반 규칙 적용 (아래로 계속 진행)
-      }
-    }
-
-    // 🎯 규칙 0.5: 드래그 중인 노드가 바로 아래에 있으면 숨김
-    final draggingNodeId = dragService.draggingNodeId;
-    if (draggingNodeId != null) {
-      final draggingNodeIndex = dragService.getNodeIndex(draggingNodeId);
-      if (draggingNodeIndex != -1) {
-        // 드래그 중인 노드가 바로 아래에 있으면
-        if (currentNodeIndex + 1 == draggingNodeIndex) {
-          return false; // 이웃한 위치이므로 라인 숨김
-        }
-      }
-    }
-
-    // 🎯 규칙 1: 다음 노드 확인 (일반 드래그)
-    if (currentNodeIndex + 1 < documentLength) {
-      final nextNode = doc.getNodeAt(currentNodeIndex + 1);
-      if (nextNode == null) return false;
-
-      // 🎯 연속된 특수 노드 사이 드롭라인 표시 허용
-      // 다음이 특수 노드인 경우
-      if (NodeTypeChecker.isSpecialNode(nextNode)) {
-        final draggingNodeId = dragService.draggingNodeId;
-        if (draggingNodeId != null) {
-          final draggingNode = doc.getNodeById(draggingNodeId);
-          // 드래그 중인 노드가 특수 노드이고, 드롭 인덱스가 다음 노드 위치면 표시
-          if (NodeTypeChecker.isSpecialNode(draggingNode) &&
-              dragService.dropIndex == currentNodeIndex + 1) {
-            return true; // 연속된 특수 노드 사이 드롭라인 표시
-          }
-        }
-        return false; // 그 외의 경우는 중복 방지를 위해 숨김
-      }
-
-      // 다음이 텍스트 노드이면 표시
-      if (NodeTypeChecker.isTextNode(nextNode)) {
-        return true;
-      }
-    }
-
-    return false;
+    return resolve(nodeId: nodeId, dragService: dragService).bottom;
   }
 
   /// ===== 좌우 세로 라인 (이미지 병합용) =====
@@ -256,35 +237,7 @@ class DropLineConfig {
     required String nodeId,
     required DragService? dragService,
   }) {
-    if (dragService == null) return false;
-    if (dragService.draggingNodeId == null) return false;
-    if (dragService.dragPosition == null) return false;
-
-    // 자기 자신을 드래그하는 경우 숨김
-    if (dragService.draggingNodeId == nodeId) {
-      return false;
-    }
-
-    // 현재 노드가 타겟 노드가 아니면 숨김
-    if (dragService.targetNodeId != nodeId) {
-      return false;
-    }
-
-    // dragMode가 imageRowMerge가 아니면 숨김
-    if (dragService.dragMode != DragType.imageRowMerge) {
-      return false;
-    }
-
-    // 🎯 이미 3개가 다 차있는 로우 이미지에는 양옆 드롭라인 숨김
-    final targetNode = dragService.editorService.document.getNodeById(nodeId);
-    if (targetNode != null && targetNode is ImageRowNode) {
-      if (targetNode.imageUrls.length >= 3) {
-        return false; // 3개 가득 찬 경우 드롭라인 숨김
-      }
-    }
-
-    // 왼쪽에서 드래그하는 경우만 표시
-    return dragService.isDraggingFromLeft;
+    return resolve(nodeId: nodeId, dragService: dragService).left;
   }
 
   /// 오른쪽 세로 라인을 표시해야 하는지 확인
@@ -292,34 +245,6 @@ class DropLineConfig {
     required String nodeId,
     required DragService? dragService,
   }) {
-    if (dragService == null) return false;
-    if (dragService.draggingNodeId == null) return false;
-    if (dragService.dragPosition == null) return false;
-
-    // 자기 자신을 드래그하는 경우 숨김
-    if (dragService.draggingNodeId == nodeId) {
-      return false;
-    }
-
-    // 현재 노드가 타겟 노드가 아니면 숨김
-    if (dragService.targetNodeId != nodeId) {
-      return false;
-    }
-
-    // dragMode가 imageRowMerge가 아니면 숨김
-    if (dragService.dragMode != DragType.imageRowMerge) {
-      return false;
-    }
-
-    // 🎯 이미 3개가 다 차있는 로우 이미지에는 양옆 드롭라인 숨김
-    final targetNode = dragService.editorService.document.getNodeById(nodeId);
-    if (targetNode != null && targetNode is ImageRowNode) {
-      if (targetNode.imageUrls.length >= 3) {
-        return false; // 3개 가득 찬 경우 드롭라인 숨김
-      }
-    }
-
-    // 오른쪽에서 드래그하는 경우만 표시
-    return !dragService.isDraggingFromLeft;
+    return resolve(nodeId: nodeId, dragService: dragService).right;
   }
 }

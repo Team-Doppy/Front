@@ -9,6 +9,9 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:doppy/image/video_trim_spec.dart';
+import 'package:doppy/image/video_edit_spec.dart';
+import 'dart:math' as math;
 
 /// 취소 토큰 클래스
 class CancellationToken {
@@ -65,16 +68,30 @@ class VideoUploadUtils {
   /// [quality] 0-100 (낮을수록 빠르지만 품질 낮음)
   /// [position] 밀리초 단위 (0 = 첫 프레임)
   /// [useFastMethod] true면 VideoThumbnail 사용 (더 빠름), false면 VideoCompress 사용
+  /// [trimSpec] 트림 스펙 (trim 구간의 프레임 캡처)
+  /// [editSpec] 편집 스펙 (이미지 필터/크롭 적용)
   static Future<File?> generateThumbnail(
     String videoPath, {
     int quality = 50,
     int position = 500,
     bool useFastMethod = false,
+    VideoTrimSpec? trimSpec,
+    VideoEditSpec? editSpec,
   }) async {
     try {
       debugPrint(
         '[VideoUploadUtils] 썸네일 생성 시작: $videoPath (quality=$quality, position=${position}ms, fast=$useFastMethod)',
       );
+
+      // 🎯 trim/edit spec이 있으면 FFmpeg로 썸네일 생성 (필터 적용 가능)
+      if (trimSpec != null || editSpec != null) {
+        return await _generateThumbnailWithFFmpeg(
+          videoPath,
+          quality: quality,
+          trimSpec: trimSpec,
+          editSpec: editSpec,
+        );
+      }
 
       if (useFastMethod) {
         // VideoThumbnail 사용 (더 빠름)
@@ -119,6 +136,128 @@ class VideoUploadUtils {
     }
   }
 
+  /// 🎯 FFmpeg로 썸네일 생성 (trim/edit spec 적용)
+  static Future<File?> _generateThumbnailWithFFmpeg(
+    String videoPath, {
+    int quality = 50,
+    VideoTrimSpec? trimSpec,
+    VideoEditSpec? editSpec,
+  }) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final outputPath =
+          '${tempDir.path}/thumb_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+      // trim 구간의 프레임 위치 계산
+      double framePosition = 0.5; // 기본값: 0.5초
+      if (trimSpec != null) {
+        final duration = trimSpec.endSeconds - trimSpec.startSeconds;
+        framePosition =
+            trimSpec.startSeconds + (duration * 0.1); // trim 구간의 10% 지점
+      }
+
+      // 비디오 필터 구성
+      final filters = <String>[];
+
+      // 회전, 플립, 크롭, 조정 적용 (editSpec이 있는 경우)
+      if (editSpec != null) {
+        // 회전 처리 (90도 단위)
+        if (editSpec.rotationQuarterTurns > 0) {
+          final turns = editSpec.rotationQuarterTurns % 4;
+          if (turns == 1) {
+            filters.add('transpose=1');
+          } else if (turns == 2) {
+            filters.add('transpose=1,transpose=1');
+          } else if (turns == 3) {
+            filters.add('transpose=2');
+          }
+        }
+
+        // 플립 처리
+        if (editSpec.flipHorizontal) {
+          filters.add('hflip');
+        }
+        if (editSpec.flipVertical) {
+          filters.add('vflip');
+        }
+
+        // 크롭 처리
+        if (editSpec.cropRectImage != null) {
+          final rect = editSpec.cropRectImage!;
+          final w = rect.width.round();
+          final h = rect.height.round();
+          final x = rect.left.round();
+          final y = rect.top.round();
+          filters.add('crop=$w:$h:$x:$y');
+        }
+
+        // 조정 (brightness, contrast, saturation)
+        final adjustments = <String>[];
+        if (editSpec.brightness != 0.0) {
+          final val = (editSpec.brightness / 100.0).clamp(-1.0, 1.0);
+          adjustments.add('brightness=$val');
+        }
+        if (editSpec.contrast != 0.0) {
+          final val = (1.0 + editSpec.contrast / 100.0).clamp(0.0, 2.0);
+          adjustments.add('contrast=$val');
+        }
+        if (editSpec.saturation != 0.0) {
+          final val = (1.0 + editSpec.saturation / 100.0).clamp(0.0, 2.0);
+          adjustments.add('saturation=$val');
+        }
+        if (adjustments.isNotEmpty) {
+          filters.add('eq=${adjustments.join(":")}');
+        }
+      }
+
+      // FFmpeg 명령어 구성
+      final List<String> commandParts = [];
+
+      // 입력 파일 및 시간 위치
+      if (trimSpec != null && trimSpec.startSeconds > 0) {
+        commandParts.add('-ss ${trimSpec.startSeconds.toStringAsFixed(3)}');
+      }
+      commandParts.add('-i "$videoPath"');
+      commandParts.add('-ss ${framePosition.toStringAsFixed(3)}');
+      commandParts.add('-vframes 1'); // 단일 프레임만 추출
+
+      // 비디오 필터 적용
+      if (filters.isNotEmpty) {
+        commandParts.add('-vf "${filters.join(",")}"');
+      }
+
+      // 출력 옵션
+      commandParts.addAll([
+        '-q:v ${(100 - quality).clamp(2, 31)}', // JPEG quality (2=최고품질, 31=최저품질)
+        '-y',
+        '"$outputPath"',
+      ]);
+
+      final command = commandParts.join(' ');
+      debugPrint('[VideoUploadUtils] FFmpeg 썸네일 생성: $command');
+
+      // FFmpeg 실행
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode)) {
+        final outputFile = File(outputPath);
+        if (await outputFile.exists()) {
+          debugPrint('[VideoUploadUtils] FFmpeg 썸네일 생성 완료: $outputPath');
+          return outputFile;
+        }
+      } else {
+        final output = await session.getOutput();
+        debugPrint('[VideoUploadUtils] FFmpeg 썸네일 생성 실패: $output');
+      }
+
+      return null;
+    } catch (e) {
+      debugPrint('[VideoUploadUtils] FFmpeg 썸네일 생성 오류: $e');
+      return null;
+    }
+  }
+
   /// 비디오 압축 (FFmpeg 사용 - 고품질 유지하면서 용량 및 로딩 속도 최적화)
   /// H.264 코덱, CRF 20 (고품질), veryfast preset, GOP 24 (1초 간격)
   /// [cancellationToken]이 제공되면 취소 가능
@@ -126,6 +265,8 @@ class VideoUploadUtils {
   static Future<File?> compressVideo(
     String videoPath, {
     CancellationToken? cancellationToken,
+    VideoTrimSpec? trimSpec,
+    VideoEditSpec? editSpec,
   }) async {
     final compressionId =
         '${videoPath}_${DateTime.now().millisecondsSinceEpoch}';
@@ -158,32 +299,13 @@ class VideoUploadUtils {
       final outputPath =
           '${tempDir.path}/processed_${DateTime.now().millisecondsSinceEpoch}.mp4';
 
-      // 🎯 FFmpeg 명령어: 고품질 압축 및 빠른 로딩을 위한 H.264 재인코딩
-      // -vcodec libx264: H.264 코덱 (keyframe 제어 가능)
-      // -preset veryfast: 빠른 인코딩 + 적절한 압축 효율 (ultrafast보다 효율적)
-      // -crf 20: 고품질 (18보다 약간 낮지만 체감 차이 거의 없음, 파일 크기 감소)
-      // -x264opts: x264 레벨 파라미터
-      //   - keyint=24: 최대 GOP 24 (1초마다 keyframe, 24fps 기준 - 초기 로딩 최적화)
-      //   - min-keyint=24: 최소 GOP 24 (고정 간격)
-      //   - no-scenecut: scene change detection 완전 비활성화
-      // -pix_fmt yuv420p: 호환성 높은 픽셀 포맷
-      // -profile:v main: main profile (baseline보다 효율적)
-      // -level 3.1: 모바일 호환성
-      // -acodec aac: AAC 오디오
-      // -movflags +faststart: 스트리밍 최적화 (moov atom 앞 배치)
-      final command =
-          '-i "$videoPath" '
-          '-vcodec libx264 '
-          '-preset veryfast '
-          '-crf 20 '
-          '-x264opts keyint=24:min-keyint=24:no-scenecut '
-          '-pix_fmt yuv420p '
-          '-profile:v main '
-          '-level 3.1 '
-          '-acodec aac '
-          '-movflags +faststart '
-          '-y '
-          '"$outputPath"';
+      // 🎯 FFmpeg 명령어 구성: trim+edit+압축을 한 번에 처리
+      final command = _buildFFmpegCommand(
+        videoPath: videoPath,
+        outputPath: outputPath,
+        trimSpec: trimSpec,
+        editSpec: editSpec,
+      );
 
       debugPrint(
         '[VideoUploadUtils] FFmpeg 실행 (H.264 re-encode with GOP=24, preset=veryfast, CRF=20)...',
@@ -536,5 +658,125 @@ class VideoUploadUtils {
     }
 
     return null; // 검증 성공
+  }
+
+  /// 🎯 FFmpeg 명령어 구성: trim+edit+압축을 한 번에 처리
+  static String _buildFFmpegCommand({
+    required String videoPath,
+    required String outputPath,
+    VideoTrimSpec? trimSpec,
+    VideoEditSpec? editSpec,
+  }) {
+    final List<String> inputArgs = [];
+    final List<String> videoFilters = [];
+    final List<String> outputArgs = [];
+
+    // 1. 입력 파일
+    inputArgs.add('-i "$videoPath"');
+
+    // 2. 트림 처리 (-ss는 입력 전에 적용하면 더 빠름)
+    if (trimSpec != null) {
+      final startSeconds = trimSpec.startSeconds;
+      final duration = trimSpec.endSeconds - trimSpec.startSeconds;
+      if (startSeconds > 0) {
+        inputArgs.insert(0, '-ss ${startSeconds.toStringAsFixed(3)}');
+      }
+      if (duration > 0) {
+        inputArgs.add('-t ${duration.toStringAsFixed(3)}');
+      }
+    }
+
+    // 3. 비디오 필터 구성 (crop, rotation, flip, adjustments)
+    if (editSpec != null) {
+      final filters = <String>[];
+
+      // 3-1. 회전 처리 (90도 단위)
+      if (editSpec.rotationQuarterTurns > 0) {
+        final turns = editSpec.rotationQuarterTurns % 4;
+        if (turns == 1) {
+          filters.add('transpose=1'); // 90도 시계방향
+        } else if (turns == 2) {
+          filters.add('transpose=1,transpose=1'); // 180도
+        } else if (turns == 3) {
+          filters.add('transpose=2'); // 270도 (90도 반시계방향)
+        }
+      }
+
+      // 3-2. 미세 회전 (도 단위)
+      if (editSpec.rotation != 0) {
+        final radians = editSpec.rotation * math.pi / 180;
+        filters.add('rotate=$radians:fillcolor=black@0:ow=iw:oh=ih');
+      }
+
+      // 3-3. 플립 처리
+      if (editSpec.flipHorizontal) {
+        filters.add('hflip');
+      }
+      if (editSpec.flipVertical) {
+        filters.add('vflip');
+      }
+
+      // 3-4. 크롭 처리
+      if (editSpec.cropRectImage != null) {
+        final rect = editSpec.cropRectImage!;
+        final w = rect.width.round();
+        final h = rect.height.round();
+        final x = rect.left.round();
+        final y = rect.top.round();
+        filters.add('crop=$w:$h:$x:$y');
+      }
+
+      // 3-5. 조정 (brightness, contrast, saturation 등)
+      final adjustments = <String>[];
+      if (editSpec.brightness != 0.0) {
+        // brightness: -1.0 ~ 1.0 (FFmpeg eq 필터)
+        final val = (editSpec.brightness / 100.0).clamp(-1.0, 1.0);
+        adjustments.add('brightness=$val');
+      }
+      if (editSpec.contrast != 0.0) {
+        // contrast: 0.0 ~ 2.0 (FFmpeg eq 필터)
+        final val = (1.0 + editSpec.contrast / 100.0).clamp(0.0, 2.0);
+        adjustments.add('contrast=$val');
+      }
+      if (editSpec.saturation != 0.0) {
+        // saturation: 0.0 ~ 2.0 (FFmpeg eq 필터)
+        final val = (1.0 + editSpec.saturation / 100.0).clamp(0.0, 2.0);
+        adjustments.add('saturation=$val');
+      }
+      if (adjustments.isNotEmpty) {
+        filters.add('eq=${adjustments.join(":")}');
+      }
+
+      // 3-6. 필터 프리셋 (필요시 추가)
+      // TODO: filter preset 적용 (필요한 경우)
+
+      // 필터 조합
+      if (filters.isNotEmpty) {
+        videoFilters.add('-vf "${filters.join(",")}"');
+      }
+    }
+
+    // 4. 출력 인코딩 옵션
+    outputArgs.addAll([
+      '-vcodec libx264',
+      '-preset veryfast',
+      '-crf 20',
+      '-x264opts keyint=24:min-keyint=24:no-scenecut',
+      '-pix_fmt yuv420p',
+      '-profile:v main',
+      '-level 3.1',
+      '-acodec aac',
+      '-movflags +faststart',
+      '-y',
+      '"$outputPath"',
+    ]);
+
+    // 명령어 조합
+    final commandParts = <String>[];
+    commandParts.addAll(inputArgs);
+    commandParts.addAll(videoFilters);
+    commandParts.addAll(outputArgs);
+
+    return commandParts.join(' ');
   }
 }

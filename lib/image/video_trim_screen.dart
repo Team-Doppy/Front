@@ -2,22 +2,18 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:doppy/image/video_trim_spec.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/dialog_utils.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
-/// 비디오 트림 결과
-class TrimmedVideoResult {
-  final File videoFile;
-  final String? thumbnailPath;
-
-  TrimmedVideoResult({required this.videoFile, this.thumbnailPath});
+/// 비디오 트림 결과 (비파괴: 실제 ffmpeg 트림을 하지 않고 구간만 반환)
+class VideoTrimResult {
+  final VideoTrimSpec trim;
+  VideoTrimResult({required this.trim});
 }
 
 /// 트림 범위 설정 (도메인 규칙)
@@ -127,7 +123,11 @@ class Trimmer extends ChangeNotifier {
 
       // 🎯 재생 범위 체크 (재생 중일 때만)
       if (isPlaying) {
-        if (position >= _endValue) {
+        // 🎯 재생바 중심이 핸들 경계에 도달하면 즉시 정지 (핸들 두께 고려)
+        // 재생바 중심이 endValue에 거의 도달하면 정지 (0.02초 여유로 더 정밀하게)
+        final stopThreshold = _endValue - 0.02;
+
+        if (position >= stopThreshold) {
           // 끝 도달: 일시정지하고 시작으로 이동
           _videoPlayerController!.pause();
           final startMs =
@@ -175,7 +175,7 @@ class Trimmer extends ChangeNotifier {
   }
 
   /// 재생/일시정지 토글
-  void videoPlaybackControl() {
+  void videoPlaybackControl() async {
     if (_videoPlayerController == null || !_isInitialized) {
       return;
     }
@@ -184,19 +184,31 @@ class Trimmer extends ChangeNotifier {
       _videoPlayerController!.pause();
       _isPlaying = false;
     } else {
-      // 현재 위치가 범위를 벗어나면 시작 지점으로
-      if (_currentPositionNotifier.value >= _endValue ||
-          _currentPositionNotifier.value < _startValue) {
-        seekTo(_startValue);
+      // 🎯 현재 위치 확인 및 범위 내로 조정
+      final currentPos = _currentPositionNotifier.value;
+
+      // 범위를 벗어났거나 끝에 도달했거나 시작 핸들과 붙어있으면 시작 지점으로 이동
+      if (currentPos >= _endValue - 0.01 || currentPos < _startValue) {
+        // 시작 지점으로 이동 (비동기 완료 대기)
+        await seekTo(_startValue);
+        // seekTo 완료 후 재생 시작
+        await _videoPlayerController!.play();
+        _isPlaying = true;
+      } else {
+        // 🎯 재생 시작 시 즉시 현재 위치를 업데이트 (재생바가 즉시 움직이도록)
+        final videoPos =
+            _videoPlayerController!.value.position.inMilliseconds / 1000.0;
+        _currentPositionNotifier.value = videoPos.clamp(_startValue, _endValue);
+        // 범위 내에 있으면 바로 재생
+        await _videoPlayerController!.play();
+        _isPlaying = true;
       }
-      _videoPlayerController!.play();
-      _isPlaying = true;
     }
     notifyListeners();
   }
 
   /// 재생 위치 이동 (명시적 사용자 액션에서만 사용)
-  void seekTo(double position) {
+  Future<void> seekTo(double position) async {
     if (_videoPlayerController == null || !_isInitialized) {
       return;
     }
@@ -214,7 +226,7 @@ class Trimmer extends ChangeNotifier {
     if (milliseconds < 0) return; // 음수 방지
 
     // 🎯 재생 중이 아니어도 프레임이 업데이트되도록 시크 수행
-    _videoPlayerController!.seekTo(Duration(milliseconds: milliseconds));
+    await _videoPlayerController!.seekTo(Duration(milliseconds: milliseconds));
 
     // 🎯 즉시 UI 업데이트 (비디오 프레임은 seekTo가 비동기로 처리)
     _currentPositionNotifier.value = clampedPosition;
@@ -363,90 +375,10 @@ class Trimmer extends ChangeNotifier {
   }
 
   /// 트리밍된 비디오 저장 (썸네일 포함)
-  /// 🎯 압축은 하지 않고 트림만 수행 (copy 코덱)
+  /// ✅ 크롭이 있으면 트림+크롭, 없으면 트림만 수행
   /// 압축은 플레이스홀더 상태에서 업로드 시 진행
-  Future<TrimmedVideoResult> saveTrimmedVideo({
-    required double startValue,
-    required double endValue,
-  }) async {
-    if (_videoFile == null) {
-      throw Exception('비디오 파일이 없습니다.');
-    }
-
-    final tempDir = await getTemporaryDirectory();
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final outputPath = '${tempDir.path}/trimmed_$timestamp.mp4';
-
-    final duration = endValue - startValue;
-
-    // 🎯 비디오 트림만 수행 (압축 없음 - copy 코덱)
-    // -c copy: 비디오/오디오 재인코딩 없이 복사 (매우 빠름, 무손실)
-    // -avoid_negative_ts make_zero: 타임스탬프 보정
-    // -movflags +faststart: 메타데이터를 파일 앞에 배치
-    // 압축은 업로드 시 플레이스홀더 상태에서 진행됨
-    final command =
-        '-ss ${startValue.toStringAsFixed(2)} '
-        '-i "${_videoFile!.path}" '
-        '-t ${duration.toStringAsFixed(2)} '
-        '-c copy '
-        '-movflags +faststart '
-        '-avoid_negative_ts make_zero '
-        '-y '
-        '"$outputPath"';
-
-    debugPrint('[Trimmer] ffmpeg 명령 (트림만, 압축 없음): $command');
-
-    final session = await FFmpegKit.execute(command);
-    final returnCode = await session.getReturnCode();
-
-    if (ReturnCode.isSuccess(returnCode)) {
-      final outputFile = File(outputPath);
-      if (await outputFile.exists()) {
-        // 🎯 썸네일 생성 (패키지 이용) - 첫 프레임
-        String? thumbnailPath;
-        try {
-          // 🎯 VideoThumbnail 패키지로 썸네일 생성
-          final bytes = await VideoThumbnail.thumbnailData(
-            video: outputPath,
-            imageFormat: ImageFormat.JPEG,
-            timeMs: 0, // 첫 프레임
-            quality: 100,
-          );
-
-          if (bytes != null) {
-            // 🎯 메모리에서 파일로 저장
-            final thumbnailFilePath = '${tempDir.path}/thumb_$timestamp.jpg';
-            final thumbnailFile = File(thumbnailFilePath);
-            await thumbnailFile.writeAsBytes(bytes);
-
-            if (await thumbnailFile.exists()) {
-              thumbnailPath = thumbnailFilePath;
-              debugPrint(
-                '[Trimmer] ✅ 썸네일 생성 완료: $thumbnailPath (${bytes.length} bytes)',
-              );
-            } else {
-              debugPrint('[Trimmer] ⚠️ 썸네일 파일 쓰기 실패');
-            }
-          } else {
-            debugPrint('[Trimmer] ⚠️ 썸네일 데이터 생성 실패 (bytes가 null)');
-          }
-        } catch (e) {
-          debugPrint('[Trimmer] ⚠️ 썸네일 생성 실패 (계속 진행): $e');
-        }
-
-        debugPrint('[Trimmer] ✅ 트림 완료 (압축은 업로드 시 진행)');
-        return TrimmedVideoResult(
-          videoFile: outputFile,
-          thumbnailPath: thumbnailPath,
-        );
-      } else {
-        throw Exception('출력 파일이 생성되지 않았습니다.');
-      }
-    } else {
-      final output = await session.getOutput();
-      debugPrint('[Trimmer] ❌ ffmpeg 실패: $output');
-      throw Exception('영상 자르기에 실패했습니다.');
-    }
+  VideoTrimSpec buildTrimSpec() {
+    return VideoTrimSpec(startSeconds: _startValue, endSeconds: _endValue);
   }
 
   @override
@@ -551,6 +483,7 @@ class _TrimEditorState extends State<TrimEditor> {
   // 🎯 드래그 상태
   bool _isHandleDragging = false;
   bool _isPlaybackBarDragging = false;
+  bool _isOverlayDragging = false; // 🎯 오버레이 드래그 상태 (핸들 움직임 방지용)
 
   // 🎯 드래그 시작 기준값 (누적 계산용)
   double? _dragStartValue;
@@ -560,6 +493,9 @@ class _TrimEditorState extends State<TrimEditor> {
   // 🎯 재생바 드래그 시작 기준값 (정밀 시크용)
   double? _playbackBarDragStartTimelineX; // timeline absolute px
   double? _playbackBarDragStartPosition; // seconds
+
+  // 🎯 오버레이 드래그 시작 기준값 (시크용)
+  double? _overlayDragStartTimelineX; // timeline absolute px
 
   @override
   void initState() {
@@ -638,14 +574,18 @@ class _TrimEditorState extends State<TrimEditor> {
         final startPixel = widget.trimmer.startValue * pxPerSecond;
         final endPixel = widget.trimmer.endValue * pxPerSecond;
 
-        // 🎯 경계선 화면 좌표 (스크롤 오프셋만 한 번 적용)
-        final startBoundaryX = startPixel - scrollOffset; // 왼쪽 경계선
-        final endBoundaryX = endPixel - scrollOffset; // 오른쪽 경계선
+        // 🎯 경계선 좌표를 단일 clamp로 고정 (음수/초과 방지)
+        double clampX(double x, double w) => x.clamp(0.0, w);
+        final startBoundaryX = clampX(startPixel - scrollOffset, totalWidth);
+        final endBoundaryX = clampX(endPixel - scrollOffset, totalWidth);
 
         // 🎯 검정 오버레이 계산 (경계선 기준)
-        final leftOverlayWidth = startBoundaryX.clamp(0.0, totalWidth);
-        final rightOverlayStart = endBoundaryX.clamp(0.0, totalWidth);
+        final leftOverlayWidth = startBoundaryX;
+        final rightOverlayStart = endBoundaryX;
         final rightOverlayWidth = totalWidth - rightOverlayStart;
+
+        // 🎯 핸들/드래그 영역 기준 통일: 핸들 중심 기준으로 계산
+        const handleWidth = 14.0;
 
         return ClipRect(
           child: Stack(
@@ -667,9 +607,11 @@ class _TrimEditorState extends State<TrimEditor> {
                 child: SingleChildScrollView(
                   controller: _scrollController,
                   scrollDirection: Axis.horizontal,
-                  // 🎯 핸들/재생바 드래그 중 스크롤 잠금: 좌표계 흔들림(점프/걸림) 방지
+                  // 🎯 핸들/재생바/오버레이 드래그 중 스크롤 잠금: 좌표계 흔들림(점프/걸림) 방지
                   physics:
-                      (_isHandleDragging || _isPlaybackBarDragging)
+                      (_isHandleDragging ||
+                              _isPlaybackBarDragging ||
+                              _isOverlayDragging)
                           ? const NeverScrollableScrollPhysics()
                           : const ClampingScrollPhysics(),
                   child: SizedBox(
@@ -808,43 +750,51 @@ class _TrimEditorState extends State<TrimEditor> {
                   ),
                 ),
 
-              // 🎯 왼쪽 경계선 핸들 (경계선 왼쪽 끝에 붙게)
+              // 🎯 왼쪽 경계선 핸들 (핸들 중심 기준)
               Positioned(
-                left: startBoundaryX.clamp(
+                left: (startBoundaryX - handleWidth / 2).clamp(
                   0.0,
-                  totalWidth - 20,
-                ), // 왼쪽에 붙게, 오버플로우 방지
+                  totalWidth - handleWidth,
+                ),
                 top: 0,
                 bottom: 0,
-                width: 20,
-                child: _buildHandle(
-                  isStart: true,
-                  pxPerSecond: pxPerSecond,
-                  scrollOffset: scrollOffset,
-                  totalSeconds: totalSeconds,
-                  totalWidth: totalWidth,
-                  maxTrimLength: maxTrimLength,
-                  selectionMinGap: selectionMinGap,
+                width: handleWidth,
+                child: OverflowBox(
+                  minHeight: 0,
+                  maxHeight: 120, // 타임라인 높이
+                  child: _buildHandle(
+                    isStart: true,
+                    pxPerSecond: pxPerSecond,
+                    scrollOffset: scrollOffset,
+                    totalSeconds: totalSeconds,
+                    totalWidth: totalWidth,
+                    maxTrimLength: maxTrimLength,
+                    selectionMinGap: selectionMinGap,
+                  ),
                 ),
               ),
 
-              // 🎯 오른쪽 경계선 핸들 (경계선 오른쪽 끝에 붙게)
+              // 🎯 오른쪽 경계선 핸들 (핸들 중심 기준)
               Positioned(
-                left: (endBoundaryX - 20).clamp(
+                left: (endBoundaryX - handleWidth / 2).clamp(
                   0.0,
-                  totalWidth - 20,
-                ), // 오른쪽 끝에 붙게, 오버플로우 방지
+                  totalWidth - handleWidth,
+                ),
                 top: 0,
                 bottom: 0,
-                width: 20,
-                child: _buildHandle(
-                  isStart: false,
-                  pxPerSecond: pxPerSecond,
-                  scrollOffset: scrollOffset,
-                  totalSeconds: totalSeconds,
-                  totalWidth: totalWidth,
-                  maxTrimLength: maxTrimLength,
-                  selectionMinGap: selectionMinGap,
+                width: handleWidth,
+                child: OverflowBox(
+                  minHeight: 0,
+                  maxHeight: 120, // 타임라인 높이
+                  child: _buildHandle(
+                    isStart: false,
+                    pxPerSecond: pxPerSecond,
+                    scrollOffset: scrollOffset,
+                    totalSeconds: totalSeconds,
+                    totalWidth: totalWidth,
+                    maxTrimLength: maxTrimLength,
+                    selectionMinGap: selectionMinGap,
+                  ),
                 ),
               ),
 
@@ -953,7 +903,6 @@ class _TrimEditorState extends State<TrimEditor> {
     // 🎯 실제 startValue/endValue 사용 (정확한 동기화)
     final startValue = widget.trimmer.startValue;
     final endValue = widget.trimmer.endValue;
-    final currentPos = widget.trimmer.currentPosition;
 
     // 🎯 선택 범위 길이(초)
     final rangeLength = endValue - startValue;
@@ -961,14 +910,13 @@ class _TrimEditorState extends State<TrimEditor> {
       return const SizedBox.shrink();
     }
 
-    // 🎯 현재 위치를 범위 내로 클램프
-    final clampedCurrentPos = currentPos.clamp(startValue, endValue);
-
-    // 🎯 핸들 폭을 제외한 “두 핸들 사이” 구간에서만 이동 (오버런 방지)
+    // 🎯 핸들 폭을 제외한 "두 핸들 사이" 구간에서만 이동 (오버런 방지)
     // startX/endX는 경계선(=트림 시작/끝 시간의 픽셀 위치)임
-    const handleWidth = 20.0;
-    final innerStartX = startX + handleWidth;
-    final innerEndX = endX - handleWidth;
+    const handleWidth = 14.0; // 핸들 두께
+    // 🎯 재생바와 핸들 사이 최소 거리 줄임 (핸들 폭의 절반만 여유)
+    const minGapFromHandle = handleWidth / 2;
+    final innerStartX = startX + minGapFromHandle;
+    final innerEndX = endX - minGapFromHandle;
     if (innerEndX <= innerStartX) {
       return const SizedBox.shrink();
     }
@@ -977,109 +925,118 @@ class _TrimEditorState extends State<TrimEditor> {
     final barWidth = _isPlaybackBarDragging ? 10.0 : 8.0;
     final hitWidth = barWidth + 28.0;
 
-    // 🎯 시간 → 픽셀(화면 좌표) : pxPerSecond 단일 진실로 정밀 매핑
-    final rawCenterX =
-        startX + ((clampedCurrentPos - startValue) * pxPerSecond);
+    // 🎯 ValueListenableBuilder로 currentPosition 실시간 업데이트
+    return ValueListenableBuilder<double>(
+      valueListenable: widget.trimmer.currentPositionNotifier,
+      builder: (context, currentPos, _) {
+        // 🎯 현재 위치를 범위 내로 클램프
+        final clampedCurrentPos = currentPos.clamp(startValue, endValue);
 
-    // 🎯 “핸들 사이” 내부에서만 이동 (바 두께 고려)
-    final minCenterX = innerStartX + (barWidth / 2);
-    final maxCenterX = innerEndX - (barWidth / 2);
-    final clampedCenterX = rawCenterX.clamp(minCenterX, maxCenterX);
+        // 🎯 시간 → 픽셀(화면 좌표) : pxPerSecond 단일 진실로 정밀 매핑
+        final rawCenterX =
+            startX + ((clampedCurrentPos - startValue) * pxPerSecond);
 
-    return Positioned(
-      left: clampedCenterX - (hitWidth / 2),
-      top: 0,
-      bottom: 0,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (details) {
-          if (_isHandleDragging) return;
+        // 🎯 "핸들 사이" 내부에서만 이동 (바 두께 고려, 최소 거리 줄임)
+        final minCenterX = innerStartX + (barWidth / 2);
+        final maxCenterX = innerEndX - (barWidth / 2);
+        final clampedCenterX = rawCenterX.clamp(minCenterX, maxCenterX);
 
-          final box =
-              _timelineKey.currentContext?.findRenderObject() as RenderBox?;
-          if (box == null) return;
+        return Positioned(
+          left: clampedCenterX - (hitWidth / 2),
+          top: 0,
+          bottom: 0,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanStart: (details) {
+              if (_isHandleDragging) return;
 
-          // 재생 중이면 일시정지 후 드래그 시크 (정확도/UX)
-          if (widget.trimmer.isPlaying) {
-            widget.trimmer.videoPlaybackControl();
-          }
+              final box =
+                  _timelineKey.currentContext?.findRenderObject() as RenderBox?;
+              if (box == null) return;
 
-          final localX = box.globalToLocal(details.globalPosition).dx;
-          final currentScrollOffset =
-              _scrollController.hasClients ? _scrollController.offset : 0.0;
-          final timelineX = localX + currentScrollOffset;
+              // 재생 중이면 일시정지 후 드래그 시크 (정확도/UX)
+              if (widget.trimmer.isPlaying) {
+                widget.trimmer.videoPlaybackControl();
+              }
 
-          setState(() {
-            _isPlaybackBarDragging = true;
-            _playbackBarDragStartTimelineX = timelineX;
-            _playbackBarDragStartPosition = widget.trimmer.currentPosition;
-          });
-          // 🎯 재생바 드래그 시작 시 Trimmer에 상태 전달 (타이머 보정 충돌 방지)
-          widget.trimmer.setPlaybackBarDragging(true);
-        },
-        onPanUpdate: (details) {
-          if (!_isPlaybackBarDragging ||
-              _playbackBarDragStartTimelineX == null ||
-              _playbackBarDragStartPosition == null) {
-            return;
-          }
+              final localX = box.globalToLocal(details.globalPosition).dx;
+              final currentScrollOffset =
+                  _scrollController.hasClients ? _scrollController.offset : 0.0;
+              final timelineX = localX + currentScrollOffset;
 
-          final box =
-              _timelineKey.currentContext?.findRenderObject() as RenderBox?;
-          if (box == null) return;
+              setState(() {
+                _isPlaybackBarDragging = true;
+                _playbackBarDragStartTimelineX = timelineX;
+                _playbackBarDragStartPosition = currentPos;
+              });
+              // 🎯 재생바 드래그 시작 시 Trimmer에 상태 전달 (타이머 보정 충돌 방지)
+              widget.trimmer.setPlaybackBarDragging(true);
+            },
+            onPanUpdate: (details) {
+              if (!_isPlaybackBarDragging ||
+                  _playbackBarDragStartTimelineX == null ||
+                  _playbackBarDragStartPosition == null) {
+                return;
+              }
 
-          final localX = box.globalToLocal(details.globalPosition).dx;
-          final currentScrollOffset =
-              _scrollController.hasClients ? _scrollController.offset : 0.0;
-          final timelineX = localX + currentScrollOffset;
+              final box =
+                  _timelineKey.currentContext?.findRenderObject() as RenderBox?;
+              if (box == null) return;
 
-          // 🎯 픽셀 → 시간 (pxPerSecond 단일 진실로 정밀 매핑)
-          final dx = timelineX - _playbackBarDragStartTimelineX!;
-          final deltaSeconds = dx / pxPerSecond;
+              final localX = box.globalToLocal(details.globalPosition).dx;
+              final currentScrollOffset =
+                  _scrollController.hasClients ? _scrollController.offset : 0.0;
+              final timelineX = localX + currentScrollOffset;
 
-          var newPosition = _playbackBarDragStartPosition! + deltaSeconds;
-          newPosition = newPosition.clamp(startValue, endValue);
+              // 🎯 픽셀 → 시간 (pxPerSecond 단일 진실로 정밀 매핑)
+              final dx = timelineX - _playbackBarDragStartTimelineX!;
+              final deltaSeconds = dx / pxPerSecond;
 
-          widget.trimmer.seekTo(newPosition);
-        },
-        onPanEnd: (_) {
-          setState(() {
-            _isPlaybackBarDragging = false;
-            _playbackBarDragStartTimelineX = null;
-            _playbackBarDragStartPosition = null;
-          });
-          // 🎯 재생바 드래그 종료 시 Trimmer에 상태 전달
-          widget.trimmer.setPlaybackBarDragging(false);
-        },
-        child: SizedBox(
-          width: hitWidth,
-          child: Center(
-            child: Builder(
-              builder: (context) {
-                final colorScheme = Theme.of(context).colorScheme;
-                return Container(
-                  width: barWidth,
-                  decoration: BoxDecoration(
-                    color: colorScheme.surface,
-                    borderRadius: BorderRadius.circular(barWidth / 2),
-                    border: Border.all(
-                      color: colorScheme.outline.withOpacity(0.35),
-                      width: 1,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: colorScheme.shadow.withOpacity(0.30),
-                        blurRadius: _isPlaybackBarDragging ? 8 : 5,
-                        offset: const Offset(0, 2),
+              var newPosition = _playbackBarDragStartPosition! + deltaSeconds;
+              newPosition = newPosition.clamp(startValue, endValue);
+
+              widget.trimmer.seekTo(newPosition);
+            },
+            onPanEnd: (_) {
+              setState(() {
+                _isPlaybackBarDragging = false;
+                _playbackBarDragStartTimelineX = null;
+                _playbackBarDragStartPosition = null;
+              });
+              // 🎯 재생바 드래그 종료 시 Trimmer에 상태 전달
+              widget.trimmer.setPlaybackBarDragging(false);
+            },
+            child: SizedBox(
+              width: hitWidth,
+              child: Center(
+                child: Builder(
+                  builder: (context) {
+                    final colorScheme = Theme.of(context).colorScheme;
+                    return Container(
+                      width: barWidth,
+                      decoration: BoxDecoration(
+                        color: colorScheme.surface,
+                        borderRadius: BorderRadius.circular(barWidth / 2),
+                        border: Border.all(
+                          color: colorScheme.outline.withOpacity(0.35),
+                          width: 1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: colorScheme.shadow.withOpacity(0.30),
+                            blurRadius: _isPlaybackBarDragging ? 8 : 5,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              },
+                    );
+                  },
+                ),
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -1096,6 +1053,9 @@ class _TrimEditorState extends State<TrimEditor> {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onPanStart: (details) {
+        // 🎯 핸들 드래그 중이면 오버레이 드래그 무시
+        if (_isHandleDragging) return;
+
         final box =
             _timelineKey.currentContext?.findRenderObject() as RenderBox?;
         if (box == null) return;
@@ -1103,15 +1063,16 @@ class _TrimEditorState extends State<TrimEditor> {
 
         setState(() {
           // 🎯 오버레이 드래그는 시크만 하므로 _isHandleDragging은 false
+          _isOverlayDragging = true; // 오버레이 드래그 상태 설정
           // 재생 중이면 일시정지
           if (widget.trimmer.isPlaying) {
             widget.trimmer.videoPlaybackControl();
           }
-          _dragStartTimelineX = localX + scrollOffset;
+          _overlayDragStartTimelineX = localX + scrollOffset;
         });
       },
       onPanUpdate: (details) {
-        if (_dragStartTimelineX == null) return;
+        if (!_isOverlayDragging || _overlayDragStartTimelineX == null) return;
 
         final box =
             _timelineKey.currentContext?.findRenderObject() as RenderBox?;
@@ -1122,7 +1083,7 @@ class _TrimEditorState extends State<TrimEditor> {
         final timelineX = localX + currentScrollOffset;
 
         // 🎯 픽셀 변화를 시간으로 변환
-        final dx = timelineX - _dragStartTimelineX!;
+        final dx = timelineX - _overlayDragStartTimelineX!;
         final deltaSeconds = dx / pxPerSecond;
 
         // 🎯 현재 위치에서 델타만큼 이동 (시크만 수행)
@@ -1136,11 +1097,12 @@ class _TrimEditorState extends State<TrimEditor> {
         widget.trimmer.seekTo(newPosition);
 
         // 🎯 드래그 시작 위치 업데이트 (누적 계산)
-        _dragStartTimelineX = timelineX;
+        _overlayDragStartTimelineX = timelineX;
       },
       onPanEnd: (_) {
         setState(() {
-          _dragStartTimelineX = null;
+          _isOverlayDragging = false;
+          _overlayDragStartTimelineX = null;
         });
       },
       child: Container(
@@ -1173,6 +1135,9 @@ class _TrimEditorState extends State<TrimEditor> {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onPanStart: (details) {
+        // 🎯 오버레이 드래그 중이면 핸들 드래그 무시
+        if (_isOverlayDragging) return;
+
         final box =
             _timelineKey.currentContext?.findRenderObject() as RenderBox?;
         if (box == null) return;
@@ -1281,70 +1246,29 @@ class _TrimEditorState extends State<TrimEditor> {
           widget.trimmer.seekTo(currentPos);
         }
       },
-      child: Center(
-        child: Builder(
-          builder: (context) {
-            final colorScheme = Theme.of(context).colorScheme;
-            return Container(
-              width: 20,
-              margin: const EdgeInsets.symmetric(vertical: 4),
-              decoration: BoxDecoration(
-                color: colorScheme.surface,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: colorScheme.primary.withOpacity(0.6),
-                  width: 2,
+      child: Builder(
+        builder: (context) {
+          final colorScheme = Theme.of(context).colorScheme;
+          return Container(
+            width: 14, // 핸들 두께
+            // 🎯 vertical margin 제거 (ClipRect 영향 제거)
+            decoration: BoxDecoration(
+              color: colorScheme.onSurface,
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(
+                color: colorScheme.primary.withOpacity(0.6),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: colorScheme.shadow.withOpacity(0.4),
+                  blurRadius: _isHandleDragging ? 8 : 6,
+                  offset: const Offset(0, 2),
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: colorScheme.shadow.withOpacity(0.4),
-                    blurRadius: _isHandleDragging ? 8 : 6,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Stack(
-                children: [
-                  // 🎯 그립 라인들
-                  Center(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Container(
-                          width: 2.0,
-                          height: double.infinity,
-                          margin: const EdgeInsets.symmetric(horizontal: 1.0),
-                          decoration: BoxDecoration(
-                            color: colorScheme.primary.withOpacity(0.7),
-                            borderRadius: BorderRadius.circular(1.25),
-                          ),
-                        ),
-                        Container(
-                          width: 2.0,
-                          height: double.infinity,
-                          margin: const EdgeInsets.symmetric(horizontal: 1.0),
-                          decoration: BoxDecoration(
-                            color: colorScheme.primary.withOpacity(0.7),
-                            borderRadius: BorderRadius.circular(1.25),
-                          ),
-                        ),
-                        Container(
-                          width: 2.0,
-                          height: double.infinity,
-                          margin: const EdgeInsets.symmetric(horizontal: 1.0),
-                          decoration: BoxDecoration(
-                            color: colorScheme.primary.withOpacity(0.7),
-                            borderRadius: BorderRadius.circular(1.25),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -1464,22 +1388,14 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
     });
 
     try {
-      final result = await _trimmer.saveTrimmedVideo(
-        startValue: _trimmer.startValue,
-        endValue: _trimmer.endValue,
-      );
-
+      final result = VideoTrimResult(trim: _trimmer.buildTrimSpec());
       if (!mounted) return;
-
-      // 🎯 플레이스홀더 안정화 대기 (UX 개선)
-      await Future.delayed(const Duration(milliseconds: 150));
-
+      await Future.delayed(const Duration(milliseconds: 120));
       if (!mounted) return;
       Navigator.of(context).pop(result);
     } catch (e) {
-      debugPrint('[VideoTrimScreen] 트리밍 오류: $e');
+      debugPrint('[VideoTrimScreen] 트림 결과 생성 오류: $e');
       if (!mounted) return;
-
       await DialogUtils.showInfoDialog(
         context,
         title: AppLocalizations.of(context).t('error'),

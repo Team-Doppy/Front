@@ -1,6 +1,8 @@
 import 'dart:ui';
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/main.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
@@ -10,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_svg/svg.dart';
+import 'package:video_player/video_player.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -166,6 +169,17 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       widget.preExtractedThumbnailPath != null &&
       widget.preExtractedThumbnailPath!.isNotEmpty;
 
+  /// 🎯 썸네일이 비디오 URL인지 확인
+  bool _isVideoUrl(String url) {
+    final lowerUrl = url.toLowerCase();
+    return lowerUrl.endsWith('.mp4') ||
+        lowerUrl.endsWith('.mov') ||
+        lowerUrl.endsWith('.m4v') ||
+        lowerUrl.endsWith('.avi') ||
+        lowerUrl.contains('/videos/') ||
+        lowerUrl.contains('video');
+  }
+
   /// 🎯 썸네일 이미지 빌더 (로컬/네트워크 자동 판단)
   Widget _buildThumbnailImage({
     required BoxFit fit,
@@ -176,7 +190,7 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       return errorWidget;
     }
 
-    // 로컬 파일이면 Image.file, 네트워크면 Image.network
+    // 로컬 파일이면 Image.file
     if (_isThumbnailLocal) {
       return Image.file(
         File(thumbnail),
@@ -184,10 +198,42 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
         errorBuilder: (context, error, stackTrace) => errorWidget,
       );
     } else {
-      return Image.network(
-        thumbnail,
+      // 네트워크 URL인 경우
+      // 🎯 비디오 URL이면 네트워크 비디오 썸네일로 렌더링 (이미지로 로드하지 않음)
+      if (_isVideoUrl(thumbnail)) {
+        return _ShareOverlayVideoThumbnail(
+          url: thumbnail,
+          fit: fit,
+          errorWidget: errorWidget,
+        );
+      }
+
+      // 🎯 CachedNetworkImage 사용 (캐싱 및 에러 처리 개선)
+      // 🎯 공용 캐시: widget.thumbnailUrl을 cacheKey로 사용하여
+      // CardView/ImageView와 동일한 캐시 공유
+      return CachedNetworkImage(
+        imageUrl: thumbnail,
         fit: fit,
-        errorBuilder: (context, error, stackTrace) => errorWidget,
+        placeholder:
+            (context, url) => Container(
+              color: Colors.grey.shade900,
+              child: Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Colors.white.withOpacity(0.3),
+                  ),
+                ),
+              ),
+            ),
+        errorWidget: (context, url, error) {
+          debugPrint('[SharePostOverlay] 이미지 로드 실패: $url, 에러: $error');
+          return errorWidget;
+        },
+        // 🎯 공용 캐시: widget.thumbnailUrl을 사용하여 다른 컴포넌트와 캐시 공유
+        cacheKey: widget.thumbnailUrl ?? thumbnail,
+        fadeInDuration: const Duration(milliseconds: 100),
+        fadeOutDuration: const Duration(milliseconds: 100),
       );
     }
   }
@@ -498,19 +544,6 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
 
       case ShareTheme.light:
         return Colors.black.withOpacity(opacity);
-    }
-  }
-
-  /// 🎯 보조 텍스트 색상 (테마별)
-  Color _getSecondaryTextColor() {
-    switch (_currentTheme) {
-      case ShareTheme.darkBlur:
-      case ShareTheme.lightBlur:
-      case ShareTheme.dark:
-        return Colors.white.withOpacity(0.7);
-
-      case ShareTheme.light:
-        return Colors.black.withOpacity(0.6);
     }
   }
 
@@ -1102,6 +1135,140 @@ class _SharePostOverlayState extends State<SharePostOverlay> {
       debugPrint('❌ 이미지 캡처 에러: $e');
       return null;
     }
+  }
+}
+
+class _ShareOverlayVideoThumbnail extends StatefulWidget {
+  const _ShareOverlayVideoThumbnail({
+    required this.url,
+    required this.fit,
+    required this.errorWidget,
+  });
+
+  final String url;
+  final BoxFit fit;
+  final Widget errorWidget;
+
+  @override
+  State<_ShareOverlayVideoThumbnail> createState() =>
+      _ShareOverlayVideoThumbnailState();
+}
+
+class _ShareOverlayVideoThumbnailState
+    extends State<_ShareOverlayVideoThumbnail> {
+  VideoPlayerController? _controller;
+  bool _gaveUp = false;
+  bool _listening = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ShareOverlayVideoThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      _disposeController();
+      _gaveUp = false;
+      _init();
+    }
+  }
+
+  void _init() {
+    try {
+      // ✅ feed(ImageView/CardView)와 컨트롤러/네트워크 로딩을 최대한 공유하기 위해 동일 namespace 사용
+      _controller = VideoCacheService().getOrCreateController(
+        widget.url,
+        namespace: 'profile',
+      );
+      if (_controller!.value.isInitialized && !_controller!.value.hasError) {
+        _controller!.setVolume(0);
+        _controller!.setLooping(true);
+        _controller!.play();
+        if (mounted) setState(() {});
+      } else {
+        if (!_listening) {
+          _listening = true;
+          _controller!.addListener(_onTick);
+        }
+        // 너무 오래 걸리면 포기
+        Future.delayed(const Duration(seconds: 12), () {
+          if (!mounted) return;
+          if (_controller == null) return;
+          if (!_controller!.value.isInitialized) {
+            setState(() => _gaveUp = true);
+          }
+        });
+      }
+    } catch (_) {
+      setState(() => _gaveUp = true);
+    }
+  }
+
+  void _onTick() {
+    if (!mounted || _controller == null) return;
+    final v = _controller!.value;
+    if (v.hasError) {
+      setState(() => _gaveUp = true);
+      return;
+    }
+    if (v.isInitialized) {
+      try {
+        _controller!.setVolume(0);
+        _controller!.setLooping(true);
+        _controller!.play();
+      } catch (_) {}
+      _controller?.removeListener(_onTick);
+      _listening = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  void _disposeController() {
+    if (_controller != null) {
+      try {
+        _controller!.removeListener(_onTick);
+      } catch (_) {}
+      VideoCacheService().releaseController(widget.url, namespace: 'profile');
+    }
+    _controller = null;
+    _listening = false;
+  }
+
+  @override
+  void dispose() {
+    _disposeController();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_gaveUp) return widget.errorWidget;
+    final c = _controller;
+    if (c == null) return widget.errorWidget;
+    if (c.value.isInitialized && !c.value.hasError) {
+      return FittedBox(
+        fit: widget.fit,
+        child: SizedBox(
+          width: c.value.size.width,
+          height: c.value.size.height,
+          child: VideoPlayer(c),
+        ),
+      );
+    }
+    // 로딩 중
+    return Container(
+      color: Colors.grey.shade900,
+      alignment: Alignment.center,
+      child: CircularProgressIndicator(
+        strokeWidth: 2,
+        valueColor: AlwaysStoppedAnimation<Color>(
+          Colors.white.withOpacity(0.3),
+        ),
+      ),
+    );
   }
 }
 

@@ -137,7 +137,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 // 앱 버전 및 상수
 class AppConstants {
-  static const String appVersion = '1.0.0';
+  static const String appVersion = '1.0.1';
 
   // 🎯 웹 도메인 (Universal Links/App Links용)
   static const String webDomain = 'www.doppy.app';
@@ -425,7 +425,18 @@ class RootShell extends StatefulWidget {
 
 class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   late int _index;
-  String? _searchInitialQuery; // 검색 화면 초기 검색어
+  // 🎯 탭 활성 인덱스 (IndexedStack 하위 위젯들이 외부 변화(키보드 등)로 불필요하게 rebuild되지 않도록 제어)
+  late final ValueNotifier<int> _activeIndexNotifier;
+
+  // 🎯 검색 탭에 "명령"으로 전달할 초기 검색어 (위젯 파라미터로 rebuild 유발하지 않음)
+  late final ValueNotifier<String?> _searchInitialQueryNotifier;
+
+  // 🎯 탭 위젯은 한 번만 생성해서 재사용 (Element.updateChild에서 동일 인스턴스면 update 스킵)
+  late final Widget _homeTab;
+  late final Widget _searchTab;
+  late final Widget _profileTab;
+  late final List<Widget> _tabs;
+
   final DeepLinkService _deepLinkService = DeepLinkService();
   bool _isCheckingRequests = false; // 🎯 요청 확인 중인지 추적
 
@@ -433,6 +444,38 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _index = widget.initialIndex;
+    _activeIndexNotifier = ValueNotifier<int>(_index);
+    _searchInitialQueryNotifier = ValueNotifier<String?>(null);
+
+    // ✅ 홈 탭: 활성 여부는 notifier로만 갱신 (RootShell rebuild와 분리)
+    _homeTab = ValueListenableBuilder<int>(
+      valueListenable: _activeIndexNotifier,
+      builder: (context, idx, _) {
+        return HomeScreen(
+          key: HomeScreenState.globalKey,
+          preloadedHomeData: widget.preloadedHomeData,
+          isActive: idx == 0,
+          onOpenSearchScreen: (query) => _openSearchScreen(query),
+        );
+      },
+    );
+
+    // ✅ 검색 탭: 비활성 상태면 내부에서 즉시 return하도록 위젯 자체가 제어
+    _searchTab = SearchScreenOverlay(
+      activeIndexListenable: _activeIndexNotifier,
+      tabIndex: 1,
+      initialQueryListenable: _searchInitialQueryNotifier,
+      onClose: _closeSearchScreen,
+      onTabChange: _handleTabChange,
+    );
+
+    _profileTab = const UserProfileScreen(isFromBottomTab: true);
+    _tabs = <Widget>[
+      _homeTab,
+      _searchTab,
+      const SizedBox.shrink(),
+      _profileTab,
+    ];
     // 라이프사이클 옵저버 등록
     WidgetsBinding.instance.addObserver(this);
 
@@ -542,6 +585,8 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     try {
       context.read<FriendProvider>().removeListener(_onFriendProviderChanged);
     } catch (_) {}
+    _activeIndexNotifier.dispose();
+    _searchInitialQueryNotifier.dispose();
     super.dispose();
   }
 
@@ -604,19 +649,79 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
             .catchError((e) {
               debugPrint('[RootShell] 포그라운드 전환 시 FCM 토큰 검사 및 동기화 실패 (무시): $e');
             });
+
+        // 🎯 3. 피드 데이터 자동 새로고침 (홈 화면이 활성화되어 있을 때만)
+        _refreshFeedOnForeground();
+
+        // 🎯 4. 사용자 프로필 정보 재동기화
+        _refreshProfileOnForeground();
+
+        // 🎯 5. 친구 요청 자동 확인 (비활성화)
+        // _checkFriendRequestsOnForeground();
       } catch (e) {
         debugPrint('[RootShell] 포그라운드 전환 시 토큰 검사 오류 (무시): $e');
       }
     }
   }
 
+  /// 🎯 포그라운드 복귀 시 내 프로필 피드 데이터 새로고침
+  void _refreshFeedOnForeground() {
+    try {
+      final myProfileFeedProvider = Provider.of<MyProfileFeedProvider>(
+        context,
+        listen: false,
+      );
+      // 캐시 무효화 후 새로고침
+      myProfileFeedProvider.invalidateCache();
+      myProfileFeedProvider
+          .loadInitial(force: true)
+          .then((_) {
+            debugPrint('[RootShell] ✅ 포그라운드 복귀 - 내 프로필 피드 새로고침 완료');
+          })
+          .catchError((e) {
+            debugPrint('[RootShell] 포그라운드 복귀 - 내 프로필 피드 새로고침 실패 (무시): $e');
+          });
+    } catch (e) {
+      debugPrint('[RootShell] 포그라운드 복귀 - 내 프로필 피드 새로고침 오류 (무시): $e');
+    }
+  }
+
+  /// 🎯 포그라운드 복귀 시 사용자 프로필 정보 재동기화
+  void _refreshProfileOnForeground() {
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      userProvider
+          .fetchMyProfile()
+          .then((_) {
+            debugPrint('[RootShell] ✅ 포그라운드 복귀 - 프로필 정보 재동기화 완료');
+          })
+          .catchError((e) {
+            debugPrint('[RootShell] 포그라운드 복귀 - 프로필 정보 재동기화 실패 (무시): $e');
+          });
+    } catch (e) {
+      debugPrint('[RootShell] 포그라운드 복귀 - 프로필 정보 재동기화 오류 (무시): $e');
+    }
+  }
+
   // 검색 화면 열기
   void _openSearchScreen([String? initialQuery]) {
     if (!mounted) return;
+    // ✅ "명령" 전달 (위젯 파라미터 변경으로 rebuild 유발하지 않음)
+    _searchInitialQueryNotifier.value = initialQuery;
+
     setState(() {
-      _searchInitialQuery = initialQuery;
       _index = 1; // 검색 탭으로 전환
     });
+    _activeIndexNotifier.value = 1;
+  }
+
+  void _closeSearchScreen() {
+    if (!mounted) return;
+    _searchInitialQueryNotifier.value = null;
+    setState(() {
+      _index = 0;
+    });
+    _activeIndexNotifier.value = 0;
   }
 
   // 탭 변경 처리 (검색 화면에서 호출)
@@ -640,10 +745,11 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     // 일반 탭 전환
     setState(() {
       _index = index;
-      if (index != 1) {
-        _searchInitialQuery = null;
-      }
     });
+    _activeIndexNotifier.value = index;
+    if (index != 1) {
+      _searchInitialQueryNotifier.value = null;
+    }
   }
 
   void _onTap(int i) {
@@ -656,8 +762,9 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
       }
       setState(() {
         _index = 0;
-        _searchInitialQuery = null;
       });
+      _activeIndexNotifier.value = 0;
+      _searchInitialQueryNotifier.value = null;
       return;
     }
 
@@ -684,10 +791,11 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     // 프로필 탭 클릭
     setState(() {
       _index = i;
-      if (i != 1) {
-        _searchInitialQuery = null;
-      }
     });
+    _activeIndexNotifier.value = i;
+    if (i != 1) {
+      _searchInitialQueryNotifier.value = null;
+    }
 
     // 다른 탭으로 이동 시 검색 오버레이 상태 해제
     if (i != 0) {
@@ -698,55 +806,37 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     // 🎯 각 탭의 화면을 IndexedStack으로 재사용 (새로 만들어지지 않음)
-    // 🎯 키보드 높이를 가져와서 바텀 네비게이션 바 위치 조정
-    final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
-
+    // 🎯 adjustResize 모드에서는 MediaQuery.size가 변경되므로, LayoutBuilder로 실제 제약 사용
     return Material(
-      child: Stack(
-        children: [
-          // 모든 탭 화면을 미리 생성하고 IndexedStack으로 관리 (상태 유지)
-          IndexedStack(
-            index: _index,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // 🎯 View.of로 실제 물리적 화면 크기 가져오기 (adjustResize 영향을 받지 않음)
+          final view = View.of(context);
+          final viewSize = view.physicalSize / view.devicePixelRatio;
+          final bottomBarHeight = 72.0; // CustomBottomNavigationBar의 고정 높이
+
+          return Stack(
             children: [
-              // 홈 화면
-              HomeScreen(
-                preloadedHomeData: widget.preloadedHomeData,
-                isActive: _index == 0,
-                onOpenSearchScreen: (query) => _openSearchScreen(query),
+              // 모든 탭 화면을 미리 생성하고 IndexedStack으로 관리 (상태 유지)
+              IndexedStack(index: _index, children: _tabs),
+              // 플로팅 바텀 네비게이션 바
+              // 🎯 View.of로 가져온 실제 물리적 화면 크기를 기준으로 절대 위치 계산
+              // adjustResize로 Stack 크기가 변경되어도 실제 화면 하단에 고정
+              // 키보드가 올라와도 실제 화면 하단에 고정 (키보드가 바텀바를 덮고 올라옴)
+              Positioned(
+                left: 0,
+                right: 0,
+                top: viewSize.height - bottomBarHeight,
+                child: CustomBottomNavigationBar(
+                  currentIndex: _index,
+                  actualIndex: _index,
+                  onTap: _onTap,
+                  isSearching: context.watch<SearchProvider>().isSearchActive,
+                ),
               ),
-              // 검색 화면
-              SearchScreenOverlay(
-                initialQuery: _searchInitialQuery,
-                onClose: () {
-                  if (mounted) {
-                    setState(() {
-                      _index = 0;
-                      _searchInitialQuery = null;
-                    });
-                  }
-                },
-                onTabChange: _handleTabChange,
-              ),
-              // 글쓰기 탭은 Navigator로 처리하므로 빈 위젯
-              const SizedBox.shrink(),
-              // 프로필 화면
-              const UserProfileScreen(isFromBottomTab: true),
             ],
-          ),
-          // 플로팅 바텀 네비게이션 바
-          // 🎯 키보드가 올라와도 화면 하단에 고정되도록 bottom 값을 키보드 높이만큼 조정
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: keyboardHeight, // 🎯 키보드 높이만큼 조정하여 화면 하단에 고정
-            child: CustomBottomNavigationBar(
-              currentIndex: _index,
-              actualIndex: _index,
-              onTap: _onTap,
-              isSearching: context.watch<SearchProvider>().isSearchActive,
-            ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }

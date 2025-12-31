@@ -93,9 +93,14 @@ class _PostCardState extends State<PostCard>
     _likeService.removeListener(_onLikeServiceChanged);
     _muteService.removeListener(_onMuteServiceChanged);
 
-    // 현재 카드가 재생 중이면 일시정지
-    if (_videoController != null && widget.isVisible) {
-      _videoController?.pause();
+    // ✅ 캐시 컨트롤러는 위젯이 사라져도 살아있을 수 있으므로,
+    // isVisible과 무관하게 "재생 중이면" 일시정지하여 소리/리소스 누수를 방지한다.
+    if (_videoController != null) {
+      try {
+        if (_videoController!.value.isPlaying) {
+          _videoController!.pause();
+        }
+      } catch (_) {}
     }
 
     // 캐시된 서버 비디오는 참조 해제

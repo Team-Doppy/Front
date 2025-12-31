@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/editor/component/divider_component.dart' show DividerNode;
@@ -8,6 +7,7 @@ import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/image/utils/edit_image_cache_manager.dart';
 import 'package:flutter/foundation.dart';
@@ -19,7 +19,7 @@ Widget _buildFastCachedNetworkImage(
   required String imageUrl,
   double? width,
   double? height,
-  BoxFit fit = BoxFit.cover,
+  BoxFit fit = BoxFit.contain,
   Widget? placeholder,
   Widget? errorWidget,
 }) {
@@ -144,26 +144,32 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
       height = _childSize?.height ?? 120.0;
     }
 
+    // ✅ 손가락 위치가 오버레이의 정확히 가운데에 오도록 설정
     final double left = widget.position.dx - (width / 2);
     final double top = widget.position.dy - (height / 2);
 
     return Positioned(
       left: left,
       top: top,
-      child: FadeTransition(
-        opacity: _fadeAnimation,
-        child: ScaleTransition(
-          scale: _scaleAnimation,
-          child: Opacity(
-            opacity: 0.7, // 🎯 70% 투명도로 뒤의 텍스트가 보이게
-            child: Material(
-              elevation: 8,
-              borderRadius: BorderRadius.circular(8),
-              child: ClipRRect(
+      // ⚠️ Positioned는 반드시 Stack의 direct child여야 한다.
+      // IgnorePointer는 Positioned 안쪽에 두어 ParentDataWidget 사용 오류를 피한다.
+      child: IgnorePointer(
+        ignoring: true,
+        child: FadeTransition(
+          opacity: _fadeAnimation,
+          child: ScaleTransition(
+            scale: _scaleAnimation,
+            child: Opacity(
+              opacity: 0.7, // 🎯 70% 투명도로 뒤의 텍스트가 보이게
+              child: Material(
+                elevation: 8,
                 borderRadius: BorderRadius.circular(8),
-                child: KeyedSubtree(
-                  key: _previewKey,
-                  child: _buildNodePreview(context),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: KeyedSubtree(
+                    key: _previewKey,
+                    child: _buildNodePreview(context),
+                  ),
                 ),
               ),
             ),
@@ -215,6 +221,8 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
       return _buildLinkPreview(node);
     } else if (node is DividerNode) {
       return _buildDividerPreview();
+    } else if (node is MentionNode) {
+      return _buildMentionPreview(node, context);
     } else if (node is ParagraphNode) {
       return _buildParagraphPreview(node, context);
     } else {
@@ -246,7 +254,7 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
                     imageUrl: node.thumbnailUrl,
                     width: 130,
                     height: 130,
-                    fit: BoxFit.cover,
+                    fit: BoxFit.contain,
                     placeholder: Container(
                       width: 130,
                       height: 130,
@@ -322,14 +330,14 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
     Widget baseImage;
     // 🚀 로컬 경로 우선 처리
     if (localPath != null && localPath.isNotEmpty) {
-      baseImage = Image.file(File(localPath), fit: BoxFit.cover);
+      baseImage = Image.file(File(localPath), fit: BoxFit.contain);
     } else if (widget.previewImageUrl != null &&
         widget.previewImageUrl!.isNotEmpty) {
       // previewImageUrl 사용 (네트워크 URL)
       baseImage = _buildFastCachedNetworkImage(
         context,
         imageUrl: widget.previewImageUrl!,
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
         errorWidget: ImageErrorPlaceholder(),
       );
     } else if (EditorService.isNetworkUrl(imageUrl)) {
@@ -337,17 +345,17 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
       baseImage = _buildFastCachedNetworkImage(
         context,
         imageUrl: imageUrl,
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
         errorWidget: ImageErrorPlaceholder(),
       );
     } else if (imageUrl.startsWith('file://')) {
       baseImage = Image.file(
         File(Uri.parse(imageUrl).toFilePath()),
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
       );
     } else if (imageUrl.isNotEmpty) {
       // 로컬 경로로 간주
-      baseImage = Image.file(File(imageUrl), fit: BoxFit.cover);
+      baseImage = Image.file(File(imageUrl), fit: BoxFit.contain);
     } else {
       baseImage = ImageErrorPlaceholder();
     }
@@ -375,6 +383,15 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
   }
 
   Widget _buildPageViewImagePreview(PageViewImageNode node) {
+    // 🎯 분리 모드: previewImageUrl이나 previewImageLocalPath가 있으면 단일 이미지 표시
+    if (widget.previewImageUrl != null && widget.previewImageUrl!.isNotEmpty) {
+      return _buildSplitImagePreview(widget.previewImageUrl!);
+    }
+    if (widget.previewImageLocalPath != null &&
+        widget.previewImageLocalPath!.isNotEmpty) {
+      return _buildSplitImagePreview(widget.previewImageLocalPath!);
+    }
+
     // 페이지뷰 느낌: 여러 이미지가 겹쳐있는 효과
     if (node.imageUrls.isEmpty) {
       return _buildDefaultPreview(node);
@@ -457,13 +474,13 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
         imageUrl: imageUrl,
         width: 150,
         height: 220,
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
         errorWidget: ImageErrorPlaceholder(),
       );
     } else if (isFileUrl || isLocalPath) {
       final String path =
           isFileUrl ? Uri.parse(imageUrl).toFilePath() : imageUrl;
-      imageWidget = Image.file(File(path), fit: BoxFit.cover);
+      imageWidget = Image.file(File(path), fit: BoxFit.contain);
     } else {
       imageWidget = ImageErrorPlaceholder();
     }
@@ -526,14 +543,14 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
         imageUrl: imageUrl,
         width: 150,
         height: 220,
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
         errorWidget: ImageErrorPlaceholder(),
       );
     } else if (isFileUrl || isLocalPath) {
       // 로컬 파일 경로
       final String path =
           isFileUrl ? Uri.parse(imageUrl).toFilePath() : imageUrl;
-      imageWidget = Image.file(File(path), fit: BoxFit.cover);
+      imageWidget = Image.file(File(path), fit: BoxFit.contain);
     } else {
       imageWidget = ImageErrorPlaceholder();
     }
@@ -543,6 +560,67 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
       child: ClipRRect(
         borderRadius: BorderRadius.circular(4),
         child: imageWidget,
+      ),
+    );
+  }
+
+  Widget _buildMentionPreview(MentionNode node, BuildContext context) {
+    final usernames = node.usernames;
+    if (usernames.isEmpty) {
+      return _buildDefaultPreview(node);
+    }
+
+    final fontSize = (node.metadata['fontSize'] as num?)?.toDouble() ?? 16.0;
+    final textAlign = node.metadata['textAlign'] as String?;
+
+    // 정렬에 따라 CrossAxisAlignment 결정
+    CrossAxisAlignment crossAlign;
+    MainAxisAlignment mainAlign;
+    switch (textAlign) {
+      case 'left':
+        crossAlign = CrossAxisAlignment.start;
+        mainAlign = MainAxisAlignment.start;
+        break;
+      case 'right':
+        crossAlign = CrossAxisAlignment.end;
+        mainAlign = MainAxisAlignment.end;
+        break;
+      case 'center':
+      default:
+        crossAlign = CrossAxisAlignment.center;
+        mainAlign = MainAxisAlignment.center;
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withOpacity(0.95),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      constraints: const BoxConstraints(minWidth: 120, maxWidth: 240),
+      child: Row(
+        mainAxisAlignment: mainAlign,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Column(
+              crossAxisAlignment: crossAlign,
+              mainAxisSize: MainAxisSize.min,
+              children:
+                  usernames.map((username) {
+                    return Text(
+                      '@$username',
+                      style: TextStyle(
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    );
+                  }).toList(),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -647,13 +725,13 @@ class _ImageRowPreviewContentState extends State<_ImageRowPreviewContent> {
       imageWidget = _buildFastCachedNetworkImage(
         context,
         imageUrl: imageUrl,
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
         errorWidget: ImageErrorPlaceholder(),
       );
     } else if (isFileUrl || isLocalPath) {
       final String path =
           isFileUrl ? Uri.parse(imageUrl).toFilePath() : imageUrl;
-      imageWidget = Image.file(File(path), fit: BoxFit.cover);
+      imageWidget = Image.file(File(path), fit: BoxFit.contain);
     } else {
       imageWidget = ImageErrorPlaceholder();
     }
@@ -797,7 +875,7 @@ class _ClipPreviewWidgetState extends State<_ClipPreviewWidget> {
       debugPrint(
         '[DragOverlay] 생성된 썸네일 바이트 사용: ${_thumbnailBytes!.length} bytes',
       );
-      base = Image.memory(_thumbnailBytes!, fit: BoxFit.cover);
+      base = Image.memory(_thumbnailBytes!, fit: BoxFit.contain);
     } else if (thumb != null && thumb.isNotEmpty) {
       // 썸네일 파일이 있으면 사용
       if (EditorService.isNetworkUrl(thumb)) {
@@ -807,7 +885,7 @@ class _ClipPreviewWidgetState extends State<_ClipPreviewWidget> {
           imageUrl: thumb,
           width: 150,
           height: 220,
-          fit: BoxFit.cover,
+          fit: BoxFit.contain,
           errorWidget: _buildPlaceholder(),
           placeholder: Container(
             width: 150,
@@ -821,7 +899,7 @@ class _ClipPreviewWidgetState extends State<_ClipPreviewWidget> {
           final file = File(thumb);
           if (file.existsSync()) {
             debugPrint('[DragOverlay] 로컬 파일 이미지 로드: $thumb');
-            base = Image.file(file, fit: BoxFit.cover);
+            base = Image.file(file, fit: BoxFit.contain);
           } else {
             debugPrint('[DragOverlay] 로컬 파일이 존재하지 않음: $thumb');
             base = _buildPlaceholder();

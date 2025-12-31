@@ -329,4 +329,149 @@ class PostContentUtils {
 
     return preview;
   }
+
+  /// 본문(content.nodes)에서 "첫 번째 이미지 URL"을 찾는다.
+  ///
+  /// - Step1(썸네일/배경) 기본값으로 사용하기 위함
+  /// - 반드시 http(s) URL만 반환 (로컬 경로는 제외)
+  static String findFirstBodyImageUrl(Map<String, dynamic> exported) {
+    bool isHttpUrl(String u) =>
+        u.startsWith('http://') || u.startsWith('https://');
+
+    try {
+      assert(() {
+        final thumb = (exported['thumbnailImageUrl'] ?? '').toString();
+        final used = exported['usedImageUrls'];
+        debugPrint(
+          '[ThumbAuto][findFirstBodyImageUrl] start: thumbnailImageUrl="$thumb", usedImageUrlsType=${used.runtimeType}',
+        );
+        return true;
+      }());
+
+      // ✅ exported 전체에서 content.nodes를 우선 탐색하되,
+      // 레거시/변형 구조(content가 Map이 아니거나 nodes 키가 다른 경우)도 안전하게 처리한다.
+      dynamic content = exported['content'];
+      List<dynamic> nodes = const [];
+
+      if (content is Map) {
+        nodes = List<dynamic>.from(content['nodes'] as List? ?? const []);
+        // 일부 변형: content['content'] 아래에 nodes가 중첩될 수 있음
+        if (nodes.isEmpty) {
+          final nested = content['content'];
+          if (nested is Map) {
+            nodes = List<dynamic>.from(nested['nodes'] as List? ?? const []);
+          }
+        }
+      } else if (exported['nodes'] is List) {
+        // 변형: 최상위에 nodes가 있는 경우
+        nodes = List<dynamic>.from(exported['nodes'] as List? ?? const []);
+      }
+
+      assert(() {
+        debugPrint(
+          '[ThumbAuto][findFirstBodyImageUrl] nodes=${nodes.length}, contentType=${content.runtimeType}',
+        );
+        for (int i = 0; i < nodes.length && i < 6; i++) {
+          final n = nodes[i];
+          if (n is! Map) continue;
+          final type = (n['type'] ?? n['nodeType'] ?? '').toString();
+          String sample = '';
+          if (type == 'image') {
+            final data = (n['data'] as Map?)?.cast<String, dynamic>();
+            sample =
+                (data?['url'] ?? data?['imageUrl'] ?? n['url'] ?? n['imageUrl'])
+                    .toString();
+          } else if (type == 'imageRow') {
+            final urls = List<dynamic>.from(
+              n['urls'] ?? n['imageUrls'] ?? n['images'] ?? const [],
+            );
+            sample = urls.isNotEmpty ? urls.first.toString() : '';
+          } else if (type == 'pageViewImage' ||
+              type == 'pageviewImage' ||
+              type == 'page_view_image') {
+            final urls = List<dynamic>.from(
+              n['imageUrls'] ?? n['urls'] ?? n['images'] ?? const [],
+            );
+            sample = urls.isNotEmpty ? urls.first.toString() : '';
+          }
+          debugPrint(
+            '[ThumbAuto][findFirstBodyImageUrl] node[$i] type=$type sample="$sample"',
+          );
+        }
+        return true;
+      }());
+
+      if (nodes.isEmpty) return '';
+
+      for (final n in nodes) {
+        if (n is! Map) continue;
+        final type = (n['type'] ?? n['nodeType'] ?? '').toString();
+
+        if (type == 'image') {
+          final data = (n['data'] as Map?)?.cast<String, dynamic>();
+          final url =
+              (data?['url'] ??
+                      data?['imageUrl'] ??
+                      data?['src'] ??
+                      n['url'] ??
+                      n['imageUrl'] ??
+                      '')
+                  .toString();
+          if (url.isNotEmpty && isHttpUrl(url)) return url;
+        }
+
+        if (type == 'imageRow') {
+          final urls = List<dynamic>.from(
+            n['urls'] ?? n['imageUrls'] ?? n['images'] ?? const [],
+          );
+          for (final u in urls) {
+            final url = u.toString();
+            if (url.isNotEmpty && isHttpUrl(url)) return url;
+          }
+        }
+
+        // 다양한 키/타입 호환 (exporter 버전별 차이)
+        if (type == 'pageViewImage' ||
+            type == 'pageviewImage' ||
+            type == 'page_view_image') {
+          final urls = List<dynamic>.from(
+            n['imageUrls'] ?? n['urls'] ?? n['images'] ?? const [],
+          );
+          for (final u in urls) {
+            final url = u.toString();
+            if (url.isNotEmpty && isHttpUrl(url)) return url;
+          }
+        }
+      }
+
+      // ✅ 본문 노드에 이미지가 없으면(혹은 스키마가 달라 못 찾았으면)
+      // stickers에서라도 하나 찾아서 Step1 배경으로 쓰게 한다.
+      try {
+        if (content is Map) {
+          final stickers = List<dynamic>.from(content['stickers'] ?? const []);
+          assert(() {
+            debugPrint(
+              '[ThumbAuto][findFirstBodyImageUrl] fallback: stickers=${stickers.length}',
+            );
+            return true;
+          }());
+          for (final s in stickers) {
+            if (s is! Map) continue;
+            if ((s['type'] ?? '').toString() != 'image') continue;
+            final c = s['content'];
+            String url = '';
+            if (c is String) url = c;
+            if (c is Map) url = (c['url'] ?? '').toString();
+            if (url.isNotEmpty && isHttpUrl(url)) return url;
+          }
+        }
+      } catch (_) {}
+    } catch (_) {}
+
+    assert(() {
+      debugPrint('[ThumbAuto][findFirstBodyImageUrl] result="" (not found)');
+      return true;
+    }());
+    return '';
+  }
 }

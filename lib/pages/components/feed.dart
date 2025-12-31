@@ -140,8 +140,8 @@ class Feed {
         final filteredBase = data.selectedBase;
         final filteredCategoryId = data.selectedCategoryId;
 
-        // 로딩 중이면 shimmer 표시
-        if (data.isLoading && data.categories.isEmpty) {
+        // 로딩 중이면 shimmer 표시 (초기 로딩 또는 새로고침)
+        if (data.isLoading) {
           return _buildLoadingShimmer(context);
         }
 

@@ -8,6 +8,7 @@ import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/editor/component/clip_component.dart'
     show ClipNode, readerVideoControllers;
 import 'package:doppy/editor/service/sticker_service.dart';
@@ -323,33 +324,26 @@ class PostReaderService {
           break;
 
         case 'mention':
-          // 멘션은 이제 Paragraph 기반으로 처리됨
+          // MentionNode로 복구
           final usernames =
               ((m['usernames'] as List?) ?? const [])
                   .map((e) => e.toString())
                   .toList();
-          final String text = usernames.map((u) => '@$u').join('\n');
+          final textAlign = (m['align'] ?? 'center').toString();
+          final fontSize = (m['fontSize'] as num?)?.toDouble();
 
-          final AttributedText attributed = AttributedText(text);
-          if (text.isNotEmpty) {
-            attributed.addAttribution(
-              boldAttribution,
-              SpanRange(0, text.length - 1),
-            );
+          final mentionMetadata = <String, dynamic>{'textAlign': textAlign};
+          if (fontSize != null) {
+            mentionMetadata['fontSize'] = fontSize;
           }
 
-          final meta = <String, dynamic>{
-            'textAlign': (m['align'] ?? 'center').toString(),
-            'mention': true,
-            'usernames': usernames,
-          };
-
-          // fontFamily를 메타데이터에서 추출하여 추가
-          if (m['fontFamily'] != null) {
-            meta['fontFamily'] = m['fontFamily'];
-          }
-
-          rebuilt.add(ParagraphNode(id: id, text: attributed, metadata: meta));
+          rebuilt.add(
+            MentionNode(
+              id: id,
+              usernames: usernames,
+              metadata: mentionMetadata,
+            ),
+          );
           break;
 
         case 'divider':
@@ -780,6 +774,82 @@ class PostReaderService {
     return result['clips'] ?? [];
   }
 
+  /// 위쪽에 있는 스티커 이미지 URL 추출 (yPx 기준으로 정렬하여 상위 스티커 선택)
+  List<String> extractTopStickerImageUrls(Map<String, dynamic> content) {
+    final List<String> stickerUrls = [];
+    final stickers = (content['stickers'] as List?) ?? [];
+
+    if (stickers.isEmpty) {
+      return stickerUrls;
+    }
+
+    // 스티커를 yPx 기준으로 정렬하기 위한 리스트
+    final List<Map<String, dynamic>> sortedStickers = [];
+
+    for (final sticker in stickers) {
+      if (sticker is! Map) continue;
+      final m = sticker.cast<String, dynamic>();
+      final type = (m['type'] ?? '').toString();
+
+      // 이미지 타입 스티커만 처리
+      if (type != 'image') continue;
+
+      final contentData = m['content'];
+      String? url;
+
+      // 레거시 지원: content가 Map, String, 또는 다른 형태일 수 있음
+      if (contentData is Map) {
+        // ✅ URL + 크기 정보 (PNG 드로잉) 또는 레거시 {url: ...}
+        url = (contentData['url'] ?? '').toString();
+      } else if (contentData is String) {
+        // 레거시: content가 직접 URL 문자열인 경우
+        url = contentData;
+      }
+
+      // URL이 있는 스티커만 처리 (bytes는 제외)
+      if (url == null || url.isEmpty) continue;
+
+      // yPx 값을 가져옴 (positionFallback 또는 anchor 기준)
+      double yPx = double.infinity; // 기본값은 무한대 (아래쪽)
+
+      final positionFallback =
+          (m['positionFallback'] as Map?)?.cast<String, dynamic>();
+      if (positionFallback != null) {
+        final y = (positionFallback['yPx'] as num?)?.toDouble();
+        if (y != null) {
+          yPx = y;
+        }
+      } else {
+        // anchor가 있는 경우, 일단 0으로 설정 (추후 개선 가능)
+        final anchor = (m['anchor'] as Map?)?.cast<String, dynamic>();
+        if (anchor != null) {
+          yPx = 0.0; // anchor가 있는 경우 임시로 0으로 설정
+        }
+      }
+
+      sortedStickers.add({'url': url, 'yPx': yPx});
+    }
+
+    // yPx 기준으로 정렬 (작은 값이 위쪽)
+    sortedStickers.sort((a, b) {
+      final yA = (a['yPx'] as num?)?.toDouble() ?? double.infinity;
+      final yB = (b['yPx'] as num?)?.toDouble() ?? double.infinity;
+      return yA.compareTo(yB);
+    });
+
+    // 상위 스티커들의 URL 추출 (최대 10개)
+    for (final sticker in sortedStickers.take(10)) {
+      final url = (sticker['url'] ?? '').toString();
+      if (url.isNotEmpty) {
+        stickerUrls.add(url);
+      }
+    }
+
+    _d('[PostReaderService] 🎨 위쪽 스티커 이미지 URL 추출: ${stickerUrls.length}개');
+
+    return stickerUrls;
+  }
+
   /// 문서에서 사용된 폰트 추출
   Set<String> extractUsedFonts(Map<String, dynamic> content) {
     final Set<String> fontIdentifiers = {};
@@ -814,6 +884,7 @@ class PostReaderService {
 
   /// 실패해도 계속 진행 (에러는 로그만 남김)
   /// 첫 텍스트 노드 제외 후, 첫 N개 미디어 노드(이미지+영상 합쳐서)에 있는 모든 미디어를 프리로드
+  /// 위쪽에 있는 스티커 이미지도 함께 프리로드
   Future<void> preloadTopMedia(
     BuildContext context,
     Map<String, dynamic> content, {
@@ -827,7 +898,10 @@ class PostReaderService {
     final imageUrls = mediaUrls['images'] ?? [];
     final clipUrls = mediaUrls['clips'] ?? [];
 
-    if (imageUrls.isEmpty && clipUrls.isEmpty) {
+    // 위쪽 스티커 이미지 URL 추출
+    final stickerImageUrls = extractTopStickerImageUrls(content);
+
+    if (imageUrls.isEmpty && clipUrls.isEmpty && stickerImageUrls.isEmpty) {
       debugPrint('[PostReaderService] ⚠️ 프리로드할 미디어가 없습니다');
       // 🎯 미디어가 없어도 폰트는 프리로드 (백그라운드)
       _preloadFontsInBackground(content);
@@ -835,10 +909,10 @@ class PostReaderService {
     }
 
     _d(
-      '[PostReaderService] 🚀 첫 $mediaNodeCount개 미디어 노드 프리로드 시작: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
+      '[PostReaderService] 🚀 첫 $mediaNodeCount개 미디어 노드 프리로드 시작: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개, 스티커 ${stickerImageUrls.length}개',
     );
 
-    // 🎯 이미지와 비디오를 병렬로 프리로드 (크기 측정 제거 - 서버 응답에 이미 포함)
+    // 🎯 이미지와 비디오, 스티커를 병렬로 프리로드 (크기 측정 제거 - 서버 응답에 이미 포함)
     final futures = <Future>[];
 
     final decodeWidth = _readDecodeWidth(context);
@@ -860,6 +934,25 @@ class PostReaderService {
             debugPrint('[PostReaderService] ✅ 이미지 프리로드 완료: $url');
           } catch (e) {
             debugPrint('[PostReaderService] ❌ 이미지 프리로드 실패: $url - $e');
+          }
+        }());
+      }
+    }
+
+    // 스티커 이미지 프리로드 (위쪽 스티커)
+    if (stickerImageUrls.isNotEmpty) {
+      for (final url in stickerImageUrls) {
+        futures.add(() async {
+          try {
+            final built = EditorImageProvider.build(
+              url: url,
+              isEditing: false, // 읽기 모드
+              decodeWidth: decodeWidth,
+            );
+            await precacheImage(built.effectiveProvider, context);
+            debugPrint('[PostReaderService] ✅ 스티커 이미지 프리로드 완료: $url');
+          } catch (e) {
+            debugPrint('[PostReaderService] ❌ 스티커 이미지 프리로드 실패: $url - $e');
           }
         }());
       }
@@ -893,7 +986,7 @@ class PostReaderService {
     await completer.future;
 
     _d(
-      '[PostReaderService] ✅ 상위 미디어 프리로드 완료: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개',
+      '[PostReaderService] ✅ 상위 미디어 프리로드 완료: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개, 스티커 ${stickerImageUrls.length}개',
     );
 
     // 🎯 폰트 프리로드 (백그라운드에서 비동기로 실행, 미디어 프리로드와 병렬)

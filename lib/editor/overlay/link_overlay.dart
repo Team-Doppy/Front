@@ -35,7 +35,8 @@ class LinkOverlay extends StatefulWidget {
   State<LinkOverlay> createState() => _LinkOverlayState();
 }
 
-class _LinkOverlayState extends State<LinkOverlay> {
+class _LinkOverlayState extends State<LinkOverlay>
+    with SingleTickerProviderStateMixin {
   final _url = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   final TextEditingController _customTitleController =
@@ -51,6 +52,10 @@ class _LinkOverlayState extends State<LinkOverlay> {
   double _dragStartY = 0.0;
   double _dragStartX = 0.0;
   bool _isDragging = false;
+
+  // 페이드 애니메이션
+  late final AnimationController _fadeController;
+  late final Animation<double> _fadeAnimation;
 
   final List<_LinkItem> _items = <_LinkItem>[]; // 여러 링크 큐
   List<String> _suggestions = <String>[]; // URL 추천 목록
@@ -107,6 +112,18 @@ class _LinkOverlayState extends State<LinkOverlay> {
   @override
   void initState() {
     super.initState();
+
+    // 페이드 애니메이션 초기화
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _fadeAnimation = CurvedAnimation(
+      parent: _fadeController,
+      curve: Curves.easeOut,
+    );
+    _fadeController.forward();
+
     // 🎯 수정 모드: 기존 링크 정보로 초기화
     if (widget.initialUrl != null && widget.initialUrl!.isNotEmpty) {
       _url.text = widget.initialUrl!;
@@ -188,6 +205,23 @@ class _LinkOverlayState extends State<LinkOverlay> {
     }
   }
 
+  // 🎯 링크 기록에서 삭제하기
+  Future<void> _removeFromHistory(String url) async {
+    try {
+      _linkHistory.remove(url);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_linkHistoryKey, _linkHistory);
+
+      // 추천 목록 업데이트
+      if (mounted) {
+        _updateSuggestions(_url.text);
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('[LinkOverlay] 링크 기록 삭제 실패: $e');
+    }
+  }
+
   // 🎯 포커스 상태에 따라 추천 목록 업데이트 (기록 우선)
   void _updateSuggestionsForFocus() {
     if (_linkHistory.isNotEmpty) {
@@ -201,6 +235,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
 
   @override
   void dispose() {
+    _fadeController.dispose();
     _url.dispose();
     _focusNode.dispose();
     _customTitleController.dispose();
@@ -210,8 +245,11 @@ class _LinkOverlayState extends State<LinkOverlay> {
   }
 
   void _closeOverlay() {
-    // 애니메이션 없이 즉시 닫기 (흰색 깜빡임 방지)
-    Navigator.of(context).pop();
+    _fadeController.reverse().then((_) {
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    });
   }
 
   @override
@@ -219,107 +257,116 @@ class _LinkOverlayState extends State<LinkOverlay> {
     return Scaffold(
       backgroundColor: const Color(0xFF2D2D2D).withOpacity(0.5),
       extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        automaticallyImplyLeading: false,
-        systemOverlayStyle: null,
-        title: Container(
-          padding: const EdgeInsets.symmetric(vertical: 20),
-          child: TextField(
-            cursorColor: AppColors.darkTextPrimary,
-            controller: _url,
-            autofocus: true,
-            focusNode: _focusNode,
-
-            style: TextStyle(color: AppColors.darkTextPrimary, fontSize: 18),
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: Colors.white.withOpacity(0.1),
-              hintText: context.tr('search_link'),
-              hintStyle: TextStyle(
-                color: Colors.white.withOpacity(0.6),
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-              ),
-              suffixIcon:
-                  _url.text.isNotEmpty
-                      ? TextButton(
-                        onPressed: () {
-                          _focusNode.unfocus();
-                          _enqueueUrl(_url.text.trim());
-                        },
-                        child: Text(
-                          // 🎯 수정 모드일 때 "수정 완료", 추가 모드일 때 "추가"
-                          (widget.initialUrl != null &&
-                                  widget.initialUrl!.isNotEmpty)
-                              ? '수정 완료'
-                              : '추가',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.8),
-                            fontSize: 16,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: FadeTransition(
+          opacity: _fadeAnimation,
+          child: AppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            automaticallyImplyLeading: false,
+            systemOverlayStyle: null,
+            title: Container(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: TextField(
+                cursorColor: AppColors.darkTextPrimary,
+                controller: _url,
+                autofocus: true,
+                focusNode: _focusNode,
+                keyboardAppearance: Brightness.light,
+                style: TextStyle(
+                  color: AppColors.darkTextPrimary,
+                  fontSize: 18,
+                ),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.1),
+                  hintText: context.tr('search_link'),
+                  hintStyle: TextStyle(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  suffixIcon:
+                      _url.text.isNotEmpty
+                          ? TextButton(
+                            onPressed: () {
+                              _focusNode.unfocus();
+                              _enqueueUrl(_url.text.trim());
+                            },
+                            child: Text(
+                              // 🎯 수정 모드일 때 "수정 완료", 추가 모드일 때 "추가"
+                              (widget.initialUrl != null &&
+                                      widget.initialUrl!.isNotEmpty)
+                                  ? context.tr('modify_complete')
+                                  : context.tr('add'),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.8),
+                                fontSize: 16,
+                              ),
+                            ),
+                          )
+                          : Icon(
+                            Icons.search,
+                            color: Colors.white.withOpacity(0.6),
+                            size: 22,
                           ),
-                        ),
-                      )
-                      : Icon(
-                        Icons.search,
-                        color: Colors.white.withOpacity(0.6),
-                        size: 22,
-                      ),
-              contentPadding: const EdgeInsets.symmetric(
-                vertical: 8,
-                horizontal: 16,
-              ),
-              isDense: true,
-              border: const OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(16)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(16)),
-                borderSide: BorderSide.none,
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(16)),
-                borderSide: BorderSide.none,
-              ),
-              disabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(16)),
-                borderSide: BorderSide.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 16,
+                  ),
+                  isDense: true,
+                  border: const OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    borderSide: BorderSide.none,
+                  ),
+                  disabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                onChanged: (value) {
+                  _onUrlChanged(value);
+                  _updateSuggestions(value);
+                  // 🎯 autoSubmit일 때 URL이 유효하면 즉시 포커스 해제하여 미리보기 표시
+                  if (widget.autoSubmit && value.trim().isNotEmpty) {
+                    final normalized = _normalizeUrl(value.trim());
+                    if (normalized != null && _isValidUrl(normalized)) {
+                      // 다음 프레임에서 포커스 해제 (입력 완료 후)
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted && _focusNode.hasFocus) {
+                          _focusNode.unfocus();
+                        }
+                      });
+                    }
+                  }
+                },
+                onSubmitted: (value) {
+                  _enqueueUrl(value.trim());
+                },
               ),
             ),
-            onChanged: (value) {
-              _onUrlChanged(value);
-              _updateSuggestions(value);
-              // 🎯 autoSubmit일 때 URL이 유효하면 즉시 포커스 해제하여 미리보기 표시
-              if (widget.autoSubmit && value.trim().isNotEmpty) {
-                final normalized = _normalizeUrl(value.trim());
-                if (normalized != null && _isValidUrl(normalized)) {
-                  // 다음 프레임에서 포커스 해제 (입력 완료 후)
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted && _focusNode.hasFocus) {
-                      _focusNode.unfocus();
-                    }
-                  });
-                }
-              }
-            },
-            onSubmitted: (value) {
-              _enqueueUrl(value.trim());
-            },
+            actions: [
+              GestureDetector(
+                onTap: () => _closeOverlay(),
+                child: Icon(
+                  Icons.close,
+                  color: Colors.white.withOpacity(0.7),
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 16),
+            ],
           ),
         ),
-        actions: [
-          GestureDetector(
-            onTap: () => _closeOverlay(),
-            child: Icon(
-              Icons.close,
-              color: Colors.white.withOpacity(0.7),
-              size: 22,
-            ),
-          ),
-          const SizedBox(width: 16),
-        ],
       ),
       body: GestureDetector(
         onPanStart: (details) {
@@ -376,49 +423,55 @@ class _LinkOverlayState extends State<LinkOverlay> {
                   // 배경 탭 시 포커스 해제
                   _focusNode.unfocus();
                 },
-                child: Container(
-                  color: const Color(0xFF2D2D2D).withOpacity(0.9),
-                  child: BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                    child: Container(color: Colors.transparent),
+                child: FadeTransition(
+                  opacity: _fadeAnimation,
+                  child: Container(
+                    color: const Color(0xFF2D2D2D).withOpacity(0.9),
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                      child: Container(color: Colors.transparent),
+                    ),
                   ),
                 ),
               ),
             ),
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: Column(
-                  children: [
-                    Expanded(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 150),
-                        switchInCurve: Curves.easeOut,
-                        switchOutCurve: Curves.easeIn,
-                        child:
-                            // 🎯 autoSubmit일 때 미리보기 표시 (URL이 있고 정규화 가능할 때)
-                            (widget.autoSubmit &&
-                                    _url.text.trim().isNotEmpty &&
-                                    _normalizeUrl(_url.text.trim()) != null)
-                                ? _buildPreviewCard()
-                                : _focusNode.hasFocus
-                                ? _buildSuggestions()
-                                : _items.isNotEmpty
-                                ? _buildItemsList()
-                                : Center(
-                                  key: const ValueKey('empty'),
-                                  child: Text(
-                                    '링크를 추가해주세요',
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.6),
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w500,
+            FadeTransition(
+              opacity: _fadeAnimation,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 150),
+                          switchInCurve: Curves.easeOut,
+                          switchOutCurve: Curves.easeIn,
+                          child:
+                              // 🎯 autoSubmit일 때 미리보기 표시 (URL이 있고 정규화 가능할 때)
+                              (widget.autoSubmit &&
+                                      _url.text.trim().isNotEmpty &&
+                                      _normalizeUrl(_url.text.trim()) != null)
+                                  ? _buildPreviewCard()
+                                  : _focusNode.hasFocus
+                                  ? _buildSuggestions()
+                                  : _items.isNotEmpty
+                                  ? _buildItemsList()
+                                  : Center(
+                                    key: const ValueKey('empty'),
+                                    child: Text(
+                                      context.tr('add_link_please'),
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.6),
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w500,
+                                      ),
                                     ),
                                   ),
-                                ),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -460,14 +513,14 @@ class _LinkOverlayState extends State<LinkOverlay> {
                         description: _pDesc,
                         thumbnailUrl: _pThumb,
                       );
-                      Navigator.of(context).pop();
+                      _closeOverlay();
                     }
                   },
                   child: Text(
                     // 🎯 수정 모드일 때 "수정 완료", 추가 모드일 때 "추가"
                     (widget.initialUrl != null && widget.initialUrl!.isNotEmpty)
-                        ? '수정 완료'
-                        : '추가',
+                        ? context.tr('modify_complete')
+                        : context.tr('add'),
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -508,10 +561,14 @@ class _LinkOverlayState extends State<LinkOverlay> {
                                 thumbnailUrl: it.thumbnailUrl,
                               );
                             }
-                            Navigator.of(context).pop();
+                            _closeOverlay();
                           },
                   child: Text(
-                    _items.isEmpty ? '' : '추가하기 (${_items.length})',
+                    _items.isEmpty
+                        ? ''
+                        : context
+                            .tr('add_with_count')
+                            .replaceAll('{count}', '${_items.length}'),
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -830,6 +887,21 @@ class _LinkOverlayState extends State<LinkOverlay> {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  // 🎯 검색 기록 삭제 버튼 (기록에 있는 항목만 표시)
+                  if (_linkHistory.contains(suggestion))
+                    InkWell(
+                      onTap: () {
+                        _removeFromHistory(suggestion);
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 12),
+                        child: Icon(
+                          Icons.close,
+                          color: Colors.white.withOpacity(0.6),
+                          size: 20,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -1157,6 +1229,7 @@ class _LinkOverlayState extends State<LinkOverlay> {
                     TextField(
                       controller: _customTitleController,
                       focusNode: _titleFocusNode,
+                      keyboardAppearance: Brightness.light,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 20,
@@ -1285,9 +1358,9 @@ class _LinkOverlayState extends State<LinkOverlay> {
               const SizedBox(width: 8),
               InkWell(
                 onTap: () => setState(() => _items.removeAt(index)),
-                child: const Text(
-                  '취소',
-                  style: TextStyle(
+                child: Text(
+                  context.tr('cancel'),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 14,
                     fontWeight: FontWeight.w500,

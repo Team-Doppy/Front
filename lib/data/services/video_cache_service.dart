@@ -103,7 +103,18 @@ class VideoCacheService {
             ? '${key}_new_${DateTime.now().millisecondsSinceEpoch}'
             : key;
 
-    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+    // ✅ 네트워크 비디오 초기화 안정성/속도 개선:
+    // - Accept 헤더로 video 타입 힌트
+    // - keep-alive로 연결 재사용(특히 연속 요청 시)
+    // - 백그라운드 재생 비활성(썸네일/피드 용도)
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse(url),
+      httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+      videoPlayerOptions: VideoPlayerOptions(
+        mixWithOthers: false,
+        allowBackgroundPlayback: false,
+      ),
+    );
 
     controller
         .initialize()
@@ -332,9 +343,11 @@ class VideoCacheService {
     }
     _isReuseBlocked = true;
     debugPrint('[VideoCache] 재사용 차단 시작');
-
-    // 🎯 모든 컨트롤러 일시정지하여 안전한 상태로 전환
-    pauseAll();
+    // ✅ 단순화/속도 개선:
+    // 여기서 pauseAll()을 호출하면, 초기화/재생 중 컨트롤러까지 멈춰
+    // 피드 썸네일 초기화가 "느린데 타임아웃"으로 보이는 현상을 유발할 수 있다.
+    // 재사용 차단의 목적은 "기존 컨트롤러를 재사용하지 말고 새로 만들기"이므로,
+    // pauseAll 없이 플래그만으로 충분하다.
   }
 
   /// 재사용 차단을 해제한다
@@ -403,6 +416,37 @@ class VideoCacheService {
     }
     debugPrint('[VideoCache] ====================');
   }
+
+  /// 특정 namespace의 모든 컨트롤러 볼륨을 설정한다.
+  ///
+  /// - 캐시 컨트롤러는 위젯 생명주기와 무관하게 살아있을 수 있으므로,
+  ///   "뮤트 토글이 안 먹는 것처럼 보이는" 케이스를 방지하기 위해 제공한다.
+  /// - 초기화되지 않았거나 dispose된 컨트롤러는 best-effort로 스킵한다.
+  void setVolumeForNamespace(String namespace, double volume) {
+    final keys = List<String>.from(
+      _controllers.keys.where((key) => key.startsWith('$namespace|')),
+    );
+    int applied = 0;
+    for (final key in keys) {
+      final controller = _controllers[key];
+      if (controller == null) continue;
+      try {
+        if (controller.value.isInitialized) {
+          controller.setVolume(volume);
+          applied++;
+        }
+      } catch (e) {
+        debugPrint('[VideoCache] 볼륨 설정 오류 ($key): $e');
+        // dispose된 컨트롤러는 맵에서 제거
+        if (_controllers[key] == controller) {
+          _controllers.remove(key);
+          _refCounts.remove(key);
+          _lastAccessed.remove(key);
+        }
+      }
+    }
+    debugPrint('[VideoCache] 네임스페이스 "$namespace" 볼륨 적용: $volume ($applied개)');
+  }
 }
 
 /// 전역 비디오 음소거 상태를 관리하는 싱글톤 서비스
@@ -422,6 +466,12 @@ class VideoMuteService extends ChangeNotifier {
       _isFeedMuted = muted;
       debugPrint(
         '[VideoMuteService] 피드 음소거 상태 변경: ${_isFeedMuted ? "음소거" : "소리 켜짐"}',
+      );
+      // 🎯 피드 카드에서 사용하는 캐시 컨트롤러에도 볼륨을 강제로 적용
+      // (위젯이 dispose 되었거나 리스너가 없는 컨트롤러가 남아있는 경우 대비)
+      VideoCacheService().setVolumeForNamespace(
+        'home',
+        _isFeedMuted ? 0.0 : 1.0,
       );
       notifyListeners();
     }

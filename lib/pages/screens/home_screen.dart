@@ -33,6 +33,10 @@ class HomeScreen extends StatefulWidget {
 class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final HomeDataService _homeDataService = HomeDataService();
 
+  // 🎯 포그라운드 복귀 시 새로고침을 위한 GlobalKey
+  static final GlobalKey<HomeScreenState> globalKey =
+      GlobalKey<HomeScreenState>();
+
   // 수직 PageView 컨트롤러
   late PageController _sectionPageController;
   int _currentSectionIndex = 0; // 0: 친구글, 1: 전체글

@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 
@@ -112,7 +113,7 @@ class AdjustmentState {
   }
 }
 
-/// 조정(밝기/대비/채도) 행렬 계산 유틸
+/// 조정(밝기/대비/채도 등) 행렬 계산 유틸
 class AdjustmentUtils {
   const AdjustmentUtils._();
 
@@ -121,54 +122,285 @@ class AdjustmentUtils {
   /// [brightness]: -100 ~ 100 (밝기)
   /// [contrast]: -100 ~ 100 (대비)
   /// [saturation]: -100 ~ 100 (채도)
+  /// [luminance]: -100 ~ 100 (휘도)
+  /// [exposure]: -100 ~ 100 (노출)
+  /// [sharpness]: 0 ~ 100 (선명도)
+  /// [temperature]: -100 ~ 100 (색온도, 차갑게 ~ 따뜻하게)
   ///
   /// 모든 값이 0이면 null 반환 (변경 없음)
   static List<double>? getAdjustmentMatrix({
     required double brightness,
     required double contrast,
     required double saturation,
+    double luminance = 0.0,
+    double exposure = 0.0,
+    double sharpness = 0.0,
+    double temperature = 0.0,
   }) {
-    if (brightness == 0.0 && contrast == 0.0 && saturation == 0.0) {
+    if (brightness == 0.0 &&
+        contrast == 0.0 &&
+        saturation == 0.0 &&
+        luminance == 0.0 &&
+        exposure == 0.0 &&
+        sharpness == 0.0 &&
+        temperature == 0.0) {
       return null;
     }
 
-    // 밝기: +value는 밝게, -value는 어둡게
-    final brightnessValue = brightness / 100.0;
-    // 대비: +value는 대비 증가, -value는 대비 감소
-    final contrastValue = 1.0 + (contrast / 100.0);
-    // 채도: +value는 채도 증가, -value는 채도 감소
-    final saturationValue = 1.0 + (saturation / 100.0);
+    // pro_image_editor의 ColorFilterAddons 참고하여 구현
+    List<double>? resultMatrix;
 
-    // 간단한 행렬 계산 (채도 포함)
-    const lumR = 0.299;
-    const lumG = 0.587;
-    const lumB = 0.114;
-    final sr = (1.0 - saturationValue) * lumR;
-    final sg = (1.0 - saturationValue) * lumG;
-    final sb = (1.0 - saturationValue) * lumB;
+    // 1. 밝기 (brightness)
+    if (brightness != 0.0) {
+      final brightnessValue = brightness / 100.0;
+      final brightnessMatrix = [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        brightnessValue * 255,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        brightnessValue * 255,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        brightnessValue * 255,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+      ];
+      resultMatrix =
+          resultMatrix != null
+              ? _multiplyMatrices(resultMatrix, brightnessMatrix)
+              : brightnessMatrix;
+    }
 
-    return [
-      (sr + saturationValue) * contrastValue,
-      sg * contrastValue,
-      sb * contrastValue,
-      0.0,
-      brightnessValue * 255,
-      sr * contrastValue,
-      (sg + saturationValue) * contrastValue,
-      sb * contrastValue,
-      0.0,
-      brightnessValue * 255,
-      sr * contrastValue,
-      sg * contrastValue,
-      (sb + saturationValue) * contrastValue,
-      0.0,
-      brightnessValue * 255,
-      0.0,
-      0.0,
-      0.0,
-      1.0,
-      0.0,
-    ];
+    // 2. 대비 (contrast)
+    if (contrast != 0.0) {
+      final adj = contrast / 100.0 * 255;
+      final factor = (259 * (adj + 255)) / (255 * (259 - adj));
+      final offset = 128 * (1 - factor);
+      final contrastMatrix = [
+        factor,
+        0.0,
+        0.0,
+        0.0,
+        offset,
+        0.0,
+        factor,
+        0.0,
+        0.0,
+        offset,
+        0.0,
+        0.0,
+        factor,
+        0.0,
+        offset,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+      ];
+      resultMatrix =
+          resultMatrix != null
+              ? _multiplyMatrices(resultMatrix, contrastMatrix)
+              : contrastMatrix;
+    }
+
+    // 3. 채도 (saturation)
+    if (saturation != 0.0) {
+      final satValue = 1.0 + (saturation / 100.0);
+      const lumR = 0.3086;
+      const lumG = 0.6094;
+      const lumB = 0.082;
+      final xInverted = 1.0 - satValue;
+      final saturationMatrix = [
+        lumR * xInverted + satValue,
+        lumG * xInverted,
+        lumB * xInverted,
+        0.0,
+        0.0,
+        lumR * xInverted,
+        lumG * xInverted + satValue,
+        lumB * xInverted,
+        0.0,
+        0.0,
+        lumR * xInverted,
+        lumG * xInverted,
+        lumB * xInverted + satValue,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+      ];
+      resultMatrix =
+          resultMatrix != null
+              ? _multiplyMatrices(resultMatrix, saturationMatrix)
+              : saturationMatrix;
+    }
+
+    // 4. 노출 (exposure)
+    if (exposure != 0.0) {
+      // exposure는 -100 ~ 100 범위를 -2.0 ~ 2.0으로 변환
+      final exposureValue = (exposure / 100.0) * 2.0;
+      final exposureFactor = math.pow(2, exposureValue).toDouble();
+      final exposureMatrix = [
+        exposureFactor,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        exposureFactor,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        exposureFactor,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+      ];
+      resultMatrix =
+          resultMatrix != null
+              ? _multiplyMatrices(resultMatrix, exposureMatrix)
+              : exposureMatrix;
+    }
+
+    // 5. 선명도 (sharpness)
+    if (sharpness != 0.0) {
+      // sharpness는 0 ~ 100 범위를 -1.0 ~ 1.0으로 변환
+      final sharpnessValue = (sharpness / 100.0) * 2.0 - 1.0;
+      final factor = 1.0 + sharpnessValue * 2.0;
+      final sharpnessMatrix = [
+        factor,
+        0.0,
+        0.0,
+        0.0,
+        -(factor - 1.0) * 128.0,
+        0.0,
+        factor,
+        0.0,
+        0.0,
+        -(factor - 1.0) * 128.0,
+        0.0,
+        0.0,
+        factor,
+        0.0,
+        -(factor - 1.0) * 128.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+      ];
+      resultMatrix =
+          resultMatrix != null
+              ? _multiplyMatrices(resultMatrix, sharpnessMatrix)
+              : sharpnessMatrix;
+    }
+
+    // 6. 색온도 (temperature)
+    if (temperature != 0.0) {
+      // temperature는 -100 ~ 100 범위를 -1.0 ~ 1.0으로 변환
+      final tempValue = temperature / 100.0;
+      final r = tempValue > 0 ? tempValue : 0.0;
+      final b = tempValue < 0 ? -tempValue : 0.0;
+      final temperatureMatrix = [
+        1.0 + r,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0 + r * 0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0 + b,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+      ];
+      resultMatrix =
+          resultMatrix != null
+              ? _multiplyMatrices(resultMatrix, temperatureMatrix)
+              : temperatureMatrix;
+    }
+
+    // 7. 휘도 (luminance)
+    if (luminance != 0.0) {
+      // luminance는 -100 ~ 100 범위를 -1.0 ~ 1.0으로 변환
+      final lumValue = luminance / 100.0;
+      const lumR = 0.2126;
+      const lumG = 0.7152;
+      const lumB = 0.0722;
+      final adjustedValue = 1.0 - lumValue;
+      final luminanceMatrix = [
+        lumR * lumValue + adjustedValue,
+        lumG * lumValue,
+        lumB * lumValue,
+        0.0,
+        0.0,
+        lumR * lumValue,
+        lumG * lumValue + adjustedValue,
+        lumB * lumValue,
+        0.0,
+        0.0,
+        lumR * lumValue,
+        lumG * lumValue,
+        lumB * lumValue + adjustedValue,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+      ];
+      resultMatrix =
+          resultMatrix != null
+              ? _multiplyMatrices(resultMatrix, luminanceMatrix)
+              : luminanceMatrix;
+    }
+
+    return resultMatrix;
+  }
+
+  /// 두 개의 4x5 ColorMatrix를 곱셈
+  static List<double> _multiplyMatrices(List<double> a, List<double> b) {
+    final result = List<double>.filled(20, 0.0);
+    for (int i = 0; i < 4; i++) {
+      for (int j = 0; j < 5; j++) {
+        double sum = 0.0;
+        for (int k = 0; k < 4; k++) {
+          sum += a[i * 5 + k] * b[k * 5 + j];
+        }
+        result[i * 5 + j] = sum;
+      }
+    }
+    return result;
   }
 }
 
@@ -581,7 +813,8 @@ class _AdjustmentRulerSliderState extends State<_AdjustmentRulerSlider> {
     final deltaX = details.localPosition.dx - _dragStartX!;
     final range = widget.max - widget.min;
     // ✅ 필터 편집기와 동일한 감도: range / 1.5
-    final deltaValue = (deltaX / width) * (range / 1.5);
+    // ✅ 슬라이더 방향 반전: deltaX를 반대로 계산
+    final deltaValue = (-deltaX / width) * (range / 1.5);
     final newValue = (_dragStartValue! + deltaValue).clamp(
       widget.min,
       widget.max,

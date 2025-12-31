@@ -1,5 +1,7 @@
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/link_component.dart';
+import 'package:doppy/editor/nodes/mention_node.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:super_editor/super_editor.dart';
@@ -18,6 +20,7 @@ class SelectedToolbar extends StatefulWidget {
     required this.onEdit,
     required this.onDelete,
     this.onChangeAlignment,
+    this.onEditMention,
     this.editorService, // 🎯 Provider context 문제 방지
   });
 
@@ -27,6 +30,7 @@ class SelectedToolbar extends StatefulWidget {
   final void Function(DocumentNode node, String selectedId) onDelete;
   final Future<void> Function(DocumentNode node, String selectedId)?
   onChangeAlignment;
+  final void Function(String nodeId, List<String> usernames)? onEditMention;
   final EditorService? editorService; // 🎯 Provider context 문제 방지
 
   @override
@@ -34,6 +38,193 @@ class SelectedToolbar extends StatefulWidget {
 }
 
 class _SelectedToolbarState extends State<SelectedToolbar> {
+  bool _mentionFontSizePanelOpen = false;
+
+  Widget _buildMentionFontSizeSelector(MentionNode mentionNode) {
+    final fontSizeValue = mentionNode.metadata['fontSize'];
+    final currentFontSize =
+        fontSizeValue is num ? fontSizeValue.toDouble() : 16.0;
+    final editorService = widget.editorService ?? context.read<EditorService>();
+    final nodeId = widget.selectedId;
+
+    if (nodeId == null) return const SizedBox.shrink();
+
+    // 축약 버튼은 항상 오른쪽에 위치
+    final collapsedButton = _buildMentionSizeCollapsedButton(currentFontSize);
+
+    // 펼쳐질 때만 리스트가 왼쪽으로 확장
+    if (_mentionFontSizePanelOpen) {
+      return Row(
+        children: [
+          Expanded(
+            child: _buildMentionFontSizeRow(
+              currentFontSize,
+              nodeId,
+              editorService,
+            ),
+          ),
+          const SizedBox(width: 4),
+          collapsedButton,
+        ],
+      );
+    } else {
+      // 축약 상태일 때는 버튼만 표시
+      return collapsedButton;
+    }
+  }
+
+  // 축약 버튼: 사이즈 (기본 툴바와 동일)
+  Widget _buildMentionSizeCollapsedButton(double currentSize) {
+    final Color surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
+    final Color onSurface = Theme.of(
+      context,
+    ).colorScheme.onSurface.withOpacity(0.6);
+    final currentSizeInt = currentSize.toInt();
+    return Material(
+      color: _mentionFontSizePanelOpen ? surfaceVariant : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _mentionFontSizePanelOpen = !_mentionFontSizePanelOpen;
+          });
+        },
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          height: 36,
+          padding: const EdgeInsets.only(left: 5, right: 5),
+          child: Row(
+            children: [
+              Text(
+                '$currentSizeInt',
+                style: TextStyle(
+                  color: onSurface,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 22,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 펼쳐진 폰트 사이즈 선택 행 (스크롤 가능, 기본 툴바와 동일)
+  Widget _buildMentionFontSizeRow(
+    double currentFontSize,
+    String nodeId,
+    EditorService editorService,
+  ) {
+    final fontSizes = [
+      11,
+      13,
+      16,
+      19,
+      22,
+      25,
+      28,
+      31,
+      34,
+      37,
+      40,
+      43,
+      46,
+      49,
+      52,
+      55,
+      58,
+      61,
+      64,
+    ];
+
+    return Container(
+      height: 36,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          const SizedBox(width: 8),
+          ...fontSizes.map((size) {
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _buildMentionFontSizeButton(
+                size.toString(),
+                size.toDouble(),
+                currentFontSize,
+                () {
+                  editorService.updateMentionFontSize(nodeId, size.toDouble());
+                  _restoreMentionSelection(nodeId);
+                  setState(() {
+                    _mentionFontSizePanelOpen = false;
+                  });
+                },
+              ),
+            );
+          }),
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMentionFontSizeButton(
+    String label,
+    double size,
+    double currentSize,
+    VoidCallback onTap,
+  ) {
+    final Color surfaceVariant = Theme.of(
+      context,
+    ).colorScheme.onSurface.withOpacity(0.1);
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final isActive = currentSize == size;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          height: 28,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          decoration: BoxDecoration(
+            color: isActive ? surfaceVariant : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 17,
+                color: isActive ? onSurface : onSurface.withOpacity(0.6),
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _restoreMentionSelection(String nodeId) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        final editorService =
+            widget.editorService ?? context.read<EditorService>();
+
+        // ✅ 목표: "툴바 선택 상태는 유지" + "문서 selection(보라색 하이라이트/캐럿)은 제거"
+        // SelectedToolbar는 NodeComponentService.selectedNodeId로 떠있으므로,
+        // composer selection은 clear 해서 커서/하이라이트를 없앤다.
+        try {
+          editorService.editor.composer.clearSelection();
+        } catch (_) {}
+
+        context.read<NodeComponentService>().setSelectedNode(nodeId);
+      } catch (_) {}
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.node == null || widget.selectedId == null)
@@ -94,133 +285,118 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
       child: Row(
         children: [
           const SizedBox(width: 8),
-          Text(
-            '선택됨',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-              fontSize: 17,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          /*
-          Text(
-            '선택됨: ${node.runtimeType}',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-         */
-          const Spacer(),
+          // 멘션 폰트 사이즈 패널이 펼쳐져 있을 때는 Spacer 제거 (리스트가 왼쪽 끝까지 확장)
+          if (!(currentNode is MentionNode &&
+              widget.onEditMention != null &&
+              _mentionFontSizePanelOpen))
+            const Spacer(),
           if (currentNode is ImageNode || currentNode is ImageRowNode) ...[
             // 스포일러 토글
             if (widget.node is ImageNode || widget.node is ImageRowNode)
-              _buildSvgToggleIcon(
-                svgPath: 'assets/icons/spoiler.svg',
-                isActive: isImageSpoiler,
-                label: '스포일러',
-                onTap: () {
-                  if (widget.selectedId != null) {
-                    final newSpoilerValue = !isImageSpoiler;
-                    final nodeId = widget.selectedId!;
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: _buildSvgToggleIcon(
+                  svgPath: 'assets/icons/spoiler.svg',
+                  isActive: isImageSpoiler,
+                  label: '스포일러',
+                  onTap: () {
+                    if (widget.selectedId != null) {
+                      final newSpoilerValue = !isImageSpoiler;
+                      final nodeId = widget.selectedId!;
 
-                    // ✅ 편집 모드(문서 기반)에서는 NodeComponentService의 세션 캐시가
-                    // 문서 metadata와 충돌하면 undo/redo 시 상태가 어긋날 수 있다.
-                    // 따라서 토글 시 세션 캐시를 제거하고, 문서 metadata만 변경한다.
-                    NodeComponentService().clearSpoilerForNode(
-                      nodeId,
-                      notify: false,
-                    );
+                      // ✅ 편집 모드(문서 기반)에서는 NodeComponentService의 세션 캐시가
+                      // 문서 metadata와 충돌하면 undo/redo 시 상태가 어긋날 수 있다.
+                      // 따라서 토글 시 세션 캐시를 제거하고, 문서 metadata만 변경한다.
+                      NodeComponentService().clearSpoilerForNode(
+                        nodeId,
+                        notify: false,
+                      );
 
-                    // 문서의 metadata 업데이트 (undo/redo 포함 복원 시 스포일러 상태 유지)
-                    try {
-                      // 🎯 prop으로 전달받은 editorService 우선 사용, 없으면 Provider로 접근
-                      final editorService =
-                          widget.editorService ?? context.read<EditorService>();
-                      final node = editorService.document.getNodeById(nodeId);
-
-                      if (node is ImageNode) {
-                        final meta = Map<String, dynamic>.from(
-                          (node as dynamic).metadata as Map<String, dynamic>? ??
-                              {},
-                        );
-                        if (newSpoilerValue) {
-                          meta['spoiler'] = true;
-                        } else {
-                          meta.remove('spoiler');
-                        }
-
-                        final updatedNode = AppImageNode(
-                          id: nodeId,
-                          imageUrl: (node as dynamic).imageUrl as String,
-                          altText: node.altText,
-                          metadata: meta,
-                        );
-
-                        editorService.editor.execute([
-                          ReplaceNodeRequest(
-                            existingNodeId: nodeId,
-                            newNode: updatedNode,
-                          ),
-                        ]);
-                      } else if (node is ImageRowNode) {
-                        final meta = Map<String, dynamic>.from(node.metadata);
-                        if (newSpoilerValue) {
-                          meta['spoiler'] = true;
-                        } else {
-                          meta.remove('spoiler');
-                        }
-
-                        final updatedNode = node.copyWith(metadata: meta);
-                        editorService.editor.execute([
-                          ReplaceNodeRequest(
-                            existingNodeId: nodeId,
-                            newNode: updatedNode,
-                          ),
-                        ]);
-                      }
-                    } catch (e) {
-                      debugPrint('[SelectedToolbar] 스포일러 metadata 업데이트 실패: $e');
-                    }
-
-                    // ✅ 스포일러 토글 후에도 SelectedToolbar 유지:
-                    // padding 토글과 동일하게 다음 프레임에 selection을 복구한다.
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (!mounted) return;
+                      // 문서의 metadata 업데이트 (undo/redo 포함 복원 시 스포일러 상태 유지)
                       try {
+                        // 🎯 prop으로 전달받은 editorService 우선 사용, 없으면 Provider로 접근
                         final editorService =
                             widget.editorService ??
                             context.read<EditorService>();
+                        final node = editorService.document.getNodeById(nodeId);
 
-                        // composer selection 복구 (특수 노드 downstream)
-                        try {
+                        if (node is ImageNode) {
+                          final meta = Map<String, dynamic>.from(
+                            (node as dynamic).metadata
+                                    as Map<String, dynamic>? ??
+                                {},
+                          );
+                          if (newSpoilerValue) {
+                            meta['spoiler'] = true;
+                          } else {
+                            meta.remove('spoiler');
+                          }
+
+                          final updatedNode = AppImageNode(
+                            id: nodeId,
+                            imageUrl: (node as dynamic).imageUrl as String,
+                            altText: node.altText,
+                            metadata: meta,
+                          );
+
                           editorService.editor.execute([
-                            ChangeSelectionRequest(
-                              DocumentSelection.collapsed(
-                                position: DocumentPosition(
-                                  nodeId: nodeId,
-                                  nodePosition:
-                                      const UpstreamDownstreamNodePosition.downstream(),
-                                ),
-                              ),
-                              SelectionChangeType.placeCaret,
-                              SelectionReason.userInteraction,
+                            ReplaceNodeRequest(
+                              existingNodeId: nodeId,
+                              newNode: updatedNode,
                             ),
                           ]);
-                        } catch (_) {}
+                        } else if (node is ImageRowNode) {
+                          final meta = Map<String, dynamic>.from(node.metadata);
+                          if (newSpoilerValue) {
+                            meta['spoiler'] = true;
+                          } else {
+                            meta.remove('spoiler');
+                          }
 
-                        // NodeComponentService 선택 강제 유지 (토글 X)
-                        context.read<NodeComponentService>().setSelectedNode(
-                          nodeId,
-                        );
+                          final updatedNode = node.copyWith(metadata: meta);
+                          editorService.editor.execute([
+                            ReplaceNodeRequest(
+                              existingNodeId: nodeId,
+                              newNode: updatedNode,
+                            ),
+                          ]);
+                        }
                       } catch (e) {
                         debugPrint(
-                          '[SelectedToolbar] 스포일러 토글 후 selection 복구 실패: $e',
+                          '[SelectedToolbar] 스포일러 metadata 업데이트 실패: $e',
                         );
                       }
-                    });
 
-                    if (mounted) setState(() {});
-                  }
-                },
-                size: 28,
+                      // ✅ 스포일러 토글 후에도 SelectedToolbar 유지:
+                      // padding 토글과 동일하게 다음 프레임에 selection을 복구한다.
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        try {
+                          final editorService =
+                              widget.editorService ??
+                              context.read<EditorService>();
+
+                          // ✅ 토글 후: 문서 selection(하이라이트/캐럿) 제거
+                          try {
+                            editorService.editor.composer.clearSelection();
+                          } catch (_) {}
+
+                          // NodeComponentService 선택 강제 유지 (토글 X)
+                          context.read<NodeComponentService>().setSelectedNode(
+                            nodeId,
+                          );
+                        } catch (e) {
+                          debugPrint(
+                            '[SelectedToolbar] 스포일러 토글 후 selection 복구 실패: $e',
+                          );
+                        }
+                      });
+
+                      if (mounted) setState(() {});
+                    }
+                  },
+                  size: 28,
+                ),
               ),
             SizedBox(width: 8),
           ],
@@ -331,21 +507,9 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                     final editorService =
                         widget.editorService ?? context.read<EditorService>();
 
-                    // 1) composer selection 복구 (특수 노드 downstream)
+                    // 1) 토글 후: 문서 selection(하이라이트/캐럿) 제거
                     try {
-                      editorService.editor.execute([
-                        ChangeSelectionRequest(
-                          DocumentSelection.collapsed(
-                            position: DocumentPosition(
-                              nodeId: nodeId,
-                              nodePosition:
-                                  const UpstreamDownstreamNodePosition.downstream(),
-                            ),
-                          ),
-                          SelectionChangeType.placeCaret,
-                          SelectionReason.userInteraction,
-                        ),
-                      ]);
+                      editorService.editor.composer.clearSelection();
                     } catch (_) {}
 
                     // 2) NodeComponentService 선택 강제 유지 (토글 X)
@@ -422,8 +586,33 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
             const SizedBox(width: 8),
           ],
 
+          // 멘션 편집 버튼 및 폰트 사이즈 선택기
+          if (currentNode is MentionNode && widget.onEditMention != null) ...[
+            // 멘션 폰트 사이즈 선택기 (펼쳐질 때만 왼쪽 끝까지 확장, 축약 버튼은 오른쪽 고정)
+            if (_mentionFontSizePanelOpen)
+              Expanded(child: _buildMentionFontSizeSelector(currentNode))
+            else
+              _buildMentionFontSizeSelector(currentNode),
+            const SizedBox(width: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 0),
+              child: _buildMainSvgIcon(
+                size: 27,
+                context: context,
+                svgPath: 'assets/icons/edit.svg',
+                isActive: false,
+                onTap: () {
+                  final nodeId = widget.selectedId;
+                  if (nodeId == null) return;
+                  widget.onEditMention!(nodeId, currentNode.usernames);
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+
           _buildMainSvgIcon(
-            size: 24,
+            size: 28,
             context: context,
             svgPath: 'assets/icons/delete.svg',
             isActive: false,
@@ -443,9 +632,10 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
     required bool isActive,
     required VoidCallback onTap,
     double? size,
+    Color? color,
   }) {
     final Color onSurface = Theme.of(context).colorScheme.onSurface;
-    final Color color = onSurface.withOpacity(0.5);
+    final Color iconColor = color ?? onSurface.withOpacity(0.5);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -466,7 +656,7 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
               key: ValueKey(svgPath),
               width: size ?? (isActive ? 28 : 25),
               height: size ?? (isActive ? 28 : 25),
-              colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+              colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
             ),
           ),
         ),
@@ -499,8 +689,8 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
           alignment: Alignment.center,
           child: SvgPicture.asset(
             svgPath,
-            width: size ?? 24,
-            height: size ?? 24,
+            width: size ?? 28,
+            height: size ?? 28,
             colorFilter: ColorFilter.mode(onSurface, BlendMode.srcIn),
           ),
         ),

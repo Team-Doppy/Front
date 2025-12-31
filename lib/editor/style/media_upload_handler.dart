@@ -5,6 +5,8 @@ import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/image/group_image_layout_selector.dart';
 import 'package:doppy/image/media_picker_screen.dart';
+import 'package:doppy/image/video_trim_spec.dart';
+import 'package:doppy/image/video_edit_spec.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:flutter/cupertino.dart';
@@ -16,8 +18,6 @@ class MediaUploadHandler {
   final BuildContext context;
   final EditorService editorService;
   final VoidCallback? onUploadComplete;
-  // ✅ (UX) "첫 진입"에서만 프리로드 후 피커를 띄워 로딩 화면이 피커 위에 보이지 않게 함
-  static bool _didWarmUpImagePicker = false;
 
   MediaUploadHandler({
     required this.context,
@@ -25,99 +25,19 @@ class MediaUploadHandler {
     this.onUploadComplete,
   });
 
-  /// 미디어 타입 선택 다이얼로그 표시
-  Future<String?> showMediaTypeSelector() async {
-    return await showModalBottomSheet<String>(
-      backgroundColor: Colors.transparent,
-      context: context,
-      builder:
-          (context) => ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface.withOpacity(0.6),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                height: 180,
-                width: double.infinity,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    const SizedBox(height: 8),
-                    Container(
-                      width: 50,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.3),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    ListTile(
-                      onTap: () => Navigator.of(context).pop('image'),
-                      title: Text(context.tr('upload_image')),
-                    ),
-                    ListTile(
-                      onTap: () => Navigator.of(context).pop('short clip'),
-                      title: Text(context.tr('upload_short_clip')),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-    );
-  }
-
   /// 이미지 업로드 처리
   Future<void> handleImageUpload() async {
     if (!context.mounted) return;
 
     final upload = context.read<UploadService>();
 
-    // ✅ (UX) 첫 진입이라면: 피커를 띄우기 전에 1페이지를 미리 로드하고,
-    // 로딩 인디케이터는 "현재 화면 위"에서만 보여준다.
-    MediaPickerPreload? preload;
-    if (!_didWarmUpImagePicker) {
-      _didWarmUpImagePicker = true;
-      try {
-        if (context.mounted) {
-          showCupertinoDialog<void>(
-            context: context,
-            barrierDismissible: false,
-            builder:
-                (_) => const CupertinoAlertDialog(
-                  content: Padding(
-                    padding: EdgeInsets.only(top: 12),
-                    child: CupertinoActivityIndicator(),
-                  ),
-                ),
-          );
-        }
-        preload = await MediaPickerScreen.preloadInitialPage(
-          mediaType: MediaType.image,
-          pageSize: 50,
-        );
-      } finally {
-        if (context.mounted && Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-        }
-      }
-    }
-
     await Navigator.of(context).push<MediaPickerResult>(
-      CupertinoPageRoute(
-        fullscreenDialog: true,
-        builder:
-            (context) => MediaPickerScreen(
+      PageRouteBuilder(
+        pageBuilder:
+            (context, animation, secondaryAnimation) => MediaPickerScreen(
               initialMediaType: MediaType.image,
               maxSelectionCount: 6,
               enableToggle: true,
-              initialPreload: preload,
               onMediaSelected: (file) {},
               onCancel: () {},
               // ✅ "노드 먼저 추가 → 잠깐 여유 → pop" 방식으로 UX 안정화
@@ -132,6 +52,12 @@ class MediaUploadHandler {
                 await _handleImageFiles(result, upload);
               },
             ),
+        transitionDuration: const Duration(milliseconds: 200),
+        reverseTransitionDuration: const Duration(milliseconds: 150),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+        fullscreenDialog: true,
       ),
     );
   }
@@ -143,10 +69,9 @@ class MediaUploadHandler {
     final upload = context.read<UploadService>();
 
     await Navigator.of(context).push<MediaPickerResult>(
-      CupertinoPageRoute(
-        fullscreenDialog: true,
-        builder:
-            (context) => MediaPickerScreen(
+      PageRouteBuilder(
+        pageBuilder:
+            (context, animation, secondaryAnimation) => MediaPickerScreen(
               initialMediaType: MediaType.video,
               maxSelectionCount: 1,
               enableToggle: true,
@@ -160,14 +85,22 @@ class MediaUploadHandler {
                   await _handleImageFromVideoPicker(result, upload);
                   return;
                 }
-                // 영상 업로드
+                // 영상 업로드 (trim/edit spec 전달)
                 await _uploadVideo(
                   result.files.first,
                   result.thumbnailPath,
                   upload,
+                  trimSpec: result.trimSpec,
+                  editSpec: result.editSpec,
                 );
               },
             ),
+        transitionDuration: const Duration(milliseconds: 200),
+        reverseTransitionDuration: const Duration(milliseconds: 150),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+        fullscreenDialog: true,
       ),
     );
   }
@@ -528,14 +461,18 @@ class MediaUploadHandler {
   Future<void> _uploadVideo(
     File file,
     String? thumbnailPath,
-    UploadService upload,
-  ) async {
+    UploadService upload, {
+    VideoTrimSpec? trimSpec,
+    VideoEditSpec? editSpec,
+  }) async {
     final editorId = 'editor_${editorService.hashCode}';
 
     await upload.uploadEditorVideo(
       file: file,
       editorId: editorId,
       initialThumbnailPath: thumbnailPath,
+      trimSpec: trimSpec,
+      editSpec: editSpec,
       onCreateNode: (localPath, fileName, {thumbnailPath, aspectRatio}) {
         return editorService.addVideoClipNode(
           localPath: localPath,

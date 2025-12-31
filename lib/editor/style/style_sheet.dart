@@ -38,10 +38,6 @@ Stylesheet buildCustomStylesheet(
       // 텍스트 노드 스타일
       StyleRule(BlockSelector.all, (doc, docNode) {
         if (docNode is ParagraphNode) {
-          // 멘션 노드는 "일반 텍스트와 동일"하게 렌더링하고, 차이는 bold만 추가한다.
-          // (폰트/사이즈/패딩은 본문과 동일하게 유지)
-          final isMention = docNode.metadata['mention'] == true;
-
           // 메타데이터에서 폰트 정보 읽기
           final fontFamily = docNode.metadata['fontFamily'] as String?;
           TextStyle bodyStyle = TextStyle(
@@ -63,10 +59,7 @@ Stylesheet buildCustomStylesheet(
           }
 
           return {
-            Styles.textStyle:
-                isMention
-                    ? bodyStyle.copyWith(fontWeight: FontWeight.bold)
-                    : bodyStyle,
+            Styles.textStyle: bodyStyle,
             Styles.padding: CascadingPadding.only(
               top: 0,
               bottom: 0,
@@ -184,7 +177,12 @@ Stylesheet buildCustomStylesheet(
       }
 
       style = style.copyWith(
-        fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+        // ✅ block(Paragraph) 레벨에서 지정된 fontWeight(예: mention=bold)는 유지해야 한다.
+        // inlineTextStyler가 무조건 normal로 덮어쓰면 멘션이 boldAttribution 없이도 bold가 안 보이게 된다.
+        fontWeight:
+            isBold
+                ? FontWeight.bold
+                : (existingStyle.fontWeight ?? FontWeight.normal),
         fontStyle: isItalic ? FontStyle.italic : FontStyle.normal,
         decoration: _buildTextDecoration(hasUnderline, hasStrikethrough),
         // height는 위에서 attribution/블록 스타일에서 일관되게 지정한다.

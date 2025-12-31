@@ -694,17 +694,16 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     );
 
     // 🎯 편집 모드에서만 selection 체크 (성능 최적화)
+    // 🎯 읽기 모드에서도 doc에 접근하여 특수 노드 간격 확인 (포스트 라이트와 동일하게)
     DocumentSelection? composerSelection;
     Document? doc;
     // ignore: invalid_use_of_visible_for_testing_member
-    SuperEditorState? seState;
+    final seState = context.findAncestorStateOfType<SuperEditorState>();
+    // ignore: invalid_use_of_visible_for_testing_member
+    doc = seState?.editContext.editor.document;
     if (widget.isEditing) {
       // ignore: invalid_use_of_visible_for_testing_member
-      seState = context.findAncestorStateOfType<SuperEditorState>();
-      // ignore: invalid_use_of_visible_for_testing_member
       composerSelection = seState?.editContext.composer.selection;
-      // ignore: invalid_use_of_visible_for_testing_member
-      doc = seState?.editContext.editor.document;
     }
 
     // 🎯 downstream 위치에 커서가 있을 때도 selection 효과 표시
@@ -1270,11 +1269,14 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                         if (isSelected || isDownstreamSelected)
                           Positioned.fill(
                             child: IgnorePointer(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: AppColors.primary,
-                                    width: 3,
+                              child: AnimatedSelectionBorder(
+                                isVisible: true,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                      color: AppColors.primary,
+                                      width: 4,
+                                    ),
                                   ),
                                 ),
                               ),

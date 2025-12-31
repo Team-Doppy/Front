@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:doppy/data/services/upload_service.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:flutter_drawing_board/flutter_drawing_board.dart';
@@ -315,7 +316,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                                         ),
                                       )
                                       : Text(
-                                        '완료',
+                                        AppLocalizations.of(
+                                          context,
+                                        ).t('complete'),
                                         style: TextStyle(
                                           color: Theme.of(
                                             context,

@@ -28,9 +28,8 @@ import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/components/profile_edit_sheet.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:doppy/pages/components/link_bottom_sheet.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'dart:async';
@@ -369,6 +368,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     return ChangeNotifierProvider<BaseFeedProvider>.value(
       value: _feedProvider,
       child: Scaffold(
+        resizeToAvoidBottomInset: false,
         backgroundColor: Theme.of(context).colorScheme.background,
         body: Stack(
           clipBehavior: Clip.none,
@@ -494,11 +494,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                     ? (other?.linkThumbnails)
                                                     : (me?.linkThumbnails);
                                             if (links.isNotEmpty) {
-                                              _showLinksModal(
+                                              LinkBottomSheet.show(
                                                 context,
-                                                links,
-                                                linkTitles,
-                                                linkThumbnails,
+                                                links: links,
+                                                linkTitles: linkTitles,
+                                                linkThumbnails: linkThumbnails,
+                                                otherUser: widget.otherUser,
                                               );
                                             }
                                           },
@@ -1034,19 +1035,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       }
     }
 
-    // 화면 전환: 페이드 인 전환 (옆에서 슬라이드되는 페이지 전환 대신)
+    // 화면 전환: 기본 MaterialPageRoute 사용
     if (mounted) {
       Navigator.of(context).push(
-        PageRouteBuilder(
-          pageBuilder:
-              (context, animation, secondaryAnimation) =>
-                  const GroupSelectionScreen(),
-          transitionDuration: const Duration(milliseconds: 220),
-          reverseTransitionDuration: const Duration(milliseconds: 220),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-        ),
+        MaterialPageRoute(builder: (context) => const GroupSelectionScreen()),
       );
     }
 
@@ -1409,332 +1401,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-        ),
-      ),
-    );
-  }
-
-  /// 🎯 링크 모달 표시 (드래그로 닫기 가능)
-  void _showLinksModal(
-    BuildContext context,
-    List<String> links,
-    Map<String, String>? linkTitles,
-    Map<String, String>? linkThumbnails,
-  ) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      enableDrag: true, // 🎯 드래그로 닫기 활성화
-      isDismissible: true, // 🎯 배경 탭으로 닫기 활성화
-      builder: (BuildContext context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.5,
-          minChildSize: 0.4,
-          maxChildSize: 0.9,
-          builder: (context, scrollController) {
-            return Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(30),
-                  topRight: Radius.circular(30),
-                ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // 드래그 핸들
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-
-                  // 제목
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-                    child: Row(
-                      children: [
-                        SvgPicture.asset(
-                          'assets/icons/link.svg',
-                          width: 24,
-                          height: 24,
-                          colorFilter: ColorFilter.mode(
-                            Theme.of(context).colorScheme.onSurface,
-                            BlendMode.srcIn,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        const Spacer(),
-                        GestureDetector(
-                          onTap: () => Navigator.of(context).pop(),
-                          child: Icon(
-                            Icons.close,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.6),
-                            size: 24,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // 링크 목록
-                  Flexible(
-                    child: ListView.separated(
-                      controller: scrollController,
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      itemCount: links.length,
-                      separatorBuilder: (context, index) {
-                        return Divider(
-                          height: 1,
-                          thickness: 1,
-                          color: Colors.transparent,
-                          indent: 0,
-                          endIndent: 0,
-                        );
-                      },
-                      itemBuilder: (context, index) {
-                        final isOther = widget.otherUser != null;
-                        final userProvider = context.read<UserProvider>();
-                        final me = userProvider.currentUser;
-                        final other = widget.otherUser;
-                        final linkThumbnails =
-                            isOther
-                                ? (other?.linkThumbnails)
-                                : (me?.linkThumbnails);
-                        return _buildLinkModalItem(
-                          context,
-                          links[index],
-                          linkTitles,
-                          linkThumbnails,
-                        );
-                      },
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  /// 🎯 모달용 링크 아이템 위젯
-  Widget _buildLinkModalItem(
-    BuildContext context,
-    String url,
-    Map<String, String>? linkTitles,
-    Map<String, String>? linkThumbnails,
-  ) {
-    // URL 정규화
-    String displayUrl = url;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      displayUrl = 'https://$url';
-    }
-
-    // 도메인 추출
-    String domain = url;
-    String? thumbnailUrl;
-
-    // 🎯 저장된 썸네일 우선 사용 (서버에서 받아온 linkThumbnails)
-    // 원본 URL과 정규화된 URL 모두 확인 (URL 정규화 차이 대응)
-    if (linkThumbnails != null) {
-      // 원본 URL로 먼저 확인
-      thumbnailUrl = linkThumbnails[url];
-      // 정규화된 URL로도 확인
-      if ((thumbnailUrl == null || thumbnailUrl.isEmpty) &&
-          linkThumbnails.containsKey(displayUrl)) {
-        thumbnailUrl = linkThumbnails[displayUrl];
-      }
-      // 역방향도 확인 (정규화된 URL이 키인 경우)
-      // Uri.parse를 사용하여 query parameter를 제외하고 비교
-      if ((thumbnailUrl == null || thumbnailUrl.isEmpty)) {
-        try {
-          final urlUri = Uri.parse(displayUrl);
-          final urlBase = '${urlUri.scheme}://${urlUri.host}${urlUri.path}';
-          for (final entry in linkThumbnails.entries) {
-            final keyUrl = entry.key;
-            try {
-              final keyUri = Uri.parse(
-                keyUrl.startsWith('http://') || keyUrl.startsWith('https://')
-                    ? keyUrl
-                    : 'https://$keyUrl',
-              );
-              final keyBase = '${keyUri.scheme}://${keyUri.host}${keyUri.path}';
-              // 기본 URL이 일치하면 (query parameter 무시)
-              if (urlBase == keyBase || keyUrl == url || keyUrl == displayUrl) {
-                thumbnailUrl = entry.value;
-                break;
-              }
-            } catch (_) {
-              // 파싱 실패 시 문자열 비교
-              if (keyUrl == url || keyUrl == displayUrl) {
-                thumbnailUrl = entry.value;
-                break;
-              }
-            }
-          }
-        } catch (_) {
-          // 파싱 실패 시 문자열 비교
-          for (final entry in linkThumbnails.entries) {
-            if (entry.key == url || entry.key == displayUrl) {
-              thumbnailUrl = entry.value;
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    // 저장된 썸네일이 없으면 Google Favicon API 사용
-    if (thumbnailUrl == null || thumbnailUrl.isEmpty) {
-      try {
-        final uri = Uri.parse(displayUrl);
-        domain = uri.host.replaceFirst('www.', '');
-        // 🎯 썸네일 URL 생성 (Google Favicon API 또는 도메인 기반)
-        thumbnailUrl =
-            'https://www.google.com/s2/favicons?domain=$domain&sz=64';
-      } catch (_) {
-        domain = url;
-      }
-    } else {
-      // 썸네일이 있으면 도메인만 추출 (표시용)
-      try {
-        final uri = Uri.parse(displayUrl);
-        domain = uri.host.replaceFirst('www.', '');
-      } catch (_) {
-        domain = url;
-      }
-    }
-
-    // 🎯 사용자가 설정한 커스텀 타이틀 가져오기
-    final customTitle = linkTitles?[url];
-    final displayTitle = customTitle ?? domain; // 커스텀 타이틀이 있으면 사용, 없으면 도메인
-
-    final theme = Theme.of(context);
-
-    return InkWell(
-      onTap: () async {
-        try {
-          final uri = Uri.parse(displayUrl);
-          if (await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          }
-          // 바텀시트 닫기
-          if (context.mounted) {
-            Navigator.of(context).pop();
-          }
-        } catch (e) {
-          if (context.mounted) {
-            ErrorHandler.showError(context, '링크를 열 수 없습니다: $url');
-          }
-        }
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 16),
-        width: double.infinity,
-        child: Row(
-          children: [
-            // 🎯 링크 썸네일
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onSurface.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child:
-                  thumbnailUrl != null
-                      ? ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: CachedNetworkImage(
-                          imageUrl: thumbnailUrl,
-                          width: 40,
-                          height: 40,
-                          fit: BoxFit.cover,
-                          fadeInDuration: Duration.zero,
-                          fadeOutDuration: Duration.zero,
-                          // 🚀 링크 이미지는 자주 바뀌지 않으므로 디스크 캐시 사용
-                          memCacheWidth: 80, // 메모리 캐시 크기 (작은 썸네일)
-                          maxWidthDiskCache: 200, // 디스크 캐시 크기
-                          errorWidget: (context, url, error) {
-                            return Icon(
-                              Icons.link,
-                              size: 20,
-                              color: theme.colorScheme.onSurface.withOpacity(
-                                0.5,
-                              ),
-                            );
-                          },
-                          placeholder: (context, url) {
-                            return Center(
-                              child: SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: theme.colorScheme.onSurface
-                                      .withOpacity(0.3),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      )
-                      : Icon(
-                        Icons.link,
-                        size: 20,
-                        color: theme.colorScheme.onSurface.withOpacity(0.7),
-                      ),
-            ),
-            const SizedBox(width: 16),
-            // 링크 정보 (텍스트 영역도 클릭 가능)
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 🎯 커스텀 타이틀 또는 도메인 표시
-                  Text(
-                    displayTitle,
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurface,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  // URL 표시 (커스텀 타이틀이 있으면 URL, 없으면 도메인)
-                  Text(
-                    customTitle != null ? url : domain,
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurface.withOpacity(0.65),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w300,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-          ],
         ),
       ),
     );

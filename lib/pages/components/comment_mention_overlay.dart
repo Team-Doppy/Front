@@ -1,6 +1,7 @@
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/data/services/comment_service.dart';
-import 'package:doppy/editor/overlay/mention_overlay.dart';
+import 'package:doppy/data/models/mention_user.dart';
+import 'package:doppy/data/services/mention_service.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:flutter/material.dart';
 

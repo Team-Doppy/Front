@@ -32,8 +32,6 @@ class ResumeWritingBottomSheet extends StatefulWidget {
 }
 
 class _ResumeWritingBottomSheetState extends State<ResumeWritingBottomSheet> {
-  bool _isLoading = false;
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -107,24 +105,9 @@ class _ResumeWritingBottomSheetState extends State<ResumeWritingBottomSheet> {
                       context,
                       label: l10n.t('resume_writing_continue'),
                       textColor: theme.colorScheme.onSurface,
-                      isLoading: _isLoading,
-                      onTap:
-                          _isLoading
-                              ? null
-                              : () {
-                                setState(() => _isLoading = true);
-                                // ✅ 로딩 표시 후 바텀시트 닫기 (백그라운드 작업은 호출부에서 처리)
-                                Future.delayed(
-                                  const Duration(milliseconds: 100),
-                                  () {
-                                    if (mounted) {
-                                      Navigator.of(
-                                        context,
-                                      ).pop(ResumeWritingChoice.resume);
-                                    }
-                                  },
-                                );
-                              },
+                      onTap: () {
+                        Navigator.of(context).pop(ResumeWritingChoice.resume);
+                      },
                     ),
                     Divider(
                       height: 1,
@@ -137,33 +120,15 @@ class _ResumeWritingBottomSheetState extends State<ResumeWritingBottomSheet> {
                       context,
                       label: l10n.t('resume_writing_new'),
                       textColor: theme.colorScheme.error,
-                      isLoading: _isLoading,
-                      onTap:
-                          _isLoading
-                              ? null
-                              : () {
-                                setState(() => _isLoading = true);
-                                // ✅ 로딩 표시 후 바텀시트 닫기 (백그라운드 작업은 호출부에서 처리)
-                                Future.delayed(
-                                  const Duration(milliseconds: 100),
-                                  () {
-                                    if (mounted) {
-                                      Navigator.of(
-                                        context,
-                                      ).pop(ResumeWritingChoice.newDraft);
-                                    }
-                                  },
-                                );
-                              },
+                      onTap: () {
+                        Navigator.of(context).pop(ResumeWritingChoice.newDraft);
+                      },
                     ),
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed:
-                            _isLoading
-                                ? null
-                                : () => Navigator.of(context).pop(null),
+                        onPressed: () => Navigator.of(context).pop(null),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: theme.colorScheme.onSurface
                               .withOpacity(0.03),
@@ -198,7 +163,6 @@ class _ResumeWritingBottomSheetState extends State<ResumeWritingBottomSheet> {
     required String label,
     required Color textColor,
     required VoidCallback? onTap,
-    bool isLoading = false,
   }) {
     return InkWell(
       onTap: onTap,
@@ -206,27 +170,15 @@ class _ResumeWritingBottomSheetState extends State<ResumeWritingBottomSheet> {
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 16),
-        child:
-            isLoading
-                ? Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(textColor),
-                    ),
-                  ),
-                )
-                : Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: textColor,
-                  ),
-                ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: textColor,
+          ),
+        ),
       ),
     );
   }

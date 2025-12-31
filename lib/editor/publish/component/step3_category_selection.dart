@@ -16,6 +16,7 @@ class Step3CategorySelection extends StatefulWidget {
   final ValueChanged<bool> onIsLoadingCategoriesChanged;
   final bool showCategoryLoading;
   final ValueChanged<bool> onShowCategoryLoadingChanged;
+  final bool isUploading; // 🎯 발행 중 상태
 
   const Step3CategorySelection({
     super.key,
@@ -27,6 +28,7 @@ class Step3CategorySelection extends StatefulWidget {
     required this.onIsLoadingCategoriesChanged,
     required this.showCategoryLoading,
     required this.onShowCategoryLoadingChanged,
+    this.isUploading = false, // 🎯 기본값 false
   });
 
   @override
@@ -109,8 +111,11 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
                             title: name,
                             isSelected: widget.selectedCategoryId == id,
                             isDarkMode: isDarkMode,
+                            isDisabled: widget.isUploading, // 🎯 발행 중 비활성화
                             onTap: () {
-                              widget.onSelectedCategoryIdChanged(id);
+                              if (!widget.isUploading) {
+                                widget.onSelectedCategoryIdChanged(id);
+                              }
                             },
                           );
                         }).toList(),
@@ -123,6 +128,44 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
   }
 
   Widget _buildCreateCategoryButton({required bool isDarkMode}) {
+    // 🎯 발행 중이면 버튼 비활성화
+    if (widget.isUploading) {
+      return Opacity(
+        opacity: 0.5,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  AppLocalizations.of(context).t('create_new_category'),
+                  style: TextStyle(
+                    color:
+                        isDarkMode
+                            ? Colors.white
+                            : Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.9),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.add_circle_outline,
+                color: Colors.white.withOpacity(0.8),
+                size: 22,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (_isCreatingCategory) {
       // 인라인 텍스트 필드 표시
       return Container(
@@ -303,38 +346,42 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
     required bool isSelected,
     required bool isDarkMode,
     required VoidCallback onTap,
+    bool isDisabled = false, // 🎯 비활성화 상태
   }) {
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color:
-              isSelected
-                  ? Colors.white.withOpacity(0.4)
-                  : Colors.white.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+      onTap: isDisabled ? null : onTap, // 🎯 비활성화 시 터치 차단
+      child: Opacity(
+        opacity: isDisabled ? 0.5 : 1.0, // 🎯 비활성화 시 반투명
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color:
+                isSelected
+                    ? Colors.white.withOpacity(0.4)
+                    : Colors.white.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-            ),
-            if (isSelected)
-              Icon(
-                Icons.check,
-                color: isDarkMode ? Colors.white : AppColors.darkTextPrimary,
-                size: 22,
-              ),
-          ],
+              if (isSelected)
+                Icon(
+                  Icons.check,
+                  color: isDarkMode ? Colors.white : AppColors.darkTextPrimary,
+                  size: 22,
+                ),
+            ],
+          ),
         ),
       ),
     );

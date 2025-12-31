@@ -49,6 +49,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
   File? _selectedImage;
   ui.Image? _uiImage;
   bool _isDefaultImageMode = false; // 기본이미지 모드
+  int _imageLoadCounter = 0; // ✅ 이미지 로드 카운터 (key에 사용하여 완전히 재생성)
 
   // ✅ 조정 바텀시트 애니메이션
   static const double _adjustBottomSheetMaxHeight = 320.0;
@@ -65,6 +66,10 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
   late final Animation<double> _dragResetCurve;
   Offset _dragResetBegin = Offset.zero;
 
+  // ✅ 이미지 에디터 페이드 애니메이션 (취소 시 부드러운 복귀)
+  late final AnimationController _imageEditorFadeController;
+  late final Animation<double> _imageEditorFadeAnimation;
+
   // 인라인 보정 모드
   bool _isAdjustMode = false;
   double _brightness = 0.0; // -100 ~ 100
@@ -72,7 +77,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
   double _saturation = 0.0; // -100 ~ 100
   double _warmth = 0.0; // -100 ~ 100
   _AdjustSnapshot? _adjustSnapshot;
-  bool _isAdjustmentSliderMode = false;
   final GlobalKey<AdjustmentEditorBottomSheetState> _adjustmentEditorKey =
       GlobalKey<AdjustmentEditorBottomSheetState>();
 
@@ -116,12 +120,27 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
             Offset.zero;
       });
     });
+
+    // ✅ 이미지 에디터 페이드 애니메이션 초기화
+    _imageEditorFadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _imageEditorFadeAnimation = CurvedAnimation(
+      parent: _imageEditorFadeController,
+      curve: Curves.easeInOut,
+    );
+    // ✅ 처음에는 0으로 시작 (이미지 로드 후에만 forward)
+    // _imageEditorFadeController.forward(); // 제거: 처음 로드 시 흔들림 방지
   }
 
   @override
   void dispose() {
     _adjustBottomSheetController.dispose();
     _dragResetController.dispose();
+    _imageEditorFadeController.dispose();
+    // ✅ 이전 이미지 dispose
+    _uiImage?.dispose();
     super.dispose();
   }
 
@@ -227,77 +246,87 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                   0,
                   -0.25,
                 ), // 위로 약간 이동 (0 = 중앙, -1 = 최상단)
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // ✅ Hero는 고정 레이아웃(앵커)만 잡고, Transform은 Hero 바깥에서 적용
-                    //    드래그 피드백은 유지하되 Hero 전환 시 깜빡임은 방지
-                    if (_selectedImage == null)
-                      Transform.translate(
-                        offset:
-                            canSwipeDismiss
-                                ? Offset(
-                                  (_dragOffset.dx * 0.18).clamp(-40.0, 40.0),
-                                  (_dragOffset.dy * 0.18).clamp(-40.0, 40.0),
-                                )
-                                : Offset.zero,
-                        child: Hero(
-                          tag: 'profile_image_${widget.username}',
-                          createRectTween:
-                              (begin, end) => RectTween(begin: begin, end: end),
-                          flightShuttleBuilder: (
-                            flightContext,
-                            animation,
-                            flightDirection,
-                            fromHeroContext,
-                            toHeroContext,
-                          ) {
-                            // ✅ 비행 중에는 "출발/도착 Hero의 child"를 그대로 재사용해야
-                            //    CachedNetworkImage placeholder ↔ image 스왑으로 인한 시작 깜빡임이 줄어듭니다.
-                            final fromHero =
-                                fromHeroContext.widget is Hero
-                                    ? (fromHeroContext.widget as Hero).child
-                                    : fromHeroContext.widget;
-                            final toHero =
-                                toHeroContext.widget is Hero
-                                    ? (toHeroContext.widget as Hero).child
-                                    : toHeroContext.widget;
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  switchInCurve: Curves.easeInOut,
+                  switchOutCurve: Curves.easeInOut,
+                  child:
+                      _selectedImage == null
+                          ? Transform.translate(
+                            key: const ValueKey('hero_avatar'),
+                            offset:
+                                canSwipeDismiss
+                                    ? Offset(
+                                      (_dragOffset.dx * 0.18).clamp(
+                                        -40.0,
+                                        40.0,
+                                      ),
+                                      (_dragOffset.dy * 0.18).clamp(
+                                        -40.0,
+                                        40.0,
+                                      ),
+                                    )
+                                    : Offset.zero,
+                            child: Hero(
+                              tag: 'profile_image_${widget.username}',
+                              createRectTween:
+                                  (begin, end) =>
+                                      RectTween(begin: begin, end: end),
+                              flightShuttleBuilder: (
+                                flightContext,
+                                animation,
+                                flightDirection,
+                                fromHeroContext,
+                                toHeroContext,
+                              ) {
+                                // ✅ 비행 중에는 "출발/도착 Hero의 child"를 그대로 재사용해야
+                                //    CachedNetworkImage placeholder ↔ image 스왑으로 인한 시작 깜빡임이 줄어듭니다.
+                                final fromHero =
+                                    fromHeroContext.widget is Hero
+                                        ? (fromHeroContext.widget as Hero).child
+                                        : fromHeroContext.widget;
+                                final toHero =
+                                    toHeroContext.widget is Hero
+                                        ? (toHeroContext.widget as Hero).child
+                                        : toHeroContext.widget;
 
-                            final stableChild =
-                                flightDirection == HeroFlightDirection.push
-                                    ? fromHero
-                                    : toHero;
+                                final stableChild =
+                                    flightDirection == HeroFlightDirection.push
+                                        ? fromHero
+                                        : toHero;
 
-                            return SizedBox(
-                              width: _cropSize,
-                              height: _cropSize,
-                              child: Material(
-                                color: Colors.transparent,
-                                child: stableChild,
+                                return SizedBox(
+                                  width: _cropSize,
+                                  height: _cropSize,
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: stableChild,
+                                  ),
+                                );
+                              },
+                              child: SizedBox(
+                                width: _cropSize,
+                                height: _cropSize,
+                                // ✅ 이미지 URL이 바뀔 때 위젯을 완전히 재생성하여 잔상 방지
+                                key: ValueKey(
+                                  'hero_avatar_${widget.profileImageUrl}',
+                                ),
+                                child: _buildHeroAvatar(
+                                  enableTransform: false, // Hero 내부는 정적
+                                  dragOffset: Offset.zero, // Transform은 외부에서 처리
+                                ),
                               ),
-                            );
-                          },
-                          child: SizedBox(
-                            width: _cropSize,
-                            height: _cropSize,
-                            // ✅ 이미지 URL이 바뀔 때 위젯을 완전히 재생성하여 잔상 방지
+                            ),
+                          )
+                          : (_uiImage != null && widget.isOwnProfile)
+                          ? FadeTransition(
                             key: ValueKey(
-                              'hero_avatar_${widget.profileImageUrl}',
-                            ),
-                            child: _buildHeroAvatar(
-                              enableTransform: false, // Hero 내부는 정적
-                              dragOffset: Offset.zero, // Transform은 외부에서 처리
-                            ),
-                          ),
-                        ),
-                      ),
-
-                    // 선택된 이미지가 있을 때 표시
-                    if (_selectedImage != null &&
-                        _uiImage != null &&
-                        widget.isOwnProfile)
-                      _buildImageEditor(theme),
-                  ],
+                              'fade_editor_$_imageLoadCounter',
+                            ), // ✅ 이미지 변경 시 완전히 재생성
+                            opacity: _imageEditorFadeAnimation,
+                            child: _buildImageEditor(theme),
+                          )
+                          : const SizedBox.shrink(key: ValueKey('empty')),
                 ),
               ),
             ),
@@ -357,7 +386,8 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                               ? (_isAdjustMode
                                   ? const SizedBox.shrink()
                                   : Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceEvenly,
                                     children: [
                                       _buildCircleButton(
                                         context: context,
@@ -380,7 +410,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                           }
                                         },
                                       ),
-                                      const SizedBox(width: 16),
                                       _buildCircleButton(
                                         context: context,
                                         icon: Icons.tune,
@@ -389,14 +418,19 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                         ).translate('adjust'),
                                         onTap: _enterAdjustMode,
                                       ),
-                                      const SizedBox(width: 16),
                                       _buildCircleButton(
                                         context: context,
                                         icon: Icons.close,
                                         label: AppLocalizations.of(
                                           context,
                                         ).translate('cancel'),
-                                        onTap: () {
+                                        onTap: () async {
+                                          // ✅ 부드럽게 페이드 아웃 후 상태 초기화
+                                          await _imageEditorFadeController
+                                              .reverse();
+                                          if (!mounted) return;
+                                          // 이전 이미지 dispose
+                                          _uiImage?.dispose();
                                           setState(() {
                                             _selectedImage = null;
                                             _uiImage = null;
@@ -404,10 +438,17 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                             _imageOffset = Offset.zero;
                                             _minScale = 1.0;
                                             _initialScale = null;
+                                            _initialRotation = null;
                                             _lastPanPosition = null;
                                             _isAdjustMode = false;
                                             _adjustSnapshot = null;
+                                            _brightness = 0.0;
+                                            _contrast = 0.0;
+                                            _saturation = 0.0;
+                                            _warmth = 0.0;
                                           });
+                                          // 다음 이미지 선택을 위해 애니메이션 리셋
+                                          _imageEditorFadeController.reset();
                                         },
                                       ),
                                     ],
@@ -415,7 +456,8 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                               : _isDefaultImageMode
                               ? // 기본이미지 모드: 확인, 취소 버튼 표시
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceEvenly,
                                 children: [
                                   _buildCircleButton(
                                     context: context,
@@ -428,7 +470,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                       Navigator.pop(context);
                                     },
                                   ),
-                                  const SizedBox(width: 16),
                                   _buildCircleButton(
                                     context: context,
                                     icon: Icons.close,
@@ -762,10 +803,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
   Future<void> _showMediaPicker() async {
     final result = await Navigator.push<MediaPickerResult>(
       context,
-      CupertinoPageRoute(
-        fullscreenDialog: true,
-        builder:
-            (context) => MediaPickerScreen(
+      PageRouteBuilder(
+        pageBuilder:
+            (context, animation, secondaryAnimation) => MediaPickerScreen(
               initialMediaType: MediaType.image,
               maxSelectionCount: 1,
               enableToggle: false, // 영상 토글 비활성화
@@ -773,6 +813,12 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                 // 단일 선택이므로 바로 처리하지 않음 (Navigator.pop의 result로 처리)
               },
             ),
+        transitionDuration: const Duration(milliseconds: 200),
+        reverseTransitionDuration: const Duration(milliseconds: 150),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+        fullscreenDialog: true,
       ),
     );
 
@@ -793,7 +839,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         warmth: _warmth,
       );
       _isAdjustMode = true;
-      _isAdjustmentSliderMode = false;
     });
     _adjustBottomSheetController.forward(from: 0);
   }
@@ -810,7 +855,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
     }
     // 슬라이더 모드면 버튼 모드로 복귀(안전)
     _adjustmentEditorKey.currentState?.resetToButtonMode();
-    _isAdjustmentSliderMode = false;
 
     await _adjustBottomSheetController.reverse();
     if (!mounted) return;
@@ -931,7 +975,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                       });
                     },
                     onSliderModeChanged: (isSliderMode) {
-                      setState(() => _isAdjustmentSliderMode = isSliderMode);
+                      // 현재 화면 로직에서 isSliderMode 상태를 참조하지 않으므로 no-op
                     },
                   ),
                 ),
@@ -945,6 +989,39 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
 
   /// 이미지 로드 및 초기 스케일 계산
   Future<void> _loadImageAndCalculateScale(File file) async {
+    // ✅ 이전 이미지 완전히 제거 (잔상 방지)
+    // 1. 먼저 페이드 아웃 (이전 이미지가 있을 때만)
+    if (_selectedImage != null) {
+      await _imageEditorFadeController.reverse();
+    } else {
+      // ✅ 처음 이미지 로드 시에도 애니메이션 컨트롤러를 0으로 확실히 설정
+      _imageEditorFadeController.reset();
+    }
+
+    // 2. 이전 이미지 dispose 및 상태 초기화
+    _uiImage?.dispose();
+    if (mounted) {
+      setState(() {
+        _selectedImage = null; // ✅ 먼저 null로 설정하여 이전 이미지 에디터 완전히 제거
+        _uiImage = null;
+        _imageScale = 1.0;
+        _imageOffset = Offset.zero;
+        _minScale = 1.0;
+        _initialScale = null;
+        _initialRotation = null;
+        _lastPanPosition = null;
+        _brightness = 0.0;
+        _contrast = 0.0;
+        _saturation = 0.0;
+        _warmth = 0.0;
+        _adjustSnapshot = null;
+      });
+    }
+
+    // 3. 레이아웃이 안정화될 때까지 대기 (Hero → 이미지 에디터 전환 시 흔들림 방지)
+    await Future.delayed(const Duration(milliseconds: 50));
+    if (!mounted) return;
+
     try {
       final bytes = await file.readAsBytes();
       final codec = await ui.instantiateImageCodec(bytes);
@@ -967,6 +1044,14 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
           math.max(_cropSize / imageRect.width, _cropSize / imageRect.height) *
           1.01; // 약간의 여유
 
+      if (!mounted) {
+        img.dispose();
+        return;
+      }
+
+      // ✅ 이미지 로드 카운터 증가 (key 변경으로 완전히 재생성)
+      _imageLoadCounter++;
+
       setState(() {
         _selectedImage = file;
         _uiImage = img;
@@ -977,12 +1062,28 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         _initialScale = null;
         _initialRotation = null;
         _lastPanPosition = null;
+        // 보정 값 초기화
+        _brightness = 0.0;
+        _contrast = 0.0;
+        _saturation = 0.0;
+        _warmth = 0.0;
+        _adjustSnapshot = null;
       });
+
+      // ✅ 레이아웃이 완전히 안정화된 후 페이드 인 애니메이션
+      // 위젯 트리가 완전히 업데이트되고 Hero → 이미지 에디터 전환이 완료된 후
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (mounted) {
+        _imageEditorFadeController.forward(from: 0);
+      }
     } catch (e) {
       debugPrint('[ProfileImageView] 이미지 로드 실패: $e');
       if (mounted) {
+        // ✅ 에러 발생 시에도 이전 이미지 dispose
+        _uiImage?.dispose();
         setState(() {
           _selectedImage = file;
+          _uiImage = null;
           _minScale = 1.0;
           _imageScale = 1.0;
           _imageOffset = Offset.zero;
@@ -997,7 +1098,8 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
 
   /// 이미지 에디터 빌드 (단일 CustomPainter로 통합)
   Widget _buildImageEditor(ThemeData theme) {
-    if (_uiImage == null) return const SizedBox.shrink();
+    if (_uiImage == null || _selectedImage == null)
+      return const SizedBox.shrink();
 
     final imageSize = Size(
       _uiImage!.width.toDouble(),
@@ -1103,6 +1205,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         });
       },
       child: CustomPaint(
+        key: ValueKey(
+          'image_editor_${_selectedImage!.path}_$_imageLoadCounter',
+        ), // ✅ 이미지 변경 시 완전히 재생성 (잔상 방지)
         size: Size.infinite,
         painter: _UnifiedImagePainter(
           image: _uiImage!,
