@@ -132,6 +132,19 @@ class _FilterEditorBottomSheetState extends State<FilterEditorBottomSheet> {
     _isLoadingThumbnail = true;
 
     try {
+      // ✅ 비디오 편집기 등에서 placeholder로 빈 bytes가 넘어올 수 있음
+      // - 빈 bytes는 디코드 불가 → 조용히 skip (깜빡임/로그 스팸 방지)
+      if (widget.imageBytes.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _isLoadingThumbnail = false;
+          });
+        } else {
+          _isLoadingThumbnail = false;
+        }
+        return;
+      }
+
       // ✅ 고해상도 원본 전체 디코드 방지: descriptor로 사이즈 확인 후 적절한 target으로 디코드
       final buffer = await ui.ImmutableBuffer.fromUint8List(widget.imageBytes);
       final descriptor = await ui.ImageDescriptor.encoded(buffer);

@@ -400,56 +400,13 @@ class VideoCropGestureHandler {
       // 새로운 scale 계산 (초기 scale * 감쇠된 scale 변화)
       double newScale = _initialScale! * dampedScale;
 
-      // ✅ 축소 시도 시: 현재 스케일이 이미 1.0 이하면 더 이상 축소 불가
-      if (dampedScale < 1.0 && imageScale <= _minImageScale) {
-        // 축소 시도 무시
-        return null;
+      // ✅ 핀치 축소 허용: 1.0 제약 제거
+      // (크롭박스가 벗어나면 onScaleEnd에서 스냅백으로 복귀)
+
+      // 최대 scale 제한만 적용 (최소값 제약 제거)
+      if (newScale > _maxImageScale) {
+        newScale = _maxImageScale;
       }
-
-      // ✅ 핀치 축소 허용 조건: 이미지가 cropRect를 덮고 있어야 함
-      if (dampedScale < 1.0 && cropState.cropRectImage != null) {
-        final Rect? frozenCropRectScreen =
-            (_frozenImageRect != null)
-                ? ImageRectUtils.imageToScreenRect(
-                  imageRect: cropState.cropRectImage!,
-                  screenImageRect: _frozenImageRect!,
-                  imageSize: videoSize,
-                )
-                : null;
-
-        final testImageRect = ImageRectUtils.computeImageRectForCrop(
-          containerSize: containerSize,
-          imageSize: videoSize,
-          scale: newScale,
-          offset: imageOffset,
-        );
-
-        final testCropRectScreen =
-            frozenCropRectScreen ??
-            ImageRectUtils.imageToScreenRect(
-              imageRect: cropState.cropRectImage!,
-              screenImageRect: testImageRect,
-              imageSize: videoSize,
-            );
-
-        // ✅ 이미지가 cropRect를 완전히 덮지 못하면 축소 금지
-        if (testImageRect.left > testCropRectScreen.left + _snapTolerancePx ||
-            testImageRect.top > testCropRectScreen.top + _snapTolerancePx ||
-            testImageRect.right < testCropRectScreen.right - _snapTolerancePx ||
-            testImageRect.bottom <
-                testCropRectScreen.bottom - _snapTolerancePx) {
-          // 축소 금지: 현재 scale 유지
-          return null;
-        }
-      }
-
-      // 최소 scale 제한
-      if (newScale < _minImageScale) {
-        return null;
-      }
-
-      // 최대 scale 제한
-      newScale = newScale.clamp(_minImageScale, _maxImageScale);
 
       // ✅ 핀치 중에는 cropRectImage를 변경하지 않음 (크롭박스 고정)
       // 오직 imageScale만 변경하여 영상만 작아지고 커지게 함
@@ -664,8 +621,12 @@ class VideoCropGestureHandler {
         );
       }
 
-      // ✅ 축소 핀치: zoom-in과 동일하게 "재투영 1회"로 정석화한다.
+      // ✅ 축소 핀치: 화면에서 크롭박스 고정 (확대와 동일한 방식)
+      // - 축소 중에도 크롭 박스(screen)는 고정되어야 함
+      // - zoom-out 종료 시점에 "고정된 screen cropRect"를 최종 imageRect 기준으로 재투영
+      // - 크롭박스 크기는 유지하고 위치만 조정하여 화면에서 고정 유지
       if (isZoomOut) {
+        // 스냅백이 적용된 최종 offset 기준으로 imageRect를 계산해야, 재투영이 일관된다.
         final finalOffset = _applySnapBackOffset(imageOffset, snapBackOffset);
         final finalImageRect = ImageRectUtils.computeImageRectForCrop(
           containerSize: containerSize,
@@ -673,6 +634,8 @@ class VideoCropGestureHandler {
           scale: imageScale,
           offset: finalOffset,
         );
+
+        // ✅ frozenCropRectScreen을 기준으로 재투영 (크롭박스 화면 고정)
         final projected = _projectScreenRectToImageRect(
           screenCropRect: frozenCropRectScreen,
           screenImageRect: finalImageRect,
@@ -688,6 +651,7 @@ class VideoCropGestureHandler {
           );
         }
 
+        // zoom-out 종료 후에는 freeze 해제 (크롭박스는 재투영으로 고정 유지)
         _resetGestureState(clearFrozen: true);
 
         return CropDragEndResult(
@@ -797,6 +761,9 @@ class VideoCropGestureHandler {
 
   /// 드래그 중 여부
   bool get isDraggingImage => _isDraggingImage;
+
+  /// 핀치 중 여부
+  bool get isPinching => _isPinching;
 
   /// Freeze된 이미지 rect 가져오기
   Rect? get frozenImageRect => _frozenImageRect;
@@ -964,88 +931,8 @@ class VideoCropAutoZoom {
   }
 }
 
-/// ✅ 비파괴 커밋 프리뷰: "크롭 결과"를 파일로 굽지 않고 화면에서만 출력
-class _CommittedCropPreviewPainter extends CustomPainter {
-  _CommittedCropPreviewPainter({
-    required this.controller,
-    required this.state,
-    required this.containerSize,
-  });
-
-  final VideoPlayerController controller;
-  final _VideoEditState state;
-  final Size containerSize;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (!controller.value.isInitialized) return;
-
-    final videoSize = Size(
-      controller.value.size.width.toDouble(),
-      controller.value.size.height.toDouble(),
-    );
-
-    // 편집 시 사용하던 동일한 좌표계(마진 포함)
-    final displayImageRect = ImageRectUtils.computeImageRectForCrop(
-      containerSize: containerSize,
-      imageSize: videoSize,
-      scale: state.imageScale,
-      offset: state.imageOffset,
-    );
-
-    final cropRectImage = state.cropState.cropRectImage;
-    if (!state.cropState.isCropRectInitialized || cropRectImage == null) {
-      // 크롭이 없으면 원본을 그냥 보여준다
-      final src = Rect.fromLTWH(0, 0, videoSize.width, videoSize.height);
-      final dst = ImageRectUtils.computeImageRectForCrop(
-        containerSize: size,
-        imageSize: videoSize,
-        scale: 1.0,
-        offset: Offset.zero,
-      );
-      // 비디오는 VideoPlayer 위젯에서 처리하므로 여기서는 rect만 계산
-      return;
-    }
-
-    final cropRectScreen = ImageRectUtils.imageToScreenRect(
-      imageRect: cropRectImage,
-      screenImageRect: displayImageRect,
-      imageSize: videoSize,
-    );
-
-    // 커버 보정(k)도 포함해서, 회전 시 빈 영역이 보이지 않도록(편집 프리뷰와 동일)
-    final totalRotationDeg = state.rotation + (state.rotationQuarterTurns * 90);
-    final theta = totalRotationDeg * (3.14159265359 / 180.0);
-    final k = CropUtils.coverScaleToContainCropRect(
-      imageRectScreen: displayImageRect,
-      cropRectScreen: cropRectScreen,
-      pivot: cropRectScreen.center,
-      thetaRad: theta,
-    );
-
-    // 비디오는 VideoPlayer 위젯에서 렌더링되므로 여기서는 계산만 수행
-  }
-
-  @override
-  bool shouldRepaint(covariant _CommittedCropPreviewPainter oldDelegate) {
-    return oldDelegate.controller != controller ||
-        oldDelegate.containerSize != containerSize ||
-        oldDelegate.state.rotation != state.rotation ||
-        oldDelegate.state.rotationQuarterTurns != state.rotationQuarterTurns ||
-        oldDelegate.state.flipHorizontal != state.flipHorizontal ||
-        oldDelegate.state.flipVertical != state.flipVertical ||
-        oldDelegate.state.imageOffset != state.imageOffset ||
-        oldDelegate.state.imageScale != state.imageScale ||
-        oldDelegate.state.cropState.cropRectImage !=
-            state.cropState.cropRectImage ||
-        oldDelegate.state.cropState.isCropRectInitialized !=
-            state.cropState.isCropRectInitialized;
-  }
-}
-
 class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
     with TickerProviderStateMixin {
-  static const double _cropEnterPadding = 6.0;
   static const Duration _cropSnapBackDuration = Duration(milliseconds: 180);
 
   AnimationController? _cropSnapBackController;
@@ -1063,6 +950,10 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
   // ✅ 초기화 중인 컨트롤러 추적 (중복 초기화 방지)
   final Map<int, Future<VideoPlayerController>> _initializingControllers = {};
   static const int _maxVideoCacheSize = 10; // 최대 비디오 컨트롤러 캐시 크기
+
+  // ✅ 필터 모드용 썸네일 캐시 (깜빡임 방지)
+  final Map<int, Uint8List?> _thumbnailCache = {};
+  final Map<int, Future<Uint8List?>> _thumbnailFutures = {};
 
   // ✅ “확 바뀌는 것” 방지용: 이전 프레임 비디오 보관 + 크로스페이드
   final Map<int, int> _applyAnimVersion = {};
@@ -1143,7 +1034,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
   // 크롭 관련 상태
   final Map<int, Size> _imageDisplaySizes = {}; // 이미지별 표시 크기
   final Map<int, Size> _containerSizes = {}; // 이미지별 컨테이너 크기 (LayoutBuilder 기준)
-  Size? _lastContainerSize; // ✅ export fallback 용 (offscreen page 대비)
   bool _isBottomSheetAnimationComplete = false; // 바텀시트 애니메이션 완료 여부
 
   // ✅ 크롭 제스처 핸들러 (이미지별)
@@ -1272,9 +1162,13 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
     }
   }
 
-  Future<VideoPlayerController> _initializeVideoController(int index, File videoFile) async {
+  Future<VideoPlayerController> _initializeVideoController(
+    int index,
+    File videoFile,
+  ) async {
     // ✅ 이미 초기화되어 있으면 반환
-    if (_videoControllers[index] != null && _videoControllers[index]!.value.isInitialized) {
+    if (_videoControllers[index] != null &&
+        _videoControllers[index]!.value.isInitialized) {
       return _videoControllers[index]!;
     }
 
@@ -1297,7 +1191,10 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
     }
   }
 
-  Future<VideoPlayerController> _initializeVideoControllerInternal(int index, File videoFile) async {
+  Future<VideoPlayerController> _initializeVideoControllerInternal(
+    int index,
+    File videoFile,
+  ) async {
     try {
       final controller = VideoPlayerController.file(videoFile);
       await controller.initialize();
@@ -1450,63 +1347,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
     );
   }
 
-  Widget _buildVideoPlayer({
-    required BuildContext context,
-    required int index,
-    required File videoFileForFallback,
-    required _VideoEditState state,
-  }) {
-    final controller = _videoControllers[index];
-    final v = _applyAnimVersion[index] ?? 0;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final fgColor =
-        isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
-
-    // 최초 로딩(컨트롤러가 없을 때만)
-    if (controller == null || !controller.value.isInitialized) {
-      return Center(
-        child: FutureBuilder<VideoPlayerController>(
-          future: _initializeVideoController(index, videoFileForFallback),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              if (widget.isExistingNodeEdit) {
-                return const SizedBox.shrink();
-              }
-              return SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 4,
-                  color: fgColor,
-                ),
-              );
-            }
-            if (snapshot.hasError || !snapshot.hasData) {
-              return const Icon(Icons.error);
-            }
-            final ctrl = snapshot.data!;
-            return _buildVideoCore(ctrl, state);
-          },
-        ),
-      );
-    }
-
-    // ✅ 스냅 교체 + "살짝 정착(zoom settle)"
-    return TweenAnimationBuilder<double>(
-      key: ValueKey('apply_settle_$index\_$v'),
-      tween: Tween(begin: 1.02, end: 1.0),
-      duration: _applySettleDuration,
-      curve: Curves.easeOutCubic,
-      builder: (context, s, _) {
-        return Transform.scale(
-          scale: s,
-          alignment: Alignment.center,
-          child: _buildVideoCore(controller, state),
-        );
-      },
-    );
-  }
-
   @override
   void dispose() {
     // 🚀 모든 비디오 컨트롤러 정리 (메모리 최적화)
@@ -1521,6 +1361,9 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
     _originalVideoControllers.clear();
     // ✅ 초기화 중인 컨트롤러 추적도 정리
     _initializingControllers.clear();
+    // ✅ 썸네일 캐시 정리
+    _thumbnailCache.clear();
+    _thumbnailFutures.clear();
     _history.clear();
     _redoStack.clear();
 
@@ -1793,6 +1636,32 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
 
   VideoEditSpec _buildEditSpecForIndex(int index) {
     final s = _videoEditStates.putIfAbsent(index, () => _VideoEditState());
+
+    // ✅ 크롭 정보 디버깅 및 검증
+    debugPrint(
+      '🔍 [VideoEditSpec] index=$index, '
+      'isCropRectInitialized=${s.cropState.isCropRectInitialized}, '
+      'cropRectImage=${s.cropState.cropRectImage}',
+    );
+
+    if (s.cropState.isCropRectInitialized &&
+        s.cropState.cropRectImage == null) {
+      debugPrint(
+        '⚠️ [VideoEditSpec] 크롭이 초기화되었지만 cropRectImage가 null입니다. index: $index',
+      );
+    }
+
+    if (s.cropState.cropRectImage != null) {
+      debugPrint(
+        '✅ [VideoEditSpec] 크롭 정보 저장: index=$index, '
+        'cropRect=${s.cropState.cropRectImage}, '
+        'width=${s.cropState.cropRectImage!.width}, '
+        'height=${s.cropState.cropRectImage!.height}',
+      );
+    } else {
+      debugPrint('ℹ️ [VideoEditSpec] 크롭 정보 없음: index=$index');
+    }
+
     return VideoEditSpec(
       rotation: s.rotation,
       rotationQuarterTurns: s.rotationQuarterTurns,
@@ -1890,7 +1759,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                                           },
                                           icon: Icon(
                                             _isBottomSheetOpen
-                                                ? Icons.arrow_back
+                                                ? null
                                                 : Icons.close,
                                             color: fgColor,
                                             size: 26,
@@ -2121,15 +1990,25 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                           child: Align(
                             alignment: Alignment.topCenter,
                             heightFactor: _bottomSheetAnimation.value,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: bgColor.withOpacity(1),
-                                borderRadius: const BorderRadius.only(
-                                  topLeft: Radius.circular(30),
-                                  topRight: Radius.circular(30),
+                            child: BackdropFilter(
+                              filter: ui.ImageFilter.blur(
+                                sigmaX: 20,
+                                sigmaY: 20,
+                              ),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: bgColor.withOpacity(0.8),
+                                ),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // 4px 간격 (블러 오버레이 내부)
+                                    SizedBox(height: 4.0),
+                                    // 바텀시트 콘텐츠
+                                    child!,
+                                  ],
                                 ),
                               ),
-                              child: child,
                             ),
                           ),
                         ),
@@ -2370,6 +2249,72 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                   ),
                 ],
               ),
+            ),
+          ),
+
+          // 상단 SafeArea 반투명 블러 오버레이
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            child: AnimatedBuilder(
+              animation: _bottomSheetAnimation,
+              builder: (context, _) {
+                if (_bottomSheetAnimation.value <= 0) {
+                  return const SizedBox.shrink();
+                }
+                final safeAreaTop = MediaQuery.of(context).padding.top;
+                if (safeAreaTop <= 0) {
+                  return const SizedBox.shrink();
+                }
+                return ClipRRect(
+                  child: Opacity(
+                    opacity: _bottomSheetAnimation.value,
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                      child: Container(
+                        height: safeAreaTop,
+                        decoration: BoxDecoration(
+                          color: bgColor.withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // 하단 SafeArea 반투명 블러 오버레이
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: AnimatedBuilder(
+              animation: _bottomSheetAnimation,
+              builder: (context, _) {
+                if (_bottomSheetAnimation.value <= 0) {
+                  return const SizedBox.shrink();
+                }
+                final safeAreaBottom = MediaQuery.of(context).padding.bottom;
+                if (safeAreaBottom <= 0) {
+                  return const SizedBox.shrink();
+                }
+                return ClipRRect(
+                  child: Opacity(
+                    opacity: _bottomSheetAnimation.value,
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                      child: Container(
+                        height: safeAreaBottom,
+                        decoration: BoxDecoration(
+                          color: bgColor.withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
 
@@ -2622,10 +2567,26 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
 
     // 표준: 회전된 외접 사각형이 cropRect를 덮도록 하는 최소 배율(상태값은 건드리지 않음)
     // ✅ 조정 모드일 때는 크롭 관련 계산을 하지 않아서 비디오 크기가 고정됨
+    // ✅ 크롭이 적용된 경우(_isClosingAfterCropApply)에도 크롭 영역만 보여주기
     double k = 1.0;
-    if (_editMode == _EditMode.crop &&
+    bool shouldApplyCrop = false;
+    if ((_isClosingAfterCropApply || _editMode != _EditMode.crop) &&
+        state.cropState.isCropRectInitialized &&
+        state.cropState.cropRectImage != null &&
         cropRectScreen != null &&
         imageRectForCrop != null) {
+      // 크롭이 적용된 경우: 크롭 영역만 보여주기
+      shouldApplyCrop = true;
+      k = CropUtils.coverScaleToContainCropRect(
+        imageRectScreen: imageRectForCrop,
+        cropRectScreen: cropRectScreen,
+        pivot: anchor,
+        thetaRad: rotationRadians,
+      );
+    } else if (_editMode == _EditMode.crop &&
+        cropRectScreen != null &&
+        imageRectForCrop != null) {
+      // 크롭 모드: 크롭 박스를 덮도록 하는 k 값 계산
       k = CropUtils.coverScaleToContainCropRect(
         imageRectScreen: imageRectForCrop,
         cropRectScreen: cropRectScreen,
@@ -2645,6 +2606,19 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
           ..translate(-anchor.dx, -anchor.dy);
 
     Widget result = Transform(transform: m, child: videoWidget);
+
+    // ✅ 크롭이 적용된 경우 크롭 영역만 보여주기
+    if (shouldApplyCrop && cropRectScreen != null && currentImageRect != null) {
+      // Transform이 적용된 후의 좌표계에서 클립해야 하므로,
+      // anchor를 기준으로 cropRectScreen을 클립 영역으로 변환
+      final clipRect = Rect.fromLTWH(
+        cropRectScreen.left - anchor.dx,
+        cropRectScreen.top - anchor.dy,
+        cropRectScreen.width,
+        cropRectScreen.height,
+      );
+      result = ClipRect(clipper: _CustomRectClipper(clipRect), child: result);
+    }
 
     // ✅ 필터/조정 모드에서 위젯 재생성 방지를 위한 고정 key 적용
     if (widgetKey != null) {
@@ -2671,27 +2645,13 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         final containerSize = Size(constraints.maxWidth, constraints.maxHeight);
         // LayoutBuilder의 containerSize 저장 (MediaQuery.size 대신 사용)
         _containerSizes[index] = containerSize;
-        _lastContainerSize = containerSize;
 
-        // ✅ 크롭 모드에서만 6px 패딩을 적용하고, 모든 계산/제스처도 동일한 좌표계(=패딩 제외)로 맞춘다.
-        // 바텀시트 애니메이션과 동기화하여 패딩이 점진적으로 적용됨
+        // ✅ 크롭 모드: 순수 좌표계 사용 (패딩 없음)
         return AnimatedBuilder(
           animation: _bottomSheetAnimation,
           builder: (context, _) {
-            final cropPad =
-                _editMode == _EditMode.crop
-                    ? _cropEnterPadding * _bottomSheetAnimation.value
-                    : 0.0;
-            final effectiveContainerSize = Size(
-              (containerSize.width - cropPad * 2).clamp(
-                0.0,
-                containerSize.width,
-              ),
-              (containerSize.height - cropPad * 2).clamp(
-                0.0,
-                containerSize.height,
-              ),
-            );
+            // ✅ 크롭 모드에서도 containerSize 직접 사용 (패딩 제거)
+            final effectiveContainerSize = containerSize;
 
             // 크롭 모드일 때 크롭 영역 초기화
             // ✅ 바텀시트가 완전히 올라온 상태에서만 초기화 (애니메이션 완료 후)
@@ -2707,9 +2667,8 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                     controller.value.size.height.toDouble(),
                   );
 
-                  // ✅ 이미지 에디터와 동일한 로직 사용
                   // ✅ 실제 화면에 표시된 이미지 rect 계산 (scale과 offset 반영)
-                  // effectiveContainerSize 사용
+                  // 순수 좌표계 사용 (패딩 없음)
                   final displayImageRect =
                       ImageRectUtils.computeImageRectForCrop(
                         containerSize: effectiveContainerSize,
@@ -2720,7 +2679,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
 
                   _imageDisplaySizes[index] = displayImageRect.size;
 
-                  // ✅ 화면에 실제로 보이는 이미지 영역 계산 (effectiveContainerSize와의 교집합)
+                  // ✅ 화면에 실제로 보이는 이미지 영역 계산 (순수 좌표계)
                   final visibleImageRect = displayImageRect.intersect(
                     Rect.fromLTWH(
                       0,
@@ -2838,8 +2797,8 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                     : null;
 
             // ✅ 현재 비디오 rect 계산
-            // 크롭 모드일 때는 항상 effectiveContainerSize 사용
-            // ✅ 조정 모드일 때는 비디오 rect를 캐싱하여 크기 고정
+            // 크롭 모드: 순수 좌표계 사용 (패딩 없음)
+            // 조정/필터 모드: 비디오 rect를 캐싱하여 크기 고정 (깜빡임 방지)
             Rect? currentImageRect;
             if (videoSize != null) {
               if (_editMode == _EditMode.crop) {
@@ -2849,8 +2808,9 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                   scale: state.imageScale,
                   offset: state.imageOffset,
                 );
-              } else if (_editMode == _EditMode.adjust) {
-                // ✅ 조정 모드일 때는 캐시된 rect 사용 (크기 고정)
+              } else if (_editMode == _EditMode.adjust ||
+                  _editMode == _EditMode.filter) {
+                // ✅ 조정/필터 모드일 때는 캐시된 rect 사용 (크기 고정)
                 final cachedSize = _imageDisplaySizes[index];
                 if (cachedSize == null) {
                   // 최초 계산 시에만 계산하고 저장
@@ -2895,22 +2855,22 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
               }
             }
 
-            // ✅ 크롭 관련 계산용 imageRect (드래그 중이면 freeze된 값 사용)
+            // ✅ 크롭 관련 계산용 imageRect (드래그/핀치 중이면 freeze된 값 사용)
             final cropHandler = _getCropGestureHandler(index);
             final imageRectForCrop =
-                cropHandler.isDraggingImage &&
+                (cropHandler.isDraggingImage || cropHandler.isPinching) &&
                         cropHandler.frozenImageRect != null
                     ? cropHandler.frozenImageRect!
                     : currentImageRect;
 
-            // ✅ 크롭 모드에서 패딩 적용 (이미지 에디터와 동일)
-            // 패딩은 위젯 레이아웃에서만 처리하고, 좌표 계산은 effectiveContainerSize 기준
+            // ✅ 크롭 모드: 순수 좌표계 사용 (패딩 없음)
             final currentImageRectForPreview = currentImageRect;
 
             // 크롭 오버레이용 screen 좌표 계산
             // ✅ 항상 imageToScreenRect로 계산만 (절대 저장/freeze 금지)
+            // ✅ 크롭이 적용된 경우(_isClosingAfterCropApply)에도 크롭 영역 계산
             Rect? cropRectScreen;
-            if (_editMode == _EditMode.crop &&
+            if ((_editMode == _EditMode.crop || _isClosingAfterCropApply) &&
                 state.cropState.isCropRectInitialized &&
                 state.cropState.cropRectImage != null &&
                 imageRectForCrop != null &&
@@ -2929,8 +2889,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                   _isBottomSheetOpen
                       ? null
                       : _toggleUI, // ✅ 바텀시트 열려있을 때는 UI 토글 비활성화
-              // ✅ 핀치/팬 통합: crop 모드에서는 ScaleGesture로 처리
-              // 패딩은 위젯 레이아웃에서만 처리하므로, 제스처 처리도 effectiveContainerSize 기준
+              // ✅ 핀치/팬 통합: crop 모드에서는 ScaleGesture로 처리 (순수 좌표계)
               onScaleStart:
                   _editMode == _EditMode.crop
                       ? (details) => _onCropScaleStart(
@@ -2989,7 +2948,10 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                             height: currentImageRectForPreview.height,
                             child: Center(
                               child: FutureBuilder<VideoPlayerController>(
-                                future: _initializeVideoController(index, currentVideoFile),
+                                future: _initializeVideoController(
+                                  index,
+                                  currentVideoFile,
+                                ),
                                 builder: (context, snapshot) {
                                   if (snapshot.connectionState ==
                                       ConnectionState.waiting) {
@@ -3078,11 +3040,9 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                       builder: (context, _) {
                         // ✅ 바텀시트가 열릴수록(1.0) 핸들이 보이고, 닫힐수록(0.0) 사라짐
                         final handlesOpacity = _bottomSheetAnimation.value;
-                        // ✅ 핸들은 effectiveContainerSize 기준 좌표 사용
-                        return AnimatedOpacity(
+                        // ✅ 핸들은 순수 좌표계 사용 (패딩 없음)
+                        return Opacity(
                           opacity: handlesOpacity,
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
                           child: CropHandleBuilder.buildCropHandles(
                             cropState: state.cropState,
                             activeHandle: cropHandler.activeHandle,
@@ -3177,27 +3137,17 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
               ),
             );
 
-            // ✅ 크롭 모드 진입/이탈 시 패딩은 바텀시트 애니메이션과 동일한 속도로 적용
+            // ✅ 크롭 모드: 순수 좌표계 사용 (패딩 없음)
             if (_editMode == _EditMode.crop) {
-              // ✅ 바텀시트가 열릴수록(1.0) 패딩이 적용됨
-              final animatedPadding =
-                  _cropEnterPadding * _bottomSheetAnimation.value;
-              // ✅ 오버레이는 패딩 밖에 배치하여 전체 영역을 덮도록 함
               return Stack(
                 children: [
-                  // 패딩이 적용된 영상과 핸들
-                  Padding(
-                    padding: EdgeInsets.all(animatedPadding),
-                    child: preview,
-                  ),
-                  // 2️⃣ 크롭 오버레이 레이어 (패딩 밖에 배치하여 전체 영역 덮음)
+                  // ✅ 비디오와 핸들 (패딩 없이 직접 배치)
+                  preview,
+                  // 2️⃣ 크롭 오버레이 레이어 (순수 좌표계)
                   // ✅ 크롭박스 페이드아웃: 바텀시트 애니메이션과 함께 페이드아웃
                   if (cropRectScreen != null && imageRectForCrop != null)
-                    // NOTE: null 체크 후 non-null 변수로 할당 (AnimatedBuilder 클로저 내부에서 사용)
                     Builder(
                       builder: (context) {
-                        // 위 if에서 null 체크 완료 → Builder 내부에서는 null promotion이 작동하지 않아 ! 필요
-                        // ignore: unnecessary_non_null_assertion
                         final Rect screenRect = cropRectScreen!;
                         final Rect imageRect = imageRectForCrop;
                         return AnimatedBuilder(
@@ -3205,34 +3155,20 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                           builder: (context, _) {
                             // ✅ 바텀시트가 열릴수록(1.0) 오버레이가 보이고, 닫힐수록(0.0) 사라짐
                             final overlayOpacity = _bottomSheetAnimation.value;
-                            // ✅ cropRectScreen은 effectiveContainerSize 기준이므로 패딩만큼 오프셋 필요
-                            final animatedPadding =
-                                _cropEnterPadding * _bottomSheetAnimation.value;
-                            final adjustedCropRectScreen = screenRect.translate(
-                              animatedPadding,
-                              animatedPadding,
-                            );
-                            // ✅ imageRect도 패딩만큼 오프셋
-                            final adjustedImageRect = imageRect.translate(
-                              animatedPadding,
-                              animatedPadding,
-                            );
 
                             return IgnorePointer(
                               // 크롭 오버레이는 터치 이벤트를 차단 (이미지 드래그를 위해)
-                              child: AnimatedOpacity(
+                              child: Opacity(
                                 opacity: overlayOpacity,
-                                duration: const Duration(milliseconds: 300),
-                                curve: Curves.easeInOut,
                                 child: CustomPaint(
                                   painter: CropOverlayPainter(
-                                    cropRectScreen: adjustedCropRectScreen,
-                                    imageRect: adjustedImageRect,
+                                    cropRectScreen: screenRect,
+                                    imageRect: imageRect,
                                     overlayColor: bgColor.withOpacity(0.8),
                                     // 요구사항: 크롭박스 색상은 primary
                                     borderColor: primaryColor,
                                   ),
-                                  // ✅ container 좌표계 기준
+                                  // ✅ container 좌표계 기준 (순수 좌표)
                                   size: containerSize,
                                 ),
                               ),
@@ -3249,12 +3185,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         );
       },
     );
-  }
-
-  Future<ui.Image> _loadImage(Uint8List bytes) async {
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
-    return frame.image;
   }
 
   ColorFilter? _getColorFilter(_VideoEditState state) {
@@ -3483,6 +3413,126 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
   }
 
   Future<void> _applyEdit() async {
+    final state = _getCurrentEditState();
+
+    // ✅ 크롭 모드에서 적용 시: 현재 화면의 크롭 영역을 cropRectImage로 저장
+    if (_editMode == _EditMode.crop) {
+      final containerSize = _containerSizes[_currentIndex];
+      final controller = _videoControllers[_currentIndex];
+      if (containerSize != null &&
+          controller != null &&
+          controller.value.isInitialized) {
+        final videoSize = Size(
+          controller.value.size.width.toDouble(),
+          controller.value.size.height.toDouble(),
+        );
+
+        // 현재 화면에 표시된 이미지 rect 계산
+        final displayImageRect = ImageRectUtils.computeImageRectForCrop(
+          containerSize: containerSize,
+          imageSize: videoSize,
+          scale: state.imageScale,
+          offset: state.imageOffset,
+        );
+
+        // ✅ 현재 화면에 보이는 크롭박스 (screen 좌표) 직접 계산
+        // cropRectImage가 있으면 그것을 screen으로 변환, 없으면 기본값 사용
+        Rect currentCropRectScreen;
+        if (state.cropState.isCropRectInitialized &&
+            state.cropState.cropRectImage != null) {
+          // 기존 cropRectImage를 screen 좌표로 변환 (현재 화면 기준)
+          final screenRect = ImageRectUtils.imageToScreenRect(
+            imageRect: state.cropState.cropRectImage!,
+            screenImageRect: displayImageRect,
+            imageSize: videoSize,
+          );
+          currentCropRectScreen = screenRect;
+        } else {
+          // 크롭 영역이 없으면 기본 크롭 영역 계산
+          final visibleImageRect = displayImageRect.intersect(
+            Rect.fromLTWH(0, 0, containerSize.width, containerSize.height),
+          );
+
+          final targetAspectRatio =
+              state.cropState.selectedAspectRatio != null
+                  ? CropGestureUtils.parseAspectRatio(
+                    state.cropState.selectedAspectRatio,
+                  )
+                  : null;
+
+          double cropWidth;
+          double cropHeight;
+
+          if (targetAspectRatio != null) {
+            const targetCropRatio = 0.8;
+            final targetVisibleWidth = visibleImageRect.width * targetCropRatio;
+            final targetVisibleHeight =
+                visibleImageRect.height * targetCropRatio;
+            final targetAspect = targetAspectRatio;
+            final targetVisibleAspect =
+                targetVisibleWidth / targetVisibleHeight;
+
+            if (targetAspect > targetVisibleAspect) {
+              cropWidth = targetVisibleWidth;
+              cropHeight = targetVisibleWidth / targetAspect;
+            } else {
+              cropHeight = targetVisibleHeight;
+              cropWidth = targetVisibleHeight * targetAspect;
+            }
+          } else {
+            cropWidth = visibleImageRect.width * 0.8;
+            cropHeight = visibleImageRect.height * 0.8;
+          }
+
+          final cropLeft =
+              visibleImageRect.left + (visibleImageRect.width - cropWidth) / 2;
+          final cropTop =
+              visibleImageRect.top + (visibleImageRect.height - cropHeight) / 2;
+
+          currentCropRectScreen = Rect.fromLTWH(
+            cropLeft,
+            cropTop,
+            cropWidth,
+            cropHeight,
+          );
+        }
+
+        // ✅ screen 좌표를 image 좌표로 변환하여 저장 (정확한 변환)
+        final scaleX = videoSize.width / displayImageRect.width;
+        final scaleY = videoSize.height / displayImageRect.height;
+
+        final cropRectImageLeft =
+            (currentCropRectScreen.left - displayImageRect.left) * scaleX;
+        final cropRectImageTop =
+            (currentCropRectScreen.top - displayImageRect.top) * scaleY;
+        final cropRectImageWidth = currentCropRectScreen.width * scaleX;
+        final cropRectImageHeight = currentCropRectScreen.height * scaleY;
+
+        // ✅ 최종 cropRectImage 저장 (이미지 경계 내로 clamp)
+        final finalCropRectImage = Rect.fromLTWH(
+          cropRectImageLeft.clamp(0.0, videoSize.width),
+          cropRectImageTop.clamp(0.0, videoSize.height),
+          cropRectImageWidth.clamp(
+            0.0,
+            videoSize.width - cropRectImageLeft.clamp(0.0, videoSize.width),
+          ),
+          cropRectImageHeight.clamp(
+            0.0,
+            videoSize.height - cropRectImageTop.clamp(0.0, videoSize.height),
+          ),
+        );
+
+        state.cropState.cropRectImage = finalCropRectImage;
+        state.cropState.isCropRectInitialized = true;
+
+        debugPrint(
+          '✅ [크롭 적용] cropRectImage 저장: ${state.cropState.cropRectImage}, '
+          'videoSize: $videoSize, '
+          'currentCropRectScreen: $currentCropRectScreen',
+        );
+      }
+    }
+
     _saveToHistorySnapshot(_currentIndex);
     // ✅ 적용 후에는 세션 스냅샷 제거 (취소 복원 대상 아님)
     _panelSessionSnapshots.remove(_currentIndex);
@@ -3821,11 +3871,17 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
   Widget _buildFilterBottomSheet() {
     final state = _getCurrentEditState();
     final currentVideoFile = _videos[_currentIndex];
-    final controller = _videoControllers[_currentIndex];
 
-    // ✅ 비디오 파일에서 썸네일 생성 (필터 프리뷰용)
+    // ✅ 썸네일 캐시 사용 (깜빡임 방지)
+    final cachedThumbnail = _thumbnailCache[_currentIndex];
+    final thumbnailFuture =
+        cachedThumbnail != null
+            ? Future.value(cachedThumbnail)
+            : _getOrGenerateThumbnail(_currentIndex, currentVideoFile);
+
     return FutureBuilder<Uint8List?>(
-      future: _generateVideoThumbnail(currentVideoFile),
+      key: ValueKey('filter_thumbnail_$_currentIndex'), // ✅ key로 재생성 방지
+      future: thumbnailFuture,
       builder: (context, snapshot) {
         return FilterEditorBottomSheet(
           selectedFilter: state.selectedFilter,
@@ -3834,6 +3890,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
           isExistingNodeEdit: widget.isExistingNodeEdit,
           onFilterChanged: (filter) {
             // ✅ 필터 선택만 하고 히스토리는 저장하지 않음 (바텀시트 닫을 때만 저장)
+            // ✅ setState는 필수이지만, 비디오 위젯은 key로 재사용됨
             setState(() {
               state.selectedFilter = filter;
             });
@@ -3847,6 +3904,36 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         );
       },
     );
+  }
+
+  /// 썸네일 가져오기 또는 생성 (캐싱)
+  Future<Uint8List?> _getOrGenerateThumbnail(int index, File videoFile) {
+    // 이미 캐시되어 있으면 반환
+    if (_thumbnailCache.containsKey(index) && _thumbnailCache[index] != null) {
+      return Future.value(_thumbnailCache[index]);
+    }
+
+    // 이미 생성 중이면 기존 Future 반환
+    if (_thumbnailFutures.containsKey(index)) {
+      return _thumbnailFutures[index]!;
+    }
+
+    // 새로 생성
+    final future = _generateVideoThumbnail(videoFile)
+        .then((bytes) {
+          if (mounted) {
+            _thumbnailCache[index] = bytes;
+            _thumbnailFutures.remove(index);
+          }
+          return bytes;
+        })
+        .catchError((e) {
+          _thumbnailFutures.remove(index);
+          return null;
+        });
+
+    _thumbnailFutures[index] = future;
+    return future;
   }
 
   /// 비디오 파일에서 썸네일 생성 (필터 프리뷰용)
@@ -3989,5 +4076,22 @@ class _GlassToolButton extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// 커스텀 Rect 클리퍼 (크롭 영역만 보여주기 위함)
+class _CustomRectClipper extends CustomClipper<Rect> {
+  _CustomRectClipper(this.clipRect);
+
+  final Rect clipRect;
+
+  @override
+  Rect getClip(Size size) {
+    return clipRect;
+  }
+
+  @override
+  bool shouldReclip(covariant _CustomRectClipper oldClipper) {
+    return oldClipper.clipRect != clipRect;
   }
 }

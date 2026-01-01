@@ -391,7 +391,6 @@ class _CommittedCropPreviewPainter extends CustomPainter {
 
 class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     with TickerProviderStateMixin {
-  static const double _cropEnterPadding = 6.0;
   static const Duration _cropSnapBackDuration = Duration(milliseconds: 180);
 
   AnimationController? _cropSnapBackController;
@@ -1281,7 +1280,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                           },
                                           icon: Icon(
                                             _isBottomSheetOpen
-                                                ? Icons.arrow_back
+                                                ? null
                                                 : Icons.close,
                                             color: fgColor,
                                             size: 26,
@@ -1496,7 +1495,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                     },
                   ),
 
-                  // 바텀시트 (일반 위젯으로 올라오고 내려감)
+                  // 바텀시트와 이미지/영상 사이 간격 + 바텀시트 (반투명 블러 오버레이)
                   AnimatedBuilder(
                     animation: _bottomSheetAnimation,
                     builder: (context, child) {
@@ -1512,15 +1511,25 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                           child: Align(
                             alignment: Alignment.topCenter,
                             heightFactor: _bottomSheetAnimation.value,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: bgColor.withOpacity(1),
-                                borderRadius: const BorderRadius.only(
-                                  topLeft: Radius.circular(30),
-                                  topRight: Radius.circular(30),
+                            child: BackdropFilter(
+                              filter: ui.ImageFilter.blur(
+                                sigmaX: 20,
+                                sigmaY: 20,
+                              ),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: bgColor.withOpacity(0.8),
+                                ),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // 4px 간격 (블러 오버레이 내부)
+                                    SizedBox(height: 4.0),
+                                    // 바텀시트 콘텐츠
+                                    child!,
+                                  ],
                                 ),
                               ),
-                              child: child,
                             ),
                           ),
                         ),
@@ -1764,6 +1773,72 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
             ),
           ),
 
+          // 상단 SafeArea 반투명 블러 오버레이
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            child: AnimatedBuilder(
+              animation: _bottomSheetAnimation,
+              builder: (context, _) {
+                if (_bottomSheetAnimation.value <= 0) {
+                  return const SizedBox.shrink();
+                }
+                final safeAreaTop = MediaQuery.of(context).padding.top;
+                if (safeAreaTop <= 0) {
+                  return const SizedBox.shrink();
+                }
+                return ClipRRect(
+                  child: Opacity(
+                    opacity: _bottomSheetAnimation.value,
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                      child: Container(
+                        height: safeAreaTop,
+                        decoration: BoxDecoration(
+                          color: bgColor.withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // 하단 SafeArea 반투명 블러 오버레이
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: AnimatedBuilder(
+              animation: _bottomSheetAnimation,
+              builder: (context, _) {
+                if (_bottomSheetAnimation.value <= 0) {
+                  return const SizedBox.shrink();
+                }
+                final safeAreaBottom = MediaQuery.of(context).padding.bottom;
+                if (safeAreaBottom <= 0) {
+                  return const SizedBox.shrink();
+                }
+                return ClipRRect(
+                  child: Opacity(
+                    opacity: _bottomSheetAnimation.value,
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                      child: Container(
+                        height: safeAreaBottom,
+                        decoration: BoxDecoration(
+                          color: bgColor.withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
           // ✅ 완료(export) 중에는 즉시 피드백(로딩 오버레이)
           if (_isExporting)
             Positioned.fill(
@@ -1961,25 +2036,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         _containerSizes[index] = containerSize;
         _lastContainerSize = containerSize;
 
-        // ✅ 크롭 모드에서만 6px 패딩을 적용하고, 모든 계산/제스처도 동일한 좌표계(=패딩 제외)로 맞춘다.
-        // 바텀시트 애니메이션과 동기화하여 패딩이 점진적으로 적용됨
+        // ✅ 크롭 모드: 순수 좌표계 사용 (패딩 없음)
         return AnimatedBuilder(
           animation: _bottomSheetAnimation,
           builder: (context, _) {
-            final cropPad =
-                _editMode == _EditMode.crop
-                    ? _cropEnterPadding * _bottomSheetAnimation.value
-                    : 0.0;
-            final effectiveContainerSize = Size(
-              (containerSize.width - cropPad * 2).clamp(
-                0.0,
-                containerSize.width,
-              ),
-              (containerSize.height - cropPad * 2).clamp(
-                0.0,
-                containerSize.height,
-              ),
-            );
+            // ✅ 크롭 모드에서도 containerSize 직접 사용 (패딩 제거)
+            final effectiveContainerSize = containerSize;
 
             // 크롭 모드일 때 크롭 영역 초기화
             // ✅ 바텀시트가 완전히 올라온 상태에서만 초기화 (애니메이션 완료 후)
@@ -2012,7 +2074,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                     : null;
 
             // ✅ 현재 이미지 rect 계산
-            // 크롭 모드일 때는 항상 마진이 적용된 함수 사용
+            // 크롭 모드일 때는 항상 computeImageRectForCrop 함수 사용
             // ✅ 조정 모드일 때는 이미지 rect를 캐싱하여 크기 고정
             Rect? currentImageRect;
             if (imageSize != null) {
@@ -2069,10 +2131,10 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
               }
             }
 
-            // ✅ 크롭 관련 계산용 imageRect (드래그 중이면 freeze된 값 사용)
+            // ✅ 크롭 관련 계산용 imageRect (드래그/핀치 중이면 freeze된 값 사용)
             final cropHandler = _getCropGestureHandler(index);
             final imageRectForCrop =
-                cropHandler.isDraggingImage &&
+                (cropHandler.isDraggingImage || cropHandler.isPinching) &&
                         cropHandler.frozenImageRect != null
                     ? cropHandler.frozenImageRect!
                     : currentImageRect;
@@ -2148,10 +2210,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                       painter: _CommittedCropPreviewPainter(
                                         image: _uiImageCache[index]!,
                                         state: state,
-                                        containerSize:
-                                            _editMode == _EditMode.crop
-                                                ? effectiveContainerSize
-                                                : containerSize,
+                                        containerSize: containerSize,
                                       ),
                                       size: Size.infinite,
                                     ),
@@ -2160,10 +2219,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                     painter: _CommittedCropPreviewPainter(
                                       image: _uiImageCache[index]!,
                                       state: state,
-                                      containerSize:
-                                          _editMode == _EditMode.crop
-                                              ? effectiveContainerSize
-                                              : containerSize,
+                                      containerSize: containerSize,
                                     ),
                                     size: Size.infinite,
                                   ))
@@ -2189,10 +2245,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                       builder: (context, _) {
                         // ✅ 바텀시트가 열릴수록(1.0) 핸들이 보이고, 닫힐수록(0.0) 사라짐
                         final handlesOpacity = _bottomSheetAnimation.value;
-                        return AnimatedOpacity(
+                        return Opacity(
                           opacity: handlesOpacity,
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
                           child: CropHandleBuilder.buildCropHandles(
                             cropState: state.cropState,
                             activeHandle: cropHandler.activeHandle,
@@ -2290,28 +2344,19 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
               ),
             );
 
-            // ✅ 크롭 모드 진입/이탈 시 패딩은 바텀시트 애니메이션과 동일한 속도로 적용
+            // ✅ 크롭 모드: 순수 좌표계 사용 (패딩 없음)
             if (_editMode == _EditMode.crop) {
-              // ✅ 바텀시트가 열릴수록(1.0) 패딩이 적용됨
-              final animatedPadding =
-                  _cropEnterPadding * _bottomSheetAnimation.value;
-              // ✅ 오버레이는 패딩 밖에 배치하여 전체 영역을 덮도록 함
               return Stack(
                 children: [
-                  // 패딩이 적용된 이미지와 핸들
-                  Padding(
-                    padding: EdgeInsets.all(animatedPadding),
-                    child: preview,
-                  ),
-                  // 2️⃣ 크롭 오버레이 레이어 (패딩 밖에 배치하여 전체 영역 덮음)
+                  // ✅ 이미지와 핸들 (패딩 없이 직접 배치)
+                  preview,
+                  // 2️⃣ 크롭 오버레이 레이어 (순수 좌표계)
+                  // ✅ 크롭박스 페이드아웃: 바텀시트 애니메이션과 함께 페이드아웃
                   if (!_isClosingAfterCropApply &&
                       cropRectScreen != null &&
                       imageRectForCrop != null)
-                    // NOTE: null 체크 후 non-null 변수로 할당 (AnimatedBuilder 클로저 내부에서 사용)
                     Builder(
                       builder: (context) {
-                        // 위 if에서 null 체크 완료 → Builder 내부에서는 null promotion이 작동하지 않아 ! 필요
-                        // ignore: unnecessary_non_null_assertion
                         final Rect screenRect = cropRectScreen!;
                         final Rect imageRect = imageRectForCrop;
                         return AnimatedBuilder(
@@ -2319,43 +2364,21 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                           builder: (context, _) {
                             // ✅ 바텀시트가 열릴수록(1.0) 오버레이가 보이고, 닫힐수록(0.0) 사라짐
                             final overlayOpacity = _bottomSheetAnimation.value;
-                            // ✅ cropRectScreen은 effectiveContainerSize 기준이므로 패딩만큼 오프셋 필요
-                            final animatedPadding =
-                                _cropEnterPadding * _bottomSheetAnimation.value;
-                            final adjustedCropRectScreen = screenRect.translate(
-                              animatedPadding,
-                              animatedPadding,
-                            );
-                            // ✅ imageRect도 패딩만큼 오프셋
-                            final adjustedImageRect = imageRect.translate(
-                              animatedPadding,
-                              animatedPadding,
-                            );
-                            // ✅ 전체 화면 크기 가져오기 (SafeArea와 바텀바 포함)
-                            final screenSize = MediaQuery.of(context).size;
-                            final safeAreaTop =
-                                MediaQuery.of(context).padding.top;
-
-                            // ✅ cropRectScreen을 전체 화면 좌표계로 변환 (SafeArea top 고려)
-                            final fullScreenCropRect = adjustedCropRectScreen
-                                .translate(0, safeAreaTop);
 
                             return IgnorePointer(
                               // 크롭 오버레이는 터치 이벤트를 차단 (이미지 드래그를 위해)
-                              child: AnimatedOpacity(
+                              child: Opacity(
                                 opacity: overlayOpacity,
-                                duration: const Duration(milliseconds: 300),
-                                curve: Curves.easeInOut,
                                 child: CustomPaint(
                                   painter: CropOverlayPainter(
-                                    cropRectScreen: fullScreenCropRect,
-                                    imageRect: adjustedImageRect,
+                                    cropRectScreen: screenRect,
+                                    imageRect: imageRect,
                                     overlayColor: bgColor.withOpacity(0.8),
                                     // 요구사항: 크롭박스 색상은 primary
                                     borderColor: primaryColor,
                                   ),
-                                  // ✅ 전체 화면 크기를 사용하여 SafeArea와 바텀바까지 덮음
-                                  size: screenSize,
+                                  // ✅ container 좌표계 기준 (순수 좌표)
+                                  size: containerSize,
                                 ),
                               ),
                             );

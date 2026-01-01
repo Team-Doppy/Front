@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/image/simple_image_editor_screen.dart';
 import 'package:doppy/image/simple_video_editor_screen.dart';
-import 'package:doppy/image/video_trim_screen.dart';
+import 'package:doppy/image/trimmer/video_trim_screen.dart';
 import 'package:doppy/image/video_trim_spec.dart';
 import 'package:doppy/image/video_edit_spec.dart';
 import 'package:doppy/image/group_image_layout_selector.dart';
@@ -1548,7 +1548,7 @@ class _VideoThumbnailWidget extends StatelessWidget {
           if (isSelected)
             Positioned.fill(
               child: Container(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
               ),
             ),
           // 선택 표시 (우측 상단)
@@ -1641,7 +1641,7 @@ class _ImageThumbnailWidget extends StatelessWidget {
           if (isSelected)
             Positioned.fill(
               child: Container(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
               ),
             ),
           // 선택 표시 (우측 상단)

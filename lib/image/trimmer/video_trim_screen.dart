@@ -208,18 +208,26 @@ class Trimmer extends ChangeNotifier {
   }
 
   /// 재생 위치 이동 (명시적 사용자 액션에서만 사용)
-  Future<void> seekTo(double position) async {
+  /// [clampToRange]가 true이면 startValue와 endValue 사이로 클램프,
+  /// false이면 전체 비디오 길이 내로만 클램프 (오버레이 드래그용)
+  Future<void> seekTo(double position, {bool clampToRange = true}) async {
     if (_videoPlayerController == null || !_isInitialized) {
       return;
     }
 
-    // 범위 내로 클램프 (음수 방지)
-    final clampedPosition = position
-        .clamp(
-          _startValue.clamp(0.0, double.infinity),
-          _endValue.clamp(0.0, double.infinity),
-        )
-        .clamp(0.0, double.infinity);
+    final maxSeconds = _videoDuration?.inSeconds.toDouble() ?? 0.0;
+
+    // 🎯 클램프 적용
+    final clampedPosition =
+        clampToRange
+            ? position.clamp(
+              _startValue.clamp(0.0, double.infinity),
+              _endValue.clamp(0.0, double.infinity),
+            )
+            : position.clamp(
+              0.0,
+              maxSeconds > 0 ? maxSeconds : double.infinity,
+            );
 
     // 🎯 Duration 생성 시 음수 방지
     final milliseconds = (clampedPosition * 1000).toInt();
@@ -233,7 +241,7 @@ class Trimmer extends ChangeNotifier {
     notifyListeners();
 
     debugPrint(
-      '[Trimmer] seekTo: ${clampedPosition.toStringAsFixed(2)}s (${milliseconds}ms)',
+      '[Trimmer] seekTo: ${clampedPosition.toStringAsFixed(2)}s (${milliseconds}ms), clampToRange: $clampToRange',
     );
   }
 
@@ -494,8 +502,12 @@ class _TrimEditorState extends State<TrimEditor> {
   double? _playbackBarDragStartTimelineX; // timeline absolute px
   double? _playbackBarDragStartPosition; // seconds
 
-  // 🎯 오버레이 드래그 시작 기준값 (시크용)
+  // 🎯 오버레이 드래그 시작 기준값 (타임라인 스크롤용)
   double? _overlayDragStartTimelineX; // timeline absolute px
+  double? _overlayDragStartScrollOffset; // 스크롤 오프셋 (핸들 위치 고정용)
+  double? _overlayDragStartStartValue; // 시작 핸들 값 (핸들 위치 고정용)
+  double? _overlayDragStartEndValue; // 끝 핸들 값 (핸들 위치 고정용)
+  double? _overlayDragStartCurrentPosition; // 재생바 위치 (재생바 위치 고정용)
 
   @override
   void initState() {
@@ -519,7 +531,11 @@ class _TrimEditorState extends State<TrimEditor> {
   }
 
   String _formatDuration(double seconds) {
-    final duration = Duration(seconds: seconds.toInt());
+    // 🎯 음수 방지 및 정수 변환
+    final safeSeconds = seconds.clamp(0.0, double.infinity);
+    final duration = Duration(
+      milliseconds: (safeSeconds * 1000).toInt().clamp(0, 86400000),
+    );
     final minutes = duration.inMinutes;
     final secs = duration.inSeconds % 60;
     if (minutes > 0) {
@@ -530,7 +546,11 @@ class _TrimEditorState extends State<TrimEditor> {
   }
 
   String _formatDurationMMSS(double seconds) {
-    final duration = Duration(seconds: seconds.toInt());
+    // 🎯 음수 방지 및 정수 변환
+    final safeSeconds = seconds.clamp(0.0, double.infinity);
+    final duration = Duration(
+      milliseconds: (safeSeconds * 1000).toInt().clamp(0, 86400000),
+    );
     final minutes = duration.inMinutes;
     final secs = duration.inSeconds % 60;
     return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
@@ -1040,7 +1060,7 @@ class _TrimEditorState extends State<TrimEditor> {
     );
   }
 
-  /// 드래그 가능한 오버레이 (시크만 수행, 구간 조절은 핸들에서만)
+  /// 드래그 가능한 오버레이 (타임라인 스크롤, 구간 조절은 핸들에서만)
   Widget _buildDraggableOverlay({
     required bool isStart,
     required double pxPerSecond,
@@ -1062,47 +1082,97 @@ class _TrimEditorState extends State<TrimEditor> {
         final localX = box.globalToLocal(details.globalPosition).dx;
 
         setState(() {
-          // 🎯 오버레이 드래그는 시크만 하므로 _isHandleDragging은 false
+          // 🎯 오버레이 드래그는 타임라인 스크롤
           _isOverlayDragging = true; // 오버레이 드래그 상태 설정
           // 재생 중이면 일시정지
           if (widget.trimmer.isPlaying) {
             widget.trimmer.videoPlaybackControl();
           }
-          _overlayDragStartTimelineX = localX + scrollOffset;
+          _overlayDragStartTimelineX = localX;
+          // 🎯 드래그 시작 시점의 스크롤 오프셋, 핸들 값, 재생바 위치 저장
+          _overlayDragStartScrollOffset =
+              _scrollController.hasClients ? _scrollController.offset : 0.0;
+          _overlayDragStartStartValue = widget.trimmer.startValue;
+          _overlayDragStartEndValue = widget.trimmer.endValue;
+          _overlayDragStartCurrentPosition = widget.trimmer.currentPosition;
         });
       },
       onPanUpdate: (details) {
-        if (!_isOverlayDragging || _overlayDragStartTimelineX == null) return;
+        if (!_isOverlayDragging ||
+            _overlayDragStartTimelineX == null ||
+            _overlayDragStartScrollOffset == null ||
+            _overlayDragStartStartValue == null ||
+            _overlayDragStartEndValue == null ||
+            _overlayDragStartCurrentPosition == null)
+          return;
+
+        if (!_scrollController.hasClients) return;
 
         final box =
             _timelineKey.currentContext?.findRenderObject() as RenderBox?;
         if (box == null) return;
         final localX = box.globalToLocal(details.globalPosition).dx;
-        final currentScrollOffset =
-            _scrollController.hasClients ? _scrollController.offset : 0.0;
-        final timelineX = localX + currentScrollOffset;
 
-        // 🎯 픽셀 변화를 시간으로 변환
-        final dx = timelineX - _overlayDragStartTimelineX!;
-        final deltaSeconds = dx / pxPerSecond;
+        // 🎯 픽셀 변화 계산 (로컬 좌표 기준)
+        final dx = localX - _overlayDragStartTimelineX!;
 
-        // 🎯 현재 위치에서 델타만큼 이동 (시크만 수행)
-        final currentPos = widget.trimmer.currentPosition;
-        var newPosition = currentPos + deltaSeconds;
+        // 🎯 스크롤 감도 약간 낮추기 (0.85배)
+        final adjustedDx = dx * 0.85;
 
-        // 🎯 전체 비디오 길이 내로 제한
-        newPosition = newPosition.clamp(0.0, totalSeconds);
+        // 🎯 현재 스크롤 위치에서 반대 방향으로 스크롤 (드래그 방향과 반대로)
+        final currentOffset = _scrollController.offset;
+        final newOffset = (currentOffset - adjustedDx).clamp(
+          0.0,
+          _scrollController.position.maxScrollExtent,
+        );
 
-        // 🎯 시크 수행
-        widget.trimmer.seekTo(newPosition);
+        // 🎯 스크롤 오프셋 변화량 계산
+        final deltaScrollOffset = newOffset - _overlayDragStartScrollOffset!;
 
-        // 🎯 드래그 시작 위치 업데이트 (누적 계산)
-        _overlayDragStartTimelineX = timelineX;
+        // 🎯 스크롤 변화량을 시간으로 변환
+        final deltaSeconds = deltaScrollOffset / pxPerSecond;
+
+        // 🎯 핸들 값들을 스크롤 변화량만큼 업데이트 (화면상 위치 고정)
+        final newStartValue = (_overlayDragStartStartValue! + deltaSeconds)
+            .clamp(0.0, totalSeconds);
+        final newEndValue = (_overlayDragStartEndValue! + deltaSeconds).clamp(
+          0.0,
+          totalSeconds,
+        );
+
+        // 🎯 재생바 위치도 스크롤 변화량만큼 업데이트 (화면상 위치 고정)
+        final newCurrentPosition = (_overlayDragStartCurrentPosition! +
+                deltaSeconds)
+            .clamp(0.0, totalSeconds);
+
+        // 🎯 핸들 값 업데이트 (역전 방지)
+        if (newStartValue < newEndValue) {
+          widget.trimmer.onChangeStart(newStartValue);
+          widget.trimmer.onChangeEnd(newEndValue);
+          widget.onChangeStart?.call(newStartValue);
+          widget.onChangeEnd?.call(newEndValue);
+        }
+
+        // 🎯 재생바 위치 업데이트 (범위 내로 클램프)
+        final clampedCurrentPos = newCurrentPosition.clamp(
+          newStartValue,
+          newEndValue,
+        );
+        widget.trimmer.seekTo(clampedCurrentPos, clampToRange: true);
+
+        // 🎯 타임라인 스크롤 (부드럽게 즉시 이동)
+        _scrollController.jumpTo(newOffset);
+
+        setState(() {}); // UI 업데이트
       },
       onPanEnd: (_) {
         setState(() {
           _isOverlayDragging = false;
           _overlayDragStartTimelineX = null;
+          _overlayDragStartScrollOffset = null;
+          _overlayDragStartStartValue = null;
+          _overlayDragStartEndValue = null;
+          _overlayDragStartCurrentPosition = null;
         });
       },
       child: Container(

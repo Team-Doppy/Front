@@ -1129,7 +1129,7 @@ class CropOverlayPainter extends CustomPainter {
         Paint()
           ..color = borderColor
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0;
+          ..strokeWidth = 3.0;
 
     canvas.drawRect(cropRectScreen, borderPaint);
 
@@ -1902,7 +1902,7 @@ class _CropHandleWidgetState extends State<_CropHandleWidget> {
     double handleSize,
     bool isActive,
   ) {
-    final handleThickness = 4.0; // 액티브 상태와 관계없이 항상 같은 두께
+    final handleThickness = 6.0; // 액티브 상태와 관계없이 항상 같은 두께
     final handleLength = handleSize * 0.6;
 
     return Container(
@@ -2089,17 +2089,10 @@ class CropGestureHandler {
       }
 
       // ✅ 핀치 축소 허용 조건: 이미지가 cropRect를 덮고 있어야 함
-      if (details.scale < 1.0 && cropState.cropRectImage != null) {
-        // 🎯 중요: 축소 허용/차단 판정 기준을 "사용자가 실제로 보는 크롭 박스"로 통일한다.
-        // - 핀치 중 UX는 cropRectScreen이 화면에 고정(frozen 기준)되어야 함
-        // - 그런데 여기서 testImageRect 기준으로 cropRectScreen을 계산하면(=박스가 이미지에 종속),
-        //   축소를 과하게 허용하게 되고, 종료 시점에 frozen 기준 스냅백이 과하게 걸릴 수 있다.
-        //
-        // 따라서 zoom-out(축소) 중에는 "frozen 기준 cropRectScreen"을 기준으로
-        // 이미지가 그 박스를 계속 덮는지 검사한다.
-        //
-        // 경계 픽셀 오차로 인한 불필요 차단/스냅백 방지를 위해 tolerance를 둔다.
-        // 핀치 시작 시점에 freeze된 imageRect가 없으면(예외 케이스) 기존 방식으로 폴백
+      // 단, newScale이 1.0 이상이면 체크 스킵 (1.0 미만으로만 제한)
+      if (details.scale < 1.0 &&
+          newScale < _minImageScale &&
+          cropState.cropRectImage != null) {
         final Rect? frozenCropRectScreen =
             (_frozenImageRect != null)
                 ? ImageRectUtils.imageToScreenRect(
@@ -2284,6 +2277,8 @@ class CropGestureHandler {
     required double imageScale,
     required Offset imageOffset,
   }) {
+    final imageSize = Size(uiImage.width.toDouble(), uiImage.height.toDouble());
+
     // scale이 최소값보다 작으면 복귀
     if (imageScale < _minImageScale) {
       _resetGestureState(clearFrozen: true);
@@ -2298,8 +2293,6 @@ class CropGestureHandler {
     }
 
     // ✅ 핀치 줌 후: 확대/축소 구분하여 처리
-    final imageSize = Size(uiImage.width.toDouble(), uiImage.height.toDouble());
-
     // 현재 scale 기준으로 이미지 rect 계산
     final currentImageRect = ImageRectUtils.computeImageRectForCrop(
       containerSize: containerSize,
@@ -2367,11 +2360,12 @@ class CropGestureHandler {
         );
       }
 
-      // ✅ 축소 핀치: zoom-in과 동일하게 "재투영 1회"로 정석화한다.
+      // ✅ 축소 핀치: 화면에서 크롭박스 고정 (확대와 동일한 방식)
       // - 축소 중에도 크롭 박스(screen)는 고정되어야 함
-      // - 종료 시점에 한 번만 고정된 screen cropRect를 최종 imageRect 기준으로 image 좌표로 투영
-      // - 이후 freeze를 해제해도 screen 크롭박스가 유지됨
+      // - zoom-out 종료 시점에 "고정된 screen cropRect"를 최종 imageRect 기준으로 재투영
+      // - 크롭박스 크기는 유지하고 위치만 조정하여 화면에서 고정 유지
       if (isZoomOut) {
+        // 스냅백이 적용된 최종 offset 기준으로 imageRect를 계산해야, 재투영이 일관된다.
         final finalOffset = _applySnapBackOffset(imageOffset, snapBackOffset);
         final finalImageRect = ImageRectUtils.computeImageRectForCrop(
           containerSize: containerSize,
@@ -2379,6 +2373,8 @@ class CropGestureHandler {
           scale: imageScale,
           offset: finalOffset,
         );
+
+        // ✅ frozenCropRectScreen을 기준으로 재투영 (크롭박스 화면 고정)
         final projected = _projectScreenRectToImageRect(
           screenCropRect: frozenCropRectScreen,
           screenImageRect: finalImageRect,
@@ -2394,6 +2390,7 @@ class CropGestureHandler {
           );
         }
 
+        // zoom-out 종료 후에는 freeze 해제 (크롭박스는 재투영으로 고정 유지)
         _resetGestureState(clearFrozen: true);
 
         return CropDragEndResult(
@@ -2508,6 +2505,9 @@ class CropGestureHandler {
 
   /// 드래그 중 여부
   bool get isDraggingImage => _isDraggingImage;
+
+  /// 핀치 중 여부
+  bool get isPinching => _isPinching;
 
   /// Freeze된 이미지 rect 가져오기
   Rect? get frozenImageRect => _frozenImageRect;
