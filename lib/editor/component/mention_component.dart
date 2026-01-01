@@ -370,6 +370,10 @@ class _MentionComponentState extends State<_MentionComponent>
         isDownstreamSelected ||
         isSelectionHighlighted;
 
+    // 테마에 따른 텍스트 색상 결정
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final defaultTextColor = AppColors.getTextPrimary(isDark);
+
     final content = Container(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
       margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
@@ -385,7 +389,7 @@ class _MentionComponentState extends State<_MentionComponent>
                   color:
                       shouldUsePrimaryColor
                           ? AppColors.primary
-                          : AppColors.darkTextPrimary,
+                          : defaultTextColor,
                   fontWeight: FontWeight.bold,
                   fontSize: widget.fontSize,
                 ),

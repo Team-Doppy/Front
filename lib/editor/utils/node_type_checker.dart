@@ -32,15 +32,12 @@ class NodeTypeChecker {
   /// 빈 문단 노드인지 확인
   static bool isEmptyParagraph(DocumentNode? node) {
     if (node is! ParagraphNode) return false;
-    final isEmpty = node.text.text.trim().isEmpty;
-    final isTitle = node.metadata['isTitle'] == true;
-    return !isTitle && isEmpty;
+    return node.text.text.trim().isEmpty;
   }
 
-  /// 제목 노드인지 확인
+  /// 제목 노드인지 확인 (더 이상 사용되지 않음)
   static bool isTitleNode(DocumentNode? node) {
-    if (node is! ParagraphNode) return false;
-    return node.metadata['isTitle'] == true;
+    return false;
   }
 
   /// 멘션 노드인지 확인

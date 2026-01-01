@@ -903,7 +903,7 @@ class EditorService extends ChangeNotifier {
   // 🎯 노드 deep copy
   DocumentNode _copyNode(DocumentNode node) {
     if (node is ParagraphNode) {
-      // metadata에는 textAlign, isTitle, fontFamily 등이 포함됨
+      // metadata에는 textAlign, fontFamily 등이 포함됨
       final copiedMetadata = Map<String, dynamic>.from(node.metadata);
 
       // 🎯 AttributedText 전체 복사 (모든 스타일 유지: bold, italic, color, font, highlight, spoiler 등)
@@ -1426,9 +1426,8 @@ class EditorService extends ChangeNotifier {
         try {
           final inserted = document.getNodeById(change.nodeId);
           if (inserted is ParagraphNode) {
-            final bool isTitle = inserted.metadata['isTitle'] == true;
             final bool isEmpty = inserted.text.text.trim().isEmpty;
-            if (!isTitle && isEmpty) {
+            if (isEmpty) {
               return 'autoEmptyParagraphInserted';
             }
           }
@@ -2119,7 +2118,6 @@ class EditorService extends ChangeNotifier {
                     if (nextNode != null &&
                         nextNode is ParagraphNode &&
                         nextNode.text.text.trim().isEmpty &&
-                        nextNode.metadata['isTitle'] != true &&
                         !_pendingDeletionNodeIds.contains(nextNode.id)) {
                       // 🎯 이미 삭제 예약되지 않았는지 확인
                       // 🎯 이전에 downstream이 아니었다가 지금 downstream으로 이동한 경우
@@ -2310,31 +2308,34 @@ class EditorService extends ChangeNotifier {
 
   /// 제목이 비어있지 않은지 판단
   bool hasNonEmptyTitle() {
-    for (int i = 0; i < document.length; i++) {
-      final node = document.getNodeAt(i);
-      if (node is ParagraphNode && node.metadata['isTitle'] == true) {
-        return node.text.text.trim().isNotEmpty;
-      }
-    }
+    // 더 이상 노드에서 제목을 찾지 않음 (제목은 외부에서 관리)
     return false;
   }
 
   /// 본문(제목 제외)에 유의미한 내용이 있는지 판단
-  bool hasNonEmptyBody({BuildContext? context}) {
+  bool hasNonEmptyBody({
+    BuildContext? context,
+    StickerService? stickerService,
+  }) {
     // 🎯 스티커가 있으면 본문이 있다고 간주
-    if (context != null) {
-      final stickerService = context.read<StickerService>();
-      if (stickerService.stickers.isNotEmpty) return true;
+    StickerService? ss = stickerService;
+    if (ss == null && context != null) {
+      try {
+        // context가 deactivated/dispose 중일 수 있으므로 안전하게 접근
+        if (context.mounted) {
+          ss = context.read<StickerService>();
+        }
+      } catch (_) {
+        ss = null;
+      }
     }
+    if (ss != null && ss.stickers.isNotEmpty) return true;
 
-    // ✅ 과거에는 0번을 "제목"으로 가정하고 1번부터 검사했지만,
-    // 현재는 제목이 외부(썸네일 편집 화면)에서 입력되는 케이스가 있어 0번이 본문일 수 있다.
-    // 따라서 0번부터 검사하되, isTitle==true 노드만 본문 검사에서 제외한다.
+    // 모든 노드를 검사하여 본문이 있는지 확인
     for (int i = 0; i < document.length; i++) {
       final node = document.getNodeAt(i);
       if (node == null) continue;
       if (node is ParagraphNode) {
-        if (node.metadata['isTitle'] == true) continue;
         if (node.text.text.trim().isNotEmpty) return true;
       } else if (_isSpecialNode(node)) {
         return true;
@@ -2378,7 +2379,6 @@ class EditorService extends ChangeNotifier {
       if (node is ParagraphNode) {
         nodes.add({
           't': 'p',
-          'title': node.metadata['isTitle'] == true,
           'align': node.metadata['textAlign'],
           'fontFamily': node.metadata['fontFamily'], // 폰트 정보 포함
           'text': node.text.text,
@@ -2405,10 +2405,25 @@ class EditorService extends ChangeNotifier {
 
   /// 종료 시 임시저장 다이얼로그 노출 필요 여부
   bool shouldPromptSaveOnExit(BuildContext context) {
-    final hasStickerChanges = context.read<StickerService>().hasChanges;
+    // ⚠️ 화면 전환/해제(deactivate) 타이밍에 Timer 등에서 호출될 수 있어
+    // Provider lookup은 항상 안전하게 수행해야 함.
+    StickerService? ss;
+    try {
+      if (context.mounted) {
+        ss = context.read<StickerService>();
+      }
+    } catch (_) {
+      ss = null;
+    }
+    final hasStickerChanges = ss?.hasChanges ?? false;
     // 제목 또는 본문 중 하나라도 유효한 입력이 있어야 함
     final bool anyContent =
-        hasNonEmptyTitle() || hasNonEmptyBody(context: context);
+        hasNonEmptyTitle() ||
+        hasNonEmptyBody(
+          stickerService: ss,
+          // fallback: 특수 상황에서만 context를 쓰되, 내부에서 mounted/try-catch로 보호
+          context: ss == null ? context : null,
+        );
     if (!anyContent) return false;
     final now = computeDocumentFingerprint();
     if (_lastSavedFingerprint == null || hasStickerChanges) {
@@ -3548,7 +3563,7 @@ class EditorService extends ChangeNotifier {
         if (node == null) continue;
 
         // 🎯 텍스트 노드를 먼저 확인
-        if (node is ParagraphNode && node.metadata['isTitle'] != true) {
+        if (node is ParagraphNode) {
           final rect = dragService.getNodeGlobalRect(node.id);
           if (rect != null && rect.contains(globalPosition)) {
             // 텍스트 노드가 감지되면 즉시 반환 (특수 노드보다 우선)
@@ -4478,7 +4493,6 @@ class _DocumentSnapshot {
           'p',
           _attributedTextStableHash(node.text),
           meta['textAlign'],
-          meta['isTitle'],
           meta['fontFamily'],
         );
       }

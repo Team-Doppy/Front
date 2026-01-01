@@ -132,26 +132,12 @@ class CommentItem extends StatelessWidget {
     );
   }
 
-  String _formatRelativeTime(String isoString) {
+  String _formatRelativeTime(BuildContext context, String isoString) {
     try {
-      // UTC 시간을 로컬 시간으로 변환
-      final dateTime = TimeUtils.toLocalTime(isoString);
-      final now = DateTime.now();
-      final difference = now.difference(dateTime);
-
-      if (difference.inMinutes < 1) {
-        return '방금';
-      } else if (difference.inHours < 1) {
-        return '${difference.inMinutes}분 전';
-      } else if (difference.inDays < 1) {
-        return '${difference.inHours}시간 전';
-      } else if (difference.inDays < 7) {
-        return '${difference.inDays}일 전';
-      } else {
-        return '${(difference.inDays / 7).floor()}주 전';
-      }
+      return TimeUtils.formatRelativeTimeFromUtc(context, isoString);
     } catch (e) {
-      return '방금';
+      final loc = AppLocalizations.of(context);
+      return loc.translate('just_now');
     }
   }
 
@@ -924,7 +910,7 @@ class CommentItem extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Text(
-        _formatRelativeTime(comment.createdAt),
+        _formatRelativeTime(context, comment.createdAt),
         style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 11),
       ),
     );
@@ -1313,7 +1299,10 @@ class _CommentImageFullscreenDialogState
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              _formatDateString(widget.comment.createdAt),
+                              _formatDateString(
+                                context,
+                                widget.comment.createdAt,
+                              ),
                               style: TextStyle(
                                 color: Theme.of(
                                   context,
@@ -1336,31 +1325,9 @@ class _CommentImageFullscreenDialogState
   }
 
   /// 🎯 날짜 포맷팅 (상대 시간)
-  String _formatDateString(String dateStr) {
+  String _formatDateString(BuildContext context, String dateStr) {
     try {
-      final date = TimeUtils.toLocalTime(dateStr);
-      final now = DateTime.now();
-      final difference = now.difference(date);
-
-      if (difference.inDays == 0) {
-        if (difference.inHours == 0) {
-          if (difference.inMinutes == 0) {
-            return '방금 전';
-          }
-          return '${difference.inMinutes}분 전';
-        }
-        return '${difference.inHours}시간 전';
-      } else if (difference.inDays == 1) {
-        return '어제';
-      } else if (difference.inDays < 7) {
-        return '${difference.inDays}일 전';
-      } else if (difference.inDays < 30) {
-        return '${difference.inDays ~/ 7}주 전';
-      } else if (difference.inDays < 365) {
-        return '${difference.inDays ~/ 30}개월 전';
-      } else {
-        return '${difference.inDays ~/ 365}년 전';
-      }
+      return TimeUtils.formatRelativeTimeFromUtc(context, dateStr);
     } catch (e) {
       // 포맷팅 실패 시 ISO 날짜를 간단히 표시
       try {

@@ -734,7 +734,14 @@ class BlogService {
 
       debugPrint('[BlogService] - 사용된 미디어: ${usedImageUrls.length}개');
 
-      await _dio.put('/api/posts/$postId/content', data: requestBody);
+      await _dio.put(
+        '/api/posts/$postId/content',
+        data: requestBody,
+        options: Options(
+          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
 
       debugPrint('[BlogService] 본문/타이틀 수정 성공: $postId');
     } catch (e) {

@@ -176,6 +176,23 @@ Stylesheet buildCustomStylesheet(
         }
       }
 
+      // 🎯 전역 폰트 사이즈 적용 (FontSizeAttribution이 없을 때만)
+      double? finalFontSize = style.fontSize;
+      bool hasFontSizeAttribution = false;
+      for (final attribution in attributions) {
+        if (attribution is FontSizeAttribution) {
+          hasFontSizeAttribution = true;
+          break;
+        }
+      }
+      if (!hasFontSizeAttribution && !isReadOnly) {
+        // 에디터 모드일 때만 전역 폰트 사이즈 사용
+        final globalFontSize = _globalTextStylingService?.globalFontSize;
+        if (globalFontSize != null) {
+          finalFontSize = globalFontSize;
+        }
+      }
+
       style = style.copyWith(
         // ✅ block(Paragraph) 레벨에서 지정된 fontWeight(예: mention=bold)는 유지해야 한다.
         // inlineTextStyler가 무조건 normal로 덮어쓰면 멘션이 boldAttribution 없이도 bold가 안 보이게 된다.
@@ -185,6 +202,7 @@ Stylesheet buildCustomStylesheet(
                 : (existingStyle.fontWeight ?? FontWeight.normal),
         fontStyle: isItalic ? FontStyle.italic : FontStyle.normal,
         decoration: _buildTextDecoration(hasUnderline, hasStrikethrough),
+        fontSize: finalFontSize,
         // height는 위에서 attribution/블록 스타일에서 일관되게 지정한다.
         leadingDistribution: TextLeadingDistribution.even,
         // 형광펜은 별도 오버레이로 렌더링하므로 배경색은 사용하지 않음

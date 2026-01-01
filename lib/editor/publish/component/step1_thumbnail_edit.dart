@@ -15,8 +15,8 @@ import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:http/http.dart' as http;
 import 'package:doppy/editor/publish/component/thumbnail_edit_bottom_sheet.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:doppy/image/utils/edit_image_cache_manager.dart';
+import 'package:doppy/image/utils/editor_image_provider.dart';
+import 'package:doppy/pages/components/shimmer_box.dart';
 
 /// Step 1: 썸네일 & 글 편집 컴포넌트
 class Step1ThumbnailEdit extends StatefulWidget {
@@ -40,6 +40,7 @@ class Step1ThumbnailEdit extends StatefulWidget {
   final ValueChanged<bool> onIsUploadingThumbChanged;
   final ValueChanged<bool> onEditModeChanged;
   final VoidCallback onEditFocusChange;
+  final bool isThumbnailEditMode; // 썸네일 편집 모드로 들어왔는지 여부
 
   const Step1ThumbnailEdit({
     super.key,
@@ -63,6 +64,7 @@ class Step1ThumbnailEdit extends StatefulWidget {
     required this.onIsUploadingThumbChanged,
     required this.onEditModeChanged,
     required this.onEditFocusChange,
+    this.isThumbnailEditMode = false,
   });
 
   @override
@@ -74,19 +76,72 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   String get _thumbRefId => 'thumb_${widget.sessionKey}';
 
   // 🎯 업로드 태스크 추적 (썸네일 변경 시 취소용)
-  UploadTask? _currentImageUploadTask; // 🎯 이미지 업로드 태스크도 추적
+  UploadTask? _currentImageUploadTask;
 
   // 🎯 포커스/키보드에 따른 UI 전환을 더 부드럽게 만들기 위한 내부 상태
   bool _hasTextFocus = false;
 
   // ✅ 미디어 피커/전환 중 "빈 썸네일 플레이스홀더"가 파르르 깜빡이는 문제 방지용
-  // - push/pop 전환 동안 잠깐 placeholder가 나타났다 사라지는 현상을 막는다.
   bool _suppressEmptyPlaceholder = false;
 
   // 🎯 비디오 첫 프레임 전 검정 플래시 방지용 "포스터(썸네일) 유지" 상태
   VideoPlayerController? _posterObservedController;
   VoidCallback? _posterListener;
   bool _showVideoPoster = false;
+
+  // 🎯 상태 스냅샷 (취소 시 복원용)
+  _ThumbnailStateSnapshot? _stateSnapshot;
+
+  /// 상태 스냅샷 저장
+  void _saveStateSnapshot() {
+    _stateSnapshot = _ThumbnailStateSnapshot(
+      localThumbnail: widget.localThumbnailFile,
+      localVideo: widget.localVideoFile,
+      videoController: widget.videoController,
+      thumbnailUrl: widget.exportedThumbnailImageUrl,
+      isUploading: widget.isUploadingThumb,
+    );
+  }
+
+  /// 상태 복원
+  void _restoreStateSnapshot() {
+    if (_stateSnapshot == null || !_isMounted()) return;
+    final snapshot = _stateSnapshot!;
+    if (snapshot.localThumbnail != widget.localThumbnailFile) {
+      widget.onLocalThumbnailChanged(snapshot.localThumbnail);
+    }
+    if (snapshot.localVideo != widget.localVideoFile) {
+      widget.onLocalVideoChanged(snapshot.localVideo);
+    }
+    if (snapshot.videoController != widget.videoController) {
+      widget.onVideoControllerChanged(snapshot.videoController);
+    }
+    if (snapshot.thumbnailUrl != widget.exportedThumbnailImageUrl) {
+      widget.onThumbnailUrlChanged(snapshot.thumbnailUrl);
+    }
+    if (snapshot.isUploading != widget.isUploadingThumb) {
+      widget.onIsUploadingThumbChanged(snapshot.isUploading);
+    }
+  }
+
+  /// 업로드 태스크 취소
+  void _cancelUploadTasks() {
+    if (!_isMounted()) return;
+    try {
+      final upload = context.read<UploadService>();
+      upload.cancelByRef(_thumbRefId);
+      if (_currentImageUploadTask != null) {
+        upload.cancel(_currentImageUploadTask!.id);
+        _currentImageUploadTask?.removeListener(() {});
+        _currentImageUploadTask = null;
+      }
+    } catch (e) {
+      debugPrint('[Step1] 업로드 태스크 취소 중 오류: $e');
+    }
+  }
+
+  /// mounted 체크 헬퍼
+  bool _isMounted() => mounted && context.mounted;
 
   @override
   void initState() {
@@ -118,14 +173,40 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     widget.excerptFocusNode.removeListener(_onTextFocusChanged);
 
     _detachPosterListener();
+
+    // 🎯 업로드 태스크 취소 (dispose 시 모든 진행 중인 업로드 중단)
+    try {
+      if (mounted) {
+        _cancelUploadTasks();
+        debugPrint('[Step1] dispose: 업로드 태스크 취소 완료');
+      }
+    } catch (e) {
+      debugPrint('[Step1] dispose: 업로드 태스크 취소 중 오류 (무시): $e');
+    }
+
     super.dispose();
   }
 
   void _detachPosterListener() {
     if (_posterObservedController != null && _posterListener != null) {
       try {
-        _posterObservedController!.removeListener(_posterListener!);
-      } catch (_) {}
+        // 🎯 dispose 체크: 컨트롤러 유효성 확인
+        // value 접근 전에 먼저 try-catch로 감싸서 안전하게 처리
+        final controller = _posterObservedController!;
+        final listener = _posterListener!;
+
+        try {
+          // value 접근 시도 (dispose된 경우 예외 발생)
+          final _ = controller.value;
+          controller.removeListener(listener);
+        } catch (e) {
+          // controller가 dispose된 타이밍 등은 무시
+          debugPrint('[Step1] 포스터 리스너 제거 오류 (dispose됨): $e');
+        }
+      } catch (e) {
+        // 예상치 못한 오류
+        debugPrint('[Step1] 포스터 리스너 제거 중 예상치 못한 오류: $e');
+      }
     }
     _posterObservedController = null;
     _posterListener = null;
@@ -146,17 +227,41 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     _showVideoPoster = true;
 
     void listener() {
-      final v = controller.value;
-      // position이 조금이라도 진행되면(첫 프레임 디코딩/표시 이후) 포스터를 내린다.
-      if (v.isInitialized && v.position > const Duration(milliseconds: 50)) {
-        if (!_showVideoPoster) return;
-        if (!mounted) return;
-        setState(() => _showVideoPoster = false);
+      // 🎯 dispose 체크: 컨트롤러 유효성 확인
+      if (!_isMounted()) {
+        _detachPosterListener();
+        return;
+      }
+
+      try {
+        // 🎯 dispose 체크: 컨트롤러 유효성 확인
+        final v = controller.value;
+        // position이 조금이라도 진행되면(첫 프레임 디코딩/표시 이후) 포스터를 내린다.
+        if (v.isInitialized && v.position > const Duration(milliseconds: 50)) {
+          if (!_showVideoPoster || !_isMounted()) return;
+          setState(() => _showVideoPoster = false);
+        }
+      } catch (e) {
+        // dispose된 컨트롤러
+        debugPrint('[Step1] 포스터 리스너 오류 (dispose됨): $e');
+        _detachPosterListener();
       }
     }
 
     _posterListener = listener;
-    controller.addListener(listener);
+
+    // 🎯 dispose 체크: 리스너 추가 전 컨트롤러 유효성 확인
+    try {
+      // value 접근 시도 (dispose된 경우 예외 발생)
+      final _ = controller.value;
+      controller.addListener(listener);
+    } catch (e) {
+      debugPrint('[Step1] 포스터 리스너 추가 오류 (dispose됨): $e');
+      // dispose된 컨트롤러는 정리
+      _posterObservedController = null;
+      _posterListener = null;
+      _showVideoPoster = false;
+    }
   }
 
   void _onTextFocusChanged() {
@@ -345,42 +450,81 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
 
                   // 음소거 버튼 (영상일 때만 표시)
                   if (widget.localVideoFile != null &&
-                      widget.videoController != null &&
-                      widget.videoController!.value.isInitialized)
-                    Positioned(
-                      right: 12,
-                      bottom: 12,
-                      child: RepaintBoundary(
-                        child: AnimatedOpacity(
-                          opacity: widget.editMode ? 0.3 : 1.0,
-                          duration: const Duration(milliseconds: 150),
-                          child: GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                if (widget.videoController!.value.volume > 0) {
-                                  widget.videoController!.setVolume(0);
-                                } else {
-                                  widget.videoController!.setVolume(1);
-                                }
-                              });
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.5),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(
-                                widget.videoController!.value.volume > 0
-                                    ? Icons.volume_up_rounded
-                                    : Icons.volume_off_rounded,
-                                color: Colors.white,
-                                size: 20,
+                      widget.videoController != null)
+                    Builder(
+                      builder: (context) {
+                        // 🎯 dispose 체크: 컨트롤러 유효성 확인
+                        try {
+                          if (!widget.videoController!.value.isInitialized) {
+                            return const SizedBox.shrink();
+                          }
+                        } catch (e) {
+                          // dispose된 컨트롤러
+                          return const SizedBox.shrink();
+                        }
+
+                        return Positioned(
+                          right: 12,
+                          bottom: 12,
+                          child: RepaintBoundary(
+                            child: AnimatedOpacity(
+                              opacity: widget.editMode ? 0.3 : 1.0,
+                              duration: const Duration(milliseconds: 150),
+                              child: GestureDetector(
+                                onTap: () {
+                                  try {
+                                    // 🎯 dispose 체크: 컨트롤러 유효성 확인
+                                    if (widget.videoController == null ||
+                                        !widget
+                                            .videoController!
+                                            .value
+                                            .isInitialized) {
+                                      return;
+                                    }
+                                    setState(() {
+                                      if (widget.videoController!.value.volume >
+                                          0) {
+                                        widget.videoController!.setVolume(0);
+                                      } else {
+                                        widget.videoController!.setVolume(1);
+                                      }
+                                    });
+                                  } catch (e) {
+                                    debugPrint(
+                                      '[Step1] 음소거 버튼 오류 (dispose됨): $e',
+                                    );
+                                  }
+                                },
+                                child: Builder(
+                                  builder: (context) {
+                                    try {
+                                      final isMuted =
+                                          widget.videoController!.value.volume >
+                                          0;
+                                      return Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.5),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          isMuted
+                                              ? Icons.volume_up_rounded
+                                              : Icons.volume_off_rounded,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                      );
+                                    } catch (e) {
+                                      return const SizedBox.shrink();
+                                    }
+                                  },
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
+                        );
+                      },
                     ),
 
                   // 편집/변경 버튼 (포커스 시 숨김)
@@ -422,20 +566,38 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
               ),
 
             // ✅ 위: 비디오. 첫 프레임이 나온 뒤에만 페이드인해서 검정 플래시를 숨김.
-            if (widget.videoController!.value.isInitialized)
-              AnimatedOpacity(
-                duration: const Duration(milliseconds: 140),
-                curve: Curves.easeOut,
-                opacity: _showVideoPoster ? 0.0 : 1.0,
-                child: FittedBox(
-                  fit: BoxFit.cover,
-                  child: SizedBox(
-                    width: widget.videoController!.value.size.width,
-                    height: widget.videoController!.value.size.height,
-                    child: VideoPlayer(widget.videoController!),
-                  ),
-                ),
-              ),
+            Builder(
+              builder: (context) {
+                // 🎯 dispose 체크: 컨트롤러 유효성 확인
+                try {
+                  if (widget.videoController == null ||
+                      !widget.videoController!.value.isInitialized) {
+                    return const SizedBox.shrink();
+                  }
+
+                  final controller = widget.videoController!;
+                  final size = controller.value.size;
+
+                  return AnimatedOpacity(
+                    duration: const Duration(milliseconds: 140),
+                    curve: Curves.easeOut,
+                    opacity: _showVideoPoster ? 0.0 : 1.0,
+                    child: FittedBox(
+                      fit: BoxFit.cover,
+                      child: SizedBox(
+                        width: size.width,
+                        height: size.height,
+                        child: VideoPlayer(controller),
+                      ),
+                    ),
+                  );
+                } catch (e) {
+                  // dispose된 컨트롤러
+                  debugPrint('[Step1] 비디오 렌더링 오류 (dispose됨): $e');
+                  return const SizedBox.shrink();
+                }
+              },
+            ),
           ],
         ),
       );
@@ -463,34 +625,58 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         ),
       );
     } else {
+      // 🎯 EditorImageProvider를 사용하여 single_image_component/row_image_component와
+      // 동일한 캐시 키(ResizeImage)를 사용하여 캐시 재사용률을 높임
+      final screenWidth = MediaQuery.sizeOf(context).width;
+      final decodeWidth = EditorImageProvider.editingDecodeWidth(
+        context,
+        screenWidth,
+      );
+      final built = EditorImageProvider.build(
+        url: widget.exportedThumbnailImageUrl,
+        isEditing: true, // 썸네일 편집은 항상 편집 모드
+        decodeWidth: decodeWidth,
+      );
+
       return SizedBox.expand(
         key: ValueKey('network_${widget.exportedThumbnailImageUrl}'),
-        child: CachedNetworkImage(
-          imageUrl: widget.exportedThumbnailImageUrl,
-          cacheKey: widget.exportedThumbnailImageUrl,
-          cacheManager: EditImageCacheManager.instance,
+        child: Image(
+          image: built.effectiveProvider,
           fit: BoxFit.cover,
-          placeholder:
-              (context, url) => Container(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              ),
-          errorWidget: (context, url, error) {
+          filterQuality: FilterQuality.low,
+          gaplessPlayback: true, // ✅ provider가 바뀌어도 기존 프레임 유지
+          frameBuilder: (context, child, frame, wasSyncLoaded) {
+            if (wasSyncLoaded || frame != null) {
+              return child;
+            }
+            // 로딩 중: shimmer placeholder
+            return ShimmerBox(
+              width: double.infinity,
+              height: double.infinity,
+              borderRadius: BorderRadius.zero,
+            );
+          },
+          errorBuilder: (context, error, stackTrace) {
             assert(() {
               debugPrint(
-                '[Step1ThumbnailEdit] ❌ 썸네일 로드 실패: url=$url, error=$error',
+                '[Step1ThumbnailEdit] ❌ 썸네일 로드 실패: url=${widget.exportedThumbnailImageUrl}, error=$error',
               );
               return true;
             }());
             return const _EmptyImagePlaceholder();
           },
-          fadeInDuration: Duration.zero,
-          fadeOutDuration: Duration.zero,
         ),
       );
     }
   }
 
   Widget _buildTitleField() {
+    // 🎯 썸네일 편집 모드일 때는 onSurface 색상 사용
+    final textColor =
+        widget.isThumbnailEditMode
+            ? Theme.of(context).colorScheme.onSurface
+            : Colors.white.withOpacity(0.85);
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -506,7 +692,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
               focusNode: widget.titleFocusNode,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white.withOpacity(0.85),
+                color: textColor,
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
                 letterSpacing: -0.2,
@@ -535,12 +721,18 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   }
 
   Widget _buildExcerptField() {
+    // 🎯 썸네일 편집 모드일 때는 onSurface 색상 사용
+    final textColor =
+        widget.isThumbnailEditMode
+            ? Theme.of(context).colorScheme.onSurface
+            : Colors.white.withOpacity(0.85);
+
     return TextField(
       controller: widget.excerptController,
       focusNode: widget.excerptFocusNode,
       textAlign: TextAlign.center,
       style: TextStyle(
-        color: Colors.white.withOpacity(0.85),
+        color: textColor,
         fontSize: 15,
         fontWeight: FontWeight.w400,
         height: 1.8,
@@ -609,79 +801,48 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   }
 
   Future<void> _openGalleryPicker() async {
-    // ✅ 전환 중 placeholder 번쩍임 방지: 피커가 떠있는 동안 empty placeholder 숨김
-    if (mounted) {
+    if (_isMounted()) {
       setState(() => _suppressEmptyPlaceholder = true);
     }
-    // 🎯 이미지 선택 시 즉시 포커스 해제 및 편집 모드 비활성화
     FocusScope.of(context).unfocus();
     widget.onEditModeChanged(false);
     widget.controller.reverse();
-
-    // 포커스 해제가 완료될 때까지 약간 대기
     await Future.delayed(const Duration(milliseconds: 50));
 
-    // ✅ 바텀시트 없이 바로 미디어 피커로 연결 (이미지 타입, 1개 제한)
     try {
       await _pickAndUploadImage();
     } finally {
-      if (mounted) {
+      if (_isMounted()) {
         setState(() => _suppressEmptyPlaceholder = false);
       }
     }
   }
 
   Future<void> _pickAndUploadImage() async {
-    // ✅ 취소 시 이미지가 비지 않도록 기존 상태 저장
-    final previousLocalThumbnail = widget.localThumbnailFile;
-    final previousLocalVideo = widget.localVideoFile;
-    final previousVideoController = widget.videoController;
-    final previousThumbnailUrl = widget.exportedThumbnailImageUrl;
-    final previousIsUploading = widget.isUploadingThumb;
+    _saveStateSnapshot();
 
     final result = await Navigator.push<MediaPickerResult>(
       context,
       CupertinoPageRoute(
-        fullscreenDialog: true, // 🎯 defaultToolbar와 동일한 전환 애니메이션
+        fullscreenDialog: true,
         builder:
             (context) => MediaPickerScreen(
               initialMediaType: MediaType.image,
               maxSelectionCount: 1,
-              enableToggle: true, // 이미지/영상 토글 가능
-              onMediaSelected: (file) {
-                // 단일 선택이므로 바로 처리
-              },
+              enableToggle: true,
+              onMediaSelected: (_) {},
             ),
       ),
     );
 
-    // ✅ 취소 시 기존 상태 복원
     if (result == null || result.files.isEmpty) {
-      if (!mounted) return;
-      // 기존 상태로 복원 (이미지가 비지 않도록)
-      if (previousLocalThumbnail != widget.localThumbnailFile) {
-        widget.onLocalThumbnailChanged(previousLocalThumbnail);
-      }
-      if (previousLocalVideo != widget.localVideoFile) {
-        widget.onLocalVideoChanged(previousLocalVideo);
-      }
-      if (previousVideoController != widget.videoController) {
-        widget.onVideoControllerChanged(previousVideoController);
-      }
-      if (previousThumbnailUrl != widget.exportedThumbnailImageUrl) {
-        widget.onThumbnailUrlChanged(previousThumbnailUrl);
-      }
-      if (previousIsUploading != widget.isUploadingThumb) {
-        widget.onIsUploadingThumbChanged(previousIsUploading);
-      }
+      _restoreStateSnapshot();
       return;
     }
 
-    // 🎯 단일 선택이므로 첫 번째 파일만 사용 (안전장치)
-    final file = result.files.first;
-    if (!mounted) return;
+    if (!_isMounted()) return;
 
-    // 🎯 실제로 선택된 미디어 타입 확인
+    final file = result.files.first;
     if (result.selectedMediaType == MediaType.video) {
       await _processVideoFileFromPicker(
         file,
@@ -690,16 +851,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       return;
     }
 
-    // 🎯 기존 업로드 태스크 모두 취소 (이미지/영상)
-    final upload = context.read<UploadService>();
-    // ✅ 클립 노드 방식: refId 기반으로 압축/업로드를 함께 취소
-    upload.cancelByRef(_thumbRefId);
-    if (_currentImageUploadTask != null) {
-      upload.cancel(_currentImageUploadTask!.id);
-      _currentImageUploadTask?.removeListener(() {});
-      _currentImageUploadTask = null;
-      debugPrint('[Step1] 이전 이미지 업로드 태스크 취소');
-    }
+    _cancelUploadTasks();
 
     widget.onLocalThumbnailChanged(file);
     widget.onIsUploadingThumbChanged(true);
@@ -710,6 +862,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     svc.clearTempVideoFile(_nsKey);
 
     try {
+      final upload = context.read<UploadService>();
       final tasks = await upload.uploadFilesViaServerBatches([
         file,
       ], kind: UploadKind.editorImage);
@@ -735,25 +888,21 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
 
         t.addListener(listener);
 
-        final hasUrl = (t.url ?? '').isNotEmpty;
-        if (t.state == UploadState.success && hasUrl) {
-          widget.onThumbnailUrlChanged(t.url!);
-
-          if (mounted) {
+        if (t.state == UploadState.success && (t.url ?? '').isNotEmpty) {
+          if (_isMounted()) {
+            widget.onThumbnailUrlChanged(t.url!);
             widget.onLocalThumbnailChanged(null);
           }
-        } else {
-          if (mounted) {
-            ErrorHandler.showError(
-              context,
-              AppLocalizations.of(context).t('thumbnail_upload_failed'),
-            );
-            widget.onLocalThumbnailChanged(null);
-          }
+        } else if (_isMounted()) {
+          ErrorHandler.showError(
+            context,
+            AppLocalizations.of(context).t('thumbnail_upload_failed'),
+          );
+          widget.onLocalThumbnailChanged(null);
         }
       }
     } catch (e) {
-      if (mounted) {
+      if (_isMounted()) {
         ErrorHandler.handleError(
           context,
           e,
@@ -762,7 +911,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         widget.onLocalThumbnailChanged(null);
       }
     } finally {
-      if (mounted) {
+      if (_isMounted()) {
         widget.onIsUploadingThumbChanged(false);
         widget.onEditModeChanged(false);
         widget.controller.reverse();
@@ -771,53 +920,24 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     }
   }
 
-  /// 🎯 선택된 영상 파일 처리 (MediaPickerScreen에서 선택된 파일을 바로 처리)
+  /// 🎯 선택된 영상 파일 처리
   Future<void> _processVideoFileFromPicker(
     File videoFile, {
     String? initialThumbnailPath,
   }) async {
-    // ✅ 취소 시 이미지가 비지 않도록 기존 상태 저장
-    final previousLocalThumbnail = widget.localThumbnailFile;
-    final previousLocalVideo = widget.localVideoFile;
-    final previousVideoController = widget.videoController;
-    final previousThumbnailUrl = widget.exportedThumbnailImageUrl;
-    final previousIsUploading = widget.isUploadingThumb;
+    _saveStateSnapshot();
 
     final validationError = await VideoUploadUtils.validateFile(
       context,
       videoFile.path,
     );
     if (validationError != null) {
-      // ✅ 검증 실패 시 기존 상태 복원
-      if (!mounted) return;
-      if (previousLocalThumbnail != widget.localThumbnailFile) {
-        widget.onLocalThumbnailChanged(previousLocalThumbnail);
-      }
-      if (previousLocalVideo != widget.localVideoFile) {
-        widget.onLocalVideoChanged(previousLocalVideo);
-      }
-      if (previousVideoController != widget.videoController) {
-        widget.onVideoControllerChanged(previousVideoController);
-      }
-      if (previousThumbnailUrl != widget.exportedThumbnailImageUrl) {
-        widget.onThumbnailUrlChanged(previousThumbnailUrl);
-      }
-      if (previousIsUploading != widget.isUploadingThumb) {
-        widget.onIsUploadingThumbChanged(previousIsUploading);
-      }
+      _restoreStateSnapshot();
       return;
     }
 
     try {
-      final upload = context.read<UploadService>();
-      // ✅ 클립 노드 방식: refId 기반으로 압축/업로드를 함께 취소
-      upload.cancelByRef(_thumbRefId);
-      // 이미지 업로드 태스크도 취소 (썸네일 교체 중 중복 업로드 방지)
-      if (_currentImageUploadTask != null) {
-        upload.cancel(_currentImageUploadTask!.id);
-        _currentImageUploadTask?.removeListener(() {});
-        _currentImageUploadTask = null;
-      }
+      _cancelUploadTasks();
 
       // ✅ 1) 트림 화면에서 넘어온 썸네일이 있으면 즉시 사용 (검정 플래시 방지)
       File? thumbnailFile;
@@ -837,45 +957,83 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         throw Exception('썸네일 생성 실패');
       }
 
-      // ✅ 3) UI는 "썸네일 먼저" 세팅 → 검정 화면 방지를 위해 썸네일을 먼저 설정한 후 로딩 상태 활성화
-      if (mounted) {
+      if (_isMounted()) {
         widget.onLocalThumbnailChanged(thumbnailFile);
         widget.onLocalVideoChanged(videoFile);
-
         final svc = NodeComponentService();
         svc.setTempVideoFile(_nsKey, videoFile.path);
         svc.setTempVideoThumbnail(_nsKey, thumbnailFile.path);
       }
 
-      // ✅ 4) 썸네일이 설정된 후에 로딩 상태 활성화 (검정 화면 방지)
       widget.onIsUploadingThumbChanged(true);
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
+        // 🎯 dispose 체크: addPostFrameCallback 실행 시점에 위젯이 dispose되었을 수 있음
+        if (!_isMounted()) return;
+
         final vc = VideoPlayerController.file(videoFile);
+
+        // 🎯 컨트롤러 참조 저장 (dispose 체크용)
+        final controllerRef = vc;
+
+        // 🎯 dispose 체크: 위젯이 여전히 mounted인지 재확인
+        if (!_isMounted()) {
+          try {
+            controllerRef.dispose();
+          } catch (_) {}
+          return;
+        }
+
         widget.onVideoControllerChanged(vc);
+
         vc
             .initialize()
             .then((_) {
-              if (mounted && widget.videoController != null) {
-                widget.videoController?.play();
-                widget.videoController?.setLooping(true);
-                setState(() {});
+              // 🎯 dispose 체크 강화: controllerRef만 사용 (widget.videoController 접근 최소화)
+              if (!_isMounted()) {
+                try {
+                  controllerRef.dispose();
+                } catch (_) {}
+                return;
+              }
+
+              // 🎯 controllerRef만 사용하여 dispose 체크
+              try {
+                if (controllerRef.value.isInitialized) {
+                  controllerRef.play();
+                  controllerRef.setLooping(true);
+                  if (_isMounted()) {
+                    setState(() {});
+                  }
+                }
+              } catch (e) {
+                debugPrint('[Step1] 비디오 컨트롤러 접근 오류 (dispose됨): $e');
+                if (_isMounted()) {
+                  widget.onVideoControllerChanged(null);
+                }
               }
             })
             .catchError((error) {
               debugPrint('[Step1] 비디오 컨트롤러 초기화 실패: $error');
-              if (!mounted) return;
+              if (!_isMounted()) return;
+
+              // 🎯 controllerRef만 사용하여 dispose 체크
+              try {
+                controllerRef.dispose();
+              } catch (_) {}
               widget.onVideoControllerChanged(null);
-              setState(() {
-                widget.onIsUploadingThumbChanged(false);
-                widget.onLocalVideoChanged(null);
-                widget.onLocalThumbnailChanged(null);
-              });
+              if (_isMounted()) {
+                setState(() {
+                  widget.onIsUploadingThumbChanged(false);
+                  widget.onLocalVideoChanged(null);
+                  widget.onLocalThumbnailChanged(null);
+                });
+              }
             });
       });
 
       // ✅ 클립 노드와 동일한 업로드 플로우 사용 (썸네일/압축/업로드/취소 추적)
+      final upload = context.read<UploadService>();
       await upload.uploadEditorVideo(
         file: videoFile,
         existingNodeId: _thumbRefId, // refId로 재사용
@@ -886,40 +1044,57 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
           return _thumbRefId;
         },
         onUpdateThumbnail: (nodeId, thumbnailPath) {
-          if (!mounted) return;
-          if (thumbnailPath.isEmpty) return;
+          if (!_isMounted() || thumbnailPath.isEmpty) return;
           widget.onLocalThumbnailChanged(File(thumbnailPath));
-          final svc = NodeComponentService();
-          svc.setTempVideoThumbnail(_nsKey, thumbnailPath);
+          NodeComponentService().setTempVideoThumbnail(_nsKey, thumbnailPath);
         },
         onCompressionComplete: (nodeId, processedLocalPath) {
-          if (!mounted) return;
-          if (processedLocalPath.isEmpty) return;
-
-          // ✅ 압축 완료 즉시 로컬 비디오를 교체 (검정 화면 방지 패턴)
-          // 썸네일은 유지한 채로 비디오 파일만 교체하여 검정 화면 방지
+          if (!_isMounted() || processedLocalPath.isEmpty) return;
           final f = File(processedLocalPath);
           widget.onLocalVideoChanged(f);
-          final svc = NodeComponentService();
-          svc.setTempVideoFile(_nsKey, processedLocalPath);
-
-          // ✅ 컨트롤러를 새 경로로 교체 (썸네일은 유지되어 검정 화면 방지)
+          NodeComponentService().setTempVideoFile(_nsKey, processedLocalPath);
           final vc = VideoPlayerController.file(f);
+
+          // 🎯 컨트롤러 참조 저장 (dispose 체크용)
+          final controllerRef = vc;
           widget.onVideoControllerChanged(vc);
+
           vc
               .initialize()
               .then((_) {
-                if (mounted && widget.videoController == vc) {
-                  widget.videoController?.play();
-                  widget.videoController?.setLooping(true);
-                  setState(() {});
+                // 🎯 dispose 체크 강화: controllerRef만 사용 (widget.videoController 접근 최소화)
+                if (!_isMounted()) {
+                  try {
+                    controllerRef.dispose();
+                  } catch (_) {}
+                  return;
+                }
+
+                // 🎯 controllerRef만 사용하여 dispose 체크
+                try {
+                  if (controllerRef.value.isInitialized) {
+                    controllerRef.play();
+                    controllerRef.setLooping(true);
+                    if (_isMounted()) {
+                      setState(() {});
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('[Step1] 압축 후 비디오 컨트롤러 접근 오류 (dispose됨): $e');
+                  if (_isMounted()) {
+                    widget.onVideoControllerChanged(null);
+                  }
                 }
               })
               .catchError((e) {
                 debugPrint('[Step1] 압축 후 비디오 컨트롤러 초기화 실패: $e');
-                if (mounted) {
-                  widget.onVideoControllerChanged(null);
-                }
+                if (!_isMounted()) return;
+
+                // 🎯 controllerRef만 사용하여 dispose 체크
+                try {
+                  controllerRef.dispose();
+                } catch (_) {}
+                widget.onVideoControllerChanged(null);
               });
         },
         onUploadComplete: (
@@ -928,7 +1103,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
           fallbackLocalPath,
           processedLocalPath,
         }) async {
-          if (!mounted) return;
+          if (!_isMounted()) return;
           if (url.isEmpty) {
             ErrorHandler.showError(
               context,
@@ -937,16 +1112,14 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             widget.onIsUploadingThumbChanged(false);
             return;
           }
-
           widget.onThumbnailUrlChanged(url);
           widget.onIsUploadingThumbChanged(false);
           widget.onEditModeChanged(false);
           widget.controller.reverse();
           FocusScope.of(context).unfocus();
         },
-        onDeleteNode: (nodeId) {
-          // Step1에서는 노드 삭제 대신 상태 초기화
-          if (!mounted) return;
+        onDeleteNode: (_) {
+          if (!_isMounted()) return;
           widget.onVideoControllerChanged(null);
           widget.onLocalVideoChanged(null);
           widget.onLocalThumbnailChanged(null);
@@ -955,7 +1128,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         isMounted: () => mounted,
         context: context,
         showErrorDialog: (title, message) async {
-          if (!mounted) return;
+          if (!_isMounted()) return;
           await DialogUtils.showInfoDialog(
             context,
             title: title,
@@ -964,22 +1137,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         },
       );
     } catch (e) {
-      if (mounted) {
+      if (_isMounted()) {
         await VideoUploadUtils.showGeneralErrorDialog(context);
-        // ✅ 에러 발생 시 기존 상태 복원 (이미지가 비지 않도록)
-        if (previousLocalThumbnail != widget.localThumbnailFile) {
-          widget.onLocalThumbnailChanged(previousLocalThumbnail);
-        }
-        if (previousLocalVideo != widget.localVideoFile) {
-          widget.onLocalVideoChanged(previousLocalVideo);
-        }
-        if (previousVideoController != widget.videoController) {
-          widget.onVideoControllerChanged(previousVideoController);
-        }
-        if (previousThumbnailUrl != widget.exportedThumbnailImageUrl) {
-          widget.onThumbnailUrlChanged(previousThumbnailUrl);
-        }
-        widget.onIsUploadingThumbChanged(previousIsUploading);
+        _restoreStateSnapshot();
         widget.onEditModeChanged(false);
         widget.controller.reverse();
         FocusScope.of(context).unfocus();
@@ -992,22 +1152,18 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     widget.controller.reverse();
     FocusScope.of(context).unfocus();
 
-    // ✅ 이미지가 없거나 비디오가 있으면 바로 미디어 피커로
     if (widget.exportedThumbnailImageUrl.isEmpty ||
         widget.localVideoFile != null) {
       await _openGalleryPicker();
       return;
     }
 
-    // ✅ 이미지가 있으면 바텀시트로 선택
     final choice = await ThumbnailEditBottomSheet.show(context);
-    if (!mounted) return;
+    if (!_isMounted()) return;
 
     if (choice == ThumbnailEditChoice.edit) {
-      // 편집 화면으로
       await _editThumbnailImage();
     } else if (choice == ThumbnailEditChoice.change) {
-      // 썸네일 변경 (미디어 피커)
       await _openGalleryPicker();
     }
   }
@@ -1041,10 +1197,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         ),
       );
 
-      if (result == null || !mounted) return;
-
-      final Uint8List? editedBytes = result is Uint8List ? result : null;
-      if (editedBytes == null) return;
+      if (result == null || !_isMounted() || result is! Uint8List) return;
 
       widget.onIsUploadingThumbChanged(true);
 
@@ -1052,7 +1205,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       final tempFile = File(
         '${Directory.systemTemp.path}/edited_thumbnail_${DateTime.now().millisecondsSinceEpoch}.jpg',
       );
-      await tempFile.writeAsBytes(editedBytes);
+      await tempFile.writeAsBytes(result);
 
       final tasks = await upload.uploadFilesViaServerBatches([
         tempFile,
@@ -1062,35 +1215,25 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         await tempFile.delete();
       } catch (_) {}
 
-      if (tasks.isEmpty || tasks.first.state != UploadState.success) {
-        if (mounted) {
-          ErrorHandler.showError(
-            context,
-            AppLocalizations.of(context).t('thumbnail_upload_failed'),
-          );
-        }
-        return;
-      }
-
-      final newUrl = tasks.first.url;
-
+      final newUrl = tasks.firstOrNull?.url;
       if (newUrl == null || newUrl.isEmpty) {
-        if (mounted) {
+        if (_isMounted()) {
           ErrorHandler.showError(
             context,
-            AppLocalizations.of(context).t('upload_url_failed'),
+            tasks.isEmpty
+                ? AppLocalizations.of(context).t('thumbnail_upload_failed')
+                : AppLocalizations.of(context).t('upload_url_failed'),
           );
         }
         return;
       }
 
-      widget.onThumbnailUrlChanged(newUrl);
-
-      if (mounted) {
+      if (_isMounted()) {
+        widget.onThumbnailUrlChanged(newUrl);
         setState(() {});
       }
     } catch (e) {
-      if (mounted) {
+      if (_isMounted()) {
         ErrorHandler.handleError(
           context,
           e,
@@ -1098,11 +1241,28 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         );
       }
     } finally {
-      if (mounted) {
+      if (_isMounted()) {
         widget.onIsUploadingThumbChanged(false);
       }
     }
   }
+}
+
+/// 상태 스냅샷 클래스
+class _ThumbnailStateSnapshot {
+  final File? localThumbnail;
+  final File? localVideo;
+  final VideoPlayerController? videoController;
+  final String thumbnailUrl;
+  final bool isUploading;
+
+  _ThumbnailStateSnapshot({
+    required this.localThumbnail,
+    required this.localVideo,
+    required this.videoController,
+    required this.thumbnailUrl,
+    required this.isUploading,
+  });
 }
 
 /// 빈 이미지 자리표시자

@@ -4,6 +4,7 @@ import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/dialog_utils.dart';
+import 'package:doppy/utils/time_utils.dart';
 
 class DraftListOverlay extends StatefulWidget {
   const DraftListOverlay({
@@ -587,17 +588,6 @@ class _DraftListOverlayState extends State<DraftListOverlay>
   }
 
   String _formatDateTime(DateTime dateTime) {
-    final now = DateTime.now();
-    final difference = now.difference(dateTime);
-
-    if (difference.inDays > 0) {
-      return '${difference.inDays}일 전';
-    } else if (difference.inHours > 0) {
-      return '${difference.inHours}시간 전';
-    } else if (difference.inMinutes > 0) {
-      return '${difference.inMinutes}분 전';
-    } else {
-      return '방금 전';
-    }
+    return TimeUtils.formatRelativeTime(context, dateTime);
   }
 }

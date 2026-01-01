@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
@@ -11,6 +12,7 @@ class VideoCacheService {
   final Map<String, VideoPlayerController> _controllers = {};
   final Map<String, int> _refCounts = {}; // 참조 카운트
   final Map<String, DateTime> _lastAccessed = {}; // 마지막 접근 시간 (LRU용)
+  final Map<String, bool> _isDisposed = {}; // dispose 상태 추적
 
   static const int maxCacheSize = 50; // 최대 캐시 크기 (10개 비디오)
 
@@ -20,11 +22,18 @@ class VideoCacheService {
   String _key(String namespace, String url) => '$namespace|$url';
 
   /// 비디오 컨트롤러 가져오기 (없으면 생성)
+  ///
+  /// [url] - 네트워크 URL 또는 로컬 파일 경로
+  /// [localPath] - 로컬 파일 경로 (우선순위: localPath > url)
+  /// [namespace] - 네임스페이스 (기본값: 'global')
   VideoPlayerController getOrCreateController(
     String url, {
+    String? localPath,
     String namespace = 'global',
   }) {
-    final key = _key(namespace, url);
+    // 로컬 경로가 있으면 우선 사용, 없으면 url 사용
+    final cacheKey = localPath?.isNotEmpty == true ? localPath! : url;
+    final key = _key(namespace, cacheKey);
 
     // 🎯 기존 컨트롤러가 있는 경우
     if (_controllers.containsKey(key)) {
@@ -50,6 +59,7 @@ class VideoCacheService {
               _controllers.remove(key);
               _refCounts.remove(key);
               _lastAccessed.remove(key);
+              _isDisposed[key] = true;
             }
           }
         }
@@ -72,13 +82,39 @@ class VideoCacheService {
               _controllers.remove(key);
               _refCounts.remove(key);
               _lastAccessed.remove(key);
+              _isDisposed[key] = true;
               // 아래에서 새로 생성
             } else {
-              // 정상적인 경우 재사용
-              _refCounts[key] = (_refCounts[key] ?? 0) + 1;
-              _lastAccessed[key] = DateTime.now(); // LRU 업데이트
-              debugPrint('[VideoCache] 재사용: $key (참조: ${_refCounts[key]})');
-              return existingController;
+              // 🎯 dispose 상태 확인 및 컨트롤러 유효성 재확인
+              if (_isDisposed[key] == true) {
+                debugPrint('[VideoCache] ⚠️ dispose된 컨트롤러 접근, 새로 생성: $key');
+                _controllers.remove(key);
+                _refCounts.remove(key);
+                _lastAccessed.remove(key);
+                _isDisposed.remove(key);
+                // 아래에서 새로 생성
+              } else {
+                // 🎯 컨트롤러 유효성 재확인 (다른 곳에서 dispose했을 수 있음)
+                try {
+                  // 접근 시도로 dispose 여부 확인
+                  final _ = existingController.value.isInitialized;
+                  // 정상적인 경우 재사용
+                  _refCounts[key] = (_refCounts[key] ?? 0) + 1;
+                  _lastAccessed[key] = DateTime.now(); // LRU 업데이트
+                  debugPrint('[VideoCache] 재사용: $key (참조: ${_refCounts[key]})');
+                  return existingController;
+                } catch (e) {
+                  // dispose된 컨트롤러
+                  debugPrint(
+                    '[VideoCache] ⚠️ dispose된 컨트롤러 접근, 새로 생성: $key - $e',
+                  );
+                  _controllers.remove(key);
+                  _refCounts.remove(key);
+                  _lastAccessed.remove(key);
+                  _isDisposed[key] = true;
+                  // 아래에서 새로 생성
+                }
+              }
             }
           } catch (e) {
             // dispose된 컨트롤러 접근 시도
@@ -86,6 +122,7 @@ class VideoCacheService {
             _controllers.remove(key);
             _refCounts.remove(key);
             _lastAccessed.remove(key);
+            _isDisposed[key] = true;
             // 아래에서 새로 생성
           }
         }
@@ -103,25 +140,52 @@ class VideoCacheService {
             ? '${key}_new_${DateTime.now().millisecondsSinceEpoch}'
             : key;
 
-    // ✅ 네트워크 비디오 초기화 안정성/속도 개선:
-    // - Accept 헤더로 video 타입 힌트
-    // - keep-alive로 연결 재사용(특히 연속 요청 시)
-    // - 백그라운드 재생 비활성(썸네일/피드 용도)
-    final controller = VideoPlayerController.networkUrl(
-      Uri.parse(url),
-      httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
-      videoPlayerOptions: VideoPlayerOptions(
-        mixWithOthers: false,
-        allowBackgroundPlayback: false,
-      ),
-    );
+    // ✅ 로컬 비디오 우선, 없으면 네트워크 URL 사용
+    final VideoPlayerController controller;
+    if (localPath?.isNotEmpty == true) {
+      controller = VideoPlayerController.file(
+        File(localPath!),
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
+      );
+      debugPrint('[VideoCache] 로컬 비디오 컨트롤러 생성: $localPath');
+    } else {
+      // ✅ 네트워크 비디오 초기화 안정성/속도 개선:
+      // - Accept 헤더로 video 타입 힌트
+      // - keep-alive로 연결 재사용(특히 연속 요청 시)
+      // - 백그라운드 재생 비활성(썸네일/피드 용도)
+      controller = VideoPlayerController.networkUrl(
+        Uri.parse(url),
+        httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
+      );
+      debugPrint('[VideoCache] 네트워크 비디오 컨트롤러 생성: $url');
+    }
 
     controller
         .initialize()
         .then((_) {
           // 🎯 초기화 완료 후에도 맵에 있는지 확인 (다른 스레드에서 제거되었을 수 있음)
-          if (_controllers[actualKey] == controller) {
+          if (_controllers[actualKey] == controller &&
+              _isDisposed[actualKey] != true) {
             try {
+              // 🎯 dispose 상태 재확인 (초기화 중 dispose되었을 수 있음)
+              if (_isDisposed[actualKey] == true) {
+                debugPrint('[VideoCache] ⚠️ 초기화 완료되었으나 dispose됨: $actualKey');
+                try {
+                  controller.dispose();
+                } catch (_) {}
+                _controllers.remove(actualKey);
+                _refCounts.remove(actualKey);
+                _lastAccessed.remove(actualKey);
+                return;
+              }
+
               // 초기화만 하고, 재생/정지는 각 위젯에서 결정
               if (controller.value.isInitialized) {
                 controller.setLooping(true);
@@ -135,13 +199,15 @@ class VideoCacheService {
                 _controllers.remove(actualKey);
                 _refCounts.remove(actualKey);
                 _lastAccessed.remove(actualKey);
+                _isDisposed[actualKey] = true;
               }
             }
           } else {
-            // 다른 스레드에서 제거되었으므로 dispose
+            // 다른 스레드에서 제거되었거나 dispose됨
             try {
               controller.dispose();
             } catch (_) {}
+            _isDisposed[actualKey] = true;
             debugPrint('[VideoCache] ⚠️ 초기화 완료되었으나 맵에서 제거됨: $actualKey');
           }
         })
@@ -151,17 +217,20 @@ class VideoCacheService {
             _controllers.remove(actualKey);
             _refCounts.remove(actualKey);
             _lastAccessed.remove(actualKey);
+            _isDisposed.remove(actualKey);
           }
           // dispose 시도
           try {
             controller.dispose();
           } catch (_) {}
+          _isDisposed[actualKey] = true;
           debugPrint('[VideoCache] ⚠️ 초기화 실패: $actualKey - $e');
         });
 
     _controllers[actualKey] = controller;
     _refCounts[actualKey] = 1;
     _lastAccessed[actualKey] = DateTime.now();
+    _isDisposed[actualKey] = false; // 새로 생성된 컨트롤러는 dispose되지 않음
     return controller;
   }
 
@@ -195,8 +264,13 @@ class VideoCacheService {
   }
 
   /// 비디오 컨트롤러 참조 해제
-  void releaseController(String url, {String namespace = 'global'}) {
-    final key = _key(namespace, url);
+  void releaseController(
+    String url, {
+    String? localPath,
+    String namespace = 'global',
+  }) {
+    final cacheKey = localPath?.isNotEmpty == true ? localPath! : url;
+    final key = _key(namespace, cacheKey);
 
     // 🎯 임시 키로 생성된 컨트롤러도 찾아서 해제
     final matchingKeys =
@@ -247,14 +321,24 @@ class VideoCacheService {
   }
 
   /// 특정 URL의 컨트롤러가 초기화되었는지 확인
-  bool isInitialized(String url, {String namespace = 'global'}) {
-    final key = _key(namespace, url);
+  bool isInitialized(
+    String url, {
+    String? localPath,
+    String namespace = 'global',
+  }) {
+    final cacheKey = localPath?.isNotEmpty == true ? localPath! : url;
+    final key = _key(namespace, cacheKey);
     return _controllers[key]?.value.isInitialized ?? false;
   }
 
   /// 해당 URL의 컨트롤러가 캐시에 존재하는지 여부
-  bool hasController(String url, {String namespace = 'global'}) {
-    final key = _key(namespace, url);
+  bool hasController(
+    String url, {
+    String? localPath,
+    String namespace = 'global',
+  }) {
+    final cacheKey = localPath?.isNotEmpty == true ? localPath! : url;
+    final key = _key(namespace, cacheKey);
     return _controllers.containsKey(key);
   }
 
@@ -285,6 +369,7 @@ class VideoCacheService {
             _controllers.remove(key);
             _refCounts.remove(key);
             _lastAccessed.remove(key);
+            _isDisposed[key] = true;
           }
         }
       }
@@ -328,6 +413,7 @@ class VideoCacheService {
       _controllers.remove(key);
       _refCounts.remove(key);
       _lastAccessed.remove(key);
+      _isDisposed[key] = true;
     }
 
     debugPrint(
@@ -391,6 +477,7 @@ class VideoCacheService {
       _controllers.remove(key);
       _refCounts.remove(key);
       _lastAccessed.remove(key);
+      _isDisposed[key] = true;
     }
     debugPrint('[VideoCache] 임시 컨트롤러 정리 완료');
   }
@@ -403,6 +490,8 @@ class VideoCacheService {
     }
     _controllers.clear();
     _refCounts.clear();
+    _lastAccessed.clear();
+    _isDisposed.clear();
   }
 
   /// 캐시 상태 디버깅
@@ -442,6 +531,7 @@ class VideoCacheService {
           _controllers.remove(key);
           _refCounts.remove(key);
           _lastAccessed.remove(key);
+          _isDisposed[key] = true;
         }
       }
     }

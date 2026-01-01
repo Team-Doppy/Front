@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:ui' as ui;
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/components/share_post_overlay.dart';
@@ -19,12 +20,15 @@ import 'package:doppy/editor/publish/component/step3_category_selection.dart';
 import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/image/utils/edit_image_cache_manager.dart';
+import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
+import 'package:doppy/editor/component/clip_component.dart'
+    show cleanupAllVideoPlayers;
+import 'package:doppy/pages/components/shimmer_box.dart';
 import 'dart:io';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 void printLarge(String text, {int chunkSize = 800}) {
   final int len = text.length;
@@ -115,10 +119,8 @@ class _PostExportScreenState extends State<PostExportScreen>
       _excerptController.dispose();
       _excerptFocusNode.dispose();
 
-      // 로컬 비디오 컨트롤러는 직접 dispose
-      if (_localVideoFile != null && _videoController != null) {
-        _videoController?.dispose();
-      }
+      // 🎯 로컬 비디오 컨트롤러 직접 dispose
+      _disposeVideoController(context: 'dispose');
 
       // 캐시된 서버 비디오는 참조 해제
       if (_cachedVideoUrl != null) {
@@ -127,6 +129,9 @@ class _PostExportScreenState extends State<PostExportScreen>
           namespace: 'profile',
         );
       }
+
+      // 🎯 업로드 태스크 취소
+      _cancelUploadTasks();
     } catch (e) {
       debugPrint('[PostExport] dispose 에러: $e');
     }
@@ -193,15 +198,18 @@ class _PostExportScreenState extends State<PostExportScreen>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         try {
-          final provider = ResizeImage(
-            CachedNetworkImageProvider(
-              thumb,
-              cacheManager: EditImageCacheManager.instance,
-              cacheKey: thumb,
-            ),
-            width: 600,
+          // 🎯 EditorImageProvider를 사용하여 step1_thumbnail_edit과 동일한 캐시 키 사용
+          final screenWidth = MediaQuery.sizeOf(context).width;
+          final decodeWidth = EditorImageProvider.editingDecodeWidth(
+            context,
+            screenWidth,
           );
-          precacheImage(provider, context).catchError((_) {});
+          final built = EditorImageProvider.build(
+            url: thumb,
+            isEditing: true,
+            decodeWidth: decodeWidth,
+          );
+          precacheImage(built.effectiveProvider, context).catchError((_) {});
         } catch (_) {}
       });
     }
@@ -216,25 +224,68 @@ class _PostExportScreenState extends State<PostExportScreen>
       final videoFile = File(persistedVideoPath);
       if (videoFile.existsSync()) {
         _localVideoFile = videoFile;
-        _videoController?.dispose();
-        _videoController = VideoPlayerController.file(videoFile);
-        _videoController!
-            .initialize()
-            .then((_) {
-              if (mounted && _videoController != null) {
-                _videoController?.play();
-                _videoController?.setLooping(true);
-                setState(() {});
-              }
-            })
-            .catchError((error) {
-              debugPrint('[PostExport] 비디오 컨트롤러 초기화 실패: $error');
-              if (mounted) {
-                _videoController?.dispose();
-                _videoController = null;
-                setState(() {});
-              }
-            });
+
+        // 🎯 기존 컨트롤러 안전하게 dispose
+        _disposeVideoController(context: '_hydrateFromExported');
+
+        // 🎯 로컬 비디오는 직접 관리 (VideoCacheService 불필요)
+        try {
+          final controller = VideoPlayerController.file(videoFile);
+
+          // 🎯 컨트롤러 참조 저장 (비동기 콜백에서 dispose 체크용)
+          final controllerRef = controller;
+
+          _videoController = controller;
+
+          // 🎯 dispose 체크: 리스너 추가 전 컨트롤러 유효성 확인
+          try {
+            controller.addListener(_onVideoControllerInitialized);
+          } catch (e) {
+            debugPrint('[PostExport] 리스너 추가 오류 (dispose됨): $e');
+            _videoController = null;
+            return;
+          }
+
+          controller
+              .initialize()
+              .then((_) {
+                // 🎯 dispose 체크 강화: mounted, controller 유효성, 참조 일치 확인
+                if (!mounted || _videoController != controllerRef) {
+                  try {
+                    controllerRef.dispose();
+                  } catch (_) {}
+                  return;
+                }
+
+                try {
+                  // 🎯 dispose 체크: 컨트롤러 유효성 확인
+                  if (controllerRef.value.isInitialized) {
+                    controllerRef.play();
+                    controllerRef.setLooping(true);
+                    if (mounted) {
+                      setState(() {});
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('[PostExport] 비디오 재생 오류 (dispose됨): $e');
+                }
+              })
+              .catchError((error) {
+                debugPrint('[PostExport] 비디오 컨트롤러 초기화 실패: $error');
+                if (!mounted) return;
+
+                // 🎯 컨트롤러가 여전히 유효한지 확인
+                if (_videoController == controllerRef) {
+                  _disposeVideoController(
+                    context: '_hydrateFromExported.catchError',
+                  );
+                  setState(() {});
+                }
+              });
+        } catch (e) {
+          debugPrint('[PostExport] 비디오 컨트롤러 생성 오류: $e');
+          _videoController = null;
+        }
         debugPrint('[PostExport] 영상 파일 복원: $persistedVideoPath');
 
         // 영상 로컬 썸네일도 복원
@@ -305,15 +356,99 @@ class _PostExportScreenState extends State<PostExportScreen>
     setState(() {});
   }
 
+  // 🎯 비디오 컨트롤러 안전하게 dispose하는 헬퍼 메서드
+  void _disposeVideoController({String? context}) {
+    if (_videoController == null) return;
+
+    try {
+      // 리스너 제거 (먼저 제거하여 콜백 방지)
+      _videoController!.removeListener(_onVideoControllerInitialized);
+    } catch (e) {
+      debugPrint('[PostExport] ${context ?? "dispose"}: 리스너 제거 오류: $e');
+    }
+
+    try {
+      // 일시정지
+      if (_videoController!.value.isInitialized) {
+        _videoController!.pause();
+      }
+    } catch (e) {
+      debugPrint(
+        '[PostExport] ${context ?? "dispose"}: 일시정지 오류 (dispose됨): $e',
+      );
+    }
+
+    try {
+      // dispose
+      _videoController!.dispose();
+      debugPrint(
+        '[PostExport] ${context ?? "dispose"}: 로컬 비디오 컨트롤러 dispose 완료',
+      );
+    } catch (e) {
+      debugPrint('[PostExport] ${context ?? "dispose"}: 컨트롤러 dispose 오류: $e');
+    }
+
+    _videoController = null;
+  }
+
+  // 🎯 비디오 컨트롤러 초기화 완료 리스너
+  void _onVideoControllerInitialized() {
+    // 🎯 dispose 체크: mounted 및 컨트롤러 유효성 확인
+    if (!mounted || _videoController == null) {
+      // dispose된 경우 리스너 제거 시도
+      try {
+        _videoController?.removeListener(_onVideoControllerInitialized);
+      } catch (_) {}
+      return;
+    }
+
+    // 🎯 컨트롤러 참조 저장 (리스너 제거 전에)
+    final controller = _videoController!;
+
+    try {
+      // 🎯 dispose 체크: 컨트롤러 유효성 확인
+      if (controller.value.isInitialized) {
+        // 🎯 리스너 제거 (먼저 제거하여 재진입 방지)
+        try {
+          controller.removeListener(_onVideoControllerInitialized);
+        } catch (e) {
+          debugPrint('[PostExport] 리스너 제거 오류 (dispose됨): $e');
+          return;
+        }
+
+        if (mounted) {
+          try {
+            controller.play();
+            controller.setLooping(true);
+            setState(() {});
+          } catch (e) {
+            debugPrint('[PostExport] 비디오 재생 오류 (dispose됨): $e');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[PostExport] 비디오 컨트롤러 초기화 리스너 오류 (dispose됨): $e');
+      // dispose된 경우 리스너 제거 시도
+      try {
+        controller.removeListener(_onVideoControllerInitialized);
+      } catch (_) {}
+    }
+  }
+
   // 부드러운 애니메이션과 함께 닫기
   Future<void> _closeWithAnimation() async {
+    _cancelUploadTasks();
+
+    // 🎯 로컬 비디오 컨트롤러 직접 dispose
+    _disposeVideoController(context: '_closeWithAnimation');
+
     // 닫힐 때는 빠르게 (250ms)
     _intro.duration = const Duration(milliseconds: 250);
     await _intro.reverse();
     // 다시 원래 duration으로 복원
     _intro.duration = const Duration(milliseconds: 800);
 
-    if (!mounted) return;
+    if (!mounted || !context.mounted) return;
 
     Navigator.of(context).pop({
       'thumbnailImageUrl': _exportedThumbnailImageUrl,
@@ -433,6 +568,9 @@ class _PostExportScreenState extends State<PostExportScreen>
       setState(() {
         _isUploading = true;
       });
+
+      // ✅ 발행 중일 때 모든 비디오 플레이어 정리 (ClipComponent의 컨트롤러 dispose)
+      cleanupAllVideoPlayers();
 
       // 🎯 포스트 발행 서비스를 통한 최종 JSON 빌드
       final publishService = PostPublishService();
@@ -762,25 +900,49 @@ class _PostExportScreenState extends State<PostExportScreen>
                 _localThumbnailFile != null
                     ? Image.file(_localThumbnailFile!, fit: BoxFit.cover)
                     : _exportedThumbnailImageUrl.isNotEmpty
-                    ? CachedNetworkImage(
-                      imageUrl: _exportedThumbnailImageUrl,
-                      fit: BoxFit.cover,
-                      placeholder:
-                          (context, url) =>
-                              Container(color: AppColors.darkSurface),
-                      errorWidget: (context, url, error) {
-                        assert(() {
-                          debugPrint(
-                            '[PostExportScreen] ❌ 배경 이미지 로드 실패: url=$url, error=$error',
-                          );
-                          return true;
-                        }());
-                        return Container(color: AppColors.darkSurface);
+                    ? Builder(
+                      builder: (context) {
+                        // 🎯 EditorImageProvider를 사용하여 step1_thumbnail_edit과
+                        // 동일한 캐시 키(ResizeImage)를 사용하여 캐시 재사용률을 높임
+                        final screenWidth = MediaQuery.sizeOf(context).width;
+                        final decodeWidth =
+                            EditorImageProvider.editingDecodeWidth(
+                              context,
+                              screenWidth,
+                            );
+                        final built = EditorImageProvider.build(
+                          url: _exportedThumbnailImageUrl,
+                          isEditing: true, // 배경 이미지도 편집 모드
+                          decodeWidth: decodeWidth,
+                        );
+
+                        return Image(
+                          image: built.effectiveProvider,
+                          fit: BoxFit.cover,
+                          filterQuality: FilterQuality.low,
+                          gaplessPlayback: true, // ✅ provider가 바뀌어도 기존 프레임 유지
+                          frameBuilder: (context, child, frame, wasSyncLoaded) {
+                            if (wasSyncLoaded || frame != null) {
+                              return child;
+                            }
+                            // 로딩 중: shimmer placeholder
+                            return ShimmerBox(
+                              width: double.infinity,
+                              height: double.infinity,
+                              borderRadius: BorderRadius.zero,
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            assert(() {
+                              debugPrint(
+                                '[PostExportScreen] ❌ 배경 이미지 로드 실패: url=$_exportedThumbnailImageUrl, error=$error',
+                              );
+                              return true;
+                            }());
+                            return Container(color: AppColors.darkSurface);
+                          },
+                        );
                       },
-                      cacheKey: _exportedThumbnailImageUrl,
-                      cacheManager: EditImageCacheManager.instance,
-                      fadeInDuration: Duration.zero,
-                      fadeOutDuration: Duration.zero,
                     )
                     : Container(color: Theme.of(context).colorScheme.surface),
           ),
@@ -826,11 +988,34 @@ class _PostExportScreenState extends State<PostExportScreen>
     );
   }
 
-  void _nextStep() {
-    // 썸네일 업로드 중이면 진행 불가
-    if (_isUploadingThumb) {
-      return;
+  /// 업로드 상태 체크 헬퍼
+  bool _hasActiveUploads() {
+    if (!mounted || !context.mounted) return false;
+    try {
+      final upload = context.read<UploadService>();
+      return upload.hasActiveUploads(
+        kinds: {UploadKind.editorImage, UploadKind.video, UploadKind.thumbnail},
+      );
+    } catch (e) {
+      debugPrint('[PostExport] 업로드 상태 체크 오류: $e');
+      return false;
     }
+  }
+
+  /// 업로드 태스크 취소 헬퍼
+  void _cancelUploadTasks() {
+    if (!mounted) return;
+    try {
+      final upload = context.read<UploadService>();
+      upload.cancelByRef('thumb_$_nsKey');
+      upload.cancelEditorCompressions('publish_$_nsKey');
+    } catch (e) {
+      debugPrint('[PostExport] 업로드 태스크 취소 오류: $e');
+    }
+  }
+
+  void _nextStep() {
+    if (_isUploadingThumb || _hasActiveUploads()) return;
 
     if (_currentStep < _totalSteps - 1) {
       FocusScope.of(context).unfocus();
@@ -838,8 +1023,6 @@ class _PostExportScreenState extends State<PostExportScreen>
         _currentStep++;
         _editMode = false;
       });
-
-      // 카테고리는 Step3 컴포넌트에서 로드함
     }
   }
 
@@ -858,13 +1041,13 @@ class _PostExportScreenState extends State<PostExportScreen>
       case 0: // Step 1: 썸네일 & 글 편집
         final editedTitle = _titleController.text.trim();
         final editedExcerpt = _excerptController.text.trim();
-        // ✅ 로컬 경로 허용 X: 반드시 UploadService로 업로드 완료되어
-        // exportedThumbnailImageUrl이 http(s) URL인 상태여야만 진행 가능
         final thumbnailUrl = _exportedThumbnailImageUrl.trim();
         final isHttpUrl =
             thumbnailUrl.startsWith('http://') ||
             thumbnailUrl.startsWith('https://');
+
         return !_isUploadingThumb &&
+            !_hasActiveUploads() &&
             thumbnailUrl.isNotEmpty &&
             isHttpUrl &&
             editedTitle.isNotEmpty &&
@@ -945,10 +1128,59 @@ class _PostExportScreenState extends State<PostExportScreen>
                         });
                       },
                       onVideoControllerChanged: (controller) {
-                        setState(() {
-                          _videoController?.dispose();
-                          _videoController = controller;
-                        });
+                        // 🎯 기존 컨트롤러 안전하게 정리
+                        if (_videoController != null &&
+                            _videoController != controller) {
+                          _disposeVideoController(
+                            context: 'onVideoControllerChanged',
+                          );
+                        }
+
+                        // 🎯 새 컨트롤러 설정 및 리스너 추가
+                        _videoController = controller;
+                        if (controller != null) {
+                          _localVideoFile = null; // Step1에서 새로 생성한 컨트롤러
+                          try {
+                            // 🎯 dispose 체크: 컨트롤러 유효성 확인
+                            if (!controller.value.isInitialized) {
+                              // 🎯 리스너 추가 전 dispose 체크
+                              try {
+                                controller.addListener(
+                                  _onVideoControllerInitialized,
+                                );
+                              } catch (e) {
+                                debugPrint(
+                                  '[PostExport] 리스너 추가 오류 (dispose됨): $e',
+                                );
+                                _videoController = null;
+                                return;
+                              }
+                            } else {
+                              // 이미 초기화된 경우 즉시 재생
+                              if (mounted) {
+                                try {
+                                  // 🎯 dispose 체크: 컨트롤러 유효성 재확인
+                                  if (controller.value.isInitialized) {
+                                    controller.play();
+                                    controller.setLooping(true);
+                                  }
+                                } catch (e) {
+                                  debugPrint(
+                                    '[PostExport] 새 컨트롤러 재생 오류 (dispose됨): $e',
+                                  );
+                                }
+                              }
+                            }
+                          } catch (e) {
+                            debugPrint(
+                              '[PostExport] 새 컨트롤러 설정 오류 (dispose됨): $e',
+                            );
+                          }
+                        }
+
+                        if (mounted) {
+                          setState(() {});
+                        }
                       },
                       onIsUploadingThumbChanged: (value) {
                         setState(() {

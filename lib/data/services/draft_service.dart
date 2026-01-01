@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
@@ -101,6 +102,7 @@ class DraftService {
     required String visibility,
     required List<int> selectedGroupIds,
     String? existingDraftId,
+    dynamic textStylingService, // TextStylingService (순환 참조 방지)
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -111,6 +113,7 @@ class DraftService {
         stickerService: stickerService,
         forPublishing: true, // 🚀 임시저장도 네트워크 이미지로 변환 (로드 속도 향상)
         allowPartialUpload: false, // 🎯 임시저장 시에는 네트워크 URL만 저장 (업로드 중이면 스킵)
+        textStylingService: textStylingService,
       );
       final String v = visibility.toLowerCase();
       final bool privateOnly = v == 'private';
@@ -132,7 +135,9 @@ class DraftService {
       }
       final effectiveTitle = title.trim();
 
-      final draftId = existingDraftId ?? _generateDraftId(effectiveTitle);
+      // 🎯 UUID 기반 임시저장: existingDraftId가 없으면 새 UUID 생성
+      // (제목이 바뀌어도 같은 UUID로 덮어쓰기)
+      final draftId = existingDraftId ?? _generateUuidDraftId();
       final now = DateTime.now();
 
       final draftData = DraftData(
@@ -188,6 +193,7 @@ class DraftService {
     String? videoThumbnailPath,
     required String visibility,
     required List<int> selectedGroupIds,
+    dynamic textStylingService, // TextStylingService (순환 참조 방지)
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -199,6 +205,7 @@ class DraftService {
         // ✅ 자동저장은 "복구 목적"이라 업로드 중/미완료 이미지가 있어도 저장을 허용한다.
         // (최근 1개만 유지 + 리스트 미노출 정책이므로 안전)
         allowPartialUpload: true,
+        textStylingService: textStylingService,
       );
       final String v = visibility.toLowerCase();
       final bool privateOnly = v == 'private';
@@ -307,17 +314,19 @@ class DraftService {
   }
 
   /// 임시저장 불러오기 (최적화)
-  Future<bool> loadDraft({
+  /// 반환값: 성공 시 DraftData, 실패 시 null
+  Future<DraftData?> loadDraft({
     required String draftId,
     required EditorService editorService,
     required StickerService stickerService,
     NodeComponentService? nodeComponentService,
     dynamic dragService, // DragService 타입 (순환 참조 방지)
+    dynamic textStylingService, // TextStylingService (순환 참조 방지)
   }) async {
     try {
       // 🚀 1. 드래프트 데이터 로드 (최적화된 방식)
       final draft = await getDraft(draftId);
-      if (draft == null) return false;
+      if (draft == null) return null;
 
       // 🚀 2. 병렬 처리 가능한 작업들을 먼저 수행
       // JSON 디코딩은 한 번만 수행
@@ -340,10 +349,7 @@ class DraftService {
       }
 
       // 🚀 4. 문서 복원 및 교체 (특수 노드 등록 포함)
-      final document = postReaderService.rebuildDocumentForRead(
-        exportedData,
-        includeTitleNode: true,
-      );
+      final document = postReaderService.rebuildDocumentForRead(exportedData);
 
       // 🚀 5. 문서 교체 (최적화: 특수 노드 등록 통합)
       await _replaceDocumentSafely(editorService, document);
@@ -370,11 +376,26 @@ class DraftService {
         stickerService: stickerService,
       );
 
+      // 🎯 전역 폰트 사이즈 복원
+      if (textStylingService != null) {
+        try {
+          final globalFontSize = exportedData['globalFontSize'];
+          if (globalFontSize != null) {
+            (textStylingService as dynamic).changeFontSize(
+              (globalFontSize as num).toDouble(),
+            );
+            debugPrint('[DraftService] ✅ 전역 폰트 사이즈 복원: $globalFontSize');
+          }
+        } catch (e) {
+          debugPrint('[DraftService] ⚠️ 전역 폰트 사이즈 복원 실패: $e');
+        }
+      }
+
       debugPrint('[DraftService] ✅ 임시저장 불러오기 완료');
-      return true;
+      return draft; // ✅ DraftData 반환하여 메타데이터 복원 가능하게 함
     } catch (e) {
       debugPrint('[DraftService] Error loading draft: $e');
-      return false;
+      return null;
     }
   }
 
@@ -384,6 +405,7 @@ class DraftService {
     required StickerService stickerService,
     NodeComponentService? nodeComponentService,
     dynamic dragService, // DragService 타입 (순환 참조 방지)
+    dynamic textStylingService, // TextStylingService (순환 참조 방지)
   }) async {
     try {
       final draft = await getAutoDraft();
@@ -401,10 +423,7 @@ class DraftService {
         (dragService as dynamic).invalidateNodeRectCache();
       }
 
-      final document = postReaderService.rebuildDocumentForRead(
-        exportedData,
-        includeTitleNode: true,
-      );
+      final document = postReaderService.rebuildDocumentForRead(exportedData);
 
       await _replaceDocumentSafely(editorService, document);
       editorService.registerAllSpecialNodes();
@@ -420,6 +439,21 @@ class DraftService {
         exported: exportedData,
         stickerService: stickerService,
       );
+
+      // 🎯 전역 폰트 사이즈 복원
+      if (textStylingService != null) {
+        try {
+          final globalFontSize = exportedData['globalFontSize'];
+          if (globalFontSize != null) {
+            (textStylingService as dynamic).changeFontSize(
+              (globalFontSize as num).toDouble(),
+            );
+            debugPrint('[DraftService] ✅ 전역 폰트 사이즈 복원: $globalFontSize');
+          }
+        } catch (e) {
+          debugPrint('[DraftService] ⚠️ 전역 폰트 사이즈 복원 실패: $e');
+        }
+      }
 
       debugPrint('[DraftService] ✅ 자동저장 불러오기 완료');
       return true;
@@ -670,10 +704,11 @@ class DraftService {
     }
   }
 
-  /// 임시저장 ID 생성 (타이틀별 + 타임스탬프)
-  String _generateDraftId(String title) {
-    final titleHash = title.hashCode.abs(); // 제목 기반 해시만 사용 (timestamp 제거)
-    return 'draft_$titleHash';
+  /// 임시저장 ID 생성 (UUID 기반)
+  /// 제목이 바뀌어도 같은 UUID로 덮어쓰기 위해 사용
+  String _generateUuidDraftId() {
+    const uuid = Uuid();
+    return 'draft_${uuid.v4()}';
   }
 
   /// 제목별 임시저장 그룹 가져오기

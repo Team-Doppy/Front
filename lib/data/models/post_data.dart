@@ -296,11 +296,8 @@ class PostData {
           final text = node['text'] as String?;
 
           if (nodeType == 'paragraph' && text != null && text.isNotEmpty) {
-            // 제목이 아닌 일반 문단만 추가
-            final isTitle = node['isTitle'] == true;
-            if (!isTitle) {
-              textParts.add(text.trim());
-            }
+            // 모든 문단 추가
+            textParts.add(text.trim());
           }
         }
       }

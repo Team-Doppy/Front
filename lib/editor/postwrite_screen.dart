@@ -136,6 +136,47 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   String? _draftSummaryOverride;
   String? _draftThumbnailOverride;
 
+  /// 🎯 메타데이터 복원 헬퍼 (중복 제거)
+  void _restoreDraftMetadata({
+    required String? title,
+    required String? summary,
+    required String? thumbnailUrl,
+  }) {
+    setState(() {
+      _draftTitleOverride =
+          (title?.trim().isNotEmpty ?? false) ? title!.trim() : null;
+      _draftSummaryOverride =
+          (summary?.trim().isNotEmpty ?? false) ? summary!.trim() : null;
+      _draftThumbnailOverride =
+          (thumbnailUrl?.trim().isNotEmpty ?? false)
+              ? thumbnailUrl!.trim()
+              : null;
+    });
+  }
+
+  /// 🎯 메타데이터 추출 헬퍼 (중복 제거)
+  Map<String, String> _extractDraftMetadata() {
+    final title =
+        (_draftTitleOverride?.trim().isNotEmpty ?? false)
+            ? _draftTitleOverride!.trim()
+            : '';
+    final summary =
+        (_draftSummaryOverride?.trim().isNotEmpty ?? false)
+            ? _draftSummaryOverride!.trim()
+            : '';
+    String thumbnailUrl =
+        (_draftThumbnailOverride?.trim().isNotEmpty ?? false)
+            ? _draftThumbnailOverride!.trim()
+            : '';
+    if (thumbnailUrl.isEmpty) {
+      final firstImageUrl = _findFirstImageUrl();
+      if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
+        thumbnailUrl = firstImageUrl;
+      }
+    }
+    return {'title': title, 'summary': summary, 'thumbnailUrl': thumbnailUrl};
+  }
+
   bool _isSavingAutoDraft = false; // ✅ 메타데이터 변경 등으로 연속 저장 시 중복 방지
 
   Future<void> _saveAutoDraftNowIfPossible() async {
@@ -170,29 +211,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       );
 
       // ✅ 정책: 제목은 "임시저장/Step1 입력"이 아니면 본문에서 추출하지 않는다.
-      final title =
-          (_draftTitleOverride != null &&
-                  _draftTitleOverride!.trim().isNotEmpty)
-              ? _draftTitleOverride!.trim()
-              : '';
-
-      final summary =
-          (_draftSummaryOverride != null &&
-                  _draftSummaryOverride!.trim().isNotEmpty)
-              ? _draftSummaryOverride!.trim()
-              : '';
-
-      String thumbnailUrl =
-          (_draftThumbnailOverride != null &&
-                  _draftThumbnailOverride!.trim().isNotEmpty)
-              ? _draftThumbnailOverride!.trim()
-              : '';
-      if (thumbnailUrl.isEmpty) {
-        final firstImageUrl = _findFirstImageUrl();
-        if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
-          thumbnailUrl = firstImageUrl;
-        }
-      }
+      final metadata = _extractDraftMetadata();
+      final title = metadata['title']!;
+      final summary = metadata['summary']!;
+      final thumbnailUrl = metadata['thumbnailUrl']!;
 
       await draftService.saveAutoDraft(
         editorService: editorService,
@@ -205,6 +227,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         videoThumbnailPath: videoThumbnailPath,
         visibility: 'public',
         selectedGroupIds: [],
+        textStylingService: textStylingService,
       );
     } finally {
       _isSavingAutoDraft = false;
@@ -227,11 +250,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 새 글 작성 모드이면 빈 문서 생성
     if (widget.isEditingMode && widget.exportedDataForEdit != null) {
       try {
-        // PostReaderService를 사용하여 문서 복원 (제목 포함)
+        // PostReaderService를 사용하여 문서 복원
         final postReaderService = PostReaderService();
         document = postReaderService.rebuildDocumentForRead(
           widget.exportedDataForEdit!,
-          includeTitleNode: true, // ✅ 구버전 호환: 제목 노드가 있으면 추출한 뒤 문서에서 제거
         );
 
         // 기존 공개범위 정보 복원
@@ -397,7 +419,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
         // ✅ 0번 노드=제목 가정 제거:
         // 첫 진입 포커스는 "첫 번째 편집 가능한 문단"을 찾아 커서를 둔다.
-        // (isTitle==true 문단이 있으면 제외)
         ParagraphNode? targetNode;
 
         targetNode ??=
@@ -478,7 +499,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   }
 
   void _onEditorServiceChange() {
-    if (!mounted) return;
+    if (!mounted || !context.mounted) return;
     // ✅ autoDraft는 "저장됨"으로 치지 않는다.
     // ✅ 단, 사용자가 "명시적 임시저장"을 해둔 상태에서 다시 변경이 생기면 플래그 해제.
     if (_didExplicitDraftSave) {
@@ -708,7 +729,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   void _startAutoSave() {
     _autoSaveTimer?.cancel();
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (!mounted || widget.isEditingMode) {
+      // ⚠️ 라우트 전환 중(deactivate)에는 mounted==true일 수 있지만
+      // context가 deactivated 상태면 Provider lookup 등이 크래시를 유발할 수 있음
+      if (!mounted || !context.mounted || widget.isEditingMode) {
         timer.cancel();
         return;
       }
@@ -718,6 +741,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
   /// 🎯 자동 저장 실행
   Future<void> _autoSave() async {
+    // ⚠️ 화면 전환/해제 타이밍 보호 (mounted==true여도 context가 이미 deactivated일 수 있음)
+    if (!mounted || !context.mounted) return;
     // 이미 저장 중이면 스킵
     if (_isAutoSaving || _isSaving) return;
 
@@ -740,12 +765,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     try {
       // ✅ 정책: 제목은 "임시저장/Step1 입력"이 아니면 본문에서 추출하지 않는다.
       // 자동저장은 복구 목적이므로, 빈 제목이면 no_title로 저장한다.
-      String title =
-          (_draftTitleOverride != null &&
-                  _draftTitleOverride!.trim().isNotEmpty)
-              ? _draftTitleOverride!.trim()
-              : '';
-      if (title.trim().isEmpty) title = context.tr('no_title');
+      final metadata = _extractDraftMetadata();
+      String title = metadata['title']!;
+      if (title.isEmpty) title = context.tr('no_title');
+      final summary = metadata['summary']!;
+      final thumbnailUrl = metadata['thumbnailUrl']!;
 
       // 🎯 UUID 기반 draftId 사용 (제목 기반 제거)
       if (currentDraftId == null) {
@@ -765,25 +789,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         sessionKey,
       );
 
-      // 썸네일: Step1 값 우선, 없으면 첫 이미지 자동
-      String thumbnailUrl =
-          (_draftThumbnailOverride != null &&
-                  _draftThumbnailOverride!.trim().isNotEmpty)
-              ? _draftThumbnailOverride!.trim()
-              : '';
-      if (thumbnailUrl.isEmpty) {
-        final firstImageUrl = _findFirstImageUrl();
-        if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
-          thumbnailUrl = firstImageUrl;
-        }
-      }
-
-      final summary =
-          (_draftSummaryOverride != null &&
-                  _draftSummaryOverride!.trim().isNotEmpty)
-              ? _draftSummaryOverride!.trim()
-              : '';
-
       // 🎯 자동저장(최근 1개): 임시저장 리스트에는 저장하지 않고, 단 하나만 유지
       await draftService.saveAutoDraft(
         editorService: editorService,
@@ -796,6 +801,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         videoThumbnailPath: videoThumbnailPath,
         visibility: 'public',
         selectedGroupIds: [],
+        textStylingService: textStylingService,
       );
 
       debugPrint('[PostwriteScreen] ✅ 자동 저장 완료: $title');
@@ -846,7 +852,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // ✅ StickerService는 singleton이므로 dispose 대신 세션 상태만 정리
       stickerService.resetSession();
     } catch (_) {}
-    _editorFocusNode.dispose();
     _keyboardVisibleNotifier.dispose();
 
     // 🎯 카테고리 변경 시 피드 프로바이더 캐시 초기화 + 새로고침
@@ -951,25 +956,19 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             stickerService: stickerService,
             nodeComponentService: nodeComponentService,
             dragService: dragService,
+            textStylingService: textStylingService,
           );
           if (!mounted) return true;
           if (ok) {
             setState(() {
               currentDraftId = autoDraft.id; // ✅ 자동저장 UUID 유지
-              // ✅ Step1 메타데이터도 함께 복원 (제목/요약/썸네일)
-              _draftTitleOverride =
-                  autoDraft.title.trim().isEmpty
-                      ? null
-                      : autoDraft.title.trim();
-              _draftSummaryOverride =
-                  autoDraft.summary.trim().isEmpty
-                      ? null
-                      : autoDraft.summary.trim();
-              _draftThumbnailOverride =
-                  autoDraft.thumbnailUrl.trim().isEmpty
-                      ? null
-                      : autoDraft.thumbnailUrl.trim();
             });
+            // ✅ Step1 메타데이터도 함께 복원 (제목/요약/썸네일)
+            _restoreDraftMetadata(
+              title: autoDraft.title,
+              summary: autoDraft.summary,
+              thumbnailUrl: autoDraft.thumbnailUrl,
+            );
           }
         } else if (choice == ResumeWritingChoice.newDraft) {
           await draftService.clearAutoDraft();
@@ -1166,278 +1165,291 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         return false;
       },
 
-      child: Scaffold(
-        resizeToAvoidBottomInset: false,
-        appBar: PreferredSize(
-          preferredSize: Size.fromHeight(appBarHeight),
-          child:
-              widget.isEditingMode
-                  ? EditModeAppBar(
-                    editorService: editorService,
-                    onSave: _saveEditedPost,
-                    currentVisibility: _editVisibility,
-                    currentGroupIds: _editGroupIds,
-                    postId: widget.postId,
-                    isSaving: _isSaving,
-                    isAutoSaving: _isAutoSaving,
-                    videoUploadIndicatorNotifier: _videoUploadIndicatorNotifier,
-                    onVisibilityChanged: (visibility, groupIds) {
-                      setState(() {
-                        _editVisibility = visibility;
-                        _editGroupIds = groupIds;
-                      });
-                      _shouldRefreshMyFeed = true;
-                    },
-                    onTitleSummaryChanged: (title, summary) {
-                      setState(() {
-                        _serverAppliedTitle = title;
-                        _serverAppliedSummary = summary;
-                      });
-                      debugPrint(
-                        '[PostwriteScreen] 제목/요약 업데이트 및 서버 적용: title=$title, summary=$summary',
-                      );
-                      _shouldRefreshMyFeed = true;
-                    },
-                    onCategoryChanged: () {
-                      _categoryChanged = true;
-                    },
-                    onThumbnailChanged: (url, id) {
-                      debugPrint(
-                        '[PostwriteScreen] onThumbnailChanged 콜백 받음: url=$url, id=$id',
-                      );
-                      setState(() {
-                        _serverAppliedThumbnailUrl = url;
-                      });
-                      _shouldRefreshMyFeed = true;
-                    },
-                  )
-                  : EditorAppBar(
-                    editorService: editorService,
-                    stickerService: stickerService,
-                    onSaveDraft: _saveDraft,
-                    onLoadDraft: _showDraftList,
-                    currentDraftId: currentDraftId,
-                    videoUploadIndicatorNotifier: _videoUploadIndicatorNotifier,
-                    initialTitleForExport: _draftTitleOverride,
-                    initialSummaryForExport: _draftSummaryOverride,
-                    initialThumbnailUrlForExport: _draftThumbnailOverride,
-                    onExportMetadataChanged: (title, summary, thumbnailUrl) {
-                      setState(() {
-                        _draftTitleOverride =
-                            title.trim().isEmpty ? null : title.trim();
-                        _draftSummaryOverride =
-                            summary.trim().isEmpty ? null : summary.trim();
-                        _draftThumbnailOverride =
-                            thumbnailUrl.trim().isEmpty
-                                ? null
-                                : thumbnailUrl.trim();
-                      });
-                      // ✅ Step1에서 편집한 값이 뒤로가기로 날아가지 않게 즉시 autoDraft에 반영
-                      _saveAutoDraftNowIfPossible().catchError((_) {});
-                    },
-                  ),
-        ),
-        body: Stack(
-          key: _editorBodyStackKey,
-          clipBehavior: Clip.none,
-          children: [
-            Theme(
-              data: AppTheme.lightTheme,
-              child: RawScrollbar(
-                controller: scrollController,
-                thumbColor: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withOpacity(0.3),
-                thickness: 4,
-                radius: const Radius.circular(12),
-                child: Listener(
-                  behavior: HitTestBehavior.translucent,
-                  onPointerDown: (details) {
-                    _handleTapBelowLastSpecialNode(details.position);
-                  },
-                  child: Builder(
-                    builder: (context) {
-                      final screenWidth = MediaQuery.sizeOf(context).width;
-                      final isDarkMode =
-                          context.read<ThemeProvider>().themeMode ==
-                          ThemeMode.dark;
-                      return RepaintBoundary(
-                        child: SuperEditor(
-                          gestureMode:
-                              Platform.isIOS
-                                  ? DocumentGestureMode.iOS
-                                  : DocumentGestureMode.android,
-                          editor: editor,
-                          focusNode: _editorFocusNode,
-                          stylesheet: _buildStylesheet(context),
-                          selectionStyle: SelectionStyles(
-                            selectionColor: AppColors.primary.withValues(
-                              alpha: 0.3,
-                            ),
-                            highlightEmptyTextBlocks: false,
-                          ),
-                          documentLayoutKey: _documentLayoutKey,
-                          scrollController: scrollController,
-                          documentOverlayBuilders: [
-                            const SuperEditorIosToolbarFocalPointDocumentLayerBuilder(),
-                            const SuperEditorIosHandlesDocumentLayerBuilder(
-                              caretWidth: 0,
-                            ),
-                            const SuperEditorAndroidToolbarFocalPointDocumentLayerBuilder(),
-                            const SuperEditorAndroidHandlesDocumentLayerBuilder(
-                              caretWidth: 0,
-                            ),
-                            SelectionBoxCaretOverlayBuilder(
-                              caretStyle: CaretStyle(
-                                width: 2,
-                                color: AppColors.primary,
+      child: Stack(
+        children: [
+          Scaffold(
+            resizeToAvoidBottomInset: false,
+            appBar: PreferredSize(
+              preferredSize: Size.fromHeight(appBarHeight),
+              child:
+                  widget.isEditingMode
+                      ? EditModeAppBar(
+                        editorService: editorService,
+                        onSave: _saveEditedPost,
+                        currentVisibility: _editVisibility,
+                        currentGroupIds: _editGroupIds,
+                        postId: widget.postId,
+                        isSaving: _isSaving,
+                        isAutoSaving: _isAutoSaving,
+                        videoUploadIndicatorNotifier:
+                            _videoUploadIndicatorNotifier,
+                        onVisibilityChanged: (visibility, groupIds) {
+                          setState(() {
+                            _editVisibility = visibility;
+                            _editGroupIds = groupIds;
+                          });
+                          _shouldRefreshMyFeed = true;
+                        },
+                        onTitleSummaryChanged: (title, summary) {
+                          setState(() {
+                            _serverAppliedTitle = title;
+                            _serverAppliedSummary = summary;
+                          });
+                          debugPrint(
+                            '[PostwriteScreen] 제목/요약 업데이트 및 서버 적용: title=$title, summary=$summary',
+                          );
+                          _shouldRefreshMyFeed = true;
+                        },
+                        onCategoryChanged: () {
+                          _categoryChanged = true;
+                        },
+                        onThumbnailChanged: (url, id) {
+                          debugPrint(
+                            '[PostwriteScreen] onThumbnailChanged 콜백 받음: url=$url, id=$id',
+                          );
+                          setState(() {
+                            _serverAppliedThumbnailUrl = url;
+                          });
+                          _shouldRefreshMyFeed = true;
+                        },
+                      )
+                      : EditorAppBar(
+                        editorService: editorService,
+                        stickerService: stickerService,
+                        onSaveDraft: _saveDraft,
+                        onLoadDraft: _showDraftList,
+                        currentDraftId: currentDraftId,
+                        videoUploadIndicatorNotifier:
+                            _videoUploadIndicatorNotifier,
+                        initialTitleForExport: _draftTitleOverride,
+                        initialSummaryForExport: _draftSummaryOverride,
+                        initialThumbnailUrlForExport: _draftThumbnailOverride,
+                        onExportMetadataChanged: (
+                          title,
+                          summary,
+                          thumbnailUrl,
+                        ) {
+                          setState(() {
+                            _draftTitleOverride =
+                                title.trim().isEmpty ? null : title.trim();
+                            _draftSummaryOverride =
+                                summary.trim().isEmpty ? null : summary.trim();
+                            _draftThumbnailOverride =
+                                thumbnailUrl.trim().isEmpty
+                                    ? null
+                                    : thumbnailUrl.trim();
+                          });
+                          // ✅ Step1에서 편집한 값이 뒤로가기로 날아가지 않게 즉시 autoDraft에 반영
+                          _saveAutoDraftNowIfPossible().catchError((_) {});
+                        },
+                      ),
+            ),
+            body: Stack(
+              key: _editorBodyStackKey,
+              clipBehavior: Clip.none,
+              children: [
+                Theme(
+                  data: AppTheme.lightTheme,
+                  child: RawScrollbar(
+                    controller: scrollController,
+                    thumbColor: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.3),
+                    thickness: 4,
+                    radius: const Radius.circular(12),
+                    child: Listener(
+                      behavior: HitTestBehavior.translucent,
+                      onPointerDown: (details) {
+                        _handleTapBelowLastSpecialNode(details.position);
+                      },
+                      child: Builder(
+                        builder: (context) {
+                          final screenWidth = MediaQuery.sizeOf(context).width;
+                          final isDarkMode =
+                              context.read<ThemeProvider>().themeMode ==
+                              ThemeMode.dark;
+                          return RepaintBoundary(
+                            child: SuperEditor(
+                              gestureMode:
+                                  Platform.isIOS
+                                      ? DocumentGestureMode.iOS
+                                      : DocumentGestureMode.android,
+                              editor: editor,
+                              focusNode: _editorFocusNode,
+                              stylesheet: _buildStylesheet(context),
+                              selectionStyle: SelectionStyles(
+                                selectionColor: AppColors.primary.withValues(
+                                  alpha: 0.3,
+                                ),
+                                highlightEmptyTextBlocks: false,
                               ),
-                              displayOnAllPlatforms: true,
+                              documentLayoutKey: _documentLayoutKey,
+                              scrollController: scrollController,
+                              documentOverlayBuilders: [
+                                const SuperEditorIosToolbarFocalPointDocumentLayerBuilder(),
+                                const SuperEditorIosHandlesDocumentLayerBuilder(
+                                  caretWidth: 0,
+                                ),
+                                const SuperEditorAndroidToolbarFocalPointDocumentLayerBuilder(),
+                                const SuperEditorAndroidHandlesDocumentLayerBuilder(
+                                  caretWidth: 0,
+                                ),
+                                SelectionBoxCaretOverlayBuilder(
+                                  caretStyle: CaretStyle(
+                                    width: 2,
+                                    color: AppColors.primary,
+                                  ),
+                                  displayOnAllPlatforms: true,
+                                ),
+                              ],
+                              componentBuilders: [
+                                SingleImageComponentBuilder(
+                                  screenWidth: screenWidth,
+                                  dragService: dragService,
+                                  isDarkMode: isDarkMode,
+                                ),
+                                RowImageComponentBuilder(
+                                  screenWidth: screenWidth,
+                                  dragService: dragService,
+                                  isDarkMode: isDarkMode,
+                                ),
+                                PageViewImageComponentBuilder(
+                                  screenWidth: screenWidth,
+                                  dragService: dragService,
+                                  isDarkMode: isDarkMode,
+                                ),
+                                CustomParagraphComponentBuilder(
+                                  dragService: dragService,
+                                  editorService: editorService,
+                                ),
+                                DividerComponentBuilder(
+                                  dragService: dragService,
+                                  editor: editor,
+                                  focusNode: _editorFocusNode,
+                                ),
+                                MentionComponentBuilder(
+                                  dragService: dragService,
+                                  editor: editor,
+                                  focusNode: _editorFocusNode,
+                                ),
+                                LinkComponentBuilder(
+                                  dragService: dragService,
+                                  isDarkMode: isDarkMode,
+                                ),
+                                ClipComponentBuilder(
+                                  screenWidth: screenWidth,
+                                  dragService: dragService,
+                                  isEditing: true,
+                                  isDarkMode: isDarkMode,
+                                ),
+                                ...defaultComponentBuilders.where(
+                                  (builder) =>
+                                      builder.runtimeType.toString() !=
+                                      'ParagraphComponentBuilder',
+                                ),
+                              ],
                             ),
-                          ],
-                          componentBuilders: [
-                            SingleImageComponentBuilder(
-                              screenWidth: screenWidth,
-                              dragService: dragService,
-                              isDarkMode: isDarkMode,
-                            ),
-                            RowImageComponentBuilder(
-                              screenWidth: screenWidth,
-                              dragService: dragService,
-                              isDarkMode: isDarkMode,
-                            ),
-                            PageViewImageComponentBuilder(
-                              screenWidth: screenWidth,
-                              dragService: dragService,
-                              isDarkMode: isDarkMode,
-                            ),
-                            CustomParagraphComponentBuilder(
-                              dragService: dragService,
-                              editorService: editorService,
-                            ),
-                            DividerComponentBuilder(
-                              dragService: dragService,
-                              editor: editor,
-                              focusNode: _editorFocusNode,
-                            ),
-                            MentionComponentBuilder(
-                              dragService: dragService,
-                              editor: editor,
-                              focusNode: _editorFocusNode,
-                            ),
-                            LinkComponentBuilder(
-                              dragService: dragService,
-                              isDarkMode: isDarkMode,
-                            ),
-                            ClipComponentBuilder(
-                              screenWidth: screenWidth,
-                              dragService: dragService,
-                              isEditing: true,
-                              isDarkMode: isDarkMode,
-                            ),
-                            ...defaultComponentBuilders.where(
-                              (builder) =>
-                                  builder.runtimeType.toString() !=
-                                  'ParagraphComponentBuilder',
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
-
-            // 드래그 오버레이 (키보드가 내려가 있을 때만 표시)
-            //
-            // ⚠️ 중요: DragOverlayWidget은 내부에서 Positioned를 반환한다.
-            // 따라서 "화면 전체 크기의 Stack"을 기준으로 레이아웃되어야 한다.
-            // AnimatedSwitcher 내부의 Stack(자식 크기 기반)으로 들어가면,
-            // Stack 사이즈가 0으로 잡혀 오버레이가 (0,0) 근처(좌상단)에 고정되는 문제가 생길 수 있다.
-            Positioned.fill(
-              child: AnimatedBuilder(
-                animation: dragService,
-                builder: (context, _) {
-                  final keyboardVisible =
-                      MediaQuery.viewInsetsOf(context).bottom > 0;
-                  return AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    switchInCurve: Curves.easeOut,
-                    switchOutCurve: Curves.easeIn,
-                    transitionBuilder: (child, animation) {
-                      return FadeTransition(opacity: animation, child: child);
-                    },
-                    child:
-                        (dragService.draggingNodeId != null && !keyboardVisible)
-                            ? Stack(children: [_buildDragOverlay()])
-                            : const SizedBox.shrink(key: ValueKey('empty')),
-                  );
-                },
-              ),
-            ),
-
-            // 스티커 캔버스
-            Positioned.fill(
-              child: RepaintBoundary(
-                child: StickerCanvas(scrollController: scrollController),
-              ),
-            ),
-
-            // 저장 중 전체 화면 블록 오버레이
-            if (_isExiting)
-              Positioned.fill(
-                child: AbsorbPointer(
-                  absorbing: true,
-                  child: Container(
-                    color: Colors.black.withOpacity(0.18),
-                    child: const Center(
-                      child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                          );
+                        },
                       ),
                     ),
                   ),
                 ),
-              ),
-            if (_isSaving)
-              Positioned.fill(
-                child: AbsorbPointer(
-                  absorbing: true,
-                  child: Container(color: Colors.transparent),
+
+                // 드래그 오버레이 (키보드가 내려가 있을 때만 표시)
+                //
+                // ⚠️ 중요: DragOverlayWidget은 내부에서 Positioned를 반환한다.
+                // 따라서 "화면 전체 크기의 Stack"을 기준으로 레이아웃되어야 한다.
+                // AnimatedSwitcher 내부의 Stack(자식 크기 기반)으로 들어가면,
+                // Stack 사이즈가 0으로 잡혀 오버레이가 (0,0) 근처(좌상단)에 고정되는 문제가 생길 수 있다.
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: dragService,
+                    builder: (context, _) {
+                      final keyboardVisible =
+                          MediaQuery.viewInsetsOf(context).bottom > 0;
+                      return AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        switchInCurve: Curves.easeOut,
+                        switchOutCurve: Curves.easeIn,
+                        transitionBuilder: (child, animation) {
+                          return FadeTransition(
+                            opacity: animation,
+                            child: child,
+                          );
+                        },
+                        child:
+                            (dragService.draggingNodeId != null &&
+                                    !keyboardVisible)
+                                ? Stack(children: [_buildDragOverlay()])
+                                : const SizedBox.shrink(key: ValueKey('empty')),
+                      );
+                    },
+                  ),
+                ),
+
+                // 스티커 캔버스
+                Positioned.fill(
+                  child: RepaintBoundary(
+                    child: StickerCanvas(scrollController: scrollController),
+                  ),
+                ),
+
+                // 저장 중 전체 화면 블록 오버레이
+                if (_isExiting)
+                  Positioned.fill(
+                    child: AbsorbPointer(
+                      absorbing: true,
+                      child: Container(
+                        color: Colors.black.withOpacity(0.18),
+                        child: const Center(),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+
+            // 🎯 성능 최적화: 키보드 높이를 상위에서 한 번만 계산하여 전달
+            // bottomNavigationBar 내부의 MediaQuery 접근 최소화
+            bottomNavigationBar: _BottomBar(
+              keyboardHeight: MediaQuery.viewInsetsOf(context).bottom,
+              keyboardVisibleNotifier: _keyboardVisibleNotifier,
+              textStylingService: textStylingService,
+              editorService: editorService,
+              scrollController: scrollController,
+              onDismissKeyboard: () {
+                _editorFocusNode.unfocus();
+              },
+              onShowDraftList: _showDraftList,
+              videoUploadIndicatorNotifier: _videoUploadIndicatorNotifier,
+              nodeComponentService: nodeComponentService,
+              document: document,
+              onEditImage: (selectedId, node) {
+                nodeComponentService.editImage(
+                  context: context,
+                  imageId: selectedId,
+                  node: node,
+                  editorService: editorService,
+                  document: document,
+                );
+              },
+              onDeleteNode: _deleteNode,
+              onChangeMediaAlignment: _changeMediaAlignment,
+            ),
+          ),
+
+          // 수정 완료 중 전체 화면 투명 오버레이 (앱바까지 덮음, post_export_screen과 동일한 방식)
+          if (_isSaving)
+            Positioned.fill(
+              child: AbsorbPointer(
+                absorbing: true,
+                child: Container(
+                  color: Colors.black.withOpacity(0.3),
+                  child: const Center(),
                 ),
               ),
-          ],
-        ),
-
-        // 🎯 성능 최적화: 키보드 높이를 상위에서 한 번만 계산하여 전달
-        // bottomNavigationBar 내부의 MediaQuery 접근 최소화
-        bottomNavigationBar: _BottomBar(
-          keyboardHeight: MediaQuery.viewInsetsOf(context).bottom,
-          keyboardVisibleNotifier: _keyboardVisibleNotifier,
-          textStylingService: textStylingService,
-          editorService: editorService,
-          scrollController: scrollController,
-          onDismissKeyboard: () {
-            _editorFocusNode.unfocus();
-          },
-          onShowDraftList: _showDraftList,
-          videoUploadIndicatorNotifier: _videoUploadIndicatorNotifier,
-          nodeComponentService: nodeComponentService,
-          document: document,
-          onEditImage: (selectedId, node) {
-            nodeComponentService.editImage(
-              context: context,
-              imageId: selectedId,
-              node: node,
-              editorService: editorService,
-              document: document,
-            );
-          },
-          onDeleteNode: _deleteNode,
-          onChangeMediaAlignment: _changeMediaAlignment,
-        ),
+            ),
+        ],
       ),
     );
   }
@@ -1719,11 +1731,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // 🎯 제목 검증 (본문 검증 통과 후)
       // ✅ 정책: 제목은 "임시저장/Step1 입력"이 아니면 본문에서 추출하지 않는다.
-      final currentTitle =
-          (_draftTitleOverride != null &&
-                  _draftTitleOverride!.trim().isNotEmpty)
-              ? _draftTitleOverride!.trim()
-              : '';
+      final titleMetadata = _extractDraftMetadata();
+      final currentTitle = titleMetadata['title']!;
 
       if (currentTitle.trim().isEmpty) {
         if (mounted) {
@@ -1766,11 +1775,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 🎯 임시저장 제목/요약/썸네일:
       // - 다음(썸네일 편집)에서 편집한 값이 있으면 그 값을 우선
       // - 없으면 기존 정책대로 문서에서 추출/자동 설정
-      final title =
-          (_draftTitleOverride != null &&
-                  _draftTitleOverride!.trim().isNotEmpty)
-              ? _draftTitleOverride!.trim()
-              : '';
+      final metadata = _extractDraftMetadata();
+      final title = metadata['title']!;
+      final summary = metadata['summary']!;
+      final thumbnailUrl = metadata['thumbnailUrl']!;
 
       // 🎯 UUID 기반 draftId 사용 (제목 기반 제거)
       if (currentDraftId == null) {
@@ -1789,25 +1797,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       final videoThumbnailPath = nodeComponentService.getTempVideoThumbnailPath(
         sessionKey,
       );
-
-      // 🎯 썸네일: 썸네일 편집 값 우선, 없으면 첫 이미지 자동
-      String thumbnailUrl =
-          (_draftThumbnailOverride != null &&
-                  _draftThumbnailOverride!.trim().isNotEmpty)
-              ? _draftThumbnailOverride!.trim()
-              : '';
-      if (thumbnailUrl.isEmpty) {
-        final firstImageUrl = _findFirstImageUrl();
-        if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
-          thumbnailUrl = firstImageUrl;
-        }
-      }
-
-      final summary =
-          (_draftSummaryOverride != null &&
-                  _draftSummaryOverride!.trim().isNotEmpty)
-              ? _draftSummaryOverride!.trim()
-              : '';
 
       // ✅ "작성하던 글이 있어요"로 들어온 경우: 자동저장을 임시저장 리스트로 이동
       // 현재 currentDraftId가 자동저장 ID인지 확인
@@ -1829,6 +1818,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         visibility: 'public', // 기본값
         selectedGroupIds: [],
         existingDraftId: currentDraftId, // UUID 기반 ID 사용
+        textStylingService: textStylingService,
       );
 
       // ✅ 자동저장에서 온 경우, 명시적 임시저장 후 자동저장 삭제
@@ -1909,6 +1899,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         stickerService: stickerService,
         forPublishing: true, // 🚀 임시저장도 네트워크 이미지로 변환 (로드 속도 향상)
         allowPartialUpload: true, // 🚀 임시저장 시 업로드 미완료 이미지 허용 (로컬 경로로 저장)
+        textStylingService: textStylingService,
       );
 
       // 5. content 추출
@@ -2093,18 +2084,26 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     FocusManager.instance.primaryFocus?.unfocus();
                   } catch (_) {}
 
-                  final success = await draftService.loadDraft(
+                  final draft = await draftService.loadDraft(
                     draftId: draftId,
                     editorService: editorService,
                     stickerService: stickerService,
                     nodeComponentService: nodeComponentService,
                     dragService: dragService,
+                    textStylingService: textStylingService,
                   );
 
-                  if (success && mounted) {
+                  if (draft != null && mounted) {
                     setState(() {
                       currentDraftId = draftId;
                     });
+
+                    // ✅ Step1 메타데이터도 함께 복원 (제목/요약/썸네일)
+                    _restoreDraftMetadata(
+                      title: draft.title,
+                      summary: draft.summary,
+                      thumbnailUrl: draft.thumbnailUrl,
+                    );
 
                     // 🎯 불러온 상태를 저장 스냅샷으로 간주
                     editorService.markSavedSnapshot();
@@ -2116,9 +2115,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
                     // 🎯 SuperEditor가 build에서 직접 생성되므로 setState로 자동 rebuild됨
                     // 레이아웃 캐시 무효화는 불필요 (자동 재계산됨)
-                  }
-
-                  if (!success && mounted) {
+                  } else if (mounted) {
                     ErrorHandler.showError(
                       context,
                       context.tr('draft_load_failed'),

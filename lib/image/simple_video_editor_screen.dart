@@ -400,13 +400,59 @@ class VideoCropGestureHandler {
       // 새로운 scale 계산 (초기 scale * 감쇠된 scale 변화)
       double newScale = _initialScale! * dampedScale;
 
-      // ✅ 핀치 축소 허용: 1.0 제약 제거
-      // (크롭박스가 벗어나면 onScaleEnd에서 스냅백으로 복귀)
-
-      // 최대 scale 제한만 적용 (최소값 제약 제거)
-      if (newScale > _maxImageScale) {
-        newScale = _maxImageScale;
+      // ✅ 축소 시도 시: 현재 스케일이 이미 1.0 이하면 더 이상 축소 불가
+      if (dampedScale < 1.0 && imageScale <= _minImageScale) {
+        // 축소 시도 무시
+        return null;
       }
+
+      // ✅ 핀치 축소 허용 조건: 이미지가 cropRect를 덮고 있어야 함
+      // 단, newScale이 1.0 이상이면 체크 스킵 (1.0 미만으로만 제한)
+      if (dampedScale < 1.0 &&
+          newScale < _minImageScale &&
+          cropState.cropRectImage != null) {
+        final Rect? frozenCropRectScreen =
+            (_frozenImageRect != null)
+                ? ImageRectUtils.imageToScreenRect(
+                  imageRect: cropState.cropRectImage!,
+                  screenImageRect: _frozenImageRect!,
+                  imageSize: videoSize,
+                )
+                : null;
+
+        final testImageRect = ImageRectUtils.computeImageRectForCrop(
+          containerSize: containerSize,
+          imageSize: videoSize,
+          scale: newScale,
+          offset: imageOffset,
+        );
+
+        final testCropRectScreen =
+            frozenCropRectScreen ??
+            ImageRectUtils.imageToScreenRect(
+              imageRect: cropState.cropRectImage!,
+              screenImageRect: testImageRect,
+              imageSize: videoSize,
+            );
+
+        // ✅ 이미지가 cropRect를 완전히 덮지 못하면 축소 금지
+        if (testImageRect.left > testCropRectScreen.left + _snapTolerancePx ||
+            testImageRect.top > testCropRectScreen.top + _snapTolerancePx ||
+            testImageRect.right < testCropRectScreen.right - _snapTolerancePx ||
+            testImageRect.bottom <
+                testCropRectScreen.bottom - _snapTolerancePx) {
+          // 축소 금지: 현재 scale 유지
+          return null;
+        }
+      }
+
+      // 최소 scale 제한
+      if (newScale < _minImageScale) {
+        return null;
+      }
+
+      // 최대 scale 제한
+      newScale = newScale.clamp(_minImageScale, _maxImageScale);
 
       // ✅ 핀치 중에는 cropRectImage를 변경하지 않음 (크롭박스 고정)
       // 오직 imageScale만 변경하여 영상만 작아지고 커지게 함

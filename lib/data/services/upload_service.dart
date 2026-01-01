@@ -864,13 +864,33 @@ class UploadService with ChangeNotifier {
 
     for (final t in tasks) {
       final bytes = await _prepareImageBytes(t);
-      final mediaType = _createMediaType(t.fileName);
+      // 🎯 실제 인코딩 형식에 맞게 파일명 수정
+      // PNG가 아니면 JPEG로 인코딩되므로 파일명도 .jpg로 변경
+      final fileNameParts = t.fileName.split('.');
+      final originalExt =
+          fileNameParts.length > 1 ? fileNameParts.last.toLowerCase() : '';
+      final bool isPng = originalExt == 'png';
+      final String adjustedFileName;
+      if (isPng) {
+        // PNG는 PNG로 유지
+        adjustedFileName = t.fileName;
+      } else {
+        // 나머지는 JPEG로 인코딩되므로 .jpg 확장자로 변경
+        if (fileNameParts.length > 1) {
+          final baseName = t.fileName.substring(0, t.fileName.lastIndexOf('.'));
+          adjustedFileName = '$baseName.jpg';
+        } else {
+          // 확장자가 없는 경우 .jpg 추가
+          adjustedFileName = '${t.fileName}.jpg';
+        }
+      }
+      final mediaType = _createMediaType(adjustedFileName);
       formData.files.add(
         MapEntry(
           'files',
           MultipartFile.fromBytes(
             bytes,
-            filename: t.fileName,
+            filename: adjustedFileName,
             contentType: mediaType,
           ),
         ),

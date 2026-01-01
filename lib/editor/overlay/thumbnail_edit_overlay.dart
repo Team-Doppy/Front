@@ -1,23 +1,15 @@
-import 'dart:ui' as ui;
 import 'dart:io';
-import 'dart:typed_data';
-import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/video_cache_service.dart';
-import 'package:doppy/image/media_picker_screen.dart';
-import 'package:flutter/cupertino.dart';
-import 'package:doppy/image/simple_image_editor_screen.dart';
-import 'package:doppy/editor/utils/video_upload_utils.dart';
+import 'package:doppy/editor/publish/component/step1_thumbnail_edit.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
-import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
 
+/// 🎯 썸네일 편집 오버레이 (Step1ThumbnailEdit 재사용)
 class ThumbnailEditOverlay extends StatefulWidget {
   final String postId; // 서버에서 데이터 가져오기용
   final String sessionKey;
@@ -45,20 +37,17 @@ class ThumbnailEditOverlay extends StatefulWidget {
   State<ThumbnailEditOverlay> createState() => _ThumbnailEditOverlayState();
 }
 
-class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
+class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
+    with TickerProviderStateMixin {
   String _thumbnailUrl = '';
   bool _isUploadingThumb = false;
   bool _isLoading = true;
   bool _isSaving = false; // 🎯 수정완료 저장 중 상태
-  bool _isVideo = false; // 썸네일이 영상인지 여부
 
   File? _localVideoFile; // 영상 선택 시 원본 비디오 파일
+  File? _localThumbnailFile; // 로컬 썸네일 파일
   VideoPlayerController? _videoController; // 영상 재생 컨트롤러
   String? _cachedVideoUrl; // 캐시된 비디오 URL (서버 영상용)
-
-  // 🎯 업로드 태스크 추적 (썸네일 변경 시 취소용)
-  UploadTask? _currentVideoUploadTask;
-  UploadTask? _currentImageUploadTask; // 🎯 이미지 업로드 태스크도 추적
 
   late final TextEditingController _titleController;
   late final TextEditingController _excerptController;
@@ -71,7 +60,11 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
   String _originalSummary = '';
   String _originalThumbnailUrl = '';
 
-  // 애니메이션 제거됨
+  // 애니메이션 컨트롤러 (Step1ThumbnailEdit에서 필요)
+  late final AnimationController _animationController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 180),
+  );
 
   @override
   void initState() {
@@ -94,7 +87,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
   Future<void> _loadPostData() async {
     try {
       // 🎯 이미 로드된 썸네일 데이터가 있고, title/summary도 모두 있으면 메타데이터 재조회 불필요
-      // title/summary는 메타데이터에 있으므로, 없으면 메타데이터를 조회해야 함
       if (widget.initialThumbnailUrl != null &&
           widget.initialTitle != null &&
           widget.initialSummary != null) {
@@ -123,7 +115,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
             // 썸네일
             _thumbnailUrl = thumbnailUrl;
             _originalThumbnailUrl = thumbnailUrl;
-            _isVideo = isVideo;
 
             _isLoading = false;
           });
@@ -183,7 +174,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
           // 썸네일
           _thumbnailUrl = thumbnailUrl;
           _originalThumbnailUrl = thumbnailUrl;
-          _isVideo = isVideo;
 
           _isLoading = false;
         });
@@ -226,6 +216,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
     _titleFocusNode.dispose();
     _excerptController.dispose();
     _excerptFocusNode.dispose();
+    _animationController.dispose();
 
     // 비디오 소리만 끄기 (컨트롤러는 dispose하지 않음)
     try {
@@ -235,19 +226,19 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
     // 비디오 컨트롤러는 절대 dispose하지 않음
     // - 캐시된 서버 비디오: VideoCacheService가 관리
     // - 로컬 비디오 (업로드 중): 업로드가 완료될 때까지 유지
-    // 앱이 종료될 때 자동으로 정리됨
 
     super.dispose();
   }
 
-  void _toggleEditMode() {
-    setState(() => _editMode = !_editMode);
-  }
-
-  void _exitEditMode() {
-    // 포커스 해제하여 편집모드 종료
-    FocusScope.of(context).unfocus();
-    setState(() => _editMode = false);
+  void _onServerVideoInitialized() {
+    if (_videoController?.value.isInitialized ?? false) {
+      _videoController?.removeListener(_onServerVideoInitialized);
+      try {
+        _videoController?.setLooping(true);
+        _videoController?.play();
+      } catch (_) {}
+      if (mounted) setState(() {});
+    }
   }
 
   Widget _buildLoadingSkeleton() {
@@ -296,536 +287,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
         const Spacer(flex: 3),
         const SizedBox(height: 10),
       ],
-    );
-  }
-
-  void _onServerVideoInitialized() {
-    if (_videoController?.value.isInitialized ?? false) {
-      _videoController?.removeListener(_onServerVideoInitialized);
-      try {
-        _videoController?.setLooping(true);
-        _videoController?.play();
-      } catch (_) {}
-      if (mounted) setState(() {});
-    }
-  }
-
-  /// 이미지 편집기 열기
-  Future<void> _editCurrentImage() async {
-    if (_thumbnailUrl.isEmpty) {
-      ErrorHandler.showInfo(context, context.tr('thumbnail_select_first'));
-      return;
-    }
-
-    try {
-      FocusScope.of(context).unfocus();
-
-      // 현재 썸네일 이미지를 네트워크에서 로드
-      final response = await http.get(Uri.parse(_thumbnailUrl));
-      if (response.statusCode != 200) {
-        if (mounted) {
-          ErrorHandler.showError(context, context.tr('image_load_failed'));
-        }
-        return;
-      }
-
-      final imageBytes = response.bodyBytes;
-
-      // ✅ SimpleImageEditorScreen 열기
-      final dynamic result = await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => SimpleImageEditorScreen(imageBytes: imageBytes),
-          fullscreenDialog: true,
-        ),
-      );
-
-      if (result == null || !mounted) return;
-
-      final Uint8List? editedBytes = result is Uint8List ? result : null;
-      if (editedBytes == null) return;
-
-      // 편집된 이미지를 서버에 업로드
-      setState(() => _isUploadingThumb = true);
-
-      final upload = context.read<UploadService>();
-      final tempDir = await getTemporaryDirectory();
-      final tempFile = File(
-        '${tempDir.path}/edited_thumbnail_${DateTime.now().millisecondsSinceEpoch}.jpg',
-      );
-      await tempFile.writeAsBytes(editedBytes);
-
-      final tasks = await upload.uploadFilesViaServerBatches([
-        tempFile,
-      ], kind: UploadKind.editorImage);
-
-      // 임시 파일 삭제
-      try {
-        await tempFile.delete();
-      } catch (_) {}
-
-      if (tasks.isEmpty || tasks.first.state != UploadState.success) {
-        if (mounted) {
-          ErrorHandler.showError(
-            context,
-            context.tr('thumbnail_upload_failed'),
-          );
-          setState(() => _isUploadingThumb = false);
-        }
-        return;
-      }
-
-      final newUrl = tasks.first.url;
-
-      if (newUrl == null || newUrl.isEmpty) {
-        if (mounted) {
-          ErrorHandler.showError(context, context.tr('upload_url_failed'));
-          setState(() => _isUploadingThumb = false);
-        }
-        return;
-      }
-
-      // 새 썸네일 정보 저장 (화면이 살아있을 때만 반영)
-      _thumbnailUrl = newUrl;
-
-      if (mounted) {
-        setState(() {
-          _isUploadingThumb = false;
-          _isVideo = false; // 편집 후 이미지로 변경
-        });
-      }
-
-      // 업로드 완료 시점에는 콜백 호출하지 않음 (수정 완료 버튼 클릭 시에만 호출)
-      debugPrint('[ThumbnailEditOverlay] 이미지 편집 완료: $_thumbnailUrl');
-    } catch (e) {
-      if (mounted) {
-        ErrorHandler.handleError(context, e);
-        setState(() => _isUploadingThumb = false);
-      }
-    }
-  }
-
-  Future<void> _openGalleryPicker() async {
-    // 이미지 또는 영상 선택 옵션 제공
-    final mediaType = await showModalBottomSheet<String>(
-      backgroundColor: Colors.transparent,
-      context: context,
-      builder:
-          (context) => ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                height: 180,
-                width: double.infinity,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    const SizedBox(height: 8),
-                    Container(
-                      width: 50,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.3),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    ListTile(
-                      onTap: () => Navigator.of(context).pop('image'),
-                      title: Text(context.tr('select_image')),
-                    ),
-                    ListTile(
-                      onTap: () => Navigator.of(context).pop('video'),
-                      title: Text(context.tr('select_video')),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-    );
-
-    if (mediaType == null || !mounted) return;
-
-    if (mediaType == 'image') {
-      await _pickAndUploadImage();
-    } else if (mediaType == 'video') {
-      await _pickAndUploadVideo();
-    }
-  }
-
-  Future<void> _pickAndUploadImage() async {
-    final result = await Navigator.push<MediaPickerResult>(
-      context,
-      CupertinoPageRoute(
-        fullscreenDialog: true, // 🎯 defaultToolbar와 동일한 전환 애니메이션
-        builder:
-            (context) => MediaPickerScreen(
-              initialMediaType: MediaType.image,
-              maxSelectionCount: 1,
-              enableToggle: true, // 이미지/영상 토글 가능
-              onMediaSelected: (file) {
-                // 단일 선택이므로 바로 처리
-              },
-            ),
-      ),
-    );
-
-    if (result != null && result.files.isNotEmpty) {
-      // 🎯 단일 선택이므로 첫 번째 파일만 사용 (안전장치)
-      final file = result.files.first;
-      if (!mounted) return;
-
-      // 🎯 실제로 선택된 미디어 타입 확인
-      if (result.selectedMediaType == MediaType.video) {
-        // 영상이 선택된 경우 영상 업로드로 처리
-        await _pickAndUploadVideo();
-        return;
-      }
-
-      // 🎯 기존 업로드 태스크 모두 취소 (이미지/영상)
-      final upload = context.read<UploadService>();
-      if (_currentVideoUploadTask != null) {
-        upload.cancel(_currentVideoUploadTask!.id);
-        _currentVideoUploadTask?.removeListener(() {});
-        _currentVideoUploadTask = null;
-        debugPrint('[ThumbnailEditOverlay] 이전 영상 업로드 태스크 취소');
-      }
-      if (_currentImageUploadTask != null) {
-        upload.cancel(_currentImageUploadTask!.id);
-        _currentImageUploadTask?.removeListener(() {});
-        _currentImageUploadTask = null;
-        debugPrint('[ThumbnailEditOverlay] 이전 이미지 업로드 태스크 취소');
-      }
-
-      // 영상 정리 (컨트롤러는 dispose하지 않고 상태만 초기화)
-      _videoController = null;
-      _localVideoFile = null;
-      _cachedVideoUrl = null;
-
-      setState(() {
-        _isUploadingThumb = true;
-        _isVideo = false; // 이미지로 변경
-      });
-      try {
-        final tasks = await upload.uploadFilesViaServerBatches([
-          file,
-        ], kind: UploadKind.editorImage);
-
-        if (tasks.isNotEmpty) {
-          final t = tasks.first;
-          // 🎯 이미지 업로드 태스크 추적
-          _currentImageUploadTask = t;
-
-          // 업로드 완료/실패 리스너 추가
-          bool handled = false;
-          void listener() {
-            if (handled) return;
-            if (t.state == UploadState.success ||
-                t.state == UploadState.failed ||
-                t.state == UploadState.cancelled) {
-              handled = true;
-              t.removeListener(listener);
-              if (_currentImageUploadTask?.id == t.id) {
-                _currentImageUploadTask = null;
-              }
-            }
-          }
-
-          t.addListener(listener);
-
-          final hasUrl = (t.url ?? '').isNotEmpty;
-
-          if (t.state == UploadState.success && hasUrl) {
-            _thumbnailUrl = t.url!;
-
-            // 업로드 완료 시점에는 콜백 호출하지 않음 (수정 완료 버튼 클릭 시에만 호출)
-          } else {
-            if (mounted) {
-              ErrorHandler.showError(
-                context,
-                context.tr('thumbnail_upload_failed'),
-              );
-            }
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          ErrorHandler.handleError(context, e, customMessage: '업로드 오류');
-        }
-      } finally {
-        if (mounted) setState(() => _isUploadingThumb = false);
-      }
-    }
-  }
-
-  Future<void> _pickAndUploadVideo() async {
-    final result = await Navigator.push<MediaPickerResult>(
-      context,
-      CupertinoPageRoute(
-        fullscreenDialog: true, // 🎯 defaultToolbar와 동일한 전환 애니메이션
-        builder:
-            (context) => MediaPickerScreen(
-              initialMediaType: MediaType.video,
-              maxSelectionCount: 1,
-              enableToggle: true, // 이미지/영상 토글 가능
-              onMediaSelected: (file) {
-                // 단일 선택이므로 바로 처리
-              },
-            ),
-      ),
-    );
-
-    if (result == null || result.files.isEmpty || !mounted) return;
-
-    // 🎯 실제로 선택된 미디어 타입 확인
-    if (result.selectedMediaType == MediaType.image) {
-      // 이미지가 선택된 경우 이미지 업로드로 처리 (이미 선택된 파일 사용)
-      final file = result.files.first;
-      if (!mounted) return;
-
-      // 🎯 영상 업로드 중이면 이전 업로드 태스크 취소
-      if (_currentVideoUploadTask != null) {
-        final upload = context.read<UploadService>();
-        upload.cancel(_currentVideoUploadTask!.id);
-        _currentVideoUploadTask?.removeListener(() {});
-        _currentVideoUploadTask = null;
-        debugPrint('[ThumbnailEditOverlay] 이전 영상 업로드 태스크 취소');
-      }
-
-      // 영상 정리 (컨트롤러는 dispose하지 않고 상태만 초기화)
-      _videoController = null;
-      _localVideoFile = null;
-      _cachedVideoUrl = null;
-
-      setState(() {
-        _isUploadingThumb = true;
-        _isVideo = false; // 이미지로 변경
-      });
-      try {
-        final upload = context.read<UploadService>();
-        final tasks = await upload.uploadFilesViaServerBatches([
-          file,
-        ], kind: UploadKind.editorImage);
-
-        if (tasks.isNotEmpty) {
-          final t = tasks.first;
-          final hasUrl = (t.url ?? '').isNotEmpty;
-
-          if (t.state == UploadState.success && hasUrl) {
-            _thumbnailUrl = t.url!;
-
-            // 업로드 완료 시점에는 콜백 호출하지 않음 (수정 완료 버튼 클릭 시에만 호출)
-          } else {
-            if (mounted) {
-              ErrorHandler.showError(
-                context,
-                context.tr('thumbnail_upload_failed'),
-              );
-            }
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          ErrorHandler.handleError(context, e, customMessage: '업로드 오류');
-        }
-      } finally {
-        if (mounted) setState(() => _isUploadingThumb = false);
-      }
-      return;
-    }
-
-    // 🎯 단일 선택이므로 첫 번째 파일만 사용 (안전장치)
-    final videoFile = result.files.first;
-
-    // 파일 검증
-    final validationError = await VideoUploadUtils.validateFile(
-      context,
-      videoFile.path,
-    );
-    if (validationError != null) return;
-
-    setState(() => _isUploadingThumb = true);
-
-    try {
-      // 썸네일 생성
-      final thumbnail = await VideoUploadUtils.generateThumbnail(
-        videoFile.path,
-      );
-      if (thumbnail == null) {
-        throw Exception('썸네일 생성 실패');
-      }
-
-      // 비디오 플레이어 초기화 (기존 컨트롤러는 dispose하지 않음)
-      _videoController = VideoPlayerController.file(videoFile)
-        ..initialize().then((_) {
-          if (mounted) {
-            _videoController?.play();
-            _videoController?.setLooping(true);
-            setState(() {});
-          }
-        });
-
-      if (mounted) {
-        setState(() => _localVideoFile = videoFile);
-      }
-
-      // 비디오 압축
-      final mp4File = await VideoUploadUtils.compressVideo(videoFile.path);
-      if (mp4File == null) {
-        if (mounted) {
-          await DialogUtils.showInfoDialog(
-            context,
-            title: '업로드 불가',
-            message: '파일이 너무 큽니다.',
-          );
-          // 컨트롤러는 dispose하지 않고 상태만 초기화
-          setState(() {
-            _localVideoFile = null;
-            _isUploadingThumb = false;
-          });
-        }
-        return;
-      }
-
-      // 🎯 이전 영상 업로드 태스크 취소
-      if (_currentVideoUploadTask != null) {
-        final upload = context.read<UploadService>();
-        upload.cancel(_currentVideoUploadTask!.id);
-        _currentVideoUploadTask?.removeListener(() {});
-        _currentVideoUploadTask = null;
-        debugPrint('[ThumbnailEditOverlay] 이전 영상 업로드 태스크 취소');
-      }
-
-      // 서버 업로드
-      final upload = context.read<UploadService>();
-      final task = upload.enqueueFile(mp4File, kind: UploadKind.video);
-
-      // 🎯 현재 업로드 태스크 저장
-      _currentVideoUploadTask = task;
-
-      bool handled = false;
-      void listener() async {
-        if (handled) return;
-
-        if (task.state == UploadState.success) {
-          handled = true;
-          final videoUrl = task.url;
-
-          if (videoUrl == null || videoUrl.isEmpty) {
-            if (mounted) {
-              ErrorHandler.showError(context, context.tr('video_url_failed'));
-              setState(() => _isUploadingThumb = false);
-            }
-            return;
-          }
-
-          _thumbnailUrl = videoUrl;
-
-          if (mounted) {
-            setState(() {
-              _isUploadingThumb = false;
-              _isVideo = true; // 영상 업로드 완료
-            });
-          }
-
-          debugPrint('[ThumbnailEditOverlay] 영상 업로드 완료 콜백 호출: $_thumbnailUrl');
-          // 업로드 완료 시점에는 콜백 호출하지 않음 (수정 완료 버튼 클릭 시에만 호출)
-
-          // 🎯 업로드 완료 시 태스크 추적 해제
-          _currentVideoUploadTask = null;
-        } else if (task.state == UploadState.failed) {
-          handled = true;
-          if (mounted) {
-            await VideoUploadUtils.showUploadFailedDialog(context, task.error);
-            // 컨트롤러는 dispose하지 않고 상태만 초기화
-            setState(() {
-              _localVideoFile = null;
-              _isUploadingThumb = false;
-            });
-          }
-
-          // 🎯 업로드 실패 시 태스크 추적 해제
-          _currentVideoUploadTask = null;
-        } else if (task.state == UploadState.cancelled) {
-          handled = true;
-          if (mounted) {
-            await VideoUploadUtils.showUploadCancelledDialog(context);
-            // 컨트롤러는 dispose하지 않고 상태만 초기화
-            setState(() {
-              _localVideoFile = null;
-              _isUploadingThumb = false;
-            });
-          }
-
-          // 🎯 업로드 취소 시 태스크 추적 해제
-          _currentVideoUploadTask = null;
-        }
-      }
-
-      task.addListener(listener);
-
-      Future.delayed(const Duration(minutes: 2), () async {
-        if (!handled && mounted) {
-          task.removeListener(listener);
-          await VideoUploadUtils.showUploadTimeoutDialog(context);
-          // 컨트롤러는 dispose하지 않고 상태만 초기화
-          setState(() {
-            _localVideoFile = null;
-            _isUploadingThumb = false;
-          });
-
-          // 🎯 타임아웃 시 태스크 추적 해제
-          _currentVideoUploadTask = null;
-        }
-      });
-    } catch (e) {
-      if (mounted) {
-        await VideoUploadUtils.showGeneralErrorDialog(context);
-        // 컨트롤러는 dispose하지 않고 상태만 초기화
-        setState(() {
-          _localVideoFile = null;
-          _isUploadingThumb = false;
-        });
-      }
-
-      // 🎯 에러 시 태스크 추적 해제
-      _currentVideoUploadTask = null;
-    }
-  }
-
-  Widget _buildEditButton() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(35),
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(35),
-          ),
-          child: Row(
-            children: [
-              Text(
-                context.tr('edit_thumbnail'),
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurface,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w300,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -937,6 +398,12 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
     }
   }
 
+  void _exitEditMode() {
+    // 포커스 해제하여 편집모드 종료
+    FocusScope.of(context).unfocus();
+    setState(() => _editMode = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final cardRadius = 20.0;
@@ -969,10 +436,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
                       );
                       if (shouldExit == true && mounted) {
                         // 업로드 중이므로 컨트롤러는 정리하지 않고 그냥 나가기
-                        // 비디오 일시정지만 함
-
-                        // 적용 없이 종료: 상태 변경 없음 (재빌드 유발 방지)
-
                         Navigator.of(context).pop();
                       }
                       return;
@@ -991,18 +454,10 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
                         cancelText: context.tr('cancel'),
                       );
                       if (shouldExit != true) return;
-
-                      // 사용자가 "나가기"를 선택 -> 변경사항 버리고 그냥 나가기
-                      // 컨트롤러는 정리하지 않음 (변경사항을 적용하지 않으므로)
-                      // 적용 없이 종료: 상태 변경 없음 (재빌드 유발 방지)
                     }
 
                     // 변경사항 여부와 관계없이 그냥 나가기
                     if (mounted) {
-                      // 비디오 일시정지 (소리는 이미 dispose에서 끔)
-
-                      // 적용 없이 종료: 상태 변경 없음 (재빌드 유발 방지)
-
                       Navigator.of(context).pop();
                     }
                   },
@@ -1017,14 +472,12 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
             child:
                 (_isSaving && !_editMode)
                     ? SizedBox(
-                      width: 16,
-                      height: 16,
+                      width: 26,
+                      height: 26,
                       child: CircularProgressIndicator(
-                        strokeWidth: 2,
+                        strokeWidth: 4,
                         valueColor: AlwaysStoppedAnimation<Color>(
-                          Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.9),
+                          Theme.of(context).colorScheme.onSurface,
                         ),
                       ),
                     )
@@ -1034,7 +487,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
                           : context.tr('modify_complete'),
                       style: TextStyle(
                         fontSize: 16,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w600,
                         color:
                             (!_editMode && (_isUploadingThumb || _isSaving))
                                 ? Theme.of(
@@ -1046,7 +499,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
                       ),
                     ),
           ),
-          SizedBox(width: 10),
+          const SizedBox(width: 10),
         ],
       ),
       body: AnimatedSwitcher(
@@ -1069,415 +522,85 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay> {
                 )
                 : KeyedSubtree(
                   key: const ValueKey('content'),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  child: Stack(
                     children: [
-                      const Spacer(flex: 1),
+                      // 🎯 Step1ThumbnailEdit 재사용
+                      Step1ThumbnailEdit(
+                        sessionKey: widget.sessionKey,
+                        cardRadius: cardRadius,
+                        titleController: _titleController,
+                        excerptController: _excerptController,
+                        titleFocusNode: _titleFocusNode,
+                        excerptFocusNode: _excerptFocusNode,
+                        exportedThumbnailImageUrl: _thumbnailUrl,
+                        editMode: _editMode,
+                        isUploadingThumb: _isUploadingThumb,
+                        localThumbnailFile: _localThumbnailFile,
+                        localVideoFile: _localVideoFile,
+                        videoController: _videoController,
+                        controller: _animationController,
+                        isThumbnailEditMode: true, // 🎯 썸네일 편집 모드
+                        onThumbnailUrlChanged: (url) {
+                          setState(() {
+                            _thumbnailUrl = url;
+                          });
+                        },
+                        onLocalThumbnailChanged: (file) {
+                          setState(() {
+                            _localThumbnailFile = file;
+                          });
+                        },
+                        onLocalVideoChanged: (file) {
+                          setState(() {
+                            _localVideoFile = file;
+                          });
+                        },
+                        onVideoControllerChanged: (controller) {
+                          setState(() {
+                            _videoController?.dispose();
+                            _videoController = controller;
+                          });
+                        },
+                        onIsUploadingThumbChanged: (value) {
+                          setState(() {
+                            _isUploadingThumb = value;
+                          });
+                        },
+                        onEditModeChanged: (value) {
+                          setState(() {
+                            _editMode = value;
+                          });
+                        },
+                        onEditFocusChange: () {},
+                      ),
 
-                      // 썸네일 카드 (키보드 열리면 숨김)
-                      AnimatedCrossFade(
-                        duration: const Duration(milliseconds: 100),
-                        crossFadeState:
-                            (MediaQuery.of(context).viewInsets.bottom > 0)
-                                ? CrossFadeState.showSecond
-                                : CrossFadeState.showFirst,
-                        firstChild: Stack(
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 50.0,
-                              ),
+                      // 수정 완료 중 전체 화면 투명 오버레이 (post_export_screen과 동일한 방식)
+                      if (_isSaving)
+                        Positioned.fill(
+                          child: AbsorbPointer(
+                            absorbing: true,
+                            child: Container(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.3),
                               child: Center(
-                                child: AspectRatio(
-                                  aspectRatio: 4 / 5, // PostList와 동일한 4:5 비율
-                                  child: GestureDetector(
-                                    onTap: _openGalleryPicker,
-                                    onLongPress: _toggleEditMode,
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(
-                                          cardRadius + 2,
-                                        ),
-                                        border: Border.all(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withOpacity(0.1),
-                                          width: 2,
-                                        ),
-                                      ),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(
-                                          cardRadius,
-                                        ),
-                                        child: Stack(
-                                          children: [
-                                            // 배경 이미지 또는 비디오
-                                            Positioned.fill(
-                                              child: AnimatedSwitcher(
-                                                duration: const Duration(
-                                                  milliseconds: 300,
-                                                ),
-                                                child:
-                                                    _localVideoFile != null &&
-                                                            _videoController !=
-                                                                null
-                                                        ? _videoController!
-                                                                .value
-                                                                .isInitialized
-                                                            ? ClipRRect(
-                                                              key: ValueKey(
-                                                                'video_${_videoController.hashCode}',
-                                                              ),
-                                                              borderRadius:
-                                                                  BorderRadius.circular(
-                                                                    cardRadius,
-                                                                  ),
-                                                              child: SizedBox.expand(
-                                                                child: FittedBox(
-                                                                  fit:
-                                                                      BoxFit
-                                                                          .cover,
-                                                                  child: SizedBox(
-                                                                    width:
-                                                                        _videoController!
-                                                                            .value
-                                                                            .size
-                                                                            .width,
-                                                                    height:
-                                                                        _videoController!
-                                                                            .value
-                                                                            .size
-                                                                            .height,
-                                                                    child: VideoPlayer(
-                                                                      _videoController!,
-                                                                    ),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            )
-                                                            : ShimmerBox(
-                                                              key: const ValueKey(
-                                                                'shimmer_local',
-                                                              ),
-                                                              width:
-                                                                  MediaQuery.of(
-                                                                    context,
-                                                                  ).size.width,
-                                                              height:
-                                                                  MediaQuery.of(
-                                                                    context,
-                                                                  ).size.height,
-                                                            )
-                                                        : _thumbnailUrl.isEmpty
-                                                        ? const _EmptyImagePlaceholder(
-                                                          key: ValueKey(
-                                                            'empty',
-                                                          ),
-                                                        )
-                                                        : _isVideo
-                                                        ? _videoController !=
-                                                                    null &&
-                                                                _videoController!
-                                                                    .value
-                                                                    .isInitialized
-                                                            ? ClipRRect(
-                                                              key: ValueKey(
-                                                                'video_network_${_thumbnailUrl}',
-                                                              ),
-                                                              borderRadius:
-                                                                  BorderRadius.circular(
-                                                                    cardRadius,
-                                                                  ),
-                                                              child: SizedBox.expand(
-                                                                child: FittedBox(
-                                                                  fit:
-                                                                      BoxFit
-                                                                          .cover,
-                                                                  child: SizedBox(
-                                                                    width:
-                                                                        _videoController!
-                                                                            .value
-                                                                            .size
-                                                                            .width,
-                                                                    height:
-                                                                        _videoController!
-                                                                            .value
-                                                                            .size
-                                                                            .height,
-                                                                    child: VideoPlayer(
-                                                                      _videoController!,
-                                                                    ),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            )
-                                                            : ShimmerBox(
-                                                              key: const ValueKey(
-                                                                'shimmer_network',
-                                                              ),
-                                                              width:
-                                                                  MediaQuery.of(
-                                                                    context,
-                                                                  ).size.width,
-                                                              height:
-                                                                  MediaQuery.of(
-                                                                    context,
-                                                                  ).size.height,
-                                                            )
-                                                        : ClipRRect(
-                                                          key: ValueKey(
-                                                            'image_$_thumbnailUrl',
-                                                          ),
-                                                          borderRadius:
-                                                              BorderRadius.circular(
-                                                                cardRadius,
-                                                              ),
-                                                          child: SizedBox.expand(
-                                                            child: FittedBox(
-                                                              fit: BoxFit.cover,
-                                                              child: Image.network(
-                                                                _thumbnailUrl,
-                                                                errorBuilder:
-                                                                    (
-                                                                      c,
-                                                                      e,
-                                                                      s,
-                                                                    ) => const _EmptyImagePlaceholder(
-                                                                      key: ValueKey(
-                                                                        'error',
-                                                                      ),
-                                                                    ),
-                                                              ),
-                                                            ),
-                                                          ),
-                                                        ),
-                                              ),
-                                            ),
-
-                                            // 업로드 중 로딩 오버레이
-                                            if (_isUploadingThumb)
-                                              Positioned.fill(
-                                                child: Container(
-                                                  color: Colors.black
-                                                      .withOpacity(0.3),
-                                                  child: const Center(
-                                                    child: CircularProgressIndicator(
-                                                      valueColor:
-                                                          AlwaysStoppedAnimation<
-                                                            Color
-                                                          >(Colors.white),
-                                                      strokeWidth: 3,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-
-                                            // 음소거 버튼 (영상일 때만)
-                                            if (_videoController != null &&
-                                                _videoController!
-                                                    .value
-                                                    .isInitialized &&
-                                                (_localVideoFile != null ||
-                                                    _isVideo))
-                                              Positioned(
-                                                right: 6,
-                                                bottom: 6,
-                                                child: GestureDetector(
-                                                  onTap: () {
-                                                    setState(() {
-                                                      if (_videoController!
-                                                              .value
-                                                              .volume >
-                                                          0) {
-                                                        _videoController!
-                                                            .setVolume(0);
-                                                      } else {
-                                                        _videoController!
-                                                            .setVolume(1);
-                                                      }
-                                                    });
-                                                  },
-                                                  child: Container(
-                                                    padding:
-                                                        const EdgeInsets.all(8),
-                                                    decoration: BoxDecoration(
-                                                      color: Colors.black
-                                                          .withOpacity(0.5),
-                                                      shape: BoxShape.circle,
-                                                    ),
-                                                    child: Icon(
-                                                      _videoController!
-                                                                  .value
-                                                                  .volume >
-                                                              0
-                                                          ? Icons
-                                                              .volume_up_rounded
-                                                          : Icons
-                                                              .volume_off_rounded,
-                                                      color: Colors.white,
-                                                      size: 16,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-
-                                            // 편집하기 버튼
-                                            if (!_isUploadingThumb)
-                                              Positioned(
-                                                left: 6,
-                                                bottom: 6,
-                                                child: GestureDetector(
-                                                  onTap: () {
-                                                    // 이미지면 바로 편집기 열기, 비디오면 선택 바텀시트
-                                                    if (_thumbnailUrl
-                                                            .isNotEmpty &&
-                                                        !_isVideo) {
-                                                      _editCurrentImage();
-                                                    } else {
-                                                      _openGalleryPicker();
-                                                    }
-                                                  },
-                                                  child: _buildEditButton(),
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                      ),
+                                child: SizedBox(
+                                  width: 26,
+                                  height: 26,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 4,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Theme.of(context).colorScheme.onSurface,
                                     ),
                                   ),
                                 ),
                               ),
                             ),
-                          ],
-                        ),
-                        secondChild: const SizedBox(height: 8),
-                      ),
-
-                      // 하단 텍스트 영역 (post_export_screen과 동일)
-                      AnimatedPadding(
-                        duration: const Duration(milliseconds: 160),
-                        curve: Curves.easeOut,
-                        padding: EdgeInsets.only(
-                          bottom:
-                              MediaQuery.of(context).viewInsets.bottom > 0
-                                  ? 0
-                                  : 0,
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 30,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            mainAxisAlignment: MainAxisAlignment.start,
-                            children: [
-                              // 제목 (탭 시 인라인 편집)
-                              GestureDetector(
-                                onTap: () {
-                                  setState(() => _editMode = true);
-                                  FocusScope.of(
-                                    context,
-                                  ).requestFocus(_titleFocusNode);
-                                },
-                                child: AbsorbPointer(
-                                  absorbing: false,
-                                  child: TextField(
-                                    controller: _titleController,
-                                    focusNode: _titleFocusNode,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.9),
-                                      fontSize: 35,
-                                      fontWeight: FontWeight.bold,
-                                      letterSpacing: -0.2,
-                                    ),
-                                    maxLines: 1,
-                                    decoration: const InputDecoration(
-                                      border: InputBorder.none,
-                                      isCollapsed: true,
-                                      contentPadding: EdgeInsets.zero,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              // 내용 (탭 시 인라인 편집 가능)
-                              GestureDetector(
-                                onTap: () {
-                                  setState(() => _editMode = true);
-                                  FocusScope.of(
-                                    context,
-                                  ).requestFocus(_excerptFocusNode);
-                                },
-                                child: AbsorbPointer(
-                                  absorbing: false,
-                                  child: TextField(
-                                    controller: _excerptController,
-                                    focusNode: _excerptFocusNode,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.7),
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w300,
-                                      height: 1.8,
-                                      letterSpacing: -0.1,
-                                    ),
-                                    maxLines: 5,
-                                    minLines: 5,
-                                    keyboardType: TextInputType.multiline,
-                                    decoration: const InputDecoration(
-                                      border: InputBorder.none,
-                                      isCollapsed: true,
-                                      contentPadding: EdgeInsets.zero,
-                                    ),
-                                    scrollPhysics:
-                                        const NeverScrollableScrollPhysics(),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                            ],
                           ),
                         ),
-                      ),
-
-                      const Spacer(),
-                      const SizedBox(height: 10),
                     ],
                   ),
                 ),
-      ),
-    );
-  }
-}
-
-// 빈 이미지 자리표시자
-class _EmptyImagePlaceholder extends StatelessWidget {
-  const _EmptyImagePlaceholder({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: Theme.of(context).colorScheme.surface,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '눌러서 썸네일을 선택해주세요',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface,
-                fontSize: 15,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

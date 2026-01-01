@@ -3,7 +3,6 @@ import 'dart:ui' as ui;
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
-import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/data/services/auth_service.dart';
@@ -87,6 +86,7 @@ class PostExporter {
     bool pretty = true,
     bool forPublishing = false,
     bool allowPartialUpload = false, // 🚀 임시저장 시 업로드 미완료 이미지 허용
+    dynamic textStylingService, // TextStylingService (순환 참조 방지)
   }) {
     final map = exportToMap(
       editorService: editorService,
@@ -94,35 +94,25 @@ class PostExporter {
       viewportSize: viewportSize,
       forPublishing: forPublishing,
       allowPartialUpload: allowPartialUpload,
+      textStylingService: textStylingService,
     );
     return JsonExport.encode(map, pretty: pretty);
   }
 
-  /// 문서에서 제목 추출
+  /// 문서에서 제목 추출 (더 이상 사용되지 않음, 빈 문자열 반환)
   static String getTitleFromDocument(MutableDocument document) {
-    for (int i = 0; i < document.length; i++) {
-      final node = document.getNodeAt(i);
-      if (node is ParagraphNode && node.metadata['isTitle'] == true) {
-        return node.text.text.trim();
-      }
-    }
     return '';
   }
 
   /// 제목이 없으면 본문에서 발췌 (최대 30자)
   static String getTitleOrExtractFromBody(MutableDocument document) {
-    // 먼저 제목 노드 확인
-    final title = getTitleFromDocument(document);
-    if (title.isNotEmpty) return title;
-
-    // 제목이 없으면 본문에서 발췌
+    // 본문에서 발췌
     final buffer = StringBuffer();
 
-    // 제목 노드(isTitle==true)는 제외하고, 나머지 모든 본문 노드에서 텍스트 수집
+    // 모든 본문 노드에서 텍스트 수집
     for (int i = 0; i < document.length; i++) {
       final node = document.getNodeAt(i);
       if (node is ParagraphNode) {
-        if (node.metadata['isTitle'] == true) continue;
         final text = node.text.text.trim();
         if (text.isNotEmpty) {
           buffer.write(text);
@@ -242,6 +232,7 @@ class PostExporter {
     Size? viewportSize,
     bool forPublishing = false,
     bool allowPartialUpload = false, // 🚀 임시저장 시 업로드 미완료 이미지 허용
+    dynamic textStylingService, // TextStylingService (순환 참조 방지)
   }) {
     final doc = editorService.document;
     final layout =
@@ -256,7 +247,6 @@ class PostExporter {
         final meta = node.metadata;
 
         final align = meta['textAlign'] as String?;
-        final isTitle = meta['isTitle'] == true;
         final fontFamily = meta['fontFamily'] as String?;
 
         // 🎯 폰트 메타데이터 디버그 로그
@@ -276,9 +266,6 @@ class PostExporter {
         // 필요한 필드만 추가
         if (align != null && align != 'center') {
           nodeMap['align'] = align;
-        }
-        if (isTitle) {
-          nodeMap['isTitle'] = true;
         }
         if (fontFamily != null && fontFamily.isNotEmpty) {
           nodeMap['fontFamily'] = fontFamily;
@@ -985,6 +972,19 @@ class PostExporter {
       'author': author,
       'content': {'nodes': nodes, 'stickers': stickers},
     };
+
+    // 🎯 전역 폰트 사이즈 저장
+    if (textStylingService != null) {
+      try {
+        final globalFontSize = (textStylingService as dynamic).globalFontSize;
+        if (globalFontSize != null) {
+          result['globalFontSize'] = globalFontSize;
+          debugPrint('[PostExporter] ✅ 전역 폰트 사이즈 저장: $globalFontSize');
+        }
+      } catch (e) {
+        debugPrint('[PostExporter] ⚠️ 전역 폰트 사이즈 저장 실패: $e');
+      }
+    }
 
     return result;
   }

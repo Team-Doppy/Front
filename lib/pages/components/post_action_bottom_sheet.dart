@@ -361,15 +361,7 @@ class PostActionBottomSheet extends StatelessWidget {
     if (onShowLikedUsers != null) {
       onShowLikedUsers!();
     } else {
-      // 직접 표시
-      showModalBottomSheet(
-        context: context,
-        backgroundColor: Colors.transparent,
-        isScrollControlled: true,
-        builder:
-            (context) =>
-                LikedUsersBottomSheet(postId: postId, likeCount: likeCount),
-      );
+      LikedUsersBottomSheet.show(context, postId: postId, likeCount: likeCount);
     }
   }
 

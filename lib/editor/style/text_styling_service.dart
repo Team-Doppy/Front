@@ -18,6 +18,11 @@ class TextStylingService extends ChangeNotifier {
 
   String? get globalFontFamily => _globalFontFamily;
 
+  // 전역 폰트 사이즈 (새로 입력되는 모든 텍스트에 적용)
+  double? _globalFontSize;
+
+  double? get globalFontSize => _globalFontSize;
+
   TextStylingService({required this.editor, required this.composer});
 
   /// 메타데이터에 폰트 적용
@@ -414,6 +419,12 @@ class TextStylingService extends ChangeNotifier {
 
     // 선택이 없으면 다음 입력에 적용
     if (selection == null || selection.isCollapsed) {
+      // 🎯 전역 폰트 사이즈 설정
+      if (_globalFontSize != size) {
+        _globalFontSize = size;
+        notifyListeners();
+      }
+
       // 🎯 현재 스타일시트에서 폰트 크기만 제거 (다른 속성은 유지)
       final currentAttrs = composer.preferences.currentAttributions.toList();
       for (final attr in currentAttrs) {

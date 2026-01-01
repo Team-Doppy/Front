@@ -620,27 +620,7 @@ class _CardViewState extends State<CardView> {
 
   String _formatDateString(String dateStr) {
     try {
-      // UTC 시간을 로컬 시간으로 변환
-      final date = TimeUtils.toLocalTime(dateStr);
-      final now = DateTime.now();
-      final difference = now.difference(date);
-
-      if (difference.inDays == 0) {
-        if (difference.inHours == 0) {
-          return '${difference.inMinutes}분 전';
-        }
-        return '${difference.inHours}시간 전';
-      } else if (difference.inDays == 1) {
-        return '어제';
-      } else if (difference.inDays < 7) {
-        return '${difference.inDays}일 전';
-      } else if (difference.inDays < 30) {
-        return '${difference.inDays ~/ 7}주 전';
-      } else if (difference.inDays < 365) {
-        return '${difference.inDays ~/ 30}개월 전';
-      } else {
-        return '${difference.inDays ~/ 365}년 전';
-      }
+      return TimeUtils.formatRelativeTimeFromUtc(context, dateStr);
     } catch (e) {
       return dateStr;
     }

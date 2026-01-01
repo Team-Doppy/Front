@@ -69,39 +69,13 @@ class PostReaderHeader extends StatelessWidget {
   }
 
   String _titleAlign() {
-    try {
-      final nodes = (_contentRoot?['nodes'] as List?) ?? const [];
-      for (final n in nodes) {
-        if (n is Map) {
-          final m = n.cast<String, dynamic>();
-          if (m['type'] == 'paragraph' && m['isTitle'] == true) {
-            return (m['align'] ?? 'center').toString();
-          }
-        }
-      }
-    } catch (_) {}
+    // 제목 정렬은 기본값 center 사용 (더 이상 노드에서 추출하지 않음)
     return 'center';
   }
 
   /// 제목 텍스트와 스타일 정보 추출
   Map<String, dynamic> _getTitleData() {
-    try {
-      final nodes = (_contentRoot?['nodes'] as List?) ?? const [];
-      for (final n in nodes) {
-        if (n is Map) {
-          final m = n.cast<String, dynamic>();
-          if (m['type'] == 'paragraph' && m['isTitle'] == true) {
-            final text = (m['text'] ?? '').toString();
-            final spans = (m['spans'] as List?) ?? const [];
-            return {
-              'text': text,
-              'fontFamily': m['fontFamily'],
-              'spans': spans,
-            };
-          }
-        }
-      }
-    } catch (_) {}
+    // 더 이상 노드에서 제목 정보를 추출하지 않음
     return {'text': '', 'spans': []};
   }
 
@@ -255,7 +229,6 @@ class PostReaderHeader extends StatelessWidget {
     final Map<String, dynamic> titleData = _getTitleData();
 
     // 제목은 항상 exportedRoot['title']을 우선 사용 (서버 데이터)
-    // content 내부의 isTitle 노드는 스타일 정보만 가져옴
     final root = currentExportedData ?? exportedRoot;
     final String titleText = (root['title'] ?? '포스트').toString();
 

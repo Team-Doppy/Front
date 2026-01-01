@@ -51,11 +51,8 @@ import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/clip_component.dart'
-    show
-        ClipNode,
-        videoPlayerControllers,
-        ClipComponentBuilder,
-        readerVideoControllers;
+    show ClipNode, videoPlayerControllers, ClipComponentBuilder;
+import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:video_player/video_player.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
@@ -189,8 +186,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
       // 2) 액션이 없으면 전체화면으로 열기 (프리로드 보장)
       if (clipNode.url.isNotEmpty) {
-        // 🎯 ClipComponent에서 생성한 컨트롤러를 가져와서 FullscreenMediaViewer에 전달
-        final controller = readerVideoControllers[clipNode.url];
+        // 🎯 VideoCacheService에서 컨트롤러 가져오기
+        final videoCache = VideoCacheService();
+        VideoPlayerController? controller;
+        if (videoCache.hasController(clipNode.url, namespace: 'reader')) {
+          controller = videoCache.getOrCreateController(
+            clipNode.url,
+            namespace: 'reader',
+          );
+        }
         debugPrint(
           '[PostReaderScreen] ✅ 풀스크린 뷰어 열기: ${clipNode.url} (컨트롤러: ${controller != null ? "있음" : "없음"})',
         );
@@ -1227,41 +1231,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // 따라서 화면 종료 시점에는 reader 전용 컨트롤러만 정리한다.
 
     // 🎯 reader 모드에서 생성한 모든 비디오 컨트롤러 정지 및 dispose
-    // 먼저 목록을 복사 (dispose 중에 맵이 변경될 수 있음)
-    final controllersToDispose = <VideoPlayerController>[];
-    final urlsToRemove = <String>[];
-
-    for (final entry in readerVideoControllers.entries) {
-      controllersToDispose.add(entry.value);
-      urlsToRemove.add(entry.key);
+    // 🎯 VideoCacheService를 통해 reader 네임스페이스의 모든 컨트롤러 일시정지
+    try {
+      VideoCacheService().pauseAllInNamespace('reader');
+      debugPrint(
+        '[PostReaderScreen] VideoCacheService를 통한 reader 컨트롤러 일시정지 완료',
+      );
+    } catch (e) {
+      debugPrint('[PostReaderScreen] VideoCacheService 일시정지 오류: $e');
     }
-
-    // 모든 컨트롤러 정지 및 dispose
-    for (int i = 0; i < controllersToDispose.length; i++) {
-      final controller = controllersToDispose[i];
-      final url = urlsToRemove[i];
-      try {
-        // 일시정지 (가능하면)
-        try {
-          if (controller.value.isPlaying) {
-            controller.pause();
-            debugPrint('[PostReaderScreen] 컨트롤러 일시정지: $url');
-          }
-        } catch (_) {}
-
-        // dispose (initialize 여부와 무관하게 best-effort)
-        controller.dispose();
-        debugPrint('[PostReaderScreen] 컨트롤러 dispose: $url');
-      } catch (e) {
-        debugPrint('[PostReaderScreen] 컨트롤러 정리 오류 ($url): $e');
-      }
-    }
-
-    // 맵 clear
-    readerVideoControllers.clear();
-    debugPrint(
-      '[PostReaderScreen] reader 비디오 컨트롤러 모두 정리 완료 (${controllersToDispose.length}개)',
-    );
 
     // 화면 종료 시 스포일러 세션 상태 초기화 (프레임 잠금 중 알림 방지)
     try {
@@ -1865,7 +1843,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                     widget.exported['id']?.toString();
 
                                 if (postId != null && postId.isNotEmpty) {
-                                  Navigator.of(context).pushReplacement(
+                                  Navigator.of(context).push(
                                     PageRouteBuilder(
                                       pageBuilder:
                                           (
@@ -1996,8 +1974,17 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                 isVideo: _isVideoViewer,
                                 preloadedController:
                                     _isVideoViewer && _currentImageUrl != null
-                                        ? readerVideoControllers[_currentImageUrl!]
-                                        : null, // 🎯 ClipComponent에서 생성한 컨트롤러 공유
+                                        ? (VideoCacheService().hasController(
+                                              _currentImageUrl!,
+                                              namespace: 'reader',
+                                            )
+                                            ? VideoCacheService()
+                                                .getOrCreateController(
+                                                  _currentImageUrl!,
+                                                  namespace: 'reader',
+                                                )
+                                            : null)
+                                        : null, // 🎯 VideoCacheService에서 컨트롤러 가져오기
                                 // ✅ imageProvider 제거: FullscreenMediaViewer 내부에서 EditorImageProvider 사용
                                 imageProvider: null,
                                 onClose: _closeImageViewer,

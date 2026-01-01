@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 
 /// 시간 관련 유틸리티 함수
 /// UTC 시간을 로컬 시간으로 변환하는 기능 제공
@@ -115,15 +116,123 @@ class TimeUtils {
     }
   }
 
-  /// 현재 시간과 UTC 시간의 차이 계산
+  /// 현재 시간과 UTC 시간의 차이 계산 (UTC 기준)
   static Duration differenceFromNow(String utcString) {
     try {
-      final utcTime = toLocalTime(utcString);
-      final now = DateTime.now();
-      return now.difference(utcTime);
+      // ✅ UTC 시간을 UTC로 파싱
+      final dateTime = DateTime.parse(utcString);
+      final utcTime =
+          dateTime.isUtc
+              ? dateTime
+              : DateTime.utc(
+                dateTime.year,
+                dateTime.month,
+                dateTime.day,
+                dateTime.hour,
+                dateTime.minute,
+                dateTime.second,
+                dateTime.millisecond,
+                dateTime.microsecond,
+              );
+
+      // ✅ 현재 시간을 UTC로 변환하여 비교
+      final nowUtc = DateTime.now().toUtc();
+      return nowUtc.difference(utcTime);
     } catch (e) {
       debugPrint('[TimeUtils] 현재 시간과의 차이 계산 실패: $e');
       return Duration.zero;
+    }
+  }
+
+  /// 상대 시간 포맷팅 (로케일 적용)
+  /// [dateTime]은 로컬 시간이어야 합니다.
+  static String formatRelativeTime(BuildContext context, DateTime dateTime) {
+    final loc = AppLocalizations.of(context);
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    // ✅ 음수 Duration 처리 (미래 시간인 경우)
+    if (difference.isNegative) {
+      return loc.translate('just_now_with_ago');
+    }
+
+    if (difference.inDays == 0) {
+      if (difference.inHours == 0) {
+        if (difference.inMinutes == 0) {
+          return loc.translate('just_now_with_ago');
+        }
+        return '${difference.inMinutes} ${loc.translate('min_ago')}';
+      }
+      return '${difference.inHours} ${loc.translate('hr_ago')}';
+    } else if (difference.inDays == 1) {
+      return loc.translate('yesterday');
+    } else if (difference.inDays < 7) {
+      return '${difference.inDays} ${loc.translate('days_ago')}';
+    } else if (difference.inDays < 30) {
+      return '${difference.inDays ~/ 7} ${loc.translate('weeks_ago')}';
+    } else if (difference.inDays < 365) {
+      return '${difference.inDays ~/ 30} ${loc.translate('months_ago')}';
+    } else {
+      return '${difference.inDays ~/ 365} ${loc.translate('years_ago')}';
+    }
+  }
+
+  /// UTC 시간 문자열을 상대 시간으로 포맷팅 (로케일 적용)
+  /// ✅ UTC 기준으로 계산하여 타임존 차이 문제 해결
+  static String formatRelativeTimeFromUtc(
+    BuildContext context,
+    String utcString,
+  ) {
+    try {
+      // ✅ UTC 시간을 UTC로 파싱
+      final dateTime = DateTime.parse(utcString);
+      final utcTime =
+          dateTime.isUtc
+              ? dateTime
+              : DateTime.utc(
+                dateTime.year,
+                dateTime.month,
+                dateTime.day,
+                dateTime.hour,
+                dateTime.minute,
+                dateTime.second,
+                dateTime.millisecond,
+                dateTime.microsecond,
+              );
+
+      // ✅ 현재 시간을 UTC로 변환하여 비교
+      final nowUtc = DateTime.now().toUtc();
+      final difference = nowUtc.difference(utcTime);
+
+      // ✅ 음수 Duration 처리 (미래 시간인 경우)
+      if (difference.isNegative) {
+        return AppLocalizations.of(context).translate('just_now_with_ago');
+      }
+
+      final loc = AppLocalizations.of(context);
+
+      if (difference.inDays == 0) {
+        if (difference.inHours == 0) {
+          if (difference.inMinutes == 0) {
+            return loc.translate('just_now_with_ago');
+          }
+          return '${difference.inMinutes} ${loc.translate('min_ago')}';
+        }
+        return '${difference.inHours} ${loc.translate('hr_ago')}';
+      } else if (difference.inDays == 1) {
+        return loc.translate('yesterday');
+      } else if (difference.inDays < 7) {
+        return '${difference.inDays} ${loc.translate('days_ago')}';
+      } else if (difference.inDays < 30) {
+        return '${difference.inDays ~/ 7} ${loc.translate('weeks_ago')}';
+      } else if (difference.inDays < 365) {
+        return '${difference.inDays ~/ 30} ${loc.translate('months_ago')}';
+      } else {
+        return '${difference.inDays ~/ 365} ${loc.translate('years_ago')}';
+      }
+    } catch (e) {
+      debugPrint('[TimeUtils] 상대 시간 포맷팅 실패: $utcString, 에러: $e');
+      return AppLocalizations.of(context).translate('just_now');
     }
   }
 }

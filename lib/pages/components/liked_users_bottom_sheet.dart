@@ -82,6 +82,21 @@ class LikedUsersBottomSheet extends StatefulWidget {
       _isLoadingCache[postId] = false;
     }
   }
+
+  static void show(
+    BuildContext context, {
+    required String postId,
+    required int likeCount,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (context) =>
+                LikedUsersBottomSheet(postId: postId, likeCount: likeCount),
+        fullscreenDialog: false,
+      ),
+    );
+  }
 }
 
 class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
@@ -150,15 +165,23 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
 
   /// 🎯 스크롤 리스너: 하단 도달 시 로드 모어
   void _onScroll() {
+    // 🎯 기본 검증
     if (!_scrollController.hasClients) return;
-    if (_isLoadingMore || !_hasMore) return;
+    if (_isLoadingMore || !_hasMore || _isLoading) return;
+    if (_likedUsers.isEmpty) return; // 데이터가 없으면 로드모어 불필요
 
     final offset = _scrollController.offset;
     final maxScroll = _scrollController.position.maxScrollExtent;
+
+    // 🎯 실제로 스크롤 가능한 컨텐츠가 없으면 로드모어 실행 안 함
+    // (데이터가 적어서 스크롤이 필요 없는 경우 방지)
+    if (maxScroll <= 0) return;
+
     final threshold = 200.0; // 하단 200px 전에 로드
 
-    // 하단 근처에 도달하면 로드 모어
-    if (maxScroll - offset < threshold) {
+    // 🎯 하단 근처에 도달했고, 실제로 스크롤 가능한 거리가 충분할 때만 로드 모어
+    // (당겨서 새로고침할 때 발생하는 미세한 스크롤 이벤트 무시)
+    if (maxScroll > threshold && maxScroll - offset < threshold) {
       _loadMoreLikedUsers();
     }
   }
@@ -365,7 +388,6 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
         backgroundColor: Theme.of(context).colorScheme.background,
         appBar: AppBar(
           automaticallyImplyLeading: false,
-          toolbarHeight: 45,
           scrolledUnderElevation: 0,
           backgroundColor: Theme.of(context).colorScheme.background,
           elevation: 0,
@@ -447,7 +469,7 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
                       controller: _scrollController,
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
+                        horizontal: 8,
                         vertical: 8,
                       ),
                       itemCount: 8, // 🎯 shimmer 아이템 8개
@@ -688,23 +710,17 @@ class _LikedUsersBottomSheetState extends State<LikedUsersBottomSheet> {
   /// 🎯 사용자 목록 Shimmer 아이템 (다크 배경용) - 간결한 버전
   Widget _buildUserShimmer() {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+      padding: const EdgeInsets.only(top: 12, bottom: 12, left: 12),
       child: Row(
         children: [
           // 프로필 이미지 Shimmer
-          ShimmerBox(
-            width: 56,
-            height: 56,
-            shape: const CircleBorder(),
-            isDarkMode: true,
-          ),
+          ShimmerBox(width: 56, height: 56, shape: const CircleBorder()),
           const SizedBox(width: 16),
           // 이름 Shimmer
           ShimmerBox(
             width: 140,
             height: 16,
             borderRadius: BorderRadius.circular(4),
-            isDarkMode: true,
           ),
         ],
       ),

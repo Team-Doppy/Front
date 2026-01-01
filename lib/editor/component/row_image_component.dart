@@ -1476,7 +1476,39 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     _measuringUrls.add(imageUrl);
 
     try {
-      // 🎯 공통 유틸리티 사용
+      // 🎯 HEIC 파일은 measureImageSize를 건너뛰고 바로 ImageProvider로 처리
+      // (불필요한 다운로드 및 경고 로그 방지)
+      if (ImageSizeUtils.isHeicFile(imageUrl)) {
+        debugPrint('[RowImage] 🔄 HEIC 파일: ImageProvider로 직접 처리');
+        final providerSize = await ImageSizeUtils.extractSizeFromImageProvider(
+          imageUrl,
+        );
+        if (providerSize != null && mounted) {
+          _imageSizes[imageUrl] = providerSize;
+          _measuringUrls.remove(imageUrl);
+
+          assert(() {
+            debugPrint(
+              '[RowImage] ✅ ImageProvider에서 크기 추출: $imageUrl -> ${providerSize.width.toInt()}x${providerSize.height.toInt()}',
+            );
+            return true;
+          }());
+
+          if (widget.isEditing) {
+            _saveImageSizeToMetadata(imageUrl, providerSize);
+          }
+
+          if (_imageSizes.length == widget.imageUrls.length) {
+            _applyUnifiedHeight(availableWidth, setStateIfChanged: true);
+          }
+        } else {
+          _measuringUrls.remove(imageUrl);
+          _useDefaultSize(imageUrl, availableWidth);
+        }
+        return;
+      }
+
+      // 🎯 일반 이미지: 공통 유틸리티 사용
       final size = await ImageSizeUtils.measureImageSize(imageUrl);
 
       if (!mounted) {
@@ -1503,37 +1535,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
           _applyUnifiedHeight(availableWidth, setStateIfChanged: true);
         }
       } else {
-        // 🎯 HEIC 파일 등은 ImageProvider로 재시도
-        if (ImageSizeUtils.isHeicFile(imageUrl)) {
-          debugPrint('[RowImage] 🔄 HEIC 파일: ImageProvider로 재시도');
-          final providerSize =
-              await ImageSizeUtils.extractSizeFromImageProvider(imageUrl);
-          if (providerSize != null && mounted) {
-            _imageSizes[imageUrl] = providerSize;
-            _measuringUrls.remove(imageUrl);
-
-            assert(() {
-              debugPrint(
-                '[RowImage] ✅ ImageProvider에서 크기 추출: $imageUrl -> ${providerSize.width.toInt()}x${providerSize.height.toInt()}',
-              );
-              return true;
-            }());
-
-            if (widget.isEditing) {
-              _saveImageSizeToMetadata(imageUrl, providerSize);
-            }
-
-            if (_imageSizes.length == widget.imageUrls.length) {
-              _applyUnifiedHeight(availableWidth, setStateIfChanged: true);
-            }
-          } else {
-            _measuringUrls.remove(imageUrl);
-            _useDefaultSize(imageUrl, availableWidth);
-          }
-        } else {
-          _measuringUrls.remove(imageUrl);
-          _useDefaultSize(imageUrl, availableWidth);
-        }
+        _measuringUrls.remove(imageUrl);
+        _useDefaultSize(imageUrl, availableWidth);
       }
     } catch (e) {
       _measuringUrls.remove(imageUrl);
