@@ -25,6 +25,23 @@ import 'package:doppy/pages/components/shimmer_box.dart';
 /// VideoPlayer 컨트롤러를 저장하는 맵
 final videoPlayerControllers = <String, VideoPlayerControllerProxy>{};
 
+/// VideoPlayerControllerProxy의 key를 생성한다.
+///
+/// - URL이 비어있는 로컬 영상(업로드 완료 후에도 로컬 컨트롤러 유지)에서 `url.hashCode` 기반 키가
+///   쉽게 충돌하여 컨트롤러 프록시가 덮어써지는 문제가 있었음.
+/// - 재생/일시정지/뮤트 토글 대상이 꼬이면 "UI는 언뮤트인데 소리가 안 난다" 같은 체감 불안정이 발생할 수 있어,
+///   namespace + (localPath 우선) + url 조합으로 안정적인 키를 만든다.
+String videoPlayerProxyKey({
+  required String namespace,
+  required String url,
+  required String localPath,
+}) {
+  final cacheKey = localPath.isNotEmpty ? localPath : url;
+  // cacheKey가 비어있으면(이상 케이스) namespace만으로라도 구분되게 fallback
+  final effective = cacheKey.isNotEmpty ? cacheKey : 'empty';
+  return 'video|$namespace|$effective';
+}
+
 // ✅ 제거됨: VideoCacheService로 통합 완료
 // editorVideoControllers와 readerVideoControllers는 VideoCacheService로 대체됨
 
@@ -330,7 +347,12 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     );
 
     // 컨트롤러 찾기
-    final key = 'video_${widget.url.hashCode}';
+    final namespace = widget.isEditing ? 'editor' : 'reader';
+    final key = videoPlayerProxyKey(
+      namespace: namespace,
+      url: widget.url,
+      localPath: widget.localPath,
+    );
     final controller = videoPlayerControllers[key];
 
     if (controller == null) {
@@ -1362,6 +1384,15 @@ class _VideoPlayerWidget extends StatefulWidget {
 }
 
 class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
+  String _proxyKey() {
+    final namespace = widget.isEditing ? 'editor' : 'reader';
+    return videoPlayerProxyKey(
+      namespace: namespace,
+      url: widget.url,
+      localPath: widget.localPath,
+    );
+  }
+
   /// 🎯 썸네일 이미지 또는 쉬머 위젯 빌드 (에러 처리 포함)
   Widget _buildThumbnailOrShimmer({
     required String thumbnailPath,
@@ -1518,8 +1549,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     proxy.hasPlayedOnce = () => _hasPlayedOnce;
     proxy.pause = _pauseVideo;
 
-    // nodeId 추출 (url을 사용하여 임시로 key 생성)
-    final key = 'video_${widget.url.hashCode}';
+    final key = _proxyKey();
     videoPlayerControllers[key] = proxy;
 
     debugPrint('[VideoPlayer] 컨트롤러 등록됨: $key');
@@ -1534,7 +1564,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     _muteService.removeListener(_onMuteServiceChanged);
 
     // 컨트롤러 해제
-    final key = 'video_${widget.url.hashCode}';
+    final key = _proxyKey();
     videoPlayerControllers.remove(key);
 
     // 리스너 제거 (dispose 전에 먼저 제거하여 콜백 방지)
@@ -2087,7 +2117,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
         return;
       }
-      final key = 'video_${widget.url.hashCode}';
+      final key = _proxyKey();
       pauseAllVideosExcept(key);
 
       final beforePlay = _controller!.value.isPlaying;

@@ -68,8 +68,12 @@ class _PostListState extends State<PostList> {
   double _lastPullProgress = 0.0;
 
   // ✅ 좌/우 넘김 애니메이션을 통일해서 체감을 부드럽게
-  static const Duration _pageTurnDuration = Duration(milliseconds: 200);
+  static const Duration _pageTurnDuration = Duration(milliseconds: 180); // 클릭용
+  static const Duration _swipeDuration = Duration(
+    milliseconds: 400,
+  ); // 텍스트 영역 스와이프용 (더 부드럽게)
   static const Curve _pageTurnCurve = Curves.easeInOut;
+  static const Curve _swipeCurve = Curves.easeOutCubic; // 스와이프용 더 부드러운 curve
 
   // 🎯 친구글이 없을 때 보여줄 온보딩 플레이스홀더 아이템
   final List<PostData> _noFriendPostItem = [
@@ -115,9 +119,6 @@ class _PostListState extends State<PostList> {
   double _gestureAccumX = 0.0;
   bool _isGestureActive = false;
   bool _isHorizontalGesture = false; // 가로 제스처 감지 여부
-  double _pullProgress = 0.0; // 당기는 진행률 (0.0 ~ 1.0)
-  double _verticalSwipeThreshold = 250.0; // 500.0에서 200.0으로 낮춤
-  bool _hideAllPostsButton = false; // 🎯 전체 글 보러가기 버튼 숨김 플래그
 
   @override
   void initState() {
@@ -282,11 +283,6 @@ class _PostListState extends State<PostList> {
 
     // 데이터가 바뀌었으면 현재 위치 기준으로 다시 프리캐시
     _schedulePrefetchAround(_currentIndex);
-
-    // 🎯 섹션이 변경되면 (친구글 -> 전체글) 버튼 숨김 플래그 리셋
-    if (widget.isShowingFriendsOnly != oldWidget.isShowingFriendsOnly) {
-      _hideAllPostsButton = false;
-    }
   }
 
   @override
@@ -308,33 +304,22 @@ class _PostListState extends State<PostList> {
         // AppBar (조건부 표시)
         if (widget.showAppBar)
           SliverAppBar(
-            toolbarHeight: 35,
             backgroundColor: Colors.transparent,
             elevation: 0,
             scrolledUnderElevation: 0,
             pinned: false,
             floating: true,
             snap: false,
-            title: AnimatedOpacity(
-              opacity:
-                  (1.0 - _pullProgress) *
-                  widget.appBarOpacity, // 🎯 친구 탭과 전체글 탭 모두 계속 표시
-              duration:
-                  _pullProgress != 0.0
-                      ? Duration(milliseconds: 0)
-                      : Duration(milliseconds: 300), // 🎯 페이드 아웃을 더 부드럽게
-              curve: Curves.easeInOut,
-              child: Container(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                  widget.isShowingFriendsOnly ? ' Doppy' : ' All Posts',
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.3,
-                    height: 1.2,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
+            title: Container(
+              padding: const EdgeInsets.only(bottom: 6, left: 6),
+              child: Text(
+                widget.sectionLabel ?? ' Doppy',
+                style: GoogleFonts.notoSansKr(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.3,
+                  height: 1.2,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
               ),
             ),
@@ -398,16 +383,7 @@ class _PostListState extends State<PostList> {
                     if (!_isGestureActive) return;
 
                     // 세로 제스처만 처리 (빈 상태에서는 가로 제스처 없음)
-                    _gestureAccumY += details.delta.dy;
-
-                    // 위로 스와이프 감지 (섹션 전환용)
-                    if (_gestureAccumY < -_verticalSwipeThreshold &&
-                        widget.onFilterTap != null) {
-                      debugPrint('⬆️ 빈 상태에서 위로 스와이프 감지! 섹션 전환');
-                      widget.onFilterTap!();
-                      _isGestureActive = false;
-                      return;
-                    }
+                    // 위로 스와이프로 탭 전환하는 로직 제거
                   },
                   onPointerUp: (details) {
                     _isGestureActive = false;
@@ -555,21 +531,21 @@ class _PostListState extends State<PostList> {
                 _gestureAccumX += details.delta.dx;
                 // 세로 움직임은 완전히 무시 (누적하지 않음)
 
-                // 수평 스크롤만 처리
+                // 수평 스크롤만 처리 (텍스트 영역 스와이프는 더 부드럽게)
                 if (_gestureAccumX.abs() > 30) {
                   if (_gestureAccumX > 0 && _currentIndex > 0) {
-                    // 오른쪽으로 스크롤 - 이전 페이지
+                    // 오른쪽으로 스크롤 - 이전 페이지 (텍스트 영역이므로 더 부드럽게)
                     _pageController.previousPage(
-                      duration: _pageTurnDuration,
-                      curve: _pageTurnCurve,
+                      duration: _swipeDuration,
+                      curve: _swipeCurve,
                     );
                     _isGestureActive = false;
                   } else if (_gestureAccumX < 0 &&
                       _currentIndex < postsToUse.length - 1) {
-                    // 왼쪽으로 스크롤 - 다음 페이지
+                    // 왼쪽으로 스크롤 - 다음 페이지 (텍스트 영역이므로 더 부드럽게)
                     _pageController.nextPage(
-                      duration: _pageTurnDuration,
-                      curve: _pageTurnCurve,
+                      duration: _swipeDuration,
+                      curve: _swipeCurve,
                     );
                     _isGestureActive = false;
                   }
@@ -578,21 +554,7 @@ class _PostListState extends State<PostList> {
               }
 
               // 세로 제스처 처리 (가로가 아닐 때만)
-              _gestureAccumY += details.delta.dy;
-
-              // 위로 스와이프 감지 (섹션 전환용)
-              if (_gestureAccumY < -_verticalSwipeThreshold &&
-                  widget.onFilterTap != null) {
-                assert(() {
-                  debugPrint(
-                    '⬆️ Listener로 위로 스와이프 감지! 섹션 전환 (임계값: $_verticalSwipeThreshold)',
-                  );
-                  return true;
-                }());
-                widget.onFilterTap!();
-                _isGestureActive = false;
-                return;
-              }
+              // 위로 스와이프로 탭 전환하는 로직 제거
             },
             onPointerUp: (details) {
               if (_isGestureActive || _isHorizontalGesture) {
@@ -705,87 +667,22 @@ class _PostListState extends State<PostList> {
 
   @override
   Widget build(BuildContext context) {
-    // 🎯 친구글이 없을 때 하단에 "전체 글 보러가기" 버튼 표시
-    final bool showAllPostsButton =
-        _items.isEmpty &&
-        !widget.showCardShimmer &&
-        !widget.isLoading &&
-        widget.isShowingFriendsOnly &&
-        widget.onFilterTap != null &&
-        _pullProgress == 0.0 && // 🎯 새로고침 당기기 시 숨김
-        !_hideAllPostsButton; // 🎯 버튼을 눌렀을 때 숨김
-
     return SafeArea(
-      child: Stack(
-        children: [
-          CustomRefreshIndicator(
-            top: 50,
-            onRefresh: widget.onRefresh,
-            onPullProgress: (progress) {
-              // ✅ drag 중 매 프레임 setState는 비싸다 → 임계치 기반으로만 업데이트
-              final next = progress.clamp(0.0, 1.0);
-              final diff = (next - _lastPullProgress).abs();
-              if (diff < 0.02 && next != 0.0 && next != 1.0) return;
-              _lastPullProgress = next;
-              if (!mounted) return;
-              setState(() {
-                _pullProgress = next;
-              });
-            },
-            child:
-                widget.showCardShimmer
-                    ? _buildRefreshingShimmer()
-                    : _buildScrollView(context),
-          ),
-          // 🎯 친구글이 없을 때 하단에 "전체 글 보러가기" 버튼 표시
-          if (showAllPostsButton)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 62,
-              child: Center(
-                child: GestureDetector(
-                  onTap: () {
-                    // 🎯 버튼을 눌렀을 때 즉시 숨김
-                    setState(() {
-                      _hideAllPostsButton = true;
-                    });
-                    widget.onFilterTap?.call();
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color:
-                          Theme.of(context).brightness == Brightness.dark
-                              ? Colors.transparent
-                              : Colors.white,
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.4),
-                        width: 0.5,
-                      ),
-                    ),
-                    child: Text(
-                      context.tr('view_all_posts'),
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: -0.1,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.95),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
+      child: CustomRefreshIndicator(
+        top: 50,
+        onRefresh: widget.onRefresh,
+        onPullProgress: (progress) {
+          // ✅ drag 중 매 프레임 setState는 비싸다 → 임계치 기반으로만 업데이트
+          final next = progress.clamp(0.0, 1.0);
+          final diff = (next - _lastPullProgress).abs();
+          if (diff < 0.02 && next != 0.0 && next != 1.0) return;
+          _lastPullProgress = next;
+          if (!mounted) return;
+        },
+        child:
+            widget.showCardShimmer
+                ? _buildRefreshingShimmer()
+                : _buildScrollView(context),
       ),
     );
   }

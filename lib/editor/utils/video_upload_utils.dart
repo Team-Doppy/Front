@@ -214,11 +214,9 @@ class VideoUploadUtils {
       final List<String> commandParts = [];
 
       // 입력 파일 및 시간 위치
-      if (trimSpec != null && trimSpec.startSeconds > 0) {
-        commandParts.add('-ss ${trimSpec.startSeconds.toStringAsFixed(3)}');
-      }
-      commandParts.add('-i "$videoPath"');
+      // ✅ framePosition은 "절대 시간" 기준이므로 -ss를 1번만 적용 (중복 적용 시 구간이 어긋날 수 있음)
       commandParts.add('-ss ${framePosition.toStringAsFixed(3)}');
+      commandParts.add('-i "$videoPath"');
       commandParts.add('-vframes 1'); // 단일 프레임만 추출
 
       // 비디오 필터 적용
@@ -306,6 +304,12 @@ class VideoUploadUtils {
         trimSpec: trimSpec,
         editSpec: editSpec,
       );
+
+      // 🎯 디버그: 생성된 명령어와 스펙 확인
+      debugPrint(
+        '[VideoUploadUtils] FFmpeg 명령어 생성: trimSpec=${trimSpec != null ? "start=${trimSpec.startSeconds}, end=${trimSpec.endSeconds}" : "null"}, editSpec=${editSpec != null ? "crop=${editSpec.cropRectImage != null}, brightness=${editSpec.brightness}, contrast=${editSpec.contrast}, saturation=${editSpec.saturation}" : "null"}',
+      );
+      debugPrint('[VideoUploadUtils] FFmpeg 명령어: $command');
 
       debugPrint(
         '[VideoUploadUtils] FFmpeg 실행 (H.264 re-encode with GOP=24, preset=veryfast, CRF=20)...',
@@ -747,12 +751,94 @@ class VideoUploadUtils {
         filters.add('eq=${adjustments.join(":")}');
       }
 
-      // 3-6. 필터 프리셋 (필요시 추가)
-      // TODO: filter preset 적용 (필요한 경우)
+      // 3-6. 추가 조정 옵션들
+      // Luminance (휘도 조정 - gamma 조정)
+      if (editSpec.luminance != 0.0) {
+        // gamma: 0.1 ~ 3.0 (1.0 = 원본)
+        // eq 필터의 gamma_r, gamma_g, gamma_b 파라미터 사용
+        final gamma = (1.0 + editSpec.luminance / 100.0).clamp(0.1, 3.0);
+        filters.add('eq=gamma_r=$gamma:gamma_g=$gamma:gamma_b=$gamma');
+      }
+
+      // Exposure (노출 조정 - curves 필터 사용)
+      if (editSpec.exposure != 0.0) {
+        // exposure: -3.0 ~ 3.0 (0.0 = 원본)
+        // curves 필터로 노출 조정 (all 채널에 적용)
+        final exposure = (editSpec.exposure / 100.0 * 3.0).clamp(-3.0, 3.0);
+        // exposure가 양수면 밝게, 음수면 어둡게
+        // curves는 포인트를 지정해야 하므로 간단하게 colorlevels 사용
+        if (exposure > 0) {
+          // 밝게: black point를 낮춤
+          final blackPoint = (exposure / 3.0 * 0.1).clamp(0.0, 0.1);
+          filters.add(
+            'colorlevels=rimin=$blackPoint:gimin=$blackPoint:bimin=$blackPoint',
+          );
+        } else {
+          // 어둡게: white point를 높임
+          final whitePoint = (1.0 + exposure / 3.0 * 0.1).clamp(0.9, 1.0);
+          filters.add(
+            'colorlevels=rimax=$whitePoint:gimax=$whitePoint:bimax=$whitePoint',
+          );
+        }
+      }
+
+      // Sharpness (선명도)
+      if (editSpec.sharpness > 0.0) {
+        // unsharp 필터: luma_msize_x=5:luma_msize_y=5:luma_amount=0.5~2.0
+        final amount = (editSpec.sharpness / 100.0 * 1.5).clamp(0.0, 2.0);
+        filters.add('unsharp=5:5:$amount');
+      }
+
+      // Temperature (색온도)
+      if (editSpec.temperature != 0.0) {
+        // colorbalance: -1.0 ~ 1.0 (음수=차갑게, 양수=따뜻하게)
+        final val = (editSpec.temperature / 100.0).clamp(-1.0, 1.0);
+        // 따뜻하게(양수): rs=val, gs=0, bs=-val (빨강 증가, 파랑 감소)
+        // 차갑게(음수): rs=val, gs=0, bs=-val (빨강 감소, 파랑 증가)
+        filters.add('colorbalance=rs=$val:gs=0:bs=${-val}');
+      }
+
+      // Blur (흐림 효과)
+      if (editSpec.blur > 0.0) {
+        // boxblur: luma_radius=0~20
+        final radius = (editSpec.blur / 100.0 * 20.0).clamp(0.0, 20.0);
+        filters.add('boxblur=luma_radius=$radius:luma_power=1');
+      }
+
+      // Vignette (비네팅 효과)
+      if (editSpec.vignette > 0.0) {
+        // vignette: angle=PI/4, x0=w/2, y0=h/2, mode=0 (black)
+        // intensity는 aspect 파라미터로 조절 가능 (0.5~2.0, 기본값 1.0)
+        final intensity = (editSpec.vignette / 100.0).clamp(0.0, 1.0);
+        // aspect 값이 작을수록 비네팅이 강해짐 (0.5~1.0 범위)
+        final aspect = 1.0 - (intensity * 0.5);
+        filters.add('vignette=PI/4:aspect=$aspect:mode=0');
+      }
+
+      // 3-7. 필터 프리셋 (filterName) - TODO: ColorFilter matrix를 FFmpeg 필터로 정확히 변환
+      // 현재는 필터 프리셋이 있어도 기본 조정(brightness/contrast/saturation)만 적용됨
+      // 정확한 재현을 위해서는 LUT(Look-Up Table) 생성이 필요하지만 복잡함
+      // TODO: 필터 프리셋의 정확한 FFmpeg 변환 구현
+
+      // 3-8. 속도 조절 (playbackSpeed) - 비디오 필터
+      if (editSpec.playbackSpeed != 1.0 && editSpec.playbackSpeed > 0) {
+        // setpts: PTS를 조정하여 재생 속도 변경
+        final ptsScale = 1.0 / editSpec.playbackSpeed;
+        filters.add('setpts=${ptsScale.toStringAsFixed(6)}*PTS');
+      }
 
       // 필터 조합
       if (filters.isNotEmpty) {
         videoFilters.add('-vf "${filters.join(",")}"');
+      }
+
+      // 3-9. 속도 조절 (playbackSpeed) - 오디오 필터
+      if (editSpec.playbackSpeed != 1.0 && editSpec.playbackSpeed > 0) {
+        // atempo는 0.5~2.0 범위만 지원
+        final speed = editSpec.playbackSpeed.clamp(0.5, 2.0);
+        if (speed != 1.0) {
+          videoFilters.add('-af "atempo=$speed"');
+        }
       }
     }
 
@@ -777,6 +863,15 @@ class VideoUploadUtils {
     commandParts.addAll(videoFilters);
     commandParts.addAll(outputArgs);
 
-    return commandParts.join(' ');
+    final command = commandParts.join(' ');
+
+    // 🎯 디버그: 생성된 명령어와 필터 확인
+    debugPrint('[VideoUploadUtils] _buildFFmpegCommand 결과:');
+    debugPrint('  - inputArgs: ${inputArgs.join(" ")}');
+    debugPrint('  - videoFilters: ${videoFilters.join(" ")}');
+    debugPrint('  - outputArgs: ${outputArgs.join(" ")}');
+    debugPrint('  - 최종 명령어: $command');
+
+    return command;
   }
 }

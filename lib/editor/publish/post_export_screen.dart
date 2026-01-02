@@ -967,8 +967,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       final action = await RetryCancelBottomSheet.show(
         context,
         title: context.tr('publish_failed_title'),
-        message: context.tr('retry_error_message'),
-        details: e.toString(),
+        error: e,
       );
       if (!mounted) return;
       if (action == RetryCancelAction.retry) {

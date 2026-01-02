@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import '../data/models/user_model.dart';
 import '../data/services/user_service.dart';
+import '../data/services/auth_service.dart';
 
 class UserProvider with ChangeNotifier {
   final UserService _userService = UserService();
@@ -99,6 +100,16 @@ class UserProvider with ChangeNotifier {
       // 🎯 User 모델에 이미 selfIntroduction이 포함되어 있으므로 별도 API 호출 불필요
       _selfIntroduction = me.selfIntroduction;
       await _persistCurrentUser();
+
+      // 🎯 서버에서 유저 정보를 재로드했을 때 AuthService 캐시도 업데이트
+      if (me.username.isNotEmpty) {
+        try {
+          await AuthService().saveUsername(me.username);
+          debugPrint('[UserProvider] ✅ AuthService 캐시 업데이트: ${me.username}');
+        } catch (e) {
+          debugPrint('[UserProvider] ⚠️ AuthService 캐시 업데이트 실패: $e');
+        }
+      }
     } finally {
       _isLoading = false;
       notifyListeners();

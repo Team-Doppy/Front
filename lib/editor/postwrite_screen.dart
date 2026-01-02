@@ -1133,7 +1133,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             context,
             title: context.tr('cancel_edit_title'),
             message: context.tr('cancel_edit_message'),
-            confirmText: context.tr('cancel'),
+            confirmText: context.tr('exit_writing_title'),
             cancelText: context.tr('continue_editing'),
             isDestructive: true,
           );
@@ -2147,19 +2147,86 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 저장 중 상태 해제
       if (mounted) {
         setState(() => _isSaving = false);
-        // 🎯 실패 UX: 스낵바 대신 재시도/취소 바텀시트
+        // 🎯 실패 UX: 스낵바 대신 재시도/취소/임시저장 바텀시트
         final action = await RetryCancelBottomSheet.show(
           context,
           title: context.tr('edit_failed_title'),
-          message: context.tr('retry_error_message'),
-          details: e.toString(),
+          error: e,
+          showSaveDraft: true,
         );
         if (!mounted) return;
         if (action == RetryCancelAction.retry) {
           await _saveEditedPost();
+        } else if (action == RetryCancelAction.saveDraft) {
+          await _saveDraftFromEditFailure();
         }
       }
     } finally {}
+  }
+
+  /// 수정 실패 시 임시저장
+  Future<void> _saveDraftFromEditFailure() async {
+    try {
+      debugPrint('[PostwriteScreen] 수정 실패 → 임시저장 시작');
+
+      // 1. 메타데이터 추출 (서버에 적용된 값 우선)
+      String title = _serverAppliedTitle ?? '';
+      String summary = _serverAppliedSummary ?? '';
+      String thumbnailUrl = _serverAppliedThumbnailUrl ?? '';
+
+      // 제목/요약이 없으면 빈 문자열로 처리 (임시저장은 제목 필수이므로)
+      if (title.trim().isEmpty) {
+        title = context.tr('no_title');
+      }
+      if (summary.trim().isEmpty) {
+        summary = '';
+      }
+      if (thumbnailUrl.trim().isEmpty) {
+        // 첫 이미지 찾기
+        final firstImageUrl = _findFirstImageUrl();
+        if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
+          thumbnailUrl = firstImageUrl;
+        }
+      }
+
+      // 3. draftId 생성 (편집 모드에서는 새 임시저장)
+      const uuid = Uuid();
+      final draftId = 'draft_${uuid.v4()}';
+
+      // 4. 영상 파일 경로 (편집 모드에서는 일반적으로 없음)
+      final sessionKey = draftId;
+      final videoFilePath = nodeComponentService.getTempVideoFilePath(
+        sessionKey,
+      );
+      final videoThumbnailPath = nodeComponentService.getTempVideoThumbnailPath(
+        sessionKey,
+      );
+
+      // 5. 임시저장
+      await draftService.saveDraft(
+        editorService: editorService,
+        stickerService: stickerService,
+        title: title,
+        summary: summary,
+        thumbnailUrl: thumbnailUrl,
+        videoFilePath: videoFilePath,
+        videoThumbnailPath: videoThumbnailPath,
+        visibility: _editVisibility,
+        selectedGroupIds: _editGroupIds,
+        existingDraftId: draftId,
+        textStylingService: textStylingService,
+      );
+
+      if (mounted) {
+        ErrorHandler.showInfo(context, context.tr('draft_saved'));
+        debugPrint('[PostwriteScreen] ✅ 수정 실패 → 임시저장 완료');
+      }
+    } catch (e) {
+      debugPrint('[PostwriteScreen] ❌ 수정 실패 → 임시저장 실패: $e');
+      if (mounted) {
+        ErrorHandler.showError(context, context.tr('draft_save_failed'));
+      }
+    }
   }
 
   /// 사용된 이미지/비디오 URL 수집

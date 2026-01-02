@@ -18,6 +18,7 @@ import 'package:doppy/image/utils/image_bytes_resolver.dart';
 import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/pages/components/doppy_loading_logo.dart';
 
 /// 에디터 내 특수 노드(이미지/이미지행/링크/멘션 등)의 선택/하이라이트 상태를 관리하는 서비스
 class NodeComponentService extends ChangeNotifier {
@@ -300,12 +301,26 @@ class NodeComponentService extends ChangeNotifier {
       final sources = <String>[];
       if (node is ImageNode) {
         sources.add(node.imageUrl);
+        debugPrint('[NodeComponentService] 📸 이미지 편집 진입 - 단일 이미지 노드');
+        debugPrint('   - 노드 ID: $imageId');
+        debugPrint('   - 이미지 URL: ${node.imageUrl}');
       } else if (node is ImageRowNode) {
         sources.addAll(node.imageUrls);
+        debugPrint('[NodeComponentService] 📸 이미지 편집 진입 - 이미지 로우 노드');
+        debugPrint('   - 노드 ID: $imageId');
+        debugPrint('   - 이미지 개수: ${node.imageUrls.length}');
+        debugPrint('   - 이미지 URLs: ${node.imageUrls}');
       } else if (node is PageViewImageNode) {
         sources.addAll(node.imageUrls);
+        debugPrint('[NodeComponentService] 📸 이미지 편집 진입 - 페이지뷰 이미지 노드');
+        debugPrint('   - 노드 ID: $imageId');
+        debugPrint('   - 이미지 개수: ${node.imageUrls.length}');
+        debugPrint('   - 이미지 URLs: ${node.imageUrls}');
       } else {
         // 지원하지 않는 노드 타입
+        debugPrint(
+          '[NodeComponentService] ❌ 지원하지 않는 노드 타입: ${node.runtimeType}',
+        );
         if (context.mounted) {
           ErrorHandler.showError(context, context.tr('image_edit_failed'));
         }
@@ -338,81 +353,36 @@ class NodeComponentService extends ChangeNotifier {
           },
           pageBuilder: (editorContext, _, __) {
             // 🎯 이미지 로딩을 비동기로 처리 (편집 화면은 즉시 열림)
-            return FutureBuilder<List<Uint8List>>(
+            return _DelayedImageLoader(
               future: ImageBytesResolver.resolveMany(
                 sources,
                 timeoutPerItem: const Duration(seconds: 10),
               ),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  // 🎯 로딩 중: 편집 화면 배경에 shimmer 표시
-                  return Scaffold(
-                    backgroundColor: Theme.of(context).colorScheme.background,
-                    body: Center(
-                      child: CircularProgressIndicator(
-                        strokeWidth: 3,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  );
-                }
-                if (snapshot.hasError || !snapshot.hasData) {
-                  // 🎯 에러 발생 시 편집 화면 닫고 에러 표시
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (context.mounted) {
-                      Navigator.pop(context);
-                      ErrorHandler.showError(
-                        context,
-                        context.tr('image_load_failed'),
-                      );
-                    }
-                  });
-                  return Scaffold(
-                    backgroundColor: Theme.of(context).colorScheme.background,
-                    body: const Center(child: SizedBox.shrink()),
-                  );
-                }
-                final imageBytesList = snapshot.data!;
-                return imageBytesList.length <= 1
-                    ? SimpleImageEditorScreen(
-                      imageBytes: imageBytesList.first,
-                      isExistingNodeEdit: true,
-                      enableLayoutSelectionForMultiImage: false,
-                      onDone: (editorContext, result) async {
-                        await _applyEditedImagesToNode(
-                          context: context,
-                          editorContext: editorContext,
-                          imageId: imageId,
-                          node: node,
-                          editorService: editorService,
-                          document: document,
-                          result: result,
-                        );
-                      },
-                    )
-                    : SimpleImageEditorScreen(
-                      imageBytesList: imageBytesList,
-                      isExistingNodeEdit: true,
-                      enableLayoutSelectionForMultiImage: false,
-                      onDone: (editorContext, result) async {
-                        await _applyEditedImagesToNode(
-                          context: context,
-                          editorContext: editorContext,
-                          imageId: imageId,
-                          node: node,
-                          editorService: editorService,
-                          document: document,
-                          result: result,
-                        );
-                      },
-                    );
+              onBack: () {
+                Navigator.of(editorContext).pop();
               },
+              imageId: imageId,
+              node: node,
+              parentContext: context,
+              editorService: editorService,
+              document: document,
+              onDone:
+                  (editorContext, result) async {
+                        await _applyEditedImagesToNode(
+                          context: context,
+                          editorContext: editorContext,
+                          imageId: imageId,
+                          node: node,
+                          editorService: editorService,
+                          document: document,
+                          result: result,
+                        );
+                      }
+                      as Future<void> Function(BuildContext, dynamic)?,
             );
           },
         ),
       );
-      // ✅ onDone에서 업로드/리플레이스까지 끝내고 editor를 닫는다.
-      return;
     } catch (e) {
       debugPrint('[NodeComponentService] 이미지 편집 중 오류: $e');
       if (context.mounted) {
@@ -423,7 +393,155 @@ class NodeComponentService extends ChangeNotifier {
       _isEditingImage = false;
     }
   }
+}
 
+/// 🎯 1초 이상 걸릴 때만 로딩 로고를 표시하는 이미지 로더
+class _DelayedImageLoader extends StatefulWidget {
+  final Future<List<Uint8List>> future;
+  final VoidCallback onBack;
+  final String imageId;
+  final DocumentNode node;
+  final BuildContext parentContext;
+  final EditorService editorService;
+  final MutableDocument document;
+  final Future<void> Function(BuildContext, dynamic)? onDone;
+
+  const _DelayedImageLoader({
+    required this.future,
+    required this.onBack,
+    required this.imageId,
+    required this.node,
+    required this.parentContext,
+    required this.editorService,
+    required this.document,
+    required this.onDone,
+  });
+
+  @override
+  State<_DelayedImageLoader> createState() => _DelayedImageLoaderState();
+}
+
+class _DelayedImageLoaderState extends State<_DelayedImageLoader> {
+  bool _showLoading = false;
+  Timer? _loadingTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // 🎯 1초 후에 로딩 로고 표시
+    _loadingTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted) {
+        setState(() {
+          _showLoading = true;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _loadingTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Uint8List>>(
+      future: widget.future,
+      builder: (context, snapshot) {
+        // 🎯 로딩 완료되면 타이머 취소하고 로딩 숨김
+        if (snapshot.connectionState != ConnectionState.waiting) {
+          _loadingTimer?.cancel();
+          if (_showLoading) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                setState(() {
+                  _showLoading = false;
+                });
+              }
+            });
+          }
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          // 🎯 1초 이상 걸릴 때만 로딩 로고 표시
+          if (!_showLoading) {
+            return Scaffold(
+              backgroundColor: Theme.of(context).colorScheme.background,
+              body: const SizedBox.shrink(),
+            );
+          }
+          return Scaffold(
+            backgroundColor: Theme.of(context).colorScheme.background,
+            body: DoppyLoadingLogo(showBackButton: true, onBack: widget.onBack),
+          );
+        }
+        if (snapshot.hasError || !snapshot.hasData) {
+          // 🎯 에러 발생 시 편집 화면 닫고 에러 표시
+          final error = snapshot.error;
+          debugPrint('[NodeComponentService] ❌ 이미지 로딩 실패:');
+          if (error != null) {
+            debugPrint('   - 에러 타입: ${error.runtimeType}');
+            debugPrint('   - 에러 메시지: $error');
+            if (error is TimeoutException) {
+              debugPrint('   - 타임아웃 시간: ${error.duration?.inSeconds}초');
+            } else if (error is HttpException) {
+              debugPrint('   - HTTP 상태 코드: ${error.message}');
+              debugPrint('   - URI: ${error.uri}');
+              debugPrint(
+                '   ⚠️ [오래된 포스트 가능성] HTTP 에러가 발생했습니다. 이미지 URL이 서버에서 삭제되었거나 변경되었을 수 있습니다.',
+              );
+            } else if (error is SocketException) {
+              debugPrint('   - 네트워크 연결 실패: ${error.message}');
+            }
+          } else {
+            debugPrint('   - 에러: snapshot.hasData가 false (데이터 없음)');
+          }
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) {
+              Navigator.pop(context);
+              ErrorHandler.showError(
+                widget.parentContext,
+                widget.parentContext.tr('image_load_failed'),
+              );
+            }
+          });
+          return Scaffold(
+            backgroundColor: Theme.of(context).colorScheme.background,
+            body: const Center(child: SizedBox.shrink()),
+          );
+        }
+        final imageBytesList = snapshot.data!;
+        return imageBytesList.length <= 1
+            ? SimpleImageEditorScreen(
+              imageBytes: imageBytesList.first,
+              isExistingNodeEdit: true,
+              enableLayoutSelectionForMultiImage: false,
+              onDone:
+                  widget.onDone != null
+                      ? (editorContext, result) async {
+                        await widget.onDone!(editorContext, result);
+                      }
+                      : null,
+            )
+            : SimpleImageEditorScreen(
+              imageBytesList: imageBytesList,
+              isExistingNodeEdit: true,
+              enableLayoutSelectionForMultiImage: false,
+              onDone:
+                  widget.onDone != null
+                      ? (editorContext, result) async {
+                        await widget.onDone!(editorContext, result);
+                      }
+                      : null,
+            );
+      },
+    );
+  }
+}
+
+extension NodeComponentServiceExtension on NodeComponentService {
   Future<void> _applyEditedImagesToNode({
     required BuildContext context,
     required BuildContext editorContext,

@@ -1725,7 +1725,11 @@ class DragService extends ChangeNotifier {
       // 비디오가 끝났는지 확인
       final clipNode = editorService.document.getNodeById(nodeId);
       if (clipNode is ClipNode) {
-        final key = 'video_${clipNode.url.hashCode}';
+        final key = videoPlayerProxyKey(
+          namespace: 'editor',
+          url: clipNode.url,
+          localPath: clipNode.localPath,
+        );
         final controller = videoPlayerControllers[key];
 
         // 비디오가 완전히 끝났을 때만 다시보기 버튼 반응

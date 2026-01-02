@@ -109,6 +109,16 @@ class AuthProvider extends ChangeNotifier {
     debugPrint('[AuthProvider] checkLoginStatus - token: $_token');
     debugPrint('[AuthProvider] checkLoginStatus - username: $_username');
 
+    // 🎯 username을 가져왔을 때 AuthService 캐시도 업데이트
+    if (_username != null && _username!.isNotEmpty) {
+      try {
+        await _authService.saveUsername(_username!);
+        debugPrint('[AuthProvider] ✅ AuthService 캐시 업데이트: $_username');
+      } catch (e) {
+        debugPrint('[AuthProvider] ⚠️ AuthService 캐시 업데이트 실패: $e');
+      }
+    }
+
     if (_token != null && _username != null) {
       _isLoggedIn = true;
       debugPrint('[AuthProvider] User is logged in');
@@ -126,6 +136,17 @@ class AuthProvider extends ChangeNotifier {
       _isLoggedIn = true;
       _token = await _authService.getToken();
       _username = await _authService.getUsername();
+
+      // 🎯 username을 가져왔을 때 AuthService 캐시도 업데이트
+      if (_username != null && _username!.isNotEmpty) {
+        try {
+          await _authService.saveUsername(_username!);
+          debugPrint('[AuthProvider] ✅ AuthService 캐시 업데이트: $_username');
+        } catch (e) {
+          debugPrint('[AuthProvider] ⚠️ AuthService 캐시 업데이트 실패: $e');
+        }
+      }
+
       notifyListeners();
     } else {
       _isLoggedIn = false;

@@ -610,6 +610,18 @@ class VideoMuteService extends ChangeNotifier {
       debugPrint(
         '[VideoMuteService] 리더 음소거 상태 변경: ${_isReaderMuted ? "음소거" : "소리 켜짐"}',
       );
+      // 🎯 readerMuted는 에디터/리더 영상의 오디오를 함께 제어하는 전역 상태로 사용 중이므로,
+      // 캐시에 남아있는(리스너가 붙어있지 않은) 컨트롤러까지 포함해 볼륨을 강제로 동기화한다.
+      try {
+        VideoCacheService().setVolumeForNamespace(
+          'reader',
+          _isReaderMuted ? 0.0 : 1.0,
+        );
+        VideoCacheService().setVolumeForNamespace(
+          'editor',
+          _isReaderMuted ? 0.0 : 1.0,
+        );
+      } catch (_) {}
       notifyListeners();
     }
   }

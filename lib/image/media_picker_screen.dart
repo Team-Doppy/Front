@@ -9,6 +9,8 @@ import 'package:doppy/image/video_edit_spec.dart';
 import 'package:doppy/image/group_image_layout_selector.dart';
 import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -76,7 +78,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   // ✅ 선택된 AssetEntity 캐시 (리오더/프리뷰에서 안정적으로 썸네일 렌더링하기 위함)
   final Map<String, AssetEntity> _selectedAssetById = {};
   MediaType _mediaType = MediaType.video; // 현재 선택된 미디어 타입
-  int _crossAxisCount = 3; // 그리드 열 수 (5열(최소) -> 3열(기본) -> 1열(최대))
+  int _crossAxisCount = 3; // 그리드 열 수 (5열(최소) -> 3열(기본))
   // 🎯 비디오 편집 spec 임시 저장 (편집 → 트림 플로우)
   VideoEditSpec? _pendingVideoEditSpec;
   double _lastScale = 1.0; // 마지막 핀치 스케일
@@ -93,6 +95,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   final ScrollController _scrollController = ScrollController();
   bool _isSubmitting = false;
   bool _isClosing = false; // ✅ pop/close 중복 방지 (업로드/노드삽입 완료 전 닫힘 방지용)
+  bool? _wasMutedBeforePicker; // 🎯 미디어피커 열기 전 뮤트 상태 저장
 
   /// ✅ pop 전에 반드시 호출: 노드 추가/리플레이스(업로드 포함)가 끝났을 때만 true 반환
   Future<bool> _runBeforePop(MediaPickerResult result) async {
@@ -169,6 +172,12 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     // 🎯 스크롤 리스너 추가 (페이지네이션)
     _scrollController.addListener(_onScroll);
 
+    // 🎯 미디어피커가 열릴 때 에디터의 모든 ClipComponent 비디오를 뮤트
+    // 뮤트 전 상태를 저장하여 닫힐 때 복원
+    final muteService = VideoMuteService();
+    _wasMutedBeforePicker = muteService.isReaderMuted;
+    muteAllVideos();
+
     // ✅ 첫 프레임(전환 애니메이션)을 먼저 확보한 뒤 권한/앨범/첫 페이지를 로드한다.
     // 탭 직후의 "멈춤"을 줄이는 핵심 포인트.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -181,6 +190,37 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+
+    // 🎯 미디어피커가 닫힐 때 뮤트 상태 복원
+    if (_wasMutedBeforePicker != null) {
+      final muteService = VideoMuteService();
+      // 원래 뮤트 상태로 복원
+      muteService.setReaderMuted(_wasMutedBeforePicker!);
+      // VideoCacheService의 볼륨도 복원 (VideoMuteService 상태에 맞춰)
+      try {
+        VideoCacheService().setVolumeForNamespace(
+          'editor',
+          _wasMutedBeforePicker! ? 0.0 : 1.0,
+        );
+        VideoCacheService().setVolumeForNamespace(
+          'reader',
+          _wasMutedBeforePicker! ? 0.0 : 1.0,
+        );
+        debugPrint(
+          '[MediaPicker] 뮤트 상태 복원: ${_wasMutedBeforePicker! ? "음소거" : "소리 켜짐"}',
+        );
+      } catch (e) {
+        debugPrint('[MediaPicker] 뮤트 상태 복원 실패: $e');
+      }
+    }
+
+    // 🎯 AssetEntity 리스트와 캐시 정리 (PHCachingImageManager 메모리 문제 방지)
+    _media.clear();
+    _selectedAssetById.clear();
+    _selectedMediaIds.clear();
+    _cachedAllAlbum = null;
+    _cachedAllAlbumType = null;
+
     super.dispose();
   }
 
@@ -789,16 +829,80 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       final duration = asset.videoDuration;
 
       // 1) SimpleVideoEditorScreen으로 이동
-      final editResult = await Navigator.push<VideoEditSpec>(
+      // 🎯 편집 화면에서 "다음"을 누르면 편집 화면을 닫지 않고 트림 화면으로 push
+      await Navigator.push<void>(
         context,
         MaterialPageRoute(
           builder:
               (editorContext) => SimpleVideoEditorScreen(
                 videoFile: file,
+                doneLabelOverride: AppLocalizations.of(
+                  context,
+                ).t('next'), // "추가" 대신 "다음"으로 변경
                 onDone: (editorContext, result) async {
-                  // VideoEditSpec을 받아서 반환
+                  // VideoEditSpec을 받아서 편집 화면을 닫지 않고 트림 화면으로 이동
                   if (result is VideoEditSpec && editorContext.mounted) {
-                    Navigator.of(editorContext).pop(result);
+                    // 편집 spec 저장
+                    _pendingVideoEditSpec = result;
+                    debugPrint(
+                      '[MediaPicker] ✅ _pendingVideoEditSpec 저장: cropRectImage=${result.cropRectImage}, brightness=${result.brightness}, contrast=${result.contrast}',
+                    );
+
+                    // 편집 화면을 닫지 않고 트림 화면을 push (편집 화면이 스택에 남아있음)
+                    final trimResult = await Navigator.push<VideoTrimResult>(
+                      editorContext,
+                      PageRouteBuilder(
+                        pageBuilder:
+                            (context, animation, secondaryAnimation) =>
+                                VideoTrimScreen(
+                                  videoFile: file,
+                                  videoDuration: duration,
+                                  editSpec: result,
+                                  fromEditor: true,
+                                ),
+                        transitionDuration: const Duration(milliseconds: 200),
+                        reverseTransitionDuration: const Duration(
+                          milliseconds: 200,
+                        ),
+                        transitionsBuilder: (
+                          context,
+                          animation,
+                          secondaryAnimation,
+                          child,
+                        ) {
+                          return FadeTransition(
+                            opacity: animation,
+                            child: child,
+                          );
+                        },
+                      ),
+                    );
+
+                    // 트림 결과를 MediaPicker로 전달
+                    if (trimResult != null && editorContext.mounted) {
+                      // fromEditor: true인 경우 편집 화면도 pop (트림 화면은 이미 pop됨)
+                      Navigator.of(editorContext).pop();
+                      if (mounted) {
+                        final trim = trimResult.trim;
+                        debugPrint(
+                          '[MediaPicker] 🎯 MediaPickerResult 생성: trimSpec=start=${trim.startSeconds}, end=${trim.endSeconds}, editSpec=${_pendingVideoEditSpec != null ? "crop=${_pendingVideoEditSpec!.cropRectImage != null}, brightness=${_pendingVideoEditSpec!.brightness}" : "null"}',
+                        );
+                        widget.onMediaSelected(file);
+                        await _popWithResult(
+                          MediaPickerResult(
+                            files: [file],
+                            selectedMediaType: MediaType.video,
+                            thumbnailPath: trimResult.thumbnailPath,
+                            trimSpec: trim,
+                            editSpec: _pendingVideoEditSpec,
+                          ),
+                        );
+                        _pendingVideoEditSpec = null;
+                      }
+                    } else if (trimResult == null && editorContext.mounted) {
+                      // 트림에서 뒤로 가면 편집 화면으로 돌아감 (자동으로 pop됨)
+                      // 편집 화면은 그대로 유지되므로 아무것도 하지 않음
+                    }
                   }
                 },
               ),
@@ -806,39 +910,8 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         ),
       );
 
-      if (editResult == null || !mounted) return;
-
-      // 편집 spec 저장
-      _pendingVideoEditSpec = editResult;
-
-      // 2) VideoTrimScreen으로 이동
-      final trimResult = await Navigator.push<VideoTrimResult>(
-        context,
-        PageRouteBuilder(
-          pageBuilder:
-              (context, animation, secondaryAnimation) =>
-                  VideoTrimScreen(videoFile: file, videoDuration: duration),
-          transitionDuration: Duration.zero,
-          reverseTransitionDuration: Duration.zero,
-        ),
-      );
-
-      if (trimResult != null && mounted) {
-        widget.onMediaSelected(file);
-        await _popWithResult(
-          MediaPickerResult(
-            files: [file],
-            selectedMediaType: MediaType.video,
-            trimSpec: trimResult.trim,
-            editSpec: _pendingVideoEditSpec,
-          ),
-        );
-        // 사용 후 초기화
-        _pendingVideoEditSpec = null;
-      } else {
-        // 트림 취소 시 편집 spec도 초기화
-        _pendingVideoEditSpec = null;
-      }
+      // 편집 화면에서 직접 뒤로 간 경우 (트림으로 가지 않은 경우)
+      // 모든 처리는 편집 화면의 onDone 콜백에서 이루어지므로 여기서는 아무것도 하지 않음
     } catch (e) {
       debugPrint('비디오 편집 오류: $e');
       _pendingVideoEditSpec = null;
@@ -992,7 +1065,8 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                     files: [file],
                     // ✅ 실제 선택된 타입은 파일 기준으로 고정 (토글 상태와 무관)
                     selectedMediaType: MediaType.video,
-                    // thumbnailPath는 FFmpeg 처리 시 생성됨
+                    // ✅ 트림 화면에서 pop 전에 생성된(트림 spec 반영된) 썸네일 사용
+                    thumbnailPath: trimResult.thumbnailPath,
                     trimSpec: trimResult.trim,
                     editSpec: _pendingVideoEditSpec, // 편집 없이 바로 트림한 경우 null
                   ),
@@ -1349,12 +1423,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
               final currentScale = details.scale;
               final scaleDelta = currentScale - _lastScale;
 
-              // 핀치 아웃 (늘리기) - 스케일이 증가하면 열 수 감소 (5 -> 3 -> 1)
+              // 핀치 아웃 (늘리기) - 스케일이 증가하면 열 수 감소 (5 -> 3)
               if (scaleDelta > 0.3) {
-                final newCount =
-                    _crossAxisCount == 5
-                        ? 3
-                        : (_crossAxisCount == 3 ? 1 : _crossAxisCount);
+                final newCount = _crossAxisCount == 5 ? 3 : _crossAxisCount;
                 if (newCount != _crossAxisCount) {
                   setState(() {
                     _crossAxisCount = newCount;
@@ -1362,12 +1433,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                 }
                 _lastScale = currentScale;
               }
-              // 핀치 인 (줄이기) - 스케일이 감소하면 열 수 증가 (1 -> 3 -> 5)
+              // 핀치 인 (줄이기) - 스케일이 감소하면 열 수 증가 (3 -> 5)
               else if (scaleDelta < -0.3) {
-                final newCount =
-                    _crossAxisCount == 1
-                        ? 3
-                        : (_crossAxisCount == 3 ? 5 : _crossAxisCount);
+                final newCount = _crossAxisCount == 3 ? 5 : _crossAxisCount;
                 if (newCount != _crossAxisCount) {
                   setState(() {
                     _crossAxisCount = newCount;
@@ -1511,20 +1579,23 @@ class _VideoThumbnailWidget extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           // photo_manager의 내장 썸네일 사용
-          AssetEntityImage(
-            asset,
-            isOriginal: false,
-            thumbnailSize: thumbnailSize,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) {
-              return Container(
-                color: CupertinoColors.systemGrey5,
-                child: const Icon(
-                  CupertinoIcons.videocam,
-                  color: CupertinoColors.systemGrey,
-                ),
-              );
-            },
+          // 🎯 RepaintBoundary로 PHCachingImageManager 메모리 문제 방지
+          RepaintBoundary(
+            child: AssetEntityImage(
+              asset,
+              isOriginal: false,
+              thumbnailSize: thumbnailSize,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  color: CupertinoColors.systemGrey5,
+                  child: const Icon(
+                    CupertinoIcons.videocam,
+                    color: CupertinoColors.systemGrey,
+                  ),
+                );
+              },
+            ),
           ),
           // 선택 오버레이
 
@@ -1615,20 +1686,23 @@ class _ImageThumbnailWidget extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           // photo_manager의 내장 썸네일 사용
-          AssetEntityImage(
-            asset,
-            isOriginal: false,
-            thumbnailSize: thumbnailSize,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) {
-              return Container(
-                color: CupertinoColors.systemGrey5,
-                child: const Icon(
-                  CupertinoIcons.photo,
-                  color: CupertinoColors.systemGrey,
-                ),
-              );
-            },
+          // 🎯 RepaintBoundary로 PHCachingImageManager 메모리 문제 방지
+          RepaintBoundary(
+            child: AssetEntityImage(
+              asset,
+              isOriginal: false,
+              thumbnailSize: thumbnailSize,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  color: CupertinoColors.systemGrey5,
+                  child: const Icon(
+                    CupertinoIcons.photo,
+                    color: CupertinoColors.systemGrey,
+                  ),
+                );
+              },
+            ),
           ),
           // 🎯 비활성화된 이미지만 어둡게 처리
           if (isDisabled)
@@ -1686,20 +1760,23 @@ class _SelectedStripItem extends StatelessWidget {
             index: index,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(14),
-              child: AssetEntityImage(
-                asset,
-                isOriginal: false,
-                thumbnailSize: const ThumbnailSize(220, 220),
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    color: colorScheme.onSurface.withOpacity(0.06),
-                    child: Icon(
-                      CupertinoIcons.photo,
-                      color: colorScheme.onSurface.withOpacity(0.45),
-                    ),
-                  );
-                },
+              // 🎯 RepaintBoundary로 PHCachingImageManager 메모리 문제 방지
+              child: RepaintBoundary(
+                child: AssetEntityImage(
+                  asset,
+                  isOriginal: false,
+                  thumbnailSize: const ThumbnailSize(220, 220),
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      color: colorScheme.onSurface.withOpacity(0.06),
+                      child: Icon(
+                        CupertinoIcons.photo,
+                        color: colorScheme.onSurface.withOpacity(0.45),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
           ),

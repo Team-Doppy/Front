@@ -51,7 +51,11 @@ import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/clip_component.dart'
-    show ClipNode, videoPlayerControllers, ClipComponentBuilder;
+    show
+        ClipNode,
+        videoPlayerControllers,
+        videoPlayerProxyKey,
+        ClipComponentBuilder;
 import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:video_player/video_player.dart';
 import 'package:doppy/editor/service/editor_service.dart';
@@ -112,18 +116,18 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _didScheduleLoadingHide = false; // ✅ hide 스케줄 1회 보장
   static const Duration _loadingFadeDuration = Duration(milliseconds: 200);
   bool _accessLevelChanged = false; // 🎯 공개 범위 변경 여부
-  bool _documentInitialized = false; // 🎯 문서 초기화 완료 플래그 (재생성 방지)
+  bool _documentInitialized = false; // 🎯 문서 초기화 완료 플래그 (재생성 방지
   bool _didStartRemainingMediaPreload =
       false; // ✅ 상위 3개 제외 나머지 미디어 백그라운드 프리로드 1회 보장 (레거시)
   // 🎯 프리로드 임계값: 뷰포트 기반 (서버가 느려서 더 일찍 프리로드)
-  // 화면 높이의 2배 전에 프리로드 = 사용자가 보는 화면 아래 2화면 전에 미리 준비
-  static const double _preloadViewportMultiplier = 2.0; // 화면 높이의 2배
+  // 화면 높이의 2배 전에 프리로드 = 사용자가 보는 화면 아래 1화면 전에 미리 준비
+  static const double _preloadViewportMultiplier = 1.0; // 화면 높이의 1배
   static const double _preloadBottomThresholdFallback =
       800.0; // 🎯 뷰포트 계산 불가 시 fallback (하단 800px)
   double? _cachedScreenHeight; // 🎯 성능 최적화: 화면 높이 캐싱
 
   // 스크롤 애니메이션을 위한 변수들
-  static const double _appBarHeight = 52.0; // AppBar 높이
+  static const double _appBarHeight = 56.0; // AppBar 높이 (kToolbarHeight와 동일)
   double _lastScrollOffset = 0.0;
   DateTime? _lastScrollUpdate; // 🎯 스크롤 업데이트 throttling용
 
@@ -456,7 +460,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     }
 
     // 컨트롤러 찾기
-    final key = 'video_${node.url.hashCode}';
+    final key = videoPlayerProxyKey(
+      namespace: 'reader',
+      url: node.url,
+      localPath: node.localPath,
+    );
     final controller = videoPlayerControllers[key];
 
     if (controller == null) {

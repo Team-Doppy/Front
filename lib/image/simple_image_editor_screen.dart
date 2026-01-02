@@ -408,9 +408,13 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   final Map<int, ui.Image?> _originalUiImageCache = {};
   static const int _maxImageCacheSize = 10; // 최대 UI 이미지 캐시 크기
 
-  // ✅ “확 바뀌는 것” 방지용: 이전 프레임 이미지 보관 + 크로스페이드
+  // ✅ "확 바뀌는 것" 방지용: 이전 프레임 이미지 보관 + 크로스페이드
   final Map<int, int> _applyAnimVersion = {};
   static const Duration _applySettleDuration = Duration(milliseconds: 140);
+
+  // ✅ 최초 이미지 진입 시 페이드인 추적 (각 이미지별로 한 번만)
+  final Map<int, bool> _hasShownFadeIn = {};
+  static const Duration _initialFadeInDuration = Duration(milliseconds: 200);
 
   // 이미지별 편집 상태 관리
   final Map<int, _ImageEditState> _imageEditStates = {};
@@ -713,6 +717,31 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
               return const Icon(Icons.error);
             }
             _uiImageCache[index] = snapshot.data!;
+
+            // ✅ 최초 로딩 완료 시 페이드인 애니메이션 적용
+            final hasShown = _hasShownFadeIn[index] ?? false;
+            if (!hasShown) {
+              _hasShownFadeIn[index] = true;
+              return TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0.0, end: 1.0),
+                duration: _initialFadeInDuration,
+                curve: Curves.easeOut,
+                builder: (context, opacity, _) {
+                  return Opacity(
+                    opacity: opacity,
+                    child: CustomPaint(
+                      painter: ImagePainter(
+                        snapshot.data!,
+                        state.imageOffset,
+                        state.imageScale,
+                      ),
+                      size: Size.infinite,
+                    ),
+                  );
+                },
+              );
+            }
+
             return CustomPaint(
               painter: ImagePainter(
                 snapshot.data!,
@@ -726,7 +755,44 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       );
     }
 
-    // ✅ 스냅 교체 + “살짝 정착(zoom settle)” (겹침 없음 → 덜 조잡/덜 어지러움)
+    // ✅ 스냅 교체 + "살짝 정착(zoom settle)" (겹침 없음 → 덜 조잡/덜 어지러움)
+    // ✅ 최초 진입 시 페이드인 애니메이션도 함께 적용
+    final hasShown = _hasShownFadeIn[index] ?? false;
+    if (!hasShown) {
+      _hasShownFadeIn[index] = true;
+      return TweenAnimationBuilder<double>(
+        key: ValueKey('initial_fade_$index'),
+        tween: Tween(begin: 0.0, end: 1.0),
+        duration: _initialFadeInDuration,
+        curve: Curves.easeOut,
+        builder: (context, opacity, _) {
+          return Opacity(
+            opacity: opacity,
+            child: TweenAnimationBuilder<double>(
+              key: ValueKey('apply_settle_$index\_$v'),
+              tween: Tween(begin: 1.02, end: 1.0),
+              duration: _applySettleDuration,
+              curve: Curves.easeOutCubic,
+              builder: (context, s, __) {
+                return Transform.scale(
+                  scale: s,
+                  alignment: Alignment.center,
+                  child: CustomPaint(
+                    painter: ImagePainter(
+                      curr,
+                      state.imageOffset,
+                      state.imageScale,
+                    ),
+                    size: Size.infinite,
+                  ),
+                );
+              },
+            ),
+          );
+        },
+      );
+    }
+
     return TweenAnimationBuilder<double>(
       key: ValueKey('apply_settle_$index\_$v'),
       tween: Tween(begin: 1.02, end: 1.0),

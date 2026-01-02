@@ -220,10 +220,16 @@ class _SplashScreenState extends State<SplashScreen>
         }
       }
 
-      // 2. FCM 토큰 검사 및 필요시 재발급 (비동기로 처리하여 앱 시작을 막지 않음)
-      _checkAndSyncFcmToken();
+      // 2. FCM 토큰 검사 및 필요시 재발급 (스피너 렌더링 안정화를 위해 약간 지연)
+      // ✅ 스피너가 먼저 안정적으로 렌더링된 후 FCM 작업 시작
+      Future.delayed(const Duration(milliseconds: 300), () {
+        _checkAndSyncFcmToken();
+      });
 
       // 3. 앱 시작 시 필수 데이터만 로드 (그룹 스키마 포함)
+      // ✅ 스피너가 먼저 안정적으로 렌더링된 후 필수 데이터 로드 시작 (100ms 지연)
+      await Future.delayed(const Duration(milliseconds: 100));
+
       // 홈 데이터, 검색 기록, 유저 정보, 그룹 스키마를 병렬로 로드
       final homeDataFuture = _loadHomeData();
       await Future.wait([
@@ -236,11 +242,17 @@ class _SplashScreenState extends State<SplashScreen>
       // 홈 데이터 가져오기
       final homeData = await homeDataFuture;
 
-      // 4. 트렌딩 데이터는 비동기로 백그라운드에서 로드 (앱 시작을 막지 않음)
-      _loadTrendingData();
+      // 4. 트렌딩 데이터는 비동기로 백그라운드에서 로드 (스피너 안정화를 위해 약간 지연)
+      // ✅ 스피너가 먼저 안정적으로 렌더링된 후 트렌딩 데이터 로드 시작
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _loadTrendingData();
+      });
 
-      // 5. 설정 정보 및 받은 요청은 비동기로 백그라운드에서 로드 (앱 시작을 막지 않음)
-      _loadSettingsAndFriendRequests();
+      // 5. 설정 정보 및 받은 요청은 비동기로 백그라운드에서 로드 (스피너 안정화를 위해 약간 지연)
+      // ✅ 스피너가 먼저 안정적으로 렌더링된 후 설정/친구 요청 로드 시작
+      Future.delayed(const Duration(milliseconds: 700), () {
+        _loadSettingsAndFriendRequests();
+      });
 
       return _BootstrapResult.loggedIn(homeData);
     } catch (e) {
@@ -469,15 +481,20 @@ class _SplashScreenState extends State<SplashScreen>
                                 : _fadeInOpacity.value;
 
                         return RepaintBoundary(
-                          child: DoppyLoadingLogo(
-                            opacity: currentOpacity,
-                            // Splash에서는 외부 애니메이션 컨트롤러가 opacity를 이미 제어하므로
-                            // 내부 AnimatedOpacity 지연(400ms)을 제거해서 "완전히 사라진 뒤" 전환되게 함
-                            opacityDuration: Duration.zero,
-                            dTextSize: 40,
-                            ppyTextSize: 40,
-                            spinnerStrokeWidth: 4.5,
-                            spinnerColor: Theme.of(context).colorScheme.primary,
+                          // ✅ 스피너 렌더링 안정화: 별도 레이어로 격리하여 메인 스레드 블로킹 최소화
+                          child: IgnorePointer(
+                            ignoring: true,
+                            child: DoppyLoadingLogo(
+                              opacity: currentOpacity,
+                              // Splash에서는 외부 애니메이션 컨트롤러가 opacity를 이미 제어하므로
+                              // 내부 AnimatedOpacity 지연(400ms)을 제거해서 "완전히 사라진 뒤" 전환되게 함
+                              opacityDuration: Duration.zero,
+                              dTextSize: 40,
+                              ppyTextSize: 40,
+                              spinnerStrokeWidth: 4.5,
+                              spinnerColor:
+                                  Theme.of(context).colorScheme.primary,
+                            ),
                           ),
                         );
                       },

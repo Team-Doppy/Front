@@ -729,6 +729,20 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   /// 🎯 포그라운드 복귀 시 사용자 프로필 정보 재동기화
   void _refreshProfileOnForeground() {
     try {
+      // 🎯 피드 정보가 이미 있으면 프로필 재로드 불필요
+      final myProfileFeedProvider = Provider.of<MyProfileFeedProvider>(
+        context,
+        listen: false,
+      );
+      final bool hasFeedData =
+          myProfileFeedProvider.categories.isNotEmpty ||
+          myProfileFeedProvider.posts.isNotEmpty;
+
+      if (hasFeedData) {
+        debugPrint('[RootShell] ⏭️ 피드 정보가 이미 있어 프로필 재로드 건너뜀');
+        return;
+      }
+
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       userProvider
           .fetchMyProfile()

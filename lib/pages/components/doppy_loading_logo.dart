@@ -69,15 +69,18 @@ class DoppyLoadingLogo extends StatelessWidget {
                 ),
                 Padding(
                   padding: EdgeInsets.only(top: 5),
-                  child: SizedBox(
-                    width: (ppyTextSize ?? 36) / 2,
-                    height: (ppyTextSize ?? 36) / 2,
-                    child: CircularProgressIndicator(
-                      strokeWidth: spinnerStrokeWidth ?? 4.2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        color ??
-                            spinnerColor ??
-                            Theme.of(context).colorScheme.onSurface,
+                  child: RepaintBoundary(
+                    // ✅ 스피너만 별도 레이어로 격리하여 메인 스레드 블로킹 최소화
+                    child: SizedBox(
+                      width: (ppyTextSize ?? 36) / 2,
+                      height: (ppyTextSize ?? 36) / 2,
+                      child: CircularProgressIndicator(
+                        strokeWidth: spinnerStrokeWidth ?? 4.2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          color ??
+                              spinnerColor ??
+                              Theme.of(context).colorScheme.onSurface,
+                        ),
                       ),
                     ),
                   ),
@@ -99,17 +102,28 @@ class DoppyLoadingLogo extends StatelessWidget {
         // 뒤로가기 버튼
         if (showBackButton)
           Positioned(
-            top: 57,
-            left: 4,
-            child: IconButton(
-              icon: Icon(
-                Icons.arrow_back_ios_new_rounded,
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withOpacity(0.75),
-                size: 24,
+            top: 0,
+            left: 0,
+            child: SafeArea(
+              bottom: false,
+              child: Container(
+                height: kToolbarHeight,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.75),
+                        size: 24,
+                      ),
+                      onPressed: onBack ?? () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
               ),
-              onPressed: onBack ?? () => Navigator.of(context).pop(),
             ),
           ),
       ],

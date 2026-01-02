@@ -7,6 +7,7 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/clip_component.dart' show muteAllVideos;
+import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -15,7 +16,6 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:convert';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:super_editor/super_editor.dart';
-import 'package:doppy/editor/utils/post_metadata_change_detector.dart';
 
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
@@ -172,22 +172,16 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
               child: Row(
                 children: [
                   // 뒤로가기 버튼
-                  GestureDetector(
-                    onTap: () async {
+                  IconButton(
+                    onPressed: () async {
                       Navigator.of(context).maybePop();
                     },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 4,
-                      ),
-                      child: Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        size: 24,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.75),
-                      ),
+                    icon: Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 24,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.75),
                     ),
                   ),
 
@@ -446,6 +440,9 @@ class EditorAppBar extends StatelessWidget {
 
     // 검증 통과 시 다음 화면으로 이동
     // ✅ Step1으로 이동할 때 모든 비디오를 mute (dispose는 하지 않음)
+    // 뮤트 전 상태를 저장하여 돌아올 때 복원
+    final muteService = VideoMuteService();
+    final wasMutedBeforeStep1 = muteService.isReaderMuted;
     muteAllVideos();
     NodeComponentService().selectNode(null);
 
@@ -499,6 +496,27 @@ class EditorAppBar extends StatelessWidget {
       ),
     );
 
+    // 🎯 Step1에서 돌아올 때 뮤트 상태 복원
+    final restoreMuteService = VideoMuteService();
+    // 원래 뮤트 상태로 복원
+    restoreMuteService.setReaderMuted(wasMutedBeforeStep1);
+    // VideoCacheService의 볼륨도 복원 (VideoMuteService 상태에 맞춰)
+    try {
+      VideoCacheService().setVolumeForNamespace(
+        'editor',
+        wasMutedBeforeStep1 ? 0.0 : 1.0,
+      );
+      VideoCacheService().setVolumeForNamespace(
+        'reader',
+        wasMutedBeforeStep1 ? 0.0 : 1.0,
+      );
+      debugPrint(
+        '[EditorAppBar] 뮤트 상태 복원: ${wasMutedBeforeStep1 ? "음소거" : "소리 켜짐"}',
+      );
+    } catch (e) {
+      debugPrint('[EditorAppBar] 뮤트 상태 복원 실패: $e');
+    }
+
     // ✅ 썸네일 편집 화면에서 돌아오며 메타데이터를 전달받으면 상위로 전달
     if (result is Map) {
       final thumbnailUrl = (result['thumbnailImageUrl'] ?? '').toString();
@@ -532,22 +550,16 @@ class EditorAppBar extends StatelessWidget {
                   Row(
                     children: [
                       // 뒤로가기 버튼
-                      GestureDetector(
-                        onTap: () async {
+                      IconButton(
+                        onPressed: () async {
                           Navigator.of(context).maybePop();
                         },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 4,
-                          ),
-                          child: Icon(
-                            Icons.arrow_back_ios_new_rounded,
-                            size: 24,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.75),
-                          ),
+                        icon: Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          size: 24,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.75),
                         ),
                       ),
 

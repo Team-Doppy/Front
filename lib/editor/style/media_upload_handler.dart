@@ -531,7 +531,14 @@ class MediaUploadHandler {
       return;
     }
 
-    await _uploadVideo(result.files.first, result.thumbnailPath, upload);
+    // 🎯 이미지 피커에서 영상으로 전환된 경우에도 trim/edit spec을 반드시 전달
+    await _uploadVideo(
+      result.files.first,
+      result.thumbnailPath,
+      upload,
+      trimSpec: result.trimSpec,
+      editSpec: result.editSpec,
+    );
   }
 
   /// 영상 피커에서 이미지로 전환된 경우

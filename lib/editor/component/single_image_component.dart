@@ -106,6 +106,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
 
   // 🎯 성능 최적화: 캐싱된 메타데이터 크기
   Size? _cachedImageSize;
+  bool _isMeasuring = false; // 🎯 중복 측정 방지 플래그
   bool _sizeInitialized = false;
 
   // 🎯 특수 노드 사이 클릭 감지 (true: 특수 노드 사이 클릭, false: 일반 클릭)
@@ -967,17 +968,21 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       return;
     }
 
-    // 🎯 메타데이터에서 크기를 먼저 확인 (임시저장 등에서 이미 저장된 경우 스킵)
-    if (_cachedImageSize == null) {
-      final metaSize = _getImageSizeFromMetadata();
-      if (metaSize != null) {
-        // 메타데이터에 크기가 있으면 측정 불필요
-        return;
-      }
-    } else {
-      // 이미 캐시된 크기가 있으면 측정 불필요
+    // 🎯 중복 측정 방지: 이미 측정 중이거나 캐시가 있으면 스킵
+    if (_isMeasuring || _cachedImageSize != null) {
       return;
     }
+
+    // 🎯 메타데이터에서 크기를 먼저 확인 (임시저장 등에서 이미 저장된 경우 스킵)
+    final metaSize = _getImageSizeFromMetadata();
+    if (metaSize != null) {
+      // 메타데이터에 크기가 있으면 측정 불필요
+      _cachedImageSize = metaSize;
+      return;
+    }
+
+    // 🎯 측정 시작 플래그 설정
+    _isMeasuring = true;
 
     try {
       // 🎯 공통 유틸리티 사용: 전체 이미지 다운로드 후 크기 추출
@@ -1017,6 +1022,9 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     } catch (e) {
       // 🎯 크기 측정 실패는 조용히 처리 (이미지 표시에는 영향 없음)
       debugPrint('[SingleImage] ⚠️ 크기 측정 실패: ${widget.imageUrl} - $e');
+    } finally {
+      // 🎯 측정 완료 플래그 해제
+      _isMeasuring = false;
     }
   }
 
@@ -1172,8 +1180,14 @@ class _SingleImageComponentState extends State<SingleImageComponent>
     // 동일한 ResizeImage(width) 캐시 키로 hit가 난다.
     final decodeWidth =
         widget.isEditing
-            ? EditorImageProvider.editingDecodeWidth(context, widget.screenWidth)
-            : EditorImageProvider.readingDecodeWidth(context, widget.screenWidth);
+            ? EditorImageProvider.editingDecodeWidth(
+              context,
+              widget.screenWidth,
+            )
+            : EditorImageProvider.readingDecodeWidth(
+              context,
+              widget.screenWidth,
+            );
 
     final built = EditorImageProvider.build(
       url: displayUrl,
@@ -1190,7 +1204,7 @@ class _SingleImageComponentState extends State<SingleImageComponent>
       frameBuilder: (context, child, frame, wasSyncLoaded) {
         if (wasSyncLoaded || frame != null) {
           _lastRenderedChild = child;
-          if (widget.isEditing && _cachedImageSize == null) {
+          if (widget.isEditing && _cachedImageSize == null && !_isMeasuring) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) _measureAndSaveImageSize();
             });

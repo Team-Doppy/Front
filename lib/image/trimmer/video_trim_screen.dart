@@ -1,10 +1,18 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
+import 'package:doppy/image/adjustment_editor.dart';
+import 'package:doppy/image/crop_editor.dart' show CropUtils, ImageRectUtils;
+import 'package:doppy/image/filter_editor.dart' show FilterUtils;
+import 'package:doppy/image/utils/filter_presets.dart';
+import 'package:doppy/image/video_edit_spec.dart';
 import 'package:doppy/image/video_trim_spec.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
+import 'package:doppy/editor/utils/video_upload_utils.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -14,7 +22,10 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 /// 비디오 트림 결과 (비파괴: 실제 ffmpeg 트림을 하지 않고 구간만 반환)
 class VideoTrimResult {
   final VideoTrimSpec trim;
-  VideoTrimResult({required this.trim});
+  // ✅ 트림/편집 스펙이 적용된 썸네일(파일) 경로
+  // MediaPicker에서 노드 생성 시 즉시 적용하여 "원본 비율/원본 썸네일"로 보이는 문제를 방지한다.
+  final String? thumbnailPath;
+  VideoTrimResult({required this.trim, this.thumbnailPath});
 }
 
 /// 트림 범위 설정 (도메인 규칙)
@@ -105,7 +116,8 @@ class Trimmer extends ChangeNotifier {
 
   void _startPlaybackTimer() {
     _playbackTimer?.cancel();
-    _playbackTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+    // 🎯 재생바 동기화를 위해 타이머 주기를 더 빠르게 (100ms -> 33ms, 약 30fps)
+    _playbackTimer = Timer.periodic(const Duration(milliseconds: 33), (timer) {
       if (_videoPlayerController == null || !_isInitialized) {
         timer.cancel();
         return;
@@ -125,8 +137,8 @@ class Trimmer extends ChangeNotifier {
       // 🎯 재생 범위 체크 (재생 중일 때만)
       if (isPlaying) {
         // 🎯 재생바 중심이 핸들 경계에 도달하면 즉시 정지 (핸들 두께 고려)
-        // 재생바 중심이 endValue에 거의 도달하면 정지 (0.02초 여유로 더 정밀하게)
-        final stopThreshold = _endValue - 0.02;
+        // 재생바 중심이 endValue에 거의 도달하면 정지 (0.005초 여유로 더 정밀하게)
+        final stopThreshold = _endValue - 0.005;
 
         if (position >= stopThreshold) {
           // 끝 도달: 일시정지하고 시작으로 이동
@@ -141,8 +153,8 @@ class Trimmer extends ChangeNotifier {
             double.infinity,
           );
           needsUpdate = true;
-        } else if (position < _startValue) {
-          // 시작 이전: 시작으로 이동
+        } else if (position < _startValue - 0.01) {
+          // 시작 이전: 시작으로 이동 (0.01초 여유를 두어 시작 핸들과 붙어있을 때 재생 가능)
           final startMs =
               ((_startValue.clamp(0.0, double.infinity)) * 1000).toInt();
           if (startMs < 0) return; // 음수 방지
@@ -189,12 +201,26 @@ class Trimmer extends ChangeNotifier {
       final currentPos = _currentPositionNotifier.value;
 
       // 범위를 벗어났거나 끝에 도달했거나 시작 핸들과 붙어있으면 시작 지점으로 이동
-      if (currentPos >= _endValue - 0.01 || currentPos < _startValue) {
+      // 0.01초 여유를 두어 시작 핸들과 붙어있을 때도 재생 가능하도록 함
+      if (currentPos >= _endValue - 0.01 || currentPos <= _startValue + 0.01) {
         // 시작 지점으로 이동 (비동기 완료 대기)
         await seekTo(_startValue);
-        // seekTo 완료 후 재생 시작
+        // 🎯 seekTo 완료 후 즉시 위치 업데이트 (재생바가 바로 움직이도록)
+        _currentPositionNotifier.value = _startValue;
+        // 재생 시작
         await _videoPlayerController!.play();
         _isPlaying = true;
+        // 🎯 재생 시작 직후 즉시 위치 업데이트 (지연 없이 재생바 움직임)
+        Future.microtask(() {
+          if (_videoPlayerController != null && _isInitialized) {
+            final videoPos =
+                _videoPlayerController!.value.position.inMilliseconds / 1000.0;
+            _currentPositionNotifier.value = videoPos.clamp(
+              _startValue,
+              _endValue,
+            );
+          }
+        });
       } else {
         // 🎯 재생 시작 시 즉시 현재 위치를 업데이트 (재생바가 즉시 움직이도록)
         final videoPos =
@@ -203,6 +229,17 @@ class Trimmer extends ChangeNotifier {
         // 범위 내에 있으면 바로 재생
         await _videoPlayerController!.play();
         _isPlaying = true;
+        // 🎯 재생 시작 직후 즉시 위치 업데이트 (지연 없이 재생바 움직임)
+        Future.microtask(() {
+          if (_videoPlayerController != null && _isInitialized) {
+            final videoPos =
+                _videoPlayerController!.value.position.inMilliseconds / 1000.0;
+            _currentPositionNotifier.value = videoPos.clamp(
+              _startValue,
+              _endValue,
+            );
+          }
+        });
       }
     }
     notifyListeners();
@@ -403,8 +440,129 @@ class Trimmer extends ChangeNotifier {
 /// VideoViewer 위젯 - video_trimmer 패키지 구조와 동일
 class VideoViewer extends StatelessWidget {
   final Trimmer trimmer;
+  final VideoEditSpec? editSpec;
 
-  const VideoViewer({super.key, required this.trimmer});
+  const VideoViewer({super.key, required this.trimmer, this.editSpec});
+
+  /// editor의 `_applyEdit()`(크롭 적용 후)와 동일한 방식으로
+  /// cropRectImage가 화면을 “꽉 채우도록(contain + center)” 만드는 scale/offset을 계산한다.
+  /// 반환값:
+  /// - imageRect: VideoPlayer를 배치할 rect (screen)
+  /// - cropRectScreen: imageRect 기준으로 변환된 crop rect (screen)
+  ({Rect imageRect, Rect cropRectScreen}) _computeCropLayout({
+    required Size containerSize,
+    required Size videoSize,
+    required Rect cropRectImage,
+  }) {
+    // 1) scale=1, offset=0 기준 rect
+    final baseRect = ImageRectUtils.computeImageRect(
+      containerSize: containerSize,
+      imageSize: videoSize,
+      scale: 1.0,
+      offset: Offset.zero,
+    );
+
+    // 2) baseRect에서 cropRectScreen 계산
+    final baseCropScreen = ImageRectUtils.imageToScreenRect(
+      imageRect: cropRectImage,
+      screenImageRect: baseRect,
+      imageSize: videoSize,
+    );
+
+    // 3) crop이 화면 안에 완전히 들어오도록(contain) 최소 스케일 선택
+    final scaleFactor = math.min(
+      containerSize.width / baseCropScreen.width,
+      containerSize.height / baseCropScreen.height,
+    );
+
+    // 4) 새 스케일 적용 (offset=0 기준)
+    final scaledRect = ImageRectUtils.computeImageRect(
+      containerSize: containerSize,
+      imageSize: videoSize,
+      scale: scaleFactor,
+      offset: Offset.zero,
+    );
+
+    final scaledCropScreen = ImageRectUtils.imageToScreenRect(
+      imageRect: cropRectImage,
+      screenImageRect: scaledRect,
+      imageSize: videoSize,
+    );
+
+    // 5) crop 중심을 화면 중심으로 이동시키는 offsetDelta
+    final containerCenter = Offset(
+      containerSize.width / 2,
+      containerSize.height / 2,
+    );
+    final offsetDelta = containerCenter - scaledCropScreen.center;
+
+    // 6) 최종 rect + 최종 crop rect
+    final finalRect = ImageRectUtils.computeImageRect(
+      containerSize: containerSize,
+      imageSize: videoSize,
+      scale: scaleFactor,
+      offset: offsetDelta,
+    );
+    final finalCropScreen = ImageRectUtils.imageToScreenRect(
+      imageRect: cropRectImage,
+      screenImageRect: finalRect,
+      imageSize: videoSize,
+    );
+
+    return (imageRect: finalRect, cropRectScreen: finalCropScreen);
+  }
+
+  ColorFilter? _getColorFilterFromSpec(VideoEditSpec? spec) {
+    if (spec == null) return null;
+
+    final FilterModel? filter =
+        (spec.filterName == null)
+            ? null
+            : presetFiltersList.cast<FilterModel?>().firstWhere(
+              (f) => f?.name == spec.filterName,
+              orElse: () => null,
+            );
+
+    final filterMatrix = FilterUtils.getFilterMatrix(
+      filter,
+      intensity: spec.filterIntensity,
+    );
+    final adjustmentMatrix = AdjustmentUtils.getAdjustmentMatrix(
+      brightness: spec.brightness,
+      contrast: spec.contrast,
+      saturation: spec.saturation,
+      luminance: spec.luminance,
+      exposure: spec.exposure,
+      sharpness: spec.sharpness,
+      temperature: spec.temperature,
+    );
+
+    if (filterMatrix != null && adjustmentMatrix != null) {
+      return ColorFilter.matrix(
+        _multiplyColorMatrices(filterMatrix, adjustmentMatrix),
+      );
+    } else if (filterMatrix != null) {
+      return ColorFilter.matrix(filterMatrix);
+    } else if (adjustmentMatrix != null) {
+      return ColorFilter.matrix(adjustmentMatrix);
+    }
+    return null;
+  }
+
+  // 4x5 행렬 곱셈
+  List<double> _multiplyColorMatrices(List<double> a, List<double> b) {
+    final result = List<double>.filled(20, 0.0);
+    for (int i = 0; i < 4; i++) {
+      for (int j = 0; j < 5; j++) {
+        double sum = 0.0;
+        for (int k = 0; k < 4; k++) {
+          sum += a[i * 5 + k] * b[k * 5 + j];
+        }
+        result[i * 5 + j] = sum;
+      }
+    }
+    return result;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -415,65 +573,217 @@ class VideoViewer extends StatelessWidget {
           return const Center(child: CupertinoActivityIndicator());
         }
 
-        return Stack(
-          children: [
-            // 영상을 원본 비율 유지하며 가운데 표시
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () {
-                  debugPrint('[VideoViewer] 재생 버튼 탭 감지!');
-                  trimmer.videoPlaybackControl();
-                },
-                behavior: HitTestBehavior.opaque,
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio:
-                        trimmer.videoPlayerController!.value.aspectRatio,
-                    child: VideoPlayer(trimmer.videoPlayerController!),
+        final controller = trimmer.videoPlayerController!;
+        final spec = editSpec;
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final containerSize = Size(
+              constraints.maxWidth,
+              constraints.maxHeight,
+            );
+            final videoSize = Size(
+              controller.value.size.width.toDouble(),
+              controller.value.size.height.toDouble(),
+            );
+
+            // ✅ 원본 비디오가 표시될 rect (screen)
+            final fullImageRect = ImageRectUtils.computeImageRect(
+              containerSize: containerSize,
+              imageSize: videoSize,
+              scale: 1.0,
+              offset: Offset.zero,
+            );
+
+            // ✅ crop이 있으면: editor와 동일한 방식으로 imageRect/cropRectScreen 재계산
+            Rect imageRect = fullImageRect;
+            Rect? cropRectScreen;
+            if (spec?.cropRectImage != null) {
+              final r = _computeCropLayout(
+                containerSize: containerSize,
+                videoSize: videoSize,
+                cropRectImage: spec!.cropRectImage!,
+              );
+              imageRect = r.imageRect;
+              cropRectScreen = r.cropRectScreen;
+            }
+
+            // base video (fullImageRect에 맞게 배치될 예정)
+            Widget videoWidget = SizedBox.expand(
+              child: VideoPlayer(controller),
+            );
+
+            // ColorFilter
+            final cf = _getColorFilterFromSpec(spec);
+            if (cf != null) {
+              videoWidget = ColorFiltered(colorFilter: cf, child: videoWidget);
+            }
+
+            // Blur
+            final blurSigma = ((spec?.blur ?? 0.0) / 100.0) * 20.0;
+            videoWidget = ImageFiltered(
+              imageFilter: ui.ImageFilter.blur(
+                sigmaX: blurSigma,
+                sigmaY: blurSigma,
+              ),
+              child: videoWidget,
+            );
+
+            // Vignette
+            final vignetteIntensity = (spec?.vignette ?? 0.0) / 100.0;
+            videoWidget = CustomPaint(
+              painter: _TrimmerVignettePainter(intensity: vignetteIntensity),
+              child: videoWidget,
+            );
+
+            // rotation/flip (+ 회전 시 빈공간 방지용 cover scale)
+            final totalRotationDeg =
+                (spec?.rotation ?? 0) +
+                ((spec?.rotationQuarterTurns ?? 0) * 90);
+            final rotationRadians = totalRotationDeg * (3.14159265359 / 180.0);
+
+            // ✅ editor 메인 프리뷰와 동일: (crop clip) + (rotation/flip) + (cover k)
+            final anchor = imageRect.center;
+            double kCover = 1.0;
+            if (cropRectScreen != null) {
+              kCover = CropUtils.coverScaleToContainCropRect(
+                imageRectScreen: imageRect,
+                cropRectScreen: cropRectScreen,
+                pivot: anchor,
+                thetaRad: rotationRadians,
+              );
+            }
+            final sx = ((spec?.flipHorizontal ?? false) ? -1.0 : 1.0) * kCover;
+            final sy = ((spec?.flipVertical ?? false) ? -1.0 : 1.0) * kCover;
+
+            final m =
+                Matrix4.identity()
+                  ..translate(anchor.dx, anchor.dy)
+                  ..rotateZ(rotationRadians)
+                  ..scale(sx, sy)
+                  ..translate(-anchor.dx, -anchor.dy);
+
+            Widget finalVideo = Transform(transform: m, child: videoWidget);
+
+            // crop clip (imageRect 기준)
+            if (cropRectScreen != null) {
+              final clipRect = Rect.fromLTWH(
+                cropRectScreen.left - imageRect.left,
+                cropRectScreen.top - imageRect.top,
+                cropRectScreen.width,
+                cropRectScreen.height,
+              );
+              finalVideo = ClipRect(
+                clipper: _TrimmerRectClipper(clipRect),
+                child: finalVideo,
+              );
+            }
+
+            final positionedVideo = Positioned(
+              left: imageRect.left,
+              top: imageRect.top,
+              width: imageRect.width,
+              height: imageRect.height,
+              child: finalVideo,
+            );
+
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () {
+                      debugPrint('[VideoViewer] 재생 버튼 탭 감지!');
+                      trimmer.videoPlaybackControl();
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Stack(children: [positionedVideo]),
                   ),
                 ),
-              ),
-            ),
-            // 재생/일시정지 아이콘 오버레이
-            IgnorePointer(
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.5),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    trimmer.isPlaying ? Icons.pause : Icons.play_arrow,
-                    color: Colors.white,
-                    size: 48,
+                // 재생/일시정지 아이콘 오버레이
+                IgnorePointer(
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        trimmer.isPlaying ? Icons.pause : Icons.play_arrow,
+                        color: Colors.white,
+                        size: 48,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-          ],
+              ],
+            );
+          },
         );
       },
     );
   }
 }
 
+class _TrimmerRectClipper extends CustomClipper<Rect> {
+  final Rect rect;
+  _TrimmerRectClipper(this.rect);
+
+  @override
+  Rect getClip(Size size) => rect;
+
+  @override
+  bool shouldReclip(covariant _TrimmerRectClipper oldClipper) =>
+      oldClipper.rect != rect;
+}
+
+class _TrimmerVignettePainter extends CustomPainter {
+  final double intensity; // 0..1
+  _TrimmerVignettePainter({required this.intensity});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (intensity <= 0) return;
+    final rect = Offset.zero & size;
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.shortestSide / 2) * 1.05;
+
+    final shader = RadialGradient(
+      center: Alignment.center,
+      radius: 1.0,
+      colors: [Colors.transparent, Colors.black.withOpacity(0.55 * intensity)],
+      stops: const [0.55, 1.0],
+    ).createShader(Rect.fromCircle(center: center, radius: radius));
+
+    final paint = Paint()..shader = shader;
+    canvas.drawRect(rect, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrimmerVignettePainter oldDelegate) =>
+      oldDelegate.intensity != intensity;
+}
+
 /// 크롭 핸들 UI 커스텀 페인터 (핸들 + 가로선)
 class _CropHandlePainter extends CustomPainter {
   final Color color;
+  final Color innerBarColor; // 핸들 중앙 이너 바 색상
+  final Color borderColor; // 핸들 보더 색상
   final double startX;
   final double endX;
   final double handleWidth;
   final double timelineHeight;
-  final double handleExtension; // 위아래 확장 크기 (2px)
+  final double handleExtension; // 위아래 확장 크기 (더 두껍게)
 
   _CropHandlePainter({
     required this.color,
+    required this.innerBarColor,
+    required this.borderColor,
     required this.startX,
     required this.endX,
     required this.handleWidth,
     required this.timelineHeight,
-    this.handleExtension = 2.0,
+    this.handleExtension = 12, // 위아래 라인 두께 증가 (8.0 -> 10.0, 핸들보다 바깥쪽으로 더 두껍게)
   });
 
   @override
@@ -486,73 +796,142 @@ class _CropHandlePainter extends CustomPainter {
     // 🎯 실제 타임라인 높이 사용 (size.height)
     final actualTimelineHeight = size.height;
 
-    // 🎯 위쪽 가로선
-    canvas.drawRect(
-      Rect.fromLTWH(startX, -handleExtension, endX - startX, handleExtension),
-      paint,
-    );
+    // 🎯 핸들 위치 계산
+    // - startX/endX는 "경계선(시간)" 좌표라서 0/width일 수 있음
+    // - 하지만 핸들은 두께(handleWidth)가 있어, 그대로 그리면 화면 밖(-x)으로 나가 hit-test가 안 잡힘
+    // - 따라서 핸들 Rect는 항상 화면 내부(0~size.width)에 clamp해서 "완전 왼쪽 끝"에서도 드래그 가능하게 함
+    final rawLeftHandleX = startX - handleWidth / 2;
+    final rawRightHandleX = endX - handleWidth / 2;
+    final leftHandleX = rawLeftHandleX.clamp(0.0, size.width - handleWidth);
+    final rightHandleX = rawRightHandleX.clamp(0.0, size.width - handleWidth);
+    final borderWidth = 2.5; // 핸들 보더 두께
 
-    // 🎯 아래쪽 가로선
-    canvas.drawRect(
-      Rect.fromLTWH(
-        startX,
-        actualTimelineHeight,
-        endX - startX,
-        handleExtension,
-      ),
-      paint,
-    );
+    // 🎯 가로선 위치: 핸들 보더 안쪽 경계에 정확히 맞춤
+    // 핸들 보더는 stroke이므로 중심선이 경계에 있음
+    // 보더 중심선에서 안쪽으로 borderWidth/2만큼 이동
+    // ✅ startX/endX가 화면 경계에 붙을 때는 "clamp된 핸들 Rect" 기준으로 계산해야 겹침/어긋남이 없음
+    final horizontalLineStartX =
+        leftHandleX + handleWidth - borderWidth / 2; // 왼쪽 핸들 보더 안쪽 경계
+    final horizontalLineEndX =
+        rightHandleX + borderWidth / 2; // 오른쪽 핸들 보더 안쪽 경계
+    final horizontalLineWidth = horizontalLineEndX - horizontalLineStartX;
 
-    // 🎯 왼쪽 핸들
-    final leftHandleX = startX - handleWidth / 2;
-    final leftHandleRect = RRect.fromRectAndRadius(
+    // 🎯 가로선 두께를 핸들보다 더 두껍게 (핸들 위쪽으로 더 확장)
+    // 핸들 높이는 handleExtension에 의존하지만, 가로선만 더 두껍게 그리기
+    final topHorizontalLineThickness = handleExtension + 1.5; // 위쪽 가로선 두께
+    final bottomHorizontalLineThickness = handleExtension + 4.0; // 아래쪽 가로선 두께
+
+    // 🎯 위쪽 가로선 (핸들 보더 안쪽 경계에 정확히 맞춤, 더 두껍게)
+    if (horizontalLineWidth > 0) {
+      canvas.drawRect(
+        Rect.fromLTWH(
+          horizontalLineStartX,
+          -topHorizontalLineThickness, // 핸들보다 더 위로 확장
+          horizontalLineWidth,
+          topHorizontalLineThickness,
+        ),
+        paint,
+      );
+    }
+
+    // 🎯 아래쪽 가로선 (핸들 보더 안쪽 경계에 정확히 맞춤, 더 두껍게)
+    if (horizontalLineWidth > 0) {
+      canvas.drawRect(
+        Rect.fromLTWH(
+          horizontalLineStartX,
+          actualTimelineHeight,
+          horizontalLineWidth,
+          bottomHorizontalLineThickness, // 핸들보다 더 아래로 확장
+        ),
+        paint,
+      );
+    }
+
+    // 🎯 왼쪽 핸들 (바깥쪽 위아래에만 보더 레디어스)
+    final leftHandleRect = RRect.fromRectAndCorners(
       Rect.fromLTWH(
         leftHandleX,
         -handleExtension,
         handleWidth,
-        actualTimelineHeight + handleExtension * 2,
+        actualTimelineHeight + handleExtension * 2 + 2,
       ),
-      const Radius.circular(2),
+      topLeft: const Radius.circular(6), // 바깥쪽 위
+      bottomLeft: const Radius.circular(6), // 바깥쪽 아래
+      topRight: Radius.zero, // 안쪽 위
+      bottomRight: Radius.zero, // 안쪽 아래
     );
+    // 핸들 채우기
     canvas.drawRRect(leftHandleRect, paint);
+    // 핸들 보더 (두껍게) - 가로선 위에 그려서 가로선을 덮음
+    final borderPaint =
+        Paint()
+          ..color = borderColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = borderWidth; // 보더 두께
+    canvas.drawRRect(leftHandleRect, borderPaint);
 
-    // 🎯 오른쪽 핸들
-    final rightHandleX = endX - handleWidth / 2;
-    final rightHandleRect = RRect.fromRectAndRadius(
+    // 🎯 오른쪽 핸들 (바깥쪽 위아래에만 보더 레디어스)
+    final rightHandleRect = RRect.fromRectAndCorners(
       Rect.fromLTWH(
         rightHandleX,
         -handleExtension,
         handleWidth,
-        actualTimelineHeight + handleExtension * 2,
+        actualTimelineHeight + handleExtension * 2 + 2,
       ),
-      const Radius.circular(2),
+      topLeft: Radius.zero, // 안쪽 위
+      bottomLeft: Radius.zero, // 안쪽 아래
+      topRight: const Radius.circular(6), // 바깥쪽 위
+      bottomRight: const Radius.circular(6), // 바깥쪽 아래
     );
+    // 핸들 채우기
     canvas.drawRRect(rightHandleRect, paint);
+    // 핸들 보더 (두껍게) - 가로선 위에 그려서 가로선을 덮음
+    canvas.drawRRect(rightHandleRect, borderPaint);
 
-    // 🎯 핸들 내부 세로선 패턴
-    final linePaint =
+    // 🎯 핸들 중앙 얇은 이너 바 (surface 색상, 높이는 핸들 높이의 1/4)
+    final innerBarWidth = 2.0; // 얇은 이너 바 두께
+    final handleHeight =
+        actualTimelineHeight + handleExtension * 2 - 2; // 핸들 높이 2px 감소
+    final innerBarHeight = handleHeight / 4; // 핸들 높이의 1/4
+    final innerBarTop =
+        (handleHeight - innerBarHeight) / 2 - handleExtension; // 중앙 정렬
+
+    final innerBarPaint =
         Paint()
-          ..color = color.withOpacity(0.3)
-          ..strokeWidth = 1
-          ..style = PaintingStyle.stroke;
+          ..color = innerBarColor
+          ..style = PaintingStyle.fill;
 
     final leftCenterX = leftHandleX + handleWidth / 2;
     final rightCenterX = rightHandleX + handleWidth / 2;
-    canvas.drawLine(
-      Offset(leftCenterX, -handleExtension),
-      Offset(leftCenterX, actualTimelineHeight + handleExtension),
-      linePaint,
+
+    // 왼쪽 핸들 중앙 이너 바 (높이 1/4, 중앙 배치)
+    canvas.drawRect(
+      Rect.fromLTWH(
+        leftCenterX - innerBarWidth / 2,
+        innerBarTop,
+        innerBarWidth,
+        innerBarHeight,
+      ),
+      innerBarPaint,
     );
-    canvas.drawLine(
-      Offset(rightCenterX, -handleExtension),
-      Offset(rightCenterX, actualTimelineHeight + handleExtension),
-      linePaint,
+
+    // 오른쪽 핸들 중앙 이너 바 (높이 1/4, 중앙 배치)
+    canvas.drawRect(
+      Rect.fromLTWH(
+        rightCenterX - innerBarWidth / 2,
+        innerBarTop,
+        innerBarWidth,
+        innerBarHeight,
+      ),
+      innerBarPaint,
     );
   }
 
   @override
   bool shouldRepaint(_CropHandlePainter oldDelegate) {
     return oldDelegate.color != color ||
+        oldDelegate.innerBarColor != innerBarColor ||
+        oldDelegate.borderColor != borderColor ||
         oldDelegate.startX != startX ||
         oldDelegate.endX != endX ||
         oldDelegate.handleWidth != handleWidth ||
@@ -569,31 +948,9 @@ class _HandlePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint =
-        Paint()
-          ..color = color
-          ..style = PaintingStyle.fill;
-
-    // 🎯 핸들 박스 그리기 (중앙 정렬)
-    final handleRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      const Radius.circular(2),
-    );
-    canvas.drawRRect(handleRect, paint);
-
-    // 🎯 내부 세로선 패턴 (선택적)
-    final linePaint =
-        Paint()
-          ..color = color.withOpacity(0.3)
-          ..strokeWidth = 1
-          ..style = PaintingStyle.stroke;
-
-    final centerX = size.width / 2;
-    canvas.drawLine(
-      Offset(centerX, 0),
-      Offset(centerX, size.height),
-      linePaint,
-    );
+    // 🎯 이 페인터는 드래그 감지 영역용으로만 사용되며, 실제로는 아무것도 그리지 않음
+    // 실제 핸들 UI는 _CropHandlePainter에서 그려지므로 여기서는 그리지 않음
+    // 연한 이너라인 중복 방지를 위해 모든 그리기 코드 제거
   }
 
   @override
@@ -745,6 +1102,7 @@ class _TrimEditorState extends State<TrimEditor> {
 
         // 🎯 핸들/드래그 영역 기준 통일: 핸들 중심 기준으로 계산
         const handleWidth = 8.0; // 핸들 두께 줄임
+        const handleDragAreaWidth = 24.0; // 핸들 드래그 영역 넓이 (탭 감지 영역 확대)
 
         return Stack(
           key: _timelineKey,
@@ -777,63 +1135,113 @@ class _TrimEditorState extends State<TrimEditor> {
                                   _isOverlayDragging)
                               ? const NeverScrollableScrollPhysics()
                               : const ClampingScrollPhysics(),
-                      child: SizedBox(
-                        width: thumbnailStripWidth,
-                        child: Row(
-                          children:
-                              widget.trimmer.thumbnails.isEmpty
-                                  ? [
-                                    Expanded(
-                                      child: Builder(
-                                        builder: (context) {
-                                          final colorScheme =
-                                              Theme.of(context).colorScheme;
-                                          return Container(
-                                            color:
-                                                colorScheme
-                                                    .surfaceContainerHighest,
-                                          );
-                                        },
-                                      ),
+                      child: Builder(
+                        builder: (context) {
+                          // 🎯 청크 최소 너비 설정 (항상 긴 청크 보장)
+                          const minChunkWidth = 60.0;
+                          final thumbnails = widget.trimmer.thumbnails;
+
+                          if (thumbnails.isEmpty) {
+                            return SizedBox(
+                              width: thumbnailStripWidth,
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Builder(
+                                      builder: (context) {
+                                        final colorScheme =
+                                            Theme.of(context).colorScheme;
+                                        return Container(
+                                          color:
+                                              colorScheme
+                                                  .surfaceContainerHighest,
+                                        );
+                                      },
                                     ),
-                                  ]
-                                  : widget.trimmer.thumbnails
-                                      .map(
-                                        (thumb) => SizedBox(
-                                          // 🎯 각 프레임 최소 너비 설정 (더 길게)
-                                          width:
-                                              thumbnailStripWidth /
-                                              widget.trimmer.thumbnails.length,
-                                          child:
-                                              thumb != null
-                                                  ? Image.memory(
-                                                    thumb,
-                                                    fit: BoxFit.cover,
-                                                    height: double.infinity,
-                                                    errorBuilder:
-                                                        (
-                                                          context,
-                                                          error,
-                                                          stackTrace,
-                                                        ) => Container(),
-                                                  )
-                                                  : Builder(
-                                                    builder: (context) {
-                                                      final colorScheme =
-                                                          Theme.of(
-                                                            context,
-                                                          ).colorScheme;
-                                                      return Container(
-                                                        color:
-                                                            colorScheme
-                                                                .surfaceContainerHighest,
-                                                      );
-                                                    },
-                                                  ),
-                                        ),
-                                      )
-                                      .toList(),
-                        ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+
+                          // 🎯 청크 개수 계산: 최소 너비를 보장하면서 가능한 많은 청크 표시
+                          final calculatedChunkWidth =
+                              thumbnailStripWidth / thumbnails.length;
+                          final effectiveChunkCount =
+                              calculatedChunkWidth < minChunkWidth
+                                  ? (thumbnailStripWidth / minChunkWidth)
+                                      .floor()
+                                      .clamp(1, thumbnails.length)
+                                  : thumbnails.length;
+
+                          // 🎯 실제 청크 너비 (최소 너비 보장)
+                          final actualChunkWidth = (thumbnailStripWidth /
+                                  effectiveChunkCount)
+                              .clamp(minChunkWidth, double.infinity);
+
+                          // 🎯 청크 인덱스 간격 계산 (원본 썸네일에서 샘플링)
+                          final step = thumbnails.length / effectiveChunkCount;
+
+                          return SizedBox(
+                            width: thumbnailStripWidth,
+                            child: Row(
+                              children: List.generate(effectiveChunkCount, (
+                                index,
+                              ) {
+                                final sourceIndex = (index * step)
+                                    .floor()
+                                    .clamp(0, thumbnails.length - 1);
+                                final thumb = thumbnails[sourceIndex];
+
+                                return SizedBox(
+                                  width: actualChunkWidth,
+                                  child: AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 200),
+                                    transitionBuilder: (
+                                      Widget child,
+                                      Animation<double> animation,
+                                    ) {
+                                      return FadeTransition(
+                                        opacity: animation,
+                                        child: child,
+                                      );
+                                    },
+                                    child:
+                                        thumb != null
+                                            ? Image.memory(
+                                              thumb,
+                                              key: ValueKey<int>(
+                                                sourceIndex,
+                                              ), // 각 청크를 고유하게 식별
+                                              fit: BoxFit.cover,
+                                              height: double.infinity,
+                                              errorBuilder:
+                                                  (
+                                                    context,
+                                                    error,
+                                                    stackTrace,
+                                                  ) => Container(),
+                                            )
+                                            : Builder(
+                                              key: ValueKey<int>(sourceIndex),
+                                              builder: (context) {
+                                                final colorScheme =
+                                                    Theme.of(
+                                                      context,
+                                                    ).colorScheme;
+                                                return Container(
+                                                  color:
+                                                      colorScheme
+                                                          .surfaceContainerHighest,
+                                                );
+                                              },
+                                            ),
+                                  ),
+                                );
+                              }),
+                            ),
+                          );
+                        },
                       ),
                     ),
                   ),
@@ -1015,7 +1423,9 @@ class _TrimEditorState extends State<TrimEditor> {
                     final colorScheme = Theme.of(context).colorScheme;
                     return CustomPaint(
                       painter: _CropHandlePainter(
-                        color: colorScheme.primary,
+                        color: colorScheme.onSurface,
+                        innerBarColor: colorScheme.surface,
+                        borderColor: colorScheme.outline,
                         startX: startBoundaryX,
                         endX: endBoundaryX,
                         handleWidth: handleWidth,
@@ -1028,15 +1438,16 @@ class _TrimEditorState extends State<TrimEditor> {
               ),
             ),
 
-            // 🎯 왼쪽 핸들 드래그 영역
+            // 🎯 왼쪽 핸들 드래그 영역 (탭 감지 영역 확대)
+            // 🎯 화면 왼쪽 끝에서도 드래그 가능하도록 영역 확장
             Positioned(
-              left: (startBoundaryX - handleWidth / 2).clamp(
-                0.0,
-                totalWidth - handleWidth,
-              ),
+              left: 0.0,
               top: -2,
               bottom: -2,
-              width: handleWidth,
+              width: math.max(
+                handleDragAreaWidth,
+                startBoundaryX + handleDragAreaWidth / 2,
+              ),
               child: _buildHandle(
                 isStart: true,
                 pxPerSecond: pxPerSecond,
@@ -1048,15 +1459,23 @@ class _TrimEditorState extends State<TrimEditor> {
               ),
             ),
 
-            // 🎯 오른쪽 핸들 드래그 영역
+            // 🎯 오른쪽 핸들 드래그 영역 (탭 감지 영역 확대)
+            // 🎯 화면 오른쪽 끝에서도 드래그 가능하도록 영역 확장
             Positioned(
-              left: (endBoundaryX - handleWidth / 2).clamp(
-                0.0,
-                totalWidth - handleWidth,
+              left: math.min(
+                endBoundaryX - handleDragAreaWidth / 2,
+                totalWidth - handleDragAreaWidth,
               ),
               top: -2,
               bottom: -2,
-              width: handleWidth,
+              width:
+                  endBoundaryX > totalWidth - handleDragAreaWidth / 2
+                      ? (totalWidth -
+                          math.min(
+                            endBoundaryX - handleDragAreaWidth / 2,
+                            totalWidth - handleDragAreaWidth,
+                          ))
+                      : handleDragAreaWidth,
               child: _buildHandle(
                 isStart: false,
                 pxPerSecond: pxPerSecond,
@@ -1090,19 +1509,19 @@ class _TrimEditorState extends State<TrimEditor> {
       return const SizedBox.shrink();
     }
 
-    // 🎯 핸들 폭을 제외한 "두 핸들 사이" 구간에서만 이동 (오버런 방지)
+    // 🎯 핸들 경계를 기준으로 재생바 위치 계산
     // startX/endX는 경계선(=트림 시작/끝 시간의 픽셀 위치)임
-    const handleWidth = 14.0; // 핸들 두께
-    // 🎯 재생바와 핸들 사이 최소 거리 줄임 (핸들 폭의 절반만 여유)
-    const minGapFromHandle = handleWidth / 2;
-    final innerStartX = startX + minGapFromHandle;
-    final innerEndX = endX - minGapFromHandle;
+    const handleWidth = 8.0; // 핸들 실제 두께 (드래그 영역이 아닌 실제 핸들)
+    // 🎯 시작 핸들의 우측 끝 = startX + handleWidth/2
+    // 🎯 엔드 핸들의 좌측 끝 = endX - handleWidth/2
+    final innerStartX = startX + handleWidth / 2; // 시작 핸들 우측 끝
+    final innerEndX = endX - handleWidth / 2; // 엔드 핸들 좌측 끝
     if (innerEndX <= innerStartX) {
       return const SizedBox.shrink();
     }
 
     // 🎯 재생바 두께/터치 영역 (항상 활성화)
-    final barWidth = _isPlaybackBarDragging ? 10.0 : 8.0;
+    final barWidth = _isPlaybackBarDragging ? 4.0 : 3.0; // 두께 더 얇게
     final hitWidth = barWidth + 28.0;
 
     // 🎯 ValueListenableBuilder로 currentPosition 실시간 업데이트
@@ -1113,10 +1532,15 @@ class _TrimEditorState extends State<TrimEditor> {
         final clampedCurrentPos = currentPos.clamp(startValue, endValue);
 
         // 🎯 시간 → 픽셀(화면 좌표) : pxPerSecond 단일 진실로 정밀 매핑
-        final rawCenterX =
-            startX + ((clampedCurrentPos - startValue) * pxPerSecond);
+        // 핸들 경계(시작 핸들 우측 끝, 엔드 핸들 좌측 끝)를 기준으로 계산
+        final rangeLength = endValue - startValue;
+        final progress =
+            rangeLength > 0
+                ? (clampedCurrentPos - startValue) / rangeLength
+                : 0.0;
+        final rawCenterX = innerStartX + (progress * (innerEndX - innerStartX));
 
-        // 🎯 "핸들 사이" 내부에서만 이동 (바 두께 고려, 최소 거리 줄임)
+        // 🎯 "핸들 경계 사이" 내부에서만 이동 (바 두께 고려)
         final minCenterX = innerStartX + (barWidth / 2);
         final maxCenterX = innerEndX - (barWidth / 2);
         final clampedCenterX = rawCenterX.clamp(minCenterX, maxCenterX);
@@ -1195,12 +1619,9 @@ class _TrimEditorState extends State<TrimEditor> {
                     return Container(
                       width: barWidth,
                       decoration: BoxDecoration(
-                        color: colorScheme.surface,
+                        color: colorScheme.onSurface,
                         borderRadius: BorderRadius.circular(barWidth / 2),
-                        border: Border.all(
-                          color: colorScheme.outline.withOpacity(0.35),
-                          width: 1,
-                        ),
+                        // 보더 제거
                         boxShadow: [
                           BoxShadow(
                             color: colorScheme.shadow.withOpacity(0.30),
@@ -1296,26 +1717,31 @@ class _TrimEditorState extends State<TrimEditor> {
           return;
         }
 
+        // 🎯 현재 반대쪽 핸들의 실제 값을 사용 (드래그 시작 시점의 고정 값이 아닌)
+        // 오버레이 드래그 시 반대쪽 핸들이 실제로 변경되었을 수 있으므로 현재 값을 사용
+        final currentOppositeValue =
+            isStart ? widget.trimmer.endValue : widget.trimmer.startValue;
+
         if (isStart) {
           var newStart = _dragStartValue! + deltaSeconds;
 
-          // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
-          if (newStart >= _dragStartOppositeValue!) return;
+          // 🎯 핸들 위치 역전 방지: 현재 반대쪽 핸들 값과 비교
+          if (newStart >= currentOppositeValue) return;
 
           // 🎯 유효성 검증 먼저 수행
           if (newStart.isNaN || newStart.isInfinite) return;
 
           newStart = newStart.clamp(
             0.0,
-            (_dragStartOppositeValue! - minLength).clamp(0.0, totalSeconds),
+            (currentOppositeValue - minLength).clamp(0.0, totalSeconds),
           );
 
           if (newStart < 0) return;
 
           // 🎯 최종 역전 체크 (clamp 후에도)
-          if (newStart >= _dragStartOppositeValue!) return;
+          if (newStart >= currentOppositeValue) return;
 
-          final proposedLength = _dragStartOppositeValue! - newStart;
+          final proposedLength = currentOppositeValue - newStart;
           if (proposedLength < minLength) return;
           if (proposedLength > maxTrimLength) return;
 
@@ -1329,23 +1755,23 @@ class _TrimEditorState extends State<TrimEditor> {
         } else {
           var newEnd = _dragStartValue! + deltaSeconds;
 
-          // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
-          if (newEnd <= _dragStartOppositeValue!) return;
+          // 🎯 핸들 위치 역전 방지: 현재 반대쪽 핸들 값과 비교
+          if (newEnd <= currentOppositeValue) return;
 
           // 🎯 유효성 검증 먼저 수행
           if (newEnd.isNaN || newEnd.isInfinite) return;
 
           newEnd = newEnd.clamp(
-            (_dragStartOppositeValue! + minLength).clamp(0.0, totalSeconds),
+            (currentOppositeValue + minLength).clamp(0.0, totalSeconds),
             totalSeconds,
           );
 
           if (newEnd < 0) return;
 
           // 🎯 최종 역전 체크 (clamp 후에도)
-          if (newEnd <= _dragStartOppositeValue!) return;
+          if (newEnd <= currentOppositeValue) return;
 
-          final proposedLength = newEnd - _dragStartOppositeValue!;
+          final proposedLength = newEnd - currentOppositeValue;
           if (proposedLength < minLength) return;
           if (proposedLength > maxTrimLength) return;
 
@@ -1547,10 +1973,10 @@ class _TrimEditorState extends State<TrimEditor> {
       },
       child: Builder(
         builder: (context) {
-          final colorScheme = Theme.of(context).colorScheme;
+          // 🎯 핸들 감지 영역은 투명하게 (보라색 제거)
           return CustomPaint(
             painter: _HandlePainter(
-              color: colorScheme.primary,
+              color: Colors.transparent,
               isDragging: _isHandleDragging,
             ),
             size: const Size(8, double.infinity),
@@ -1621,11 +2047,15 @@ class _TrimEditorState extends State<TrimEditor> {
 class VideoTrimScreen extends StatefulWidget {
   final File videoFile;
   final Duration videoDuration;
+  final VideoEditSpec? editSpec;
+  final bool fromEditor;
 
   const VideoTrimScreen({
     super.key,
     required this.videoFile,
     required this.videoDuration,
+    this.editSpec,
+    this.fromEditor = false,
   });
 
   @override
@@ -1650,6 +2080,16 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
         videoDuration: widget.videoDuration,
       );
 
+      // ✅ 편집에서 넘어온 경우: 트리머에서도 동일한 재생 속도 적용(미리보기용)
+      final controller = _trimmer.videoPlayerController;
+      final speed = widget.editSpec?.playbackSpeed;
+      if (controller != null &&
+          controller.value.isInitialized &&
+          speed != null) {
+        // ignore: discarded_futures
+        controller.setPlaybackSpeed(speed.clamp(0.5, 2.0));
+      }
+
       // 썸네일 로드
       _trimmer.loadThumbnails();
     } catch (e) {
@@ -1673,7 +2113,28 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
     });
 
     try {
-      final result = VideoTrimResult(trim: _trimmer.buildTrimSpec());
+      final trimSpec = _trimmer.buildTrimSpec();
+
+      // ✅ pop 전에 썸네일을 확정한다 (트림+편집(transform) 반영)
+      // - 트림 화면에서 잠깐 로딩(20x20 스피너) 후, 노드에 썸네일이 들어간 상태로 pop되도록
+      String? thumbnailPath;
+      try {
+        final thumb = await VideoUploadUtils.generateThumbnail(
+          widget.videoFile.path,
+          // FFmpeg 경로를 타도록 스펙 전달
+          trimSpec: trimSpec,
+          editSpec: widget.editSpec,
+          quality: 60,
+        );
+        thumbnailPath = thumb?.path;
+      } catch (e) {
+        debugPrint('[VideoTrimScreen] 썸네일 생성 실패(계속 진행): $e');
+      }
+
+      final result = VideoTrimResult(
+        trim: trimSpec,
+        thumbnailPath: thumbnailPath,
+      );
       if (!mounted) return;
       await Future.delayed(const Duration(milliseconds: 120));
       if (!mounted) return;
@@ -1684,7 +2145,7 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
       await DialogUtils.showInfoDialog(
         context,
         title: AppLocalizations.of(context).t('error'),
-        message: '영상 자르기에 실패했습니다. 다시 시도해주세요.',
+        message: AppLocalizations.of(context).t('video_trim_failed'),
       );
     } finally {
       if (!mounted) return;
@@ -1716,9 +2177,16 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
         ),
         leading: CupertinoButton(
           padding: EdgeInsets.zero,
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () {
+            // 🎯 편집 화면에서 온 경우: null을 반환하여 편집 화면으로 돌아가도록 함
+            if (widget.fromEditor) {
+              Navigator.of(context).pop(null);
+            } else {
+              Navigator.of(context).pop();
+            }
+          },
           child: Text(
-            AppLocalizations.of(context).t('cancel'),
+            widget.fromEditor ? '뒤로' : AppLocalizations.of(context).t('cancel'),
             style: TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w600,
@@ -1726,14 +2194,7 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
             ),
           ),
         ),
-        middle: Text(
-          AppLocalizations.of(context).t('video_trim'),
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            color: colorScheme.onSurface,
-          ),
-        ),
+
         trailing: CupertinoButton(
           padding: EdgeInsets.zero,
           onPressed: _isTrimming ? null : _trimVideo,
@@ -1764,7 +2225,12 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
           SafeArea(
             child: Column(
               children: [
-                Expanded(child: VideoViewer(trimmer: _trimmer)),
+                Expanded(
+                  child: VideoViewer(
+                    trimmer: _trimmer,
+                    editSpec: widget.editSpec,
+                  ),
+                ),
                 TrimEditor(
                   trimmer: _trimmer,
                   onChangeStart: (value) {

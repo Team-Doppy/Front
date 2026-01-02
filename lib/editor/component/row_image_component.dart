@@ -509,6 +509,19 @@ class _ImageRowComponentState extends State<ImageRowComponent>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final screenWidth = widget.screenWidth;
+      final missingCount =
+          widget.imageUrls
+              .where(
+                (url) =>
+                    !_imageSizes.containsKey(url) &&
+                    !_measuringUrls.contains(url),
+              )
+              .length;
+      if (missingCount > 0) {
+        debugPrint(
+          '[RowImage] 📏 동적 사이즈 측정 시작 (메타데이터에 없는 이미지 $missingCount개): ${widget.imageUrls.where((url) => !_imageSizes.containsKey(url) && !_measuringUrls.contains(url)).toList()}',
+        );
+      }
       for (final imageUrl in widget.imageUrls) {
         if (!_imageSizes.containsKey(imageUrl) &&
             !_measuringUrls.contains(imageUrl)) {
@@ -597,6 +610,19 @@ class _ImageRowComponentState extends State<ImageRowComponent>
           // 새로운 크기 정보가 로드되었으면 높이 재계산
           if (hasNewSizes && _imageSizes.length == widget.imageUrls.length) {
             _applyUnifiedHeight(widget.screenWidth, setStateIfChanged: true);
+          }
+        }
+
+        // ✅ 오래된 포스트: 메타데이터에 사이즈 정보가 없으면 동적 측정
+        // (URL이 변경되지 않았어도 메타데이터가 비어있을 수 있음)
+        final screenWidth = widget.screenWidth;
+        for (final imageUrl in widget.imageUrls) {
+          if (!_imageSizes.containsKey(imageUrl) &&
+              !_measuringUrls.contains(imageUrl)) {
+            debugPrint(
+              '[RowImage] 📏 오래된 포스트 감지: 메타데이터에 사이즈 없음, 동적 측정 시작: $imageUrl',
+            );
+            _measureImageRealtime(imageUrl, screenWidth);
           }
         }
       });

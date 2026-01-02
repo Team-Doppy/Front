@@ -5,6 +5,7 @@ import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/providers/auth_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:flutter/material.dart';
 
@@ -955,11 +956,26 @@ class PostExporter {
       author = AuthProvider().username ?? '';
     }
 
-    // 3. 여전히 없으면 에러 (백그라운드에서 돌아왔을 때는 AuthService.currentUsernameSync가 있어야 함)
+    // 3. UserProvider에서도 시도 (SharedPreferences에 저장된 username)
+    if (author.isEmpty) {
+      try {
+        final userProvider = UserProvider();
+        final currentUser = userProvider.currentUser;
+        if (currentUser != null && currentUser.username.isNotEmpty) {
+          author = currentUser.username;
+          debugPrint('[PostExporter] ✅ UserProvider에서 author 읽기 성공: $author');
+        }
+      } catch (e) {
+        debugPrint('[PostExporter] ⚠️ UserProvider에서 author 읽기 실패: $e');
+      }
+    }
+
+    // 4. 모든 방법이 실패하면 에러
     if (author.isEmpty) {
       debugPrint(
-        '[PostExporter] ⚠️ author를 가져올 수 없습니다. AuthService.currentUsernameSync와 AuthProvider().username 모두 비어있습니다.',
+        '[PostExporter] ⚠️ author를 가져올 수 없습니다. 모든 소스(AuthService.currentUsernameSync, AuthProvider().username, UserProvider.currentUser)에서 비어있습니다.',
       );
+      debugPrint('[PostExporter] 💡 해결 방법: 앱을 재시작하거나, 서버에서 프로필 정보를 재로드해주세요.');
       throw StateError('author is required');
     }
 

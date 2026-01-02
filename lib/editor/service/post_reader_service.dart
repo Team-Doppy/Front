@@ -900,7 +900,7 @@ class PostReaderService {
     // 위쪽 스티커 이미지 URL 추출
     final stickerImageUrls = extractTopStickerImageUrls(content);
 
-    if (imageUrls.isEmpty && clipUrls.isEmpty && stickerImageUrls.isEmpty) {
+    if (imageUrls.isEmpty && stickerImageUrls.isEmpty) {
       debugPrint('[PostReaderService] ⚠️ 프리로드할 미디어가 없습니다');
       // 🎯 미디어가 없어도 폰트는 동기적으로 프리로드
       await _preloadFonts(context, content);
@@ -912,7 +912,7 @@ class PostReaderService {
     debugPrint('═══════════════════════════════════════════════════════════');
     debugPrint('🚀 [동기 프리로드 시작] 첫 $mediaNodeCount개 미디어 노드');
     debugPrint('   📸 이미지: ${imageUrls.length}개');
-    debugPrint('   🎬 비디오: ${clipUrls.length}개');
+    debugPrint('   🎬 비디오: ${clipUrls.length}개 (비동기 프리로드로 처리)');
     debugPrint('   🎨 스티커: ${stickerImageUrls.length}개');
     debugPrint('═══════════════════════════════════════════════════════════');
     debugPrint('');
@@ -983,21 +983,26 @@ class PostReaderService {
       }
     }
 
-    // 비디오 프리로드 (순차 실행 - 각 비디오는 내부적으로 초기화 대기)
+    // ✅ 비디오 프리로드는 동기 프리로드에서 제외 (비동기로 처리)
+    // - 비디오 초기화는 각각 최대 10초씩 걸릴 수 있어 전체 동기 프리로드가 매우 느려짐
+    // - 비디오는 실제로 화면에 보일 때 초기화되어도 되므로 비동기 처리로 충분
+    // - 첫 화면의 비디오는 ClipComponent에서 자동으로 초기화됨
     if (clipUrls.isNotEmpty) {
-      for (final url in clipUrls) {
-        // 🎯 context dispose 체크
-        if (!context.mounted) {
-          debugPrint('[PostReaderService] ⚠️ context dispose됨 - 비디오 프리로드 중단');
-          return;
+      debugPrint(
+        '[PostReaderService] 🎬 비디오 ${clipUrls.length}개는 비동기 프리로드로 처리 (동기 프리로드에서 제외)',
+      );
+      // 비동기로 백그라운드 프리로드 시작 (논블로킹)
+      Future.microtask(() async {
+        for (final url in clipUrls) {
+          try {
+            await preloadVideoForReader(url);
+            debugPrint('[PostReaderService] ✅ 비디오 비동기 프리로드 완료: $url');
+          } catch (e) {
+            debugPrint('[PostReaderService] ⚠️ 비디오 비동기 프리로드 실패: $url - $e');
+            // 에러는 무시하고 계속 진행
+          }
         }
-        try {
-          await preloadVideoForReader(url);
-        } catch (e) {
-          debugPrint('[PostReaderService] ⚠️ 비디오 프리로드 실패 (계속 진행): $url - $e');
-          // 에러를 무시하고 계속 진행
-        }
-      }
+      });
     }
 
     // 🎯 캐시 적용을 위해 한 프레임 대기
@@ -1015,7 +1020,7 @@ class PostReaderService {
     debugPrint('═══════════════════════════════════════════════════════════');
     debugPrint('✅ [동기 프리로드 완료] 첫 $mediaNodeCount개 미디어 노드');
     debugPrint('   📸 이미지: ${imageUrls.length}개');
-    debugPrint('   🎬 비디오: ${clipUrls.length}개');
+    debugPrint('   🎬 비디오: ${clipUrls.length}개 (비동기 처리 중)');
     debugPrint('   🎨 스티커: ${stickerImageUrls.length}개');
     debugPrint('═══════════════════════════════════════════════════════════');
     debugPrint('');

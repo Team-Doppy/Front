@@ -1126,6 +1126,9 @@ class UploadService with ChangeNotifier {
   }) async {
     // 🎯 즉시 로그 출력 (메서드 진입 시점 확인)
     debugPrint('[UploadService] 🎬 에디터 영상 업로드 시작: ${file.path}');
+    debugPrint(
+      '[UploadService] 📋 받은 스펙: trimSpec=${trimSpec != null ? "start=${trimSpec.startSeconds}, end=${trimSpec.endSeconds}" : "null"}, editSpec=${editSpec != null ? "crop=${editSpec.cropRectImage != null}, brightness=${editSpec.brightness}, contrast=${editSpec.contrast}" : "null"}',
+    );
 
     try {
       // 1. 확장자 검증
@@ -1156,6 +1159,25 @@ class UploadService with ChangeNotifier {
         await controller.dispose();
       } catch (e) {
         debugPrint('[UploadService] 영상 비율 가져오기 실패 (기본값 사용): $e');
+      }
+
+      // 🎯 편집 크롭이 있으면 "변환 결과" 비율을 우선 사용 (썸네일/레이아웃이 원본 비율로 보이는 문제 방지)
+      // - cropRectImage는 변환 후 프레임(에디터 기준) 좌표로 저장되므로 rect 비율이 최종 출력 비율과 가장 일치함
+      if (editSpec?.cropRectImage != null) {
+        final rect = editSpec!.cropRectImage!;
+        if (rect.height > 0) {
+          aspectRatio = rect.width / rect.height;
+          debugPrint('[UploadService] 🎯 크롭 기반 비율로 덮어씀: $aspectRatio');
+        }
+      } else if (editSpec != null && aspectRatio != null) {
+        // 크롭이 없더라도 90/270도 회전이면 비율이 뒤집힘
+        final turns = editSpec.rotationQuarterTurns % 4;
+        if (turns == 1 || turns == 3) {
+          if (aspectRatio != 0) {
+            aspectRatio = 1.0 / aspectRatio;
+            debugPrint('[UploadService] 🎯 회전 기반 비율로 덮어씀: $aspectRatio');
+          }
+        }
       }
 
       // 3. 노드 생성 (이미 생성된 경우 재사용)
@@ -1229,6 +1251,9 @@ class UploadService with ChangeNotifier {
           context: context,
           showErrorDialog: showErrorDialog,
           editorId: editorId,
+          // ✅ 핵심: 트림/편집 스펙을 압축 단계까지 전달해야 실제 업로드 파일에 반영됨
+          trimSpec: trimSpec,
+          editSpec: editSpec,
         );
       });
 

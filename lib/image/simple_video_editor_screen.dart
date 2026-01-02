@@ -39,9 +39,15 @@ class SimpleVideoEditorScreen extends StatefulWidget {
     this.isExistingNodeEdit = false,
     this.doneLabelOverride,
     this.onDone,
+    this.initialEditSpec,
+    this.initialEditSpecs,
   }) : assert(
          videoFile != null || videoFileList != null,
          'videoFile 또는 videoFileList 중 하나는 필수입니다.',
+       ),
+       assert(
+         initialEditSpec == null || initialEditSpecs == null,
+         'initialEditSpec과 initialEditSpecs는 동시에 사용할 수 없습니다.',
        );
 
   final File? videoFile;
@@ -58,6 +64,12 @@ class SimpleVideoEditorScreen extends StatefulWidget {
   /// (예: MediaPicker가 에디터/피커를 동시에 닫아야 하는 경우)
   final Future<void> Function(BuildContext editorContext, dynamic result)?
   onDone;
+
+  /// ✅ 편집 화면을 다시 열 때(예: 트리머에서 뒤로) 이전 편집 상태를 복원하기 위한 초기 스펙(단일 비디오).
+  final VideoEditSpec? initialEditSpec;
+
+  /// ✅ 여러 비디오 편집 시, 인덱스별 초기 스펙.
+  final List<VideoEditSpec>? initialEditSpecs;
 
   @override
   State<SimpleVideoEditorScreen> createState() =>
@@ -1369,7 +1381,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
               child: Icon(
                 isPlaying ? Icons.pause : Icons.play_arrow,
                 color: fgColor,
-                size: 20,
+                size: 24,
               ),
             ),
             const SizedBox(width: 8),
@@ -1382,7 +1394,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
               child: Icon(
                 isMuted ? Icons.volume_off : Icons.volume_up,
                 color: fgColor,
-                size: 20,
+                size: 24,
               ),
             ),
           ],
@@ -1635,7 +1647,8 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
 
       final specs = <VideoEditSpec>[];
       for (int i = 0; i < _videos.length; i++) {
-        specs.add(_buildEditSpecForIndex(i));
+        final spec = _buildEditSpecForIndex(i);
+        specs.add(spec);
       }
       if (!mounted) return;
 
@@ -1851,7 +1864,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                                             ),
                                           ),
                                         ),
-                                        const SizedBox(width: 8),
+                                        const SizedBox(width: 16),
                                         // 재생/뮤트 버튼
                                         _buildAppBarPlaybackControls(fgColor),
                                       ],
