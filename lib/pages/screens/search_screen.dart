@@ -282,136 +282,118 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   }
 
   Widget _buildActive(BuildContext context) {
-    // 🎯 키보드(viewInsets) 변경으로 인한 불필요한 리빌드 방지
-    // PostWriteScreen에서 키보드가 올라와도 SearchScreen이 리빌드되지 않도록 viewInsets 무시
-    // (SearchScreen 내부에서는 키보드를 사용하지 않으므로 viewInsets가 필요 없음)
-    final view = View.of(context);
-    final frozenMq = MediaQueryData.fromView(
-      view,
-    ).copyWith(viewInsets: EdgeInsets.zero);
+    return Consumer<SearchService>(
+      builder: (context, searchService, child) {
+        // 🎯 현재 배경 이미지 URL 가져오기
+        final backgroundImageUrl = _getCurrentBackgroundImageUrl(searchService);
 
-    return MediaQuery(
-      data: frozenMq,
-      child: Consumer<SearchService>(
-        builder: (context, searchService, child) {
-          // 🎯 현재 배경 이미지 URL 가져오기
-          final backgroundImageUrl = _getCurrentBackgroundImageUrl(
-            searchService,
-          );
+        return Scaffold(
+          resizeToAvoidBottomInset: false,
+          backgroundColor: Theme.of(context).colorScheme.background,
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: AnimatedSwitcher(
+                  duration: const Duration(
+                    milliseconds: 400,
+                  ), // 🎯 부드러운 전환 (섹션 전환과 동일한 duration)
+                  switchInCurve: Curves.easeInOut,
+                  switchOutCurve: Curves.easeInOut,
+                  transitionBuilder: (child, animation) {
+                    return FadeTransition(opacity: animation, child: child);
+                  },
+                  child:
+                      backgroundImageUrl != null
+                          ? Builder(
+                            builder: (context) {
+                              // 비디오 URL 체크
+                              final isVideoUrl =
+                                  backgroundImageUrl.toLowerCase().endsWith(
+                                    '.mp4',
+                                  ) ||
+                                  backgroundImageUrl.toLowerCase().endsWith(
+                                    '.mov',
+                                  ) ||
+                                  backgroundImageUrl.toLowerCase().endsWith(
+                                    '.avi',
+                                  ) ||
+                                  backgroundImageUrl.toLowerCase().endsWith(
+                                    '.webm',
+                                  ) ||
+                                  backgroundImageUrl.contains('/videos/');
 
-          return Scaffold(
-            resizeToAvoidBottomInset: false,
-            backgroundColor: Theme.of(context).colorScheme.background,
-            body: Stack(
-              children: [
-                Positioned.fill(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(
-                      milliseconds: 400,
-                    ), // 🎯 부드러운 전환 (섹션 전환과 동일한 duration)
-                    switchInCurve: Curves.easeInOut,
-                    switchOutCurve: Curves.easeInOut,
-                    transitionBuilder: (child, animation) {
-                      return FadeTransition(opacity: animation, child: child);
-                    },
-                    child:
-                        backgroundImageUrl != null
-                            ? Builder(
-                              builder: (context) {
-                                // 비디오 URL 체크
-                                final isVideoUrl =
-                                    backgroundImageUrl.toLowerCase().endsWith(
-                                      '.mp4',
-                                    ) ||
-                                    backgroundImageUrl.toLowerCase().endsWith(
-                                      '.mov',
-                                    ) ||
-                                    backgroundImageUrl.toLowerCase().endsWith(
-                                      '.avi',
-                                    ) ||
-                                    backgroundImageUrl.toLowerCase().endsWith(
-                                      '.webm',
-                                    ) ||
-                                    backgroundImageUrl.contains('/videos/');
-
-                                // 비디오인 경우 VideoPlayer 사용
-                                if (isVideoUrl) {
-                                  return SearchBackgroundVideoWidget(
-                                    videoUrl: backgroundImageUrl,
-                                    key: ValueKey(
-                                      'bg-video-$backgroundImageUrl',
-                                    ),
-                                  );
-                                } else {
-                                  return CachedNetworkImage(
-                                    imageUrl: backgroundImageUrl,
-                                    fit: BoxFit.cover,
-                                    width: double.infinity,
-                                    height: double.infinity,
-                                    key: ValueKey('bg-$backgroundImageUrl'),
-                                    fadeInDuration: const Duration(
-                                      milliseconds: 200,
-                                    ), // 🎯 배경 이미지 변경 시 페이드 인 효과
-                                    fadeOutDuration: const Duration(
-                                      milliseconds: 300,
-                                    ), // 🎯 이전 이미지 페이드 아웃
-                                    placeholder:
-                                        (context, url) => ShimmerBox(
-                                          width: double.infinity,
-                                          height: double.infinity,
-                                        ),
-                                    errorWidget:
-                                        (context, url, error) =>
-                                            const SizedBox.shrink(),
-                                  );
-                                }
-                              },
-                            )
-                            : const SizedBox.shrink(),
-                  ),
+                              // 비디오인 경우 VideoPlayer 사용
+                              if (isVideoUrl) {
+                                return SearchBackgroundVideoWidget(
+                                  videoUrl: backgroundImageUrl,
+                                  key: ValueKey('bg-video-$backgroundImageUrl'),
+                                );
+                              } else {
+                                return CachedNetworkImage(
+                                  imageUrl: backgroundImageUrl,
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                  key: ValueKey('bg-$backgroundImageUrl'),
+                                  fadeInDuration: const Duration(
+                                    milliseconds: 200,
+                                  ), // 🎯 배경 이미지 변경 시 페이드 인 효과
+                                  fadeOutDuration: const Duration(
+                                    milliseconds: 300,
+                                  ), // 🎯 이전 이미지 페이드 아웃
+                                  placeholder:
+                                      (context, url) => ShimmerBox(
+                                        width: double.infinity,
+                                        height: double.infinity,
+                                      ),
+                                  errorWidget:
+                                      (context, url, error) =>
+                                          const SizedBox.shrink(),
+                                );
+                              }
+                            },
+                          )
+                          : const SizedBox.shrink(),
                 ),
-                Positioned.fill(
-                  child: Container(
-                    color: Theme.of(context).colorScheme.background,
-                  ),
+              ),
+              Positioned.fill(
+                child: Container(
+                  color: Theme.of(context).colorScheme.background,
                 ),
-                SafeArea(
-                  child: Column(
-                    children: [
-                      // 🎯 검색 결과가 표시될 때는 검색창 숨김
-                      if (!_isShowingSearchResults) ...[
-                        SearchTopBar(
-                          controller: _searchController,
-                          focusNode: _searchFocusNode,
-                          query: searchService.query,
-                          onClear: _clearSearch,
-                          onBack: _resetToInitial,
-                          onClose: widget.onClose,
-                          onSubmitted: _runSearch,
-                          onCancel: () {
-                            _searchFocusNode.unfocus();
-                            context.read<SearchService>().setFocused(false);
-                          },
-                          isSearching: _isSearching, // 🎯 검색 중 여부 전달
-                        ),
-                      ],
-                      Expanded(
-                        child:
-                            _isShowingSearchResults
-                                ? _buildSearchResultsView(context)
-                                : _buildDefaultSearchBody(
-                                  context,
-                                  searchService,
-                                ),
+              ),
+              SafeArea(
+                child: Column(
+                  children: [
+                    // 🎯 검색 결과가 표시될 때는 검색창 숨김
+                    if (!_isShowingSearchResults) ...[
+                      SearchTopBar(
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        query: searchService.query,
+                        onClear: _clearSearch,
+                        onBack: _resetToInitial,
+                        onClose: widget.onClose,
+                        onSubmitted: _runSearch,
+                        onCancel: () {
+                          _searchFocusNode.unfocus();
+                          context.read<SearchService>().setFocused(false);
+                        },
+                        isSearching: _isSearching, // 🎯 검색 중 여부 전달
                       ),
                     ],
-                  ),
+                    Expanded(
+                      child:
+                          _isShowingSearchResults
+                              ? _buildSearchResultsView(context)
+                              : _buildDefaultSearchBody(context, searchService),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          );
-        },
-      ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

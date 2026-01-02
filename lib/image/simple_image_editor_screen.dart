@@ -1269,6 +1269,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                       Padding(
                                         padding: const EdgeInsets.only(
                                           bottom: 2.0,
+                                          right: 4,
                                         ),
                                         child: IconButton(
                                           onPressed: () {

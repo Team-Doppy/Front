@@ -1,7 +1,6 @@
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/nodes/mention_node.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:super_editor/super_editor.dart';
@@ -345,6 +344,8 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                               newNode: updatedNode,
                             ),
                           ]);
+                          // 🎯 이미지 스포일러 토글을 히스토리에 저장
+                          editorService.saveHistoryNow();
                         } else if (node is ImageRowNode) {
                           final meta = Map<String, dynamic>.from(node.metadata);
                           if (newSpoilerValue) {
@@ -360,6 +361,8 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                               newNode: updatedNode,
                             ),
                           ]);
+                          // 🎯 이미지 스포일러 토글을 히스토리에 저장
+                          editorService.saveHistoryNow();
                         }
                       } catch (e) {
                         debugPrint(
@@ -450,6 +453,8 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                         newNode: updatedNode,
                       ),
                     ]);
+                    // 🎯 padding 변경을 히스토리에 저장
+                    editorService.saveHistoryNow();
                   } else if (node is ClipNode) {
                     final meta = Map<String, dynamic>.from(node.metadata);
                     currentPadding = (meta['padding'] as String?) ?? 'center';
@@ -472,6 +477,8 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                         newNode: updatedNode,
                       ),
                     ]);
+                    // 🎯 padding 변경을 히스토리에 저장
+                    editorService.saveHistoryNow();
                   } else if (node is LinkNode) {
                     final meta = Map<String, dynamic>.from(node.metadata);
                     currentPadding = (meta['padding'] as String?) ?? 'center';
@@ -493,6 +500,8 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                         newNode: updatedNode,
                       ),
                     ]);
+                    // 🎯 padding 변경을 히스토리에 저장
+                    editorService.saveHistoryNow();
                   }
                 } catch (e) {
                   debugPrint('[SelectedToolbar] padding 토글 실패: $e');
@@ -560,6 +569,8 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                       newNode: updatedNode,
                     ),
                   ]);
+                  // 🎯 링크 viewMode 토글을 히스토리에 저장
+                  editorService.saveHistoryNow();
                   if (mounted) setState(() {});
                 } catch (e) {
                   debugPrint('[SelectedToolbar] 링크 viewMode 업데이트 실패: $e');

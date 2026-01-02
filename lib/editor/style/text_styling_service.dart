@@ -1,4 +1,5 @@
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
 import 'package:doppy/editor/style/text_attributions.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import 'package:super_editor/super_editor.dart';
 class TextStylingService extends ChangeNotifier {
   final Editor editor;
   final MutableDocumentComposer composer;
+  EditorService? _editorService; // 🎯 히스토리 저장용 (선택적)
 
   // 전역 폰트 (새로 입력되는 모든 텍스트에 적용)
   String? _globalFontFamily;
@@ -24,6 +26,11 @@ class TextStylingService extends ChangeNotifier {
   double? get globalFontSize => _globalFontSize;
 
   TextStylingService({required this.editor, required this.composer});
+
+  /// 🎯 EditorService 참조 설정 (히스토리 저장용)
+  void setEditorService(EditorService? editorService) {
+    _editorService = editorService;
+  }
 
   /// 메타데이터에 폰트 적용
   void applyFontToMetadata(String fontFamily) {
@@ -98,6 +105,8 @@ class TextStylingService extends ChangeNotifier {
         attributions: {italicsAttribution},
       ),
     ]);
+    // 🎯 텍스트 스타일 변경을 히스토리에 저장
+    _editorService?.saveHistoryNow();
   }
 
   /// 밑줄 토글
@@ -116,6 +125,8 @@ class TextStylingService extends ChangeNotifier {
         attributions: {underlineAttribution},
       ),
     ]);
+    // 🎯 텍스트 스타일 변경을 히스토리에 저장
+    _editorService?.saveHistoryNow();
   }
 
   /// 취소선 토글
@@ -134,6 +145,8 @@ class TextStylingService extends ChangeNotifier {
         attributions: {strikethroughAttribution},
       ),
     ]);
+    // 🎯 텍스트 스타일 변경을 히스토리에 저장
+    _editorService?.saveHistoryNow();
   }
 
   /// 스포일러 토글 (선택 영역 가리기)
@@ -154,6 +167,8 @@ class TextStylingService extends ChangeNotifier {
         attributions: {spoilerAttribution},
       ),
     ]);
+    // 🎯 텍스트 스포일러 토글을 히스토리에 저장
+    _editorService?.saveHistoryNow();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       editor.execute([
@@ -274,6 +289,8 @@ class TextStylingService extends ChangeNotifier {
 
       // 새 형광펜 적용
       editor.execute(requests);
+      // 🎯 형광펜 변경을 히스토리에 저장
+      _editorService?.saveHistoryNow();
     }
   }
 
@@ -369,6 +386,8 @@ class TextStylingService extends ChangeNotifier {
 
     if (requests.isNotEmpty) {
       editor.execute(requests);
+      // 🎯 형광펜 제거를 히스토리에 저장
+      _editorService?.saveHistoryNow();
     }
   }
 
@@ -410,6 +429,8 @@ class TextStylingService extends ChangeNotifier {
         attributions: {colorAttribution},
       ),
     ]);
+    // 🎯 텍스트 색상 변경을 히스토리에 저장
+    _editorService?.saveHistoryNow();
   }
 
   /// 폰트 크기 변경
@@ -468,6 +489,8 @@ class TextStylingService extends ChangeNotifier {
 
     if (requests.isNotEmpty) {
       editor.execute(requests);
+      // 🎯 폰트 크기 변경을 히스토리에 저장
+      _editorService?.saveHistoryNow();
     }
   }
 
@@ -597,6 +620,8 @@ class TextStylingService extends ChangeNotifier {
 
     if (requests.isNotEmpty) {
       editor.execute(requests);
+      // 🎯 텍스트 정렬 변경을 히스토리에 저장
+      _editorService?.saveHistoryNow();
     }
   }
 
@@ -801,6 +826,8 @@ class TextStylingService extends ChangeNotifier {
       // 한 번에 실행
       if (requests.isNotEmpty) {
         editor.execute(requests);
+        // 🎯 폰트 변경을 히스토리에 저장
+        _editorService?.saveHistoryNow();
       }
     }
   }
@@ -856,5 +883,8 @@ class TextStylingService extends ChangeNotifier {
         SelectionReason.userInteraction,
       ),
     ]);
+    // 🎯 구분선 삽입은 NodeInsertedEvent로 자동 저장되지만, 명시적으로 저장
+    // (NodeInsertedEvent가 발생하므로 사실상 중복이지만 안전을 위해)
+    _editorService?.saveHistoryNow();
   }
 }

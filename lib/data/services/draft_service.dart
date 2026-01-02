@@ -391,6 +391,10 @@ class DraftService {
         }
       }
 
+      // 🚀 7. 비디오 비동기 프리로드 (문서 복원 후 백그라운드에서 실행)
+      // 🎯 Post Reader와 동일한 방식으로 비동기 프리로드하여 로딩 시간 단축
+      _preloadVideosForEditor(document);
+
       debugPrint('[DraftService] ✅ 임시저장 불러오기 완료');
       return draft; // ✅ DraftData 반환하여 메타데이터 복원 가능하게 함
     } catch (e) {
@@ -454,6 +458,10 @@ class DraftService {
           debugPrint('[DraftService] ⚠️ 전역 폰트 사이즈 복원 실패: $e');
         }
       }
+
+      // 🚀 7. 비디오 비동기 프리로드 (문서 복원 후 백그라운드에서 실행)
+      // 🎯 Post Reader와 동일한 방식으로 비동기 프리로드하여 로딩 시간 단축
+      _preloadVideosForEditor(document);
 
       debugPrint('[DraftService] ✅ 자동저장 불러오기 완료');
       return true;
@@ -736,6 +744,43 @@ class DraftService {
     } catch (e) {
       debugPrint('[DraftService] Error grouping drafts by title: $e');
       return {};
+    }
+  }
+
+  /// 🚀 에디터용 비디오 비동기 프리로드 (Post Reader와 동일한 방식)
+  /// 문서 복원 후 백그라운드에서 실행되어 로딩 시간을 단축
+  void _preloadVideosForEditor(MutableDocument document) {
+    // 🎯 ClipNode에서 URL/localPath 수집
+    final videoUrls = <String>[];
+    final videoLocalPaths = <String>[];
+
+    for (int i = 0; i < document.nodeCount; i++) {
+      final node = document.getNodeAt(i);
+      if (node is ClipNode) {
+        if (node.url.isNotEmpty) {
+          videoUrls.add(node.url);
+        }
+        if (node.localPath.isNotEmpty) {
+          videoLocalPaths.add(node.localPath);
+        }
+      }
+    }
+
+    // 🎯 비동기로 프리로드 (논블로킹)
+    if (videoUrls.isNotEmpty || videoLocalPaths.isNotEmpty) {
+      debugPrint(
+        '[DraftService] 🚀 비디오 비동기 프리로드 시작: URL=${videoUrls.length}개, Local=${videoLocalPaths.length}개',
+      );
+      // 🎯 각 비디오를 비동기로 프리로드 (병렬 처리)
+      for (final url in videoUrls) {
+        if (url.isNotEmpty) {
+          PostReaderService.preloadVideo(url).catchError((e) {
+            debugPrint('[DraftService] ⚠️ 비디오 프리로드 실패: $url - $e');
+          });
+        }
+      }
+      // 🎯 로컬 경로는 VideoCacheService에서 자동 처리되므로 별도 프리로드 불필요
+      // (ClipComponent에서 로컬 경로로 컨트롤러 생성 시 자동 초기화됨)
     }
   }
 }

@@ -21,7 +21,6 @@ import 'package:doppy/editor/component/row_image_component.dart'
     show RowImageComponentBuilder, ImageRowNode;
 import 'package:doppy/editor/component/pageview_image_component.dart'
     show PageViewImageComponentBuilder, PageViewImageNode;
-import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
@@ -40,6 +39,7 @@ import 'package:doppy/pages/components/liked_users_bottom_sheet.dart';
 import 'package:doppy/pages/components/viewers_bottom_sheet.dart';
 import 'package:doppy/pages/components/post_action_bottom_sheet.dart';
 import 'package:doppy/pages/components/mention_bottom_sheet.dart';
+import 'package:doppy/pages/components/post_reader_error_screen.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -57,6 +57,7 @@ import 'package:video_player/video_player.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
+import 'package:doppy/editor/service/post_reader_scroll_preload_service.dart';
 import 'package:doppy/editor/post_reader_stickers.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 
@@ -101,6 +102,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   static final GlobalKey _stackKey = GlobalKey();
   final BlogService _blogService = BlogService();
   final PostReaderService _postReaderService = PostReaderService();
+  final PostReaderScrollPreloadService _scrollPreloadService =
+      PostReaderScrollPreloadService();
   Future<Map<String, dynamic>>? _contentFuture;
   Map<String, dynamic>? _currentExportedData; // 최신 컨텐츠를 저장
   bool _showLoadingLogo = false; // 로딩 로고 표시 여부
@@ -111,8 +114,13 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _accessLevelChanged = false; // 🎯 공개 범위 변경 여부
   bool _documentInitialized = false; // 🎯 문서 초기화 완료 플래그 (재생성 방지)
   bool _didStartRemainingMediaPreload =
-      false; // ✅ 상위 3개 제외 나머지 미디어 백그라운드 프리로드 1회 보장
-  int _preloadOp = 0; // ✅ pop/dispose 시 프리로드 중단 토큰
+      false; // ✅ 상위 3개 제외 나머지 미디어 백그라운드 프리로드 1회 보장 (레거시)
+  // 🎯 프리로드 임계값: 뷰포트 기반 (서버가 느려서 더 일찍 프리로드)
+  // 화면 높이의 2배 전에 프리로드 = 사용자가 보는 화면 아래 2화면 전에 미리 준비
+  static const double _preloadViewportMultiplier = 2.0; // 화면 높이의 2배
+  static const double _preloadBottomThresholdFallback =
+      800.0; // 🎯 뷰포트 계산 불가 시 fallback (하단 800px)
+  double? _cachedScreenHeight; // 🎯 성능 최적화: 화면 높이 캐싱
 
   // 스크롤 애니메이션을 위한 변수들
   static const double _appBarHeight = 52.0; // AppBar 높이
@@ -124,8 +132,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   int _bottomBarAnimationDuration = 300; // 하단 바 애니메이션 속도 (ms)
   bool _previousAppBarState = true; // 🎯 풀스크린/오버레이 진입 전 앱바 상태 저장
   double _currentScrollOffset = 0.0; // 🎯 현재 스크롤 위치 (타이틀 표시용)
-  bool _showLoadingBackButton = true; // 🎯 로딩 화면 뒤로가기 버튼 표시 여부
-  bool _showErrorBackButton = true; // 🎯 에러 화면 뒤로가기 버튼 표시 여부
+  final bool _showLoadingBackButton = true; // 🎯 로딩 화면 뒤로가기 버튼 표시 여부
+  final bool _showErrorBackButton = true; // 🎯 에러 화면 뒤로가기 버튼 표시 여부
 
   // 순차 애니메이션 제거
 
@@ -425,62 +433,16 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // default: 알 수 없는 노드 타입 (처리 안 함)
   }
 
+  /// 🎯 레거시: 한 번만 실행되는 프리로드 (하위 호환성)
   void _startRemainingMediaPreloadOnce(Map<String, dynamic> content) {
     if (_didStartRemainingMediaPreload) return;
     _didStartRemainingMediaPreload = true;
-    final int op = ++_preloadOp;
-
-    // UI를 막지 않도록 백그라운드에서만 실행
-    Future.microtask(() async {
-      try {
-        if (!mounted || op != _preloadOp) return;
-        if (content['nodes'] == null) return;
-
-        // ✅ 상위 3개 "미디어 노드"에 포함된 이미지/비디오는 이미 preloadTopMedia로 완료됨
-        final topImages = _postReaderService.extractTopImageUrls(
-          content,
-          mediaNodeCount: 3,
-        );
-        final topClips = _postReaderService.extractTopClipUrls(
-          content,
-          mediaNodeCount: 3,
-        );
-
-        final allImages = _postReaderService.extractImageUrls(content);
-        final remainingImages =
-            allImages.where((u) => !topImages.contains(u)).toList();
-
-        final allClips = _postReaderService.extractClipUrls(content);
-        final remainingClips =
-            allClips.where((u) => !topClips.contains(u)).toList();
-
-        // ✅ 나머지 이미지는 백그라운드로 프리캐시 (상한은 걸어두자)
-        if (remainingImages.isNotEmpty) {
-          final toPreload =
-              remainingImages.length > 30
-                  ? remainingImages.take(30).toList()
-                  : remainingImages;
-          await _postReaderService.preloadImages(
-            context,
-            toPreload,
-            maxCount: toPreload.length,
-            shouldContinue: () => mounted && op == _preloadOp,
-          );
-        }
-
-        // ✅ 나머지 비디오는 백그라운드로 프리로드
-        if (remainingClips.isNotEmpty) {
-          await Future.wait(
-            remainingClips.map(
-              (url) => PostReaderService.preloadVideoForReader(url),
-            ),
-            eagerError: false,
-          );
-        }
-      } catch (_) {
-        // best-effort
-      }
-    });
+    // 🎯 스크롤 기반 프리로드로 대체되므로, 초기에는 다음 배치를 한 번만 트리거
+    _scrollPreloadService.preloadNextBatch(
+      content: content,
+      context: context,
+      mounted: () => mounted,
+    );
   }
 
   void _triggerClipNodeAction(String nodeId, String action) {
@@ -1214,15 +1176,18 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
   @override
   void dispose() {
-    _preloadOp++; // ✅ 남아있는 프리로드 작업 중단
+    // 🎯 dispose 순서 중요: 프리로드 중단 → 스크롤 리스너 제거 → 리소스 정리
+    _scrollPreloadService.dispose(); // ✅ 남아있는 프리로드 작업 중단
+    _scrollCtrl.removeListener(_onScroll); // 🎯 스크롤 리스너 제거 (프리로드 트리거 방지)
     _commentService.removeListener(_onCommentServiceChanged);
     _likeService.removeListener(_onLikeServiceChanged);
 
     // WebSocket 연결 해제
     _commentService.disconnectWebSocket();
 
+    // 🎯 EditorService dispose (무한 루프 방지)
+    _editorService.dispose();
     _readOnlyFocus.dispose();
-    _scrollCtrl.removeListener(_onScroll);
     _imageViewerCtrl.dispose();
 
     // ✅ 주의: PostReaderService의 프리로드 캐시는 앱 전역(shared) 캐시다.
@@ -1288,6 +1253,40 @@ class _PostReaderScreenState extends State<PostReaderScreen>
           });
         }
       });
+    }
+
+    // 🎯 뷰포트 기반 프리로드 (서버가 느려서 더 일찍 프리로드)
+    if (delta > threshold && // 아래로 스크롤
+        _currentExportedData != null &&
+        !_scrollPreloadService.isPreloading) {
+      // 🎯 스크롤 컨트롤러에서 최대 스크롤 위치 가져오기
+      if (_scrollCtrl.hasClients && context.mounted) {
+        final maxScroll = _scrollCtrl.position.maxScrollExtent;
+        final currentScroll = _scrollCtrl.position.pixels;
+        final distanceToBottom = maxScroll - currentScroll;
+
+        // 🎯 뷰포트 기반 임계값 계산 (화면 높이의 배수) - 캐싱으로 성능 최적화
+        _cachedScreenHeight ??= MediaQuery.sizeOf(context).height;
+        final viewportThreshold =
+            _cachedScreenHeight! * _preloadViewportMultiplier;
+
+        // 🎯 뷰포트 기반 또는 하단 거리 기반 중 더 큰 값 사용
+        final preloadThreshold =
+            viewportThreshold > _preloadBottomThresholdFallback
+                ? viewportThreshold
+                : _preloadBottomThresholdFallback;
+
+        // 🎯 실제로 스크롤 가능한 컨텐츠가 없으면 프리로드 불필요
+        // 🎯 문서 전체 길이가 threshold보다 짧으면 프리로드 안 함 (이미 모든 미디어가 보임)
+        if (maxScroll > preloadThreshold &&
+            distanceToBottom < preloadThreshold) {
+          _scrollPreloadService.preloadNextBatch(
+            content: _currentExportedData!,
+            context: context,
+            mounted: () => mounted,
+          );
+        }
+      }
     }
 
     _lastScrollOffset = nextOffset;
@@ -1368,63 +1367,40 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               }
 
               if (snap.hasError) {
-                return Scaffold(
-                  // ✅ 에러 화면에서도 키보드(viewInsets)로 인한 불필요 레이아웃 변경 차단
-                  resizeToAvoidBottomInset: false,
-                  backgroundColor: Theme.of(context).colorScheme.background,
-                  appBar:
-                      _showErrorBackButton
-                          ? AppBar(
-                            backgroundColor: Colors.transparent,
-                            elevation: 0,
-                            leading: Padding(
-                              padding: const EdgeInsets.only(bottom: 4.0),
-                              child: IconButton(
-                                icon: Icon(
-                                  Icons.arrow_back_ios_new_rounded,
-                                  size: 24,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.75),
-                                ),
-                                onPressed: _closeErrorScreen,
-                              ),
-                            ),
-                          )
-                          : AppBar(
-                            automaticallyImplyLeading: false,
-                            backgroundColor: Colors.transparent,
-                            elevation: 0,
-                          ),
-                  body: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.warning_amber_rounded, size: 40),
-                          const SizedBox(height: 12),
-                          Text(
-                            '본문을 불러오지 못했어요',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                          const SizedBox(height: 15),
-                        ],
-                      ),
-                    ),
-                  ),
+                return PostReaderErrorScreen(
+                  showBackButton: _showErrorBackButton,
+                  onBack: _closeErrorScreen,
                 );
               }
 
               // 🎯 본문 로드 실패 시에도 화면 표시 (댓글은 비동기로 로드되므로)
               if (snap.hasData) {
+                final contentData = snap.data!;
+
+                // 🎯 빈 content인지 확인 (본문 로드 실패 시 빈 Map 반환됨)
+                // content에 'nodes' 키가 없거나 빈 배열이면 본문이 없는 것으로 간주
+                final hasValidContent =
+                    contentData.containsKey('nodes') &&
+                    contentData['nodes'] is List &&
+                    (contentData['nodes'] as List).isNotEmpty;
+
+                // 🎯 빈 content이면 에러 화면 표시
+                if (!hasValidContent && contentData.length <= 3) {
+                  // content가 메타데이터(likeCount, isLiked, commentCount)만 있는 경우
+                  return PostReaderErrorScreen(
+                    showBackButton: _showErrorBackButton,
+                    onBack: _closeErrorScreen,
+                  );
+                }
+
                 final merged = Map<String, dynamic>.from(widget.exported);
-                merged['content'] = snap.data!;
+                merged['content'] = contentData;
 
                 // ✅ 상위 3개는 이미 await preloadTopMedia로 끝난 상태.
                 // 나머지는 딱 1번만 백그라운드로 프리로드한다(중복/재빌드 방지).
-                if (snap.data != null && snap.data!.isNotEmpty) {
-                  _startRemainingMediaPreloadOnce(snap.data!);
+                if (contentData.isNotEmpty &&
+                    contentData.containsKey('nodes')) {
+                  _startRemainingMediaPreloadOnce(contentData);
                 }
 
                 // 🎯 공개범위 정보도 최신 상태로 업데이트 (_loadContentWithPreloadedMedia에서 이미 업데이트됨)
@@ -1658,6 +1634,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                                 onUsernameTap: _openUserProfile,
                                               );
                                             },
+                                            isDarkMode: isDarkMode,
                                           ),
                                           ClipComponentBuilder(
                                             screenWidth: screenWidth, // 🚀 전달
@@ -1835,47 +1812,137 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               barHeight: computedBarHeight,
                               isMyPost: isMyPost,
                               onBack: _closeScreen,
-                              onEdit: () {
+                              onEdit: () async {
                                 final dataToEdit =
                                     _currentExportedData ?? widget.exported;
                                 final postId =
                                     dataToEdit['id']?.toString() ??
                                     widget.exported['id']?.toString();
 
-                                if (postId != null && postId.isNotEmpty) {
-                                  Navigator.of(context).push(
-                                    PageRouteBuilder(
-                                      pageBuilder:
-                                          (
-                                            context,
-                                            animation,
-                                            secondaryAnimation,
-                                          ) => PostwriteScreen(
-                                            isEditingMode: true,
-                                            exportedDataForEdit: dataToEdit,
-                                            postId: postId,
-                                          ),
-                                      transitionDuration: const Duration(
-                                        milliseconds: 200,
-                                      ),
-                                      reverseTransitionDuration: const Duration(
-                                        milliseconds: 200,
-                                      ),
-                                      transitionsBuilder: (
-                                        context,
-                                        animation,
-                                        secondaryAnimation,
-                                        child,
-                                      ) {
-                                        return FadeTransition(
-                                          opacity: animation,
-                                          child: child,
-                                        );
-                                      },
-                                    ),
-                                  );
-                                } else {
+                                if (postId == null || postId.isEmpty) {
                                   debugPrint('[PostReaderScreen] postId가 없습니다');
+                                  return;
+                                }
+
+                                // 편집 화면 열기
+                                debugPrint('[PostReaderScreen] 편집 화면 진입');
+                                debugPrint(
+                                  '  - dataToEdit의 content.nodes: ${((dataToEdit['content'] as Map?)?['nodes'] as List?)?.length ?? 0}개',
+                                );
+
+                                // 편집 화면 열기 (저장 성공 여부를 pop result로 받음)
+                                final result =
+                                    await PostReaderService.openEditScreen(
+                                      context,
+                                      exportedData: dataToEdit,
+                                      postId: postId,
+                                    );
+
+                                if (!mounted) return;
+
+                                final bool didEdit =
+                                    result is Map &&
+                                    (result['didEdit'] == true);
+
+                                // 저장/적용이 실제로 일어난 경우에만 최신 문서로 갱신
+                                if (!didEdit) return;
+
+                                try {
+                                  // ✅ Postwrite에서 로컬 export/content를 pop으로 넘긴 경우
+                                  // 추가 서버 호출 없이 pop 결과로 즉시 반영한다.
+                                  Map<String, dynamic>? poppedContent;
+                                  try {
+                                    final raw = result['content'];
+                                    if (raw != null) {
+                                      poppedContent =
+                                          (raw as Map).cast<String, dynamic>();
+                                    }
+                                  } catch (_) {
+                                    poppedContent = null;
+                                  }
+
+                                  late final MutableDocument refreshedDoc;
+                                  late final Map<String, dynamic> merged;
+
+                                  if (poppedContent != null) {
+                                    merged = Map<String, dynamic>.from(
+                                      dataToEdit,
+                                    );
+                                    merged['content'] = poppedContent;
+
+                                    refreshedDoc = _postReaderService
+                                        .rebuildDocumentForRead(merged);
+                                  } else {
+                                    // fallback: 서버에서 최신 content 재조회
+                                    final (
+                                      d,
+                                      m,
+                                    ) = await PostReaderService.refreshDocumentAfterEdit(
+                                      context,
+                                      postId,
+                                      currentExportedData: dataToEdit,
+                                    );
+                                    refreshedDoc = d;
+                                    merged = m;
+                                  }
+
+                                  if (!mounted) return;
+
+                                  final mergedContent =
+                                      (merged['content'] as Map?)
+                                          ?.cast<String, dynamic>() ??
+                                      <String, dynamic>{};
+
+                                  setState(() {
+                                    _currentExportedData = merged;
+
+                                    // 공개범위도 최신으로 동기화
+                                    _accessLevel =
+                                        (merged['accessLevel'] as String?) ??
+                                        _accessLevel;
+                                    _sharedGroupIds =
+                                        (merged['sharedGroupIds'] as List?)
+                                            ?.map((e) => (e as num).toInt())
+                                            .toList() ??
+                                        _sharedGroupIds;
+                                    _sharedGroupNames =
+                                        (merged['sharedGroupNames'] as List?)
+                                            ?.map((e) => e.toString())
+                                            .toList() ??
+                                        _sharedGroupNames;
+
+                                    // FutureBuilder도 최신 content를 사용하게 교체
+                                    _contentFuture =
+                                        Future<Map<String, dynamic>>.value(
+                                          mergedContent,
+                                        );
+
+                                    // 문서/에디터를 최신 content로 교체
+                                    _document = refreshedDoc;
+                                    _editor = createDefaultDocumentEditor(
+                                      document: _document,
+                                      composer: _composer,
+                                    );
+                                    try {
+                                      _editorService.dispose();
+                                    } catch (_) {}
+                                    _editorService = EditorService(
+                                      editor: _editor,
+                                      document: _document,
+                                      enableInitialStateSave: false,
+                                    );
+                                    _editorService.setDocumentLayoutKey(
+                                      _layoutKey,
+                                    );
+                                    _dragService = DragService(
+                                      editorService: _editorService,
+                                    );
+                                    _documentInitialized = true;
+                                  });
+                                } catch (e) {
+                                  debugPrint(
+                                    '[PostReaderScreen] 수정 후 문서 갱신 실패(무시): $e',
+                                  );
                                 }
                               },
                               onDelete: _deletePost,
@@ -2368,16 +2435,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         ),
       ),
     );
-  }
-
-  List<String> _extractUsernamesFromText(String text) {
-    if (text.isEmpty) return const [];
-    return text
-        .split('\n')
-        .map((e) => e.trim())
-        .where((e) => e.startsWith('@') && e.length > 1)
-        .map((e) => e.substring(1))
-        .toList();
   }
 
   void _openUserProfile(String username) {

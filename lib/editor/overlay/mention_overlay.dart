@@ -39,7 +39,8 @@ class _MentionOverlayState extends State<MentionOverlay>
   final List<_UserChip> _selected = <_UserChip>[];
   bool _loading = false;
   DateTime? _lastQueryAt;
-  bool _showRecentList = true; // 기록 리스트 토글 상태 (처음엔 열림, 선택 추가 후부터 닫힘)
+  // 수정 모드(initialUsernames가 있으면)일 때는 히스토리 리스트 숨김
+  bool _showRecentList = true; // initState에서 초기화됨
   bool _hasAnimatedRecentList = false; // 기록 리스트 애니메이션 적용 여부
   bool _isQuickClose = false; // 빠른 닫기 플래그 (사용자 추가 시)
 
@@ -59,6 +60,10 @@ class _MentionOverlayState extends State<MentionOverlay>
   @override
   void initState() {
     super.initState();
+
+    // 수정 모드(initialUsernames가 있으면)일 때는 히스토리 리스트 숨김
+    _showRecentList =
+        widget.initialUsernames == null || widget.initialUsernames!.isEmpty;
 
     // 페이드 애니메이션 초기화
     _fadeController = AnimationController(
@@ -232,6 +237,11 @@ class _MentionOverlayState extends State<MentionOverlay>
                     color: Colors.white.withOpacity(0.6),
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
+                  ),
+                  prefixIcon: Icon(
+                    Icons.alternate_email,
+                    color: Colors.white,
+                    size: 20,
                   ),
                   suffixIcon:
                       _controller.text.isEmpty && _results.isNotEmpty

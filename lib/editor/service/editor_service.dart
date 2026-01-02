@@ -65,6 +65,9 @@ class EditorService extends ChangeNotifier {
   ScrollController? _scrollController;
   // 마지막 유효 selection 캐시 (포커스가 잠시 사라져도 사용)
   DocumentSelection? _lastSelection;
+  DocumentPosition? _pendingAnchor; // 🎯 드래그 드롭 등으로 변경된 노드 위치 저장용
+  final Set<String> _userInsertedEmptyParagraphs =
+      {}; // 🎯 사용자가 명시적으로 추가한 빈 문단 ID
 
   // 특수 노드 정보를 노드 ID로 관리 (키 기반 정확한 추적)
   final Map<String, _SpecialNodeInfo> _specialNodeRegistry = {};
@@ -124,6 +127,9 @@ class EditorService extends ChangeNotifier {
 
   // 🎯 NodeComponentService 참조 (노드 선택 해제용)
   BuildContext? _context;
+
+  // 🎯 에디터 포커스 노드 (키보드 올리기용)
+  FocusNode? _editorFocusNode;
 
   // ✅ 선택 범위 삭제(특수노드 포함) 처리 중에는 레지스트리 기반 자동 복원을 잠깐 막는다.
   // (삭제 요청이 들어오는 타이밍/대상 계산이 흔들려도 "삭제된 특수노드가 다시 살아나는" 불안정 방지)
@@ -435,6 +441,8 @@ class EditorService extends ChangeNotifier {
     editor.execute([
       ReplaceNodeRequest(existingNodeId: nodeId, newNode: updatedNode),
     ]);
+    // 🎯 멘션 노드 업데이트를 히스토리에 저장
+    _saveCurrentState(immediate: true);
   }
 
   void updateMentionFontSize(String nodeId, double fontSize) {
@@ -547,6 +555,11 @@ class EditorService extends ChangeNotifier {
   // 🎯 BuildContext 설정 (initState 이후에 설정 가능)
   void setContext(BuildContext context) {
     _context = context;
+  }
+
+  // 🎯 에디터 포커스 노드 설정 (키보드 올리기용)
+  void setEditorFocusNode(FocusNode? focusNode) {
+    _editorFocusNode = focusNode;
   }
 
   // 🎯 초기 상태 저장 (비동기로 처리하여 UI 블로킹 방지)
@@ -853,15 +866,21 @@ class EditorService extends ChangeNotifier {
 
     final stickers = _copyAllStickersForSnapshot();
 
+    // 🎯 anchor 우선순위: _pendingAnchor (드래그 드롭 등) > 현재 커서 위치
+    final anchor =
+        _pendingAnchor ??
+        (editor.composer.selectionNotifier.value ?? _lastSelection)?.extent;
+
+    // 🎯 사용 후 초기화
+    _pendingAnchor = null;
+
     return _DocumentSnapshot(
       nodes: nodes,
       order: order,
       stickers: stickers,
       version: _documentVersion,
       selection: null, // 🎯 커서 숨기기
-      anchor:
-          (editor.composer.selectionNotifier.value ?? _lastSelection)
-              ?.extent, // ✅ 히스토리 UX용 앵커(스크롤 위치)
+      anchor: anchor, // ✅ 히스토리 UX용 앵커(스크롤 위치)
     );
   }
 
@@ -930,13 +949,23 @@ class EditorService extends ChangeNotifier {
         metadata: Map<String, dynamic>.from(node.metadata),
       );
     }
+    if (node is PageViewImageNode) {
+      // 🎯 PageViewImageNode의 metadata도 복사하여 유지
+      return PageViewImageNode(
+        id: node.id,
+        imageUrls: List<String>.from(node.imageUrls),
+        metadata: Map<String, dynamic>.from(node.metadata),
+      );
+    }
     if (node is LinkNode) {
+      // 🎯 링크 노드의 metadata(padding, viewMode 등)도 복사하여 유지
       return LinkNode(
         id: node.id,
         url: node.url,
         title: node.title,
         description: node.description,
         thumbnailUrl: node.thumbnailUrl,
+        metadata: Map<String, dynamic>.from(node.metadata),
       );
     }
     if (node is ClipNode) {
@@ -955,7 +984,12 @@ class EditorService extends ChangeNotifier {
       return DividerNode(id: node.id);
     }
     if (node is MentionNode) {
-      return MentionNode(id: node.id, usernames: node.usernames);
+      // 🎯 멘션 노드의 metadata(fontSize 등)도 복사하여 폰트 크기 유지
+      return MentionNode(
+        id: node.id,
+        usernames: node.usernames,
+        metadata: Map<String, dynamic>.from(node.metadata),
+      );
     }
     // 기본: 그대로 반환
     return node;
@@ -1251,7 +1285,7 @@ class EditorService extends ChangeNotifier {
 
   void _scheduleScrollToSnapshotAnchor(
     _DocumentSnapshot snapshot, {
-    double thresholdPx = 400.0,
+    double thresholdPx = 200.0,
     bool useJumpTo = false,
   }) {
     // ✅ undo/redo 직후 레이아웃이 안정화된 다음 프레임에서 스크롤한다.
@@ -1423,13 +1457,17 @@ class EditorService extends ChangeNotifier {
 
       if (change is NodeInsertedEvent) {
         // ✅ "빈 문단 자동 추가"는 유저에게 숨겨야 하는 내부 보정이므로 히스토리에서 제외
+        // 🎯 단, 사용자가 명시적으로 추가한 빈 문단은 히스토리에 포함
         try {
           final inserted = document.getNodeById(change.nodeId);
           if (inserted is ParagraphNode) {
             final bool isEmpty = inserted.text.text.trim().isEmpty;
-            if (isEmpty) {
+            if (isEmpty &&
+                !_userInsertedEmptyParagraphs.contains(change.nodeId)) {
               return 'autoEmptyParagraphInserted';
             }
+            // 🎯 사용자가 추가한 빈 문단은 한 번만 체크하고 제거
+            _userInsertedEmptyParagraphs.remove(change.nodeId);
           }
         } catch (_) {}
       }
@@ -2433,6 +2471,36 @@ class EditorService extends ChangeNotifier {
     return now != _lastSavedFingerprint;
   }
 
+  /// 🎯 본문 변경사항만 확인 (제목/요약/썸네일 변경은 무시)
+  /// 썸네일 편집 화면에서 제목/요약/썸네일을 변경하고 본문 편집 화면으로 돌아왔을 때,
+  /// 본문 변경사항이 없으면 바로 나가기 위해 사용
+  bool shouldPromptSaveOnExitBodyOnly(BuildContext context) {
+    // ⚠️ 화면 전환/해제(deactivate) 타이밍에 Timer 등에서 호출될 수 있어
+    // Provider lookup은 항상 안전하게 수행해야 함.
+    StickerService? ss;
+    try {
+      if (context.mounted) {
+        ss = context.read<StickerService>();
+      }
+    } catch (_) {
+      ss = null;
+    }
+    final hasStickerChanges = ss?.hasChanges ?? false;
+    // 🎯 본문만 확인 (제목은 무시)
+    final bool hasBodyContent = hasNonEmptyBody(
+      stickerService: ss,
+      // fallback: 특수 상황에서만 context를 쓰되, 내부에서 mounted/try-catch로 보호
+      context: ss == null ? context : null,
+    );
+    if (!hasBodyContent) return false;
+    final now = computeDocumentFingerprint();
+    if (_lastSavedFingerprint == null || hasStickerChanges) {
+      // 저장 이력이 없다면 변경이 있는 상태로 간주
+      return true;
+    }
+    return now != _lastSavedFingerprint;
+  }
+
   void reorderNode(String nodeId, int targetIndex) {
     final node = document.getNodeById(nodeId);
     if (node == null) return;
@@ -2472,6 +2540,20 @@ class EditorService extends ChangeNotifier {
       if (node is MentionNode) {
         _mergeAdjacentMentionNodesAround(nodeId);
       }
+
+      // 🎯 변경된 노드 위치를 anchor로 저장
+      // 멘션 병합 시에는 병합된 노드의 ID를 찾아야 하지만, 일단 원래 노드 ID 사용
+      // (병합 후에도 노드가 존재하면 그 노드, 없으면 새 위치의 노드 사용)
+      final finalNodeId =
+          document.getNodeById(nodeId) != null
+              ? nodeId
+              : (targetIndex < document.length
+                  ? document.getNodeAt(targetIndex)?.id ?? nodeId
+                  : nodeId);
+      _pendingAnchor = DocumentPosition(
+        nodeId: finalNodeId,
+        nodePosition: const UpstreamDownstreamNodePosition.upstream(),
+      );
       // 🎯 notifyListeners는 finally 이후에 한 번만
     } finally {
       _isExecutingHistory = false;
@@ -2746,6 +2828,12 @@ class EditorService extends ChangeNotifier {
       document.deleteNode(targetImageId);
 
       document.insertNodeAt(insertIndex, imageRowNode);
+
+      // 🎯 변경된 노드 위치를 anchor로 저장
+      _pendingAnchor = DocumentPosition(
+        nodeId: imageRowNode.id,
+        nodePosition: const UpstreamDownstreamNodePosition.upstream(),
+      );
       // 🎯 notifyListeners는 finally 이후에 한 번만
     } finally {
       _isExecutingHistory = false;
@@ -3038,6 +3126,12 @@ class EditorService extends ChangeNotifier {
       document.deleteNode(targetPageViewId);
 
       document.insertNodeAt(insertIdx, pageViewImageNode);
+
+      // 🎯 변경된 노드 위치를 anchor로 저장
+      _pendingAnchor = DocumentPosition(
+        nodeId: pageViewImageNode.id,
+        nodePosition: const UpstreamDownstreamNodePosition.upstream(),
+      );
       // 🎯 notifyListeners는 finally 이후에 한 번만
     } finally {
       _isExecutingHistory = false;
@@ -3220,6 +3314,32 @@ class EditorService extends ChangeNotifier {
     _insertComponentNodeAtNextLine(node);
   }
 
+  /// 링크 노드 업데이트 (메타데이터 재조회용)
+  void updateLinkNode({
+    required String nodeId,
+    String? title,
+    String? description,
+    String? thumbnailUrl,
+  }) {
+    final existingNode = document.getNodeById(nodeId);
+    if (existingNode is! LinkNode) return;
+
+    final updatedNode = LinkNode(
+      id: nodeId,
+      url: existingNode.url,
+      title: title ?? existingNode.title,
+      description: description ?? existingNode.description,
+      thumbnailUrl: thumbnailUrl ?? existingNode.thumbnailUrl,
+      metadata: existingNode.metadata,
+    );
+
+    editor.execute([
+      ReplaceNodeRequest(existingNodeId: nodeId, newNode: updatedNode),
+    ]);
+    // 🎯 링크 노드 업데이트를 히스토리에 저장
+    _saveCurrentState(immediate: true);
+  }
+
   /// 지정 인덱스에 빈 문단을 삽입하고 캐럿을 그 문단 앞으로 이동
   /// 빈 문단을 지정된 인덱스에 추가하고, 0.1초 후 포커스를 설정합니다.
   /// 새로 추가된 노드 ID를 반환합니다.
@@ -3239,12 +3359,24 @@ class EditorService extends ChangeNotifier {
         metadata: <String, dynamic>{'textAlign': align},
       );
 
+      // 🎯 사용자가 명시적으로 추가한 빈 문단임을 표시
+      _userInsertedEmptyParagraphs.add(paragraphId);
+
       editor.execute([
         InsertNodeAtIndexRequest(nodeIndex: insertIndex, newNode: newParagraph),
       ]);
 
-      // 🎯 안정화를 위해 0.1초 대기 후 포커스 설정 및 키보드 올리기
-      Future.delayed(const Duration(milliseconds: 100), () {
+      // 🎯 프레임 완료 후 포커스 설정 및 키보드 올리기
+      // 노드가 실제로 삽입되고 렌더링된 후 커서를 설정해야 함
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // 🎯 노드가 실제로 존재하는지 확인
+        final doc = editor.document;
+        final insertedNode = doc.getNodeById(paragraphId);
+        if (insertedNode == null || insertedNode is! ParagraphNode) {
+          debugPrint('[EditorService] ⚠️ 삽입된 노드를 찾을 수 없음: $paragraphId');
+          return;
+        }
+
         try {
           editor.execute([
             ChangeSelectionRequest(
@@ -3258,9 +3390,11 @@ class EditorService extends ChangeNotifier {
               SelectionReason.userInteraction,
             ),
           ]);
-          // 🎯 키보드 올리기
-          FocusManager.instance.primaryFocus?.requestFocus();
-        } catch (_) {}
+          // 🎯 키보드 올리기 (에디터 포커스 노드 사용)
+          _editorFocusNode?.requestFocus();
+        } catch (e) {
+          debugPrint('[EditorService] ⚠️ 커서 설정 실패: $e');
+        }
       });
       // 🎯 editor.execute()가 자동으로 document 리스너를 호출하므로 notifyListeners() 불필요
       return paragraphId;
@@ -3438,6 +3572,8 @@ class EditorService extends ChangeNotifier {
       );
       document.replaceNodeById(nodeId, updated);
       notifyListeners();
+      // 🎯 비디오 썸네일 업데이트를 히스토리에 저장
+      _saveCurrentState(immediate: true);
     }
   }
 
@@ -3875,6 +4011,13 @@ class EditorService extends ChangeNotifier {
       debugPrint(
         '[EditorService] ✅ 이미지 분리 완료: newImageId=$newImageId, insertIndex=${insertIndex ?? rowIndex}',
       );
+
+      // 🎯 분리된 노드 위치를 anchor로 저장
+      _pendingAnchor = DocumentPosition(
+        nodeId: newImageId,
+        nodePosition: const UpstreamDownstreamNodePosition.upstream(),
+      );
+
       return newImageId;
     } finally {
       _isExecutingHistory = false;
@@ -4011,6 +4154,13 @@ class EditorService extends ChangeNotifier {
       debugPrint(
         '[EditorService] ✅ PageView 이미지 분리 완료: newImageId=$newImageId, insertIndex=${insertIndex ?? pageViewIndex}',
       );
+
+      // 🎯 분리된 노드 위치를 anchor로 저장
+      _pendingAnchor = DocumentPosition(
+        nodeId: newImageId,
+        nodePosition: const UpstreamDownstreamNodePosition.upstream(),
+      );
+
       return newImageId;
     } finally {
       _isExecutingHistory = false;

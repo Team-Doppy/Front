@@ -1407,6 +1407,51 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   bool _isDisposed = false; // 🎯 dispose 플래그
   final VideoMuteService _muteService = VideoMuteService();
   double? _metadataAspectRatio; // metadata에서 가져온 비율 (캐싱)
+  bool _didRunPostInitSetup =
+      false; // ✅ 컨트롤러 초기화 완료 후 1회만 실행할 작업들(볼륨/메타/썸네일/오토플레이)
+  static const int _minAutoPlayBufferedMs =
+      400; // 🎯 reader 자동재생을 시작하기 위한 최소 초반 버퍼
+
+  bool _hasSufficientInitialBuffer(VideoPlayerValue value) {
+    try {
+      final buffered = value.buffered;
+      if (buffered.isEmpty) return false;
+      final requiredEnd = Duration(milliseconds: _minAutoPlayBufferedMs);
+      // 0ms 근처부터 requiredEnd 이상 버퍼가 잡히면 OK
+      for (final r in buffered) {
+        final startOk = r.start <= const Duration(milliseconds: 200);
+        final endOk = r.end >= requiredEnd;
+        if (startOk && endOk) return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _maybeAutoPlay({required String reason}) {
+    if (_isDisposed || !mounted) return;
+    if (!widget.shouldAutoPlay) return;
+    if (_controller == null) return;
+    if (_isPlaying || _hasPlayedOnce) return;
+
+    // 편집 모드: 기존 UX 유지(준비되면 즉시 재생)
+    if (widget.isEditing) {
+      if (_isInitialized && _isReadyToPlay) {
+        _playVideo();
+      }
+      return;
+    }
+
+    // 읽기 모드: "초반 버퍼 확보" 또는 "버퍼링 아님"일 때만 재생 시작
+    try {
+      final v = _controller!.value;
+      if (!v.isInitialized) return;
+      final ok = (!v.isBuffering) || _hasSufficientInitialBuffer(v);
+      if (!ok) return;
+      _playVideo();
+    } catch (_) {}
+  }
 
   @override
   void initState() {
@@ -1444,7 +1489,12 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
           _controller = cachedController;
           _isInitialized = true;
           _isReadyToPlay = true;
+          // ✅ 중복 리스너 방지: 재사용 시에도 항상 재부착
+          try {
+            _controller!.removeListener(_onVideoStatusChanged);
+          } catch (_) {}
           _controller!.addListener(_onVideoStatusChanged);
+          _didRunPostInitSetup = true;
           _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
           debugPrint('[ClipComponent] VideoCacheService에서 컨트롤러 재사용: $cacheKey');
           if (mounted) {
@@ -1595,13 +1645,11 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     }
     // shouldAutoPlay가 변경되면 재생/정지
     if (oldWidget.shouldAutoPlay != widget.shouldAutoPlay &&
-        _controller != null &&
-        _isInitialized &&
-        _isReadyToPlay) {
+        _controller != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        if (widget.shouldAutoPlay && !_isPlaying && !_hasPlayedOnce) {
-          _playVideo();
+        if (widget.shouldAutoPlay) {
+          _maybeAutoPlay(reason: 'didUpdateWidget.shouldAutoPlay=true');
         } else if (!widget.shouldAutoPlay && _isPlaying) {
           // 가시성에서 벗어나면 프리로드 여부와 관계없이 일시정지
           _pauseVideo();
@@ -1661,139 +1709,64 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
       _controller = controller;
 
-      // 🎯 프리로드된 컨트롤러가 아니면 초기화 필요
-      if (!isPreloaded) {
-        try {
-          await _controller!.initialize();
-        } catch (e) {
-          debugPrint('[ClipComponent] 초기화 실패: $e');
-          // 초기화 실패 시 참조 해제
-          try {
-            videoCache.releaseController(
-              widget.url,
-              localPath: widget.localPath,
-              namespace: namespace,
-            );
-          } catch (_) {}
-          _controller = null;
-          if (mounted) {
-            setState(() {});
-          }
-          return;
-        }
-
-        // 🎯 초기화 완료 후에도 위젯이 살아있는지 확인
-        if (!mounted) {
-          // VideoCacheService 컨트롤러는 dispose하지 않고 참조만 해제
-          try {
-            videoCache.releaseController(
-              widget.url,
-              localPath: widget.localPath,
-              namespace: namespace,
-            );
-          } catch (e) {
-            debugPrint('[ClipComponent] 참조 해제 오류: $e');
-          }
-          _controller = null;
-          debugPrint('[ClipComponent] 초기화 취소: 초기화 완료 후 dispose됨 - $cacheKey');
-          return;
-        }
-      } else {
-        // 프리로드된 컨트롤러는 이미 초기화됨
-        debugPrint('[ClipComponent] ✅ 프리로드된 컨트롤러 - 초기화 스킵: $cacheKey');
-      }
-
-      _isInitialized = true;
-
-      // 🎯 VideoCacheService가 이미 컨트롤러를 관리하므로 별도 저장 불필요
-      debugPrint(
-        '[ClipComponent] VideoCacheService가 컨트롤러 관리 중: ${widget.localPath.isNotEmpty ? widget.localPath : widget.url}',
-      );
-
-      // 음소거 설정
+      // ✅ 중요: VideoCacheService가 controller.initialize()를 비동기로 이미 돌린다.
+      // 여기서 다시 initialize()를 호출하면 iOS에서 "Future already completed" 레이스가 날 수 있음.
+      //
+      // 따라서 컨트롤러 리스너를 "즉시" 붙이고, 초기화 완료/버퍼링/에러 상태 변화는
+      // _onVideoStatusChanged에서 감지하여 _isInitialized/_isReadyToPlay를 갱신한다.
       if (mounted && _controller != null) {
         try {
-          // 🎯 dispose 체크: 컨트롤러 유효성 확인
-          if (_controller!.value.isInitialized) {
-            await _controller!.setVolume(
-              _muteService.isReaderMuted ? 0.0 : 1.0,
-            );
-          }
-        } catch (e) {
-          debugPrint('[ClipComponent] 볼륨 설정 오류 (dispose됨): $e');
-        }
-      }
-
-      // 🎯 편집 모드에서 aspectRatio 메타데이터 저장 (SingleImageComponent와 동일)
-      if (widget.isEditing && _controller != null && !isPreloaded) {
+          _controller!.removeListener(_onVideoStatusChanged);
+        } catch (_) {}
         try {
-          // 🎯 dispose 체크: 컨트롤러 유효성 확인
-          if (_controller!.value.isInitialized) {
-            final videoSize = _controller!.value.size;
-            if (videoSize.width > 0 && videoSize.height > 0) {
-              final aspectRatio = videoSize.width / videoSize.height;
-              _saveAspectRatioToMetadata(aspectRatio);
-            }
-          }
-        } catch (e) {
-          debugPrint('[ClipComponent] aspectRatio 저장 오류 (dispose됨): $e');
-        }
-      }
-
-      // 재생 완료 리스너
-      if (mounted && _controller != null) {
-        try {
-          // 🎯 dispose 체크: 컨트롤러 유효성 확인
-          if (_controller!.value.isInitialized) {
-            _controller!.addListener(_onVideoStatusChanged);
-          }
+          _controller!.addListener(_onVideoStatusChanged);
         } catch (e) {
           debugPrint('[ClipComponent] 리스너 추가 오류 (dispose됨): $e');
         }
       }
 
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-        debugPrint('[ClipComponent] ✅ 초기화 완료: $cacheKey');
-      }
-
-      // 🎯 썸네일이 캐시에 없으면 생성 (비동기로 실행하여 초기화 지연 방지)
-      // 로컬 비디오는 썸네일 생성 스킵 (이미 thumbnailPath가 있음)
-      if (mounted &&
-          widget.localPath.isEmpty &&
-          !videoThumbnailCache.containsKey(cacheKey)) {
-        _generateThumbnailForCache(cacheKey);
-      }
-
-      // 🎯 재생 준비 완료 설정
-      // 프리로드된 컨트롤러는 이미 준비되어 있으므로 즉시 설정
+      // ✅ 현재 시점의 상태를 반영(초기화는 아직 안 끝났을 수 있음)
       if (mounted && _controller != null) {
         try {
-          // 컨트롤러가 여전히 유효한지 확인
-          final _ = _controller!.value.isInitialized;
+          final isInit = _controller!.value.isInitialized;
           setState(() {
-            _isReadyToPlay = true;
+            _isInitialized = isInit;
+            // "재생 가능"은 최소 초기화 완료 기준으로 판단 (버퍼링은 별도 UI에서 표시)
+            _isReadyToPlay = isInit;
           });
+        } catch (_) {}
+      }
 
-          if (isPreloaded) {
-            debugPrint(
-              '[ClipComponent] ✅ 프리로드된 컨트롤러 - 즉시 재생 준비 완료: ${widget.url}',
-            );
-          } else {
-            debugPrint('[ClipComponent] ✅ 새 컨트롤러 - 재생 준비 완료: ${widget.url}');
-          }
-
-          // 🎯 뷰포트에 있으면 바로 재생
-          if (widget.shouldAutoPlay) {
-            _playVideo();
-          }
-        } catch (e) {
-          debugPrint('[ClipComponent] 재생 준비 설정 오류: $e');
-          // dispose된 컨트롤러 처리
-          _controller = null;
-          _isInitialized = false;
+      // ✅ 프리로드 히트라면(이미 init), 후속 작업을 바로 1회 실행
+      if (isPreloaded &&
+          mounted &&
+          _controller != null &&
+          !_didRunPostInitSetup) {
+        _didRunPostInitSetup = true;
+        // 볼륨 설정(best-effort)
+        try {
+          await _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
+        } catch (_) {}
+        // 편집 모드에서 aspectRatio 저장(best-effort)
+        if (widget.isEditing) {
+          try {
+            final s = _controller!.value.size;
+            if (s.width > 0 && s.height > 0) {
+              _saveAspectRatioToMetadata(s.width / s.height);
+            }
+          } catch (_) {}
+        }
+        // 썸네일 생성(best-effort, 비동기)
+        if (mounted &&
+            widget.localPath.isEmpty &&
+            !videoThumbnailCache.containsKey(cacheKey)) {
+          _generateThumbnailForCache(cacheKey);
+        }
+        // 가시성 조건이면 자동 재생
+        if (widget.shouldAutoPlay && !_isPlaying && !_hasPlayedOnce) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _maybeAutoPlay(reason: 'init.preloaded');
+          });
         }
       }
     } catch (e, stackTrace) {
@@ -1870,12 +1843,80 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     }
 
     try {
-      final position = _controller!.value.position;
-      final duration = _controller!.value.duration;
+      // ✅ 컨트롤러 상태 스냅샷
+      final value = _controller!.value;
+      final isInitNow = value.isInitialized;
+      final hasErrorNow = value.hasError;
+
+      // ✅ 에러 전파: 무한 로딩 대신 에러 UI로 전환
+      if (hasErrorNow && !_hasError) {
+        debugPrint('[ClipComponent] ⚠️ 컨트롤러 에러 감지: ${value.errorDescription}');
+        if (!_isDisposed && mounted) {
+          setState(() {
+            _hasError = true;
+            _isInitialized = false;
+            _isReadyToPlay = false;
+          });
+        }
+        return;
+      }
+
+      // ✅ init 완료/버퍼링 변화에 따라 readiness 갱신
+      final bool shouldUpdateInitFlags =
+          (_isInitialized != isInitNow) ||
+          (_isReadyToPlay != isInitNow) ||
+          (_hasError != hasErrorNow);
+
+      if (shouldUpdateInitFlags && !_isDisposed && mounted) {
+        setState(() {
+          _isInitialized = isInitNow;
+          // "재생 가능"은 최소 init 완료 기준으로 판단.
+          // (버퍼링은 별도 오버레이로 표현)
+          _isReadyToPlay = isInitNow;
+          _hasError = hasErrorNow;
+        });
+      }
+
+      // ✅ init이 이제 막 완료된 경우: 후속 작업(볼륨/메타/썸네일/오토플레이) 1회 수행
+      if (isInitNow && !_didRunPostInitSetup) {
+        _didRunPostInitSetup = true;
+        // 볼륨(best-effort)
+        try {
+          _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
+        } catch (_) {}
+        // aspectRatio 저장(best-effort, 편집 모드)
+        if (widget.isEditing) {
+          try {
+            final s = value.size;
+            if (s.width > 0 && s.height > 0) {
+              _saveAspectRatioToMetadata(s.width / s.height);
+            }
+          } catch (_) {}
+        }
+        // 썸네일 생성(best-effort, 비동기)
+        final cacheKey =
+            widget.localPath.isNotEmpty ? widget.localPath : widget.url;
+        if (mounted &&
+            widget.localPath.isEmpty &&
+            !videoThumbnailCache.containsKey(cacheKey)) {
+          _generateThumbnailForCache(cacheKey);
+        }
+        // 가시성 조건이면 자동 재생
+        if (widget.shouldAutoPlay && !_isPlaying && !_hasPlayedOnce) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!_isDisposed && mounted) {
+              _maybeAutoPlay(reason: 'listener.initNow');
+            }
+          });
+        }
+      }
+
+      final position = value.position;
+      final duration = value.duration;
       final isAtEnd = duration > Duration.zero && position >= duration;
 
       // 재생 상태 업데이트 (먼저 실행)
-      final isPlaying = _controller!.value.isPlaying;
+      final isPlaying = value.isPlaying;
       final wasPlaying = _isPlaying;
 
       // 재생 상태 변경 로그
@@ -2043,6 +2084,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
         debugPrint(
           '[ClipComponent] ⚠️ _playVideo 취소: mounted=$mounted, controller=${_controller != null}',
         );
+
         return;
       }
       final key = 'video_${widget.url.hashCode}';
@@ -2112,6 +2154,18 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
       // 메타데이터에 aspectRatio 추가
       final meta = Map<String, dynamic>.from(node.metadata);
+      // ✅ 동일 값이면 업데이트/replace를 하지 않아서 불필요한 리빌드 폭발 방지
+      final existing = meta['aspectRatio'];
+      final existingDouble =
+          (existing is num)
+              ? existing.toDouble()
+              : double.tryParse(existing?.toString() ?? '');
+      if (existingDouble != null) {
+        final delta = (existingDouble - aspectRatio).abs();
+        if (delta < 0.001) {
+          return;
+        }
+      }
       meta['aspectRatio'] = aspectRatio;
 
       // 🎯 성능 최적화: 로컬 경로와 네트워크 URL 모두 키로 저장 (이미지와 동일한 패턴)
@@ -2230,11 +2284,17 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
     // 로딩 상태: 업로드/압축/초기화/버퍼링 모두 포함
     final isBuffering = _controller?.value.isBuffering ?? false;
+    final isPlayingNow = _controller?.value.isPlaying ?? _isPlaying;
+    // 🎯 읽기 모드(글 보기/임시저장 불러오기)에서는 업로드/처리 중이 아니면 로딩 스피너 표시 안 함
     final shouldShowSpinner =
-        widget.isUploading ||
-        widget.isProcessing ||
-        !_isReadyToPlay ||
-        isBuffering;
+        widget.isEditing
+            ? (widget.isUploading ||
+                widget.isProcessing ||
+                // ✅ 이미 재생이 시작된 경우(첫 프레임 렌더 가능)에는 로딩 오버레이를 숨긴다.
+                // iOS/AVPlayer는 isBuffering이 길게 true로 유지될 수 있어 UX가 나빠진다.
+                (!_isReadyToPlay && !isPlayingNow) ||
+                (isBuffering && !isPlayingNow))
+            : (widget.isUploading || widget.isProcessing);
 
     // ✅ 항상 Stack 구조 유지:
     // Stack[

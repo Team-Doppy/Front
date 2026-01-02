@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'dart:async';
 
 import 'package:doppy/editor/publish/post_export_screen.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
@@ -14,6 +15,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:convert';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:super_editor/super_editor.dart';
+import 'package:doppy/editor/utils/post_metadata_change_detector.dart';
 
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
@@ -30,6 +32,17 @@ class EditModeAppBar extends StatefulWidget {
   final bool isSaving; // 저장 중 상태
   final bool isAutoSaving; // 자동 저장 중 상태
   final ValueNotifier<bool>? videoUploadIndicatorNotifier; // 영상 업로드 인디케이터 상태
+  final VoidCallback? onEditThumbnail; // 썸네일 편집 화면 열기 콜백
+  final String? initialTitle; // 썸네일 편집 화면 초기 제목
+  final String? initialSummary; // 썸네일 편집 화면 초기 요약
+  final String? initialThumbnailUrl; // 썸네일 편집 화면 초기 썸네일 URL
+  final String? sessionKey; // 썸네일 편집 화면용 sessionKey
+  final String? currentTitle; // 현재 제목 (변경 감지용)
+  final String? currentSummary; // 현재 요약 (변경 감지용)
+  final String? currentThumbnailUrl; // 현재 썸네일 URL (변경 감지용)
+  final Map<String, dynamic>?
+  originalExportedData; // 원본 exported 데이터 (문서 변경 감지용)
+  final StickerService? stickerService; // 스티커 서비스 (문서 변경 감지용)
 
   const EditModeAppBar({
     super.key,
@@ -45,6 +58,16 @@ class EditModeAppBar extends StatefulWidget {
     this.onCategoryChanged,
     this.onThumbnailChanged,
     this.videoUploadIndicatorNotifier,
+    this.onEditThumbnail,
+    this.initialTitle,
+    this.initialSummary,
+    this.initialThumbnailUrl,
+    this.sessionKey,
+    this.currentTitle,
+    this.currentSummary,
+    this.currentThumbnailUrl,
+    this.originalExportedData,
+    this.stickerService,
   });
 
   @override
@@ -55,6 +78,13 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
   String? _thumbnailUrl;
   bool _isLoading = false;
 
+  String? _originalTitle; // 원본 제목 (서버에서 처음 로드한 값)
+  String? _originalSummary; // 원본 요약 (서버에서 처음 로드한 값)
+  String? _originalThumbnailUrl; // 원본 썸네일 URL (서버에서 처음 로드한 값)
+  String? _originalVisibility; // 원본 공개범위 (서버에서 처음 로드한 값)
+  List<int>? _originalGroupIds; // 원본 그룹 ID 리스트 (서버에서 처음 로드한 값)
+  // 🎯 카테고리는 로컬 기반이므로 editor_appbar에서는 관리하지 않음
+
   @override
   void initState() {
     super.initState();
@@ -63,10 +93,15 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
     // 수정 모드 진입 시 썸네일만 로드
     if (widget.postId != null) {
       _loadThumbnail();
+    } else {
+      // postId가 없으면 initial 값들을 원본으로 사용
+      _originalTitle = widget.initialTitle;
+      _originalSummary = widget.initialSummary;
+      _originalThumbnailUrl = widget.initialThumbnailUrl;
     }
   }
 
-  /// 수정 모드 진입 시 썸네일만 로드
+  /// 수정 모드 진입 시 썸네일, 제목, 요약 로드
   Future<void> _loadThumbnail() async {
     if (_isLoading) return;
 
@@ -82,7 +117,32 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
         _isLoading = false;
       });
 
+      // 🎯 제목과 요약도 함께 로드하여 초기화 (수정 완료 버튼 검증용)
+      final title = metadata['title'] as String? ?? '';
+      final summary = metadata['summary'] as String? ?? '';
+
+      // 원본 값 저장 (서버에서 처음 로드한 값)
+      if (mounted) {
+        setState(() {
+          // 원본 값이 아직 설정되지 않았을 때만 저장 (최초 1회만)
+          _originalTitle ??= title;
+          _originalSummary ??= summary;
+          _originalThumbnailUrl ??= _thumbnailUrl;
+
+          // 🎯 공개범위 원본 값 저장 (카테고리는 로컬 기반이므로 서버에서 가져오지 않음)
+          final accessLevel = metadata['accessLevel'] as String?;
+          final sharedGroupIds = metadata['sharedGroupIds'] as List<int>?;
+          _originalVisibility ??= accessLevel;
+          _originalGroupIds ??=
+              sharedGroupIds != null ? List<int>.from(sharedGroupIds) : null;
+        });
+      }
+
+      widget.onTitleSummaryChanged?.call(title, summary);
+
       debugPrint('[EditModeAppBar] 썸네일 로드 완료: $_thumbnailUrl');
+      debugPrint('[EditModeAppBar] 제목 로드 완료: $title');
+      debugPrint('[EditModeAppBar] 요약 로드 완료: $summary');
     } catch (e) {
       debugPrint('[EditModeAppBar] 썸네일 로드 실패: $e');
       if (mounted) {
@@ -119,7 +179,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
-                        vertical: 8,
+                        vertical: 4,
                       ),
                       child: Icon(
                         Icons.arrow_back_ios_new_rounded,
@@ -231,59 +291,89 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                       }
 
                       // 기존 버튼들
-                      return Row(
-                        children: [
-                          // 수정 완료 버튼 / 로딩 표시
-                          GestureDetector(
-                            onTap: widget.isSaving ? null : widget.onSave,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(),
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child:
-                                    widget.isSaving
-                                        ? Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 2,
-                                          ),
-                                          child: SizedBox(
-                                            width: 26,
-                                            height: 26,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 3,
-                                              color:
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.primary,
-                                            ),
-                                          ),
-                                        )
-                                        : Row(
-                                          children: [
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              context.tr('modify_complete'),
-                                              style: TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w600,
-                                                color:
-                                                    Theme.of(
-                                                      context,
-                                                    ).colorScheme.primary,
+                      return AnimatedBuilder(
+                        animation: widget.editorService,
+                        builder: (context, _) {
+                          // 수정 완료 버튼 색상 (항상 활성화)
+                          final saveButtonColor =
+                              Theme.of(context).colorScheme.primary;
+
+                          return Row(
+                            children: [
+                              // 썸네일 수정 버튼
+                              if (widget.onEditThumbnail != null)
+                                GestureDetector(
+                                  onTap: widget.onEditThumbnail,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(),
+                                    child: Icon(
+                                      Icons.more_horiz_rounded,
+                                      size: 20,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.6),
+                                    ),
+                                  ),
+                                ),
+                              // 수정 완료 버튼 / 로딩 표시
+                              GestureDetector(
+                                onTap: widget.isSaving ? null : widget.onSave,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(),
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child:
+                                        widget.isSaving
+                                            ? Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 2,
+                                                  ),
+                                              child: SizedBox(
+                                                width: 26,
+                                                height: 26,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 3,
+                                                  valueColor:
+                                                      AlwaysStoppedAnimation<
+                                                        Color
+                                                      >(
+                                                        Theme.of(
+                                                          context,
+                                                        ).colorScheme.primary,
+                                                      ),
+                                                ),
                                               ),
+                                            )
+                                            : Row(
+                                              children: [
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  context.tr('modify_complete'),
+                                                  style: TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: saveButtonColor,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 12),
+                                              ],
                                             ),
-                                            const SizedBox(width: 12),
-                                          ],
-                                        ),
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                        ],
+                            ],
+                          );
+                        },
                       );
                     },
                   ),
@@ -449,7 +539,7 @@ class EditorAppBar extends StatelessWidget {
                         child: Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 16,
-                            vertical: 8,
+                            vertical: 4,
                           ),
                           child: Icon(
                             Icons.arrow_back_ios_new_rounded,

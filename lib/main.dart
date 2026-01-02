@@ -38,11 +38,16 @@ import 'package:overlay_support/overlay_support.dart';
 import 'firebase_options.dart';
 import 'theme/theme.dart';
 import 'utils/route_observer.dart';
+import 'utils/deep_link_ingress.dart';
+import 'utils/deep_link_store.dart';
 import 'data/services/deep_link_service.dart';
-import 'utils/deep_link_coordinator.dart';
 
 // Global NavigatorKey for accessing context from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// 🎯 테스트용 OS 언어 설정 플래그 (나중에는 동적으로 결정)
+// true: 한국어 강제, false: 영어 강제, null: 실제 OS 언어 사용
+const bool? kTestForceKorean = true; // null이면 실제 OS 언어 사용
 
 /// 위로 스와이프하여 닫을 수 있는 알림 위젯
 class _DismissibleNotification extends StatefulWidget {
@@ -114,15 +119,6 @@ class _DismissibleNotificationState extends State<_DismissibleNotification> {
   }
 }
 
-/// 🎯 FCM 딥링크 처리
-void _handleDeepLinkFromFcm(String deepLinkUrl) {
-  final result = DeepLinkService.parseDeepLink(deepLinkUrl);
-  if (result != null && result.type != DeepLinkType.unknown) {
-    // 스플래시 부트스트랩/루트 전환 중에는 큐잉 후, RootShell 준비 완료 시 처리
-    DeepLinkCoordinator().handle(result, source: 'fcm');
-  }
-}
-
 // 🎯 FCM Background 메시지 핸들러 (top-level 함수로 선언)
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -182,15 +178,21 @@ Future<void> main() async {
           showOverlayNotification((context) {
             return _DismissibleNotification(
               onTap: () {
-                // 🎯 알림 탭 시 딥링크 처리
+                // ✅ 알림 탭 시: pending 저장 → /splash로 스택 리셋 (항상 Splash부터)
                 final deepLink = message.data['deepLink'] as String?;
                 if (deepLink != null && deepLink.isNotEmpty) {
-                  _handleDeepLinkFromFcm(deepLink);
+                  DeepLinkIngress().ingestUrl(
+                    deepLink,
+                    source: 'fcm_foreground',
+                  );
                 } else {
                   // 🎯 type 필드로 처리 (딥링크가 없는 경우)
                   final type = message.data['type'] as String?;
                   if (type == 'FRIEND_REQUEST') {
-                    _handleDeepLinkFromFcm('doppy://friends/requests');
+                    DeepLinkIngress().ingestUrl(
+                      'doppy://friends/requests',
+                      source: 'fcm_foreground',
+                    );
                   }
                 }
                 // 알림 닫기
@@ -278,44 +280,8 @@ Future<void> main() async {
       }
     });
 
-    // 🎯 FCM 메시지 클릭 핸들러 등록
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      // 🎯 딥링크 처리
-      final deepLink = message.data['deepLink'] as String?;
-      if (deepLink != null && deepLink.isNotEmpty) {
-        _handleDeepLinkFromFcm(deepLink);
-      } else {
-        // 🎯 type 필드로 처리 (딥링크가 없는 경우)
-        final type = message.data['type'] as String?;
-        if (type == 'FRIEND_REQUEST') {
-          _handleDeepLinkFromFcm('doppy://friends/requests');
-        }
-      }
-    });
-
-    // 🎯 앱이 종료된 상태에서 알림 클릭으로 열린 경우 확인
-    final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
-    if (initialMessage != null) {
-      // 🎯 딥링크 처리
-      final deepLink = initialMessage.data['deepLink'] as String?;
-      if (deepLink != null && deepLink.isNotEmpty) {
-        debugPrint('[FCM] 초기 딥링크 발견: $deepLink');
-        // 앱 초기화 완료 후 처리
-        Future.delayed(const Duration(milliseconds: 1000), () {
-          _handleDeepLinkFromFcm(deepLink);
-        });
-      } else {
-        // 🎯 type 필드로 처리 (딥링크가 없는 경우)
-        final type = initialMessage.data['type'] as String?;
-        if (type == 'FRIEND_REQUEST') {
-          debugPrint('[FCM] 초기 친구 요청 알림 발견');
-          // 앱 초기화 완료 후 처리
-          Future.delayed(const Duration(milliseconds: 1000), () {
-            _handleDeepLinkFromFcm('doppy://friends/requests');
-          });
-        }
-      }
-    }
+    // ✅ 앱 종료 상태 초기 진입(푸시/딥링크) 캡처
+    await DeepLinkIngress().captureInitialEntry();
   } catch (e) {
     debugPrint('[Firebase] 초기화 실패: $e');
   }
@@ -361,6 +327,11 @@ Future<void> main() async {
     ),
   );
 
+  // ✅ 앱 실행 중 진입 이벤트는 "pending 저장 → /splash로 스택 리셋"으로 통일
+  // 플랫폼 pushRoute(/334, /username 등)가 매우 이른 타이밍에 들어오는 케이스가 있어
+  // 가능한 한 빨리 observer/stream을 붙여 Navigator가 라우트를 push하는 것을 막는다.
+  DeepLinkIngress().start();
+
   // 전역 1회: 네트워크 모니터/재로딩 코디네이터 시작
   try {
     NetworkManager.initConnectivityMonitor();
@@ -395,18 +366,103 @@ class MyApp extends StatelessWidget {
             theme: AppTheme.lightTheme,
             darkTheme: AppTheme.darkTheme,
             themeMode: context.watch<ThemeProvider>().themeMode,
-            home: const SplashScreen(),
+            // onGenerateInitialRoutes를 사용하므로 home는 사용하지 않는다.
+            // (Flutter assert: home == null || onGenerateInitialRoutes == null)
+            initialRoute: '/splash',
             navigatorObservers: [routeObserver],
+            // ✅ IMPORTANT:
+            // Flutter 엔진 initialRoute가 /334 같은 "경로(path-only)"로 들어오면,
+            // Navigator가 기본 규칙에 따라 `['/', '/334']`처럼 "2개 라우트"를 초기 스택에 생성할 수 있다.
+            // 그러면 RootShell(Home)이 "pop 가능한 화면"처럼 보이며(뒤로가기 아이콘),
+            // 딥링크 진입 시 홈이 push된 것 같은 증상이 발생한다.
+            //
+            // 따라서 어떤 진입 경로든 초기 스택은 "Splash 1장"으로 강제하고,
+            // initialRoute는 pending 딥링크로만 저장한 뒤 Splash bootstrap 완료 후 처리한다.
+            onGenerateInitialRoutes: (String initialRouteName) {
+              try {
+                // captureInitialEntry()가 이미 pending을 저장했을 수도 있으므로 중복 저장은 피한다.
+                if (!DeepLinkStore.hasPending &&
+                    initialRouteName.isNotEmpty &&
+                    initialRouteName != Navigator.defaultRouteName &&
+                    // ✅ 앱 내부 라우트는 딥링크로 취급하지 않는다.
+                    // (예: '/splash'가 포스트ID로 오인되어 "포스트를 불러올 수 없습니다" 스낵바가 뜨는 문제 방지)
+                    initialRouteName != '/splash' &&
+                    initialRouteName != '/login' &&
+                    initialRouteName != '/post-write') {
+                  final result = DeepLinkService.parseDeepLink(
+                    initialRouteName,
+                  );
+                  if (result != null && result.type != DeepLinkType.unknown) {
+                    debugPrint(
+                      '[Navigator] 🔗 engine initialRoute captured: $initialRouteName',
+                    );
+                    DeepLinkStore.setPending(
+                      result,
+                      source: 'engine_initial_route',
+                    );
+                  }
+                }
+              } catch (e) {
+                debugPrint(
+                  '[Navigator] onGenerateInitialRoutes failed (ignored): $e',
+                );
+              }
+
+              return <Route<dynamic>>[
+                MaterialPageRoute<dynamic>(
+                  settings: const RouteSettings(name: '/splash'),
+                  builder: (_) => const SplashScreen(),
+                ),
+              ];
+            },
             routes: {
-              '/home': (_) => const RootShell(initialIndex: 0),
+              '/splash': (_) => const SplashScreen(),
               '/login': (_) => const LoginScreen(),
-              '/search': (_) => const RootShell(initialIndex: 1),
-              '/profile': (context) => const RootShell(initialIndex: 3),
               '/post-write': (_) => PostwriteScreen(isEditingMode: false),
             },
 
-            onUnknownRoute:
-                (_) => MaterialPageRoute(builder: (_) => const HomeScreen()),
+            // ✅ IMPORTANT: iOS/Android App Links가 "엔진 initialRoute"로 들어올 수 있음 (예: /334)
+            // Flutter 엔진은 딥링크 URL(https://www.doppy.app/334)을 받아서 경로(/334)만 추출해
+            // MaterialApp.initialRoute로 설정하는데, 이건 Flutter의 기본 동작이라 네이티브 설정으로는 막을 수 없음.
+            // 따라서 여기서 fallback으로 처리: 경로를 synthetic URL로 복원해 딥링크로 파싱하고 Splash로 보냄.
+            // (정상 케이스는 captureInitialEntry()의 getInitialLink()가 먼저 처리함)
+            onGenerateRoute: (settings) {
+              final name = settings.name;
+              // 이미 pending이 있으면 무시 (captureInitialEntry()가 이미 처리했을 가능성)
+              if (DeepLinkStore.hasPending) {
+                debugPrint(
+                  '[Navigator] ⏭️ onGenerateRoute skipped (pending exists): $name',
+                );
+                return MaterialPageRoute(
+                  settings: const RouteSettings(name: '/splash'),
+                  builder: (_) => const SplashScreen(),
+                );
+              }
+              if (name != null && name != '/' && name.startsWith('/')) {
+                // 예: /334, /334/slug, /profile/username 등
+                // parseDeepLink()가 경로만 들어와도 자동으로 보정하므로 그대로 전달
+                final result = DeepLinkService.parseDeepLink(name);
+                if (result != null && result.type != DeepLinkType.unknown) {
+                  debugPrint('[Navigator] 🔗 engine route as deep link: $name');
+                  DeepLinkStore.setPending(
+                    result,
+                    source: 'engine_initial_route',
+                  );
+                  return MaterialPageRoute(
+                    settings: const RouteSettings(name: '/splash'),
+                    builder: (_) => const SplashScreen(),
+                  );
+                }
+              }
+              return null; // 기본 routing 유지
+            },
+
+            // ✅ 어떤 경로로 들어오든 Splash부터 다시 밟는 정책:
+            // 등록되지 않은 라우트로 pushNamed가 호출되면 HomeScreen으로 떨어지지 않도록 한다.
+            onUnknownRoute: (settings) {
+              debugPrint('[Navigator] ❓ unknown route: ${settings.name}');
+              return MaterialPageRoute(builder: (_) => const SplashScreen());
+            },
           ),
         );
       },
@@ -437,7 +493,6 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   late final Widget _profileTab;
   late final List<Widget> _tabs;
 
-  final DeepLinkService _deepLinkService = DeepLinkService();
   bool _isCheckingRequests = false; // 🎯 요청 확인 중인지 추적
 
   @override
@@ -479,21 +534,8 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     // 라이프사이클 옵저버 등록
     WidgetsBinding.instance.addObserver(this);
 
-    // 🎯 딥링크 리스너 등록 (웹 링크 직접 클릭 시 처리)
-    _deepLinkService.listenToDeepLinks((DeepLinkResult result) {
-      final context = navigatorKey.currentContext;
-      if (context != null) {
-        debugPrint('[RootShell] 웹 링크에서 딥링크 수신: type=${result.type}');
-        DeepLinkCoordinator().handle(result, source: 'app_links');
-      } else {
-        debugPrint('[RootShell] Navigator context가 없습니다 - 딥링크 처리를 건너뜁니다');
-      }
-    });
-
     // 🎯 앱 진입 시 받은 요청 확인 및 바텀시트 표시
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // RootShell이 실제로 렌더된 이후부터 딥링크 네비게이션을 허용
-      DeepLinkCoordinator().markReady();
       _checkAndShowReceivedRequests();
     });
   }
@@ -579,8 +621,6 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   void dispose() {
     // 라이프사이클 옵저버 해제
     WidgetsBinding.instance.removeObserver(this);
-    // 딥링크 리스너 해제
-    _deepLinkService.dispose();
     // FriendProvider 리스너 해제
     try {
       context.read<FriendProvider>().removeListener(_onFriendProviderChanged);

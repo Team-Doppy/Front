@@ -6,13 +6,8 @@ import 'package:doppy/image/crop_editor.dart';
 import 'package:doppy/image/media_picker_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
-import 'package:doppy/providers/friend_provider.dart';
-import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:image_gallery_saver/image_gallery_saver.dart';
-import 'package:provider/provider.dart';
 
 /// 프로필 사진 전체 화면
 class ProfileImageViewScreen extends StatefulWidget {
@@ -24,6 +19,12 @@ class ProfileImageViewScreen extends StatefulWidget {
   final VoidCallback onSetDefaultImage;
   final bool isOwnProfile;
   final VoidCallback? onFollowStatusChanged; // 팔로우 상태 변경 시 콜백
+  // 읽기 모드용 프로필 정보
+  final String? alias;
+  final String? selfIntroduction;
+  final List<String>? links;
+  final Map<String, String>? linkTitles;
+  final Map<String, String>? linkThumbnails;
 
   const ProfileImageViewScreen({
     Key? key,
@@ -35,6 +36,11 @@ class ProfileImageViewScreen extends StatefulWidget {
     required this.onSetDefaultImage,
     required this.isOwnProfile,
     this.onFollowStatusChanged,
+    this.alias,
+    this.selfIntroduction,
+    this.links,
+    this.linkTitles,
+    this.linkThumbnails,
   }) : super(key: key);
 
   @override
@@ -43,8 +49,6 @@ class ProfileImageViewScreen extends StatefulWidget {
 
 class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
     with TickerProviderStateMixin {
-  bool _isDownloading = false;
-
   // 이미지 선택 관련
   File? _selectedImage;
   ui.Image? _uiImage;
@@ -130,6 +134,14 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
       parent: _imageEditorFadeController,
       curve: Curves.easeInOut,
     );
+    // ✅ 읽기 모드일 때는 프로필 정보를 바로 표시
+    if (!widget.isOwnProfile) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _imageEditorFadeController.forward();
+        }
+      });
+    }
     // ✅ 처음에는 0으로 시작 (이미지 로드 후에만 forward)
     // _imageEditorFadeController.forward(); // 제거: 처음 로드 시 흔들림 방지
   }
@@ -155,11 +167,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
     final theme = Theme.of(context);
     // ✅ 이미지 편집(추가/크롭/이동) 중에는 스와이프-닫기 제스처를 막아야 편집 제스처와 충돌하지 않음
     final bool canSwipeDismiss = _selectedImage == null && !_isAdjustMode;
-    // 기본이미지 모드일 때는 프로필 이미지를 표시하지 않음
-    final hasProfileImage =
-        !_isDefaultImageMode &&
-        widget.profileImageUrl != null &&
-        widget.profileImageUrl!.isNotEmpty;
 
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
@@ -242,10 +249,10 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                 return Transform.translate(offset: Offset(0, dy), child: child);
               },
               child: Align(
-                alignment: const Alignment(
-                  0,
-                  -0.25,
-                ), // 위로 약간 이동 (0 = 중앙, -1 = 최상단)
+                alignment:
+                    widget.isOwnProfile
+                        ? const Alignment(0, -0.25) // 내 프로필: 위로 약간 이동
+                        : const Alignment(0, 0), // 읽기 모드: 중앙
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 200),
                   switchInCurve: Curves.easeInOut,
@@ -530,79 +537,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                   ),
                                 ],
                               )
-                          : Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              // 팔로우/팔로잉 버튼
-                              Consumer<FriendProvider>(
-                                builder: (context, friendProvider, _) {
-                                  final isFollowing =
-                                      friendProvider.friendStatus ==
-                                      FriendRequestStatus.accepted;
-                                  final isRequested =
-                                      friendProvider.friendStatus ==
-                                      FriendRequestStatus.requested;
-
-                                  return _buildCircleButton(
-                                    context: context,
-                                    icon:
-                                        isFollowing
-                                            ? Icons.check_circle
-                                            : Icons.person_add,
-                                    label:
-                                        isFollowing
-                                            ? AppLocalizations.of(
-                                              context,
-                                            ).translate('following')
-                                            : isRequested
-                                            ? AppLocalizations.of(
-                                              context,
-                                            ).translate('request_sent')
-                                            : AppLocalizations.of(
-                                              context,
-                                            ).translate('follow'),
-                                    onTap: () async {
-                                      if (isFollowing) {
-                                        // 팔로우 해제
-                                        await _unfollow(context);
-                                      } else if (isRequested) {
-                                        // 요청 취소
-                                        await _cancelRequest(context);
-                                      } else {
-                                        // 팔로우 요청 보내기
-                                        await _follow(context);
-                                      }
-                                    },
-                                  );
-                                },
-                              ),
-
-                              // 공유하기 버튼
-                              _buildCircleButton(
-                                context: context,
-                                icon: Icons.ios_share,
-                                label: AppLocalizations.of(
-                                  context,
-                                ).translate('share'),
-                                onTap: widget.onShareProfile,
-                              ),
-
-                              // 다운로드 버튼
-                              hasProfileImage
-                                  ? _buildCircleButton(
-                                    context: context,
-                                    icon:
-                                        _isDownloading
-                                            ? Icons.downloading
-                                            : Icons.download,
-                                    label: AppLocalizations.of(
-                                      context,
-                                    ).translate('download'),
-                                    onTap: () => _downloadImage(context),
-                                  )
-                                  : const SizedBox(),
-                            ],
-                          ),
+                          : const SizedBox.shrink(), // 읽기 모드: 버튼 없음
                 ),
               ),
             ),
@@ -683,120 +618,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         ],
       ),
     );
-  }
-
-  Future<void> _follow(BuildContext context) async {
-    final friendProvider = context.read<FriendProvider>();
-    try {
-      final success = await friendProvider.sendFriendRequest(widget.username);
-      if (success && widget.onFollowStatusChanged != null) {
-        widget.onFollowStatusChanged!();
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ErrorHandler.showError(
-          context,
-          AppLocalizations.of(context).translate('friend_request_failed'),
-        );
-      }
-    }
-  }
-
-  Future<void> _unfollow(BuildContext context) async {
-    final friendProvider = context.read<FriendProvider>();
-    try {
-      await friendProvider.deleteFriend(widget.username);
-      if (widget.onFollowStatusChanged != null) {
-        widget.onFollowStatusChanged!();
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ErrorHandler.showError(
-          context,
-          AppLocalizations.of(context).translate('unfriend_failed'),
-        );
-      }
-    }
-  }
-
-  Future<void> _cancelRequest(BuildContext context) async {
-    final friendProvider = context.read<FriendProvider>();
-    try {
-      final success = await friendProvider.cancelSentRequestOptimistic(
-        widget.username,
-      );
-      if (success && widget.onFollowStatusChanged != null) {
-        widget.onFollowStatusChanged!();
-      } else if (!success && context.mounted) {
-        ErrorHandler.showError(
-          context,
-          AppLocalizations.of(context).translate('cancel_request_failed'),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ErrorHandler.showError(
-          context,
-          AppLocalizations.of(context).translate('cancel_request_failed'),
-        );
-      }
-    }
-  }
-
-  Future<void> _downloadImage(BuildContext context) async {
-    if (_isDownloading ||
-        widget.profileImageUrl == null ||
-        widget.profileImageUrl!.isEmpty) {
-      return;
-    }
-
-    setState(() => _isDownloading = true);
-
-    try {
-      final response = await http.get(Uri.parse(widget.profileImageUrl!));
-
-      if (response.statusCode == 200) {
-        final result = await ImageGallerySaver.saveImage(
-          response.bodyBytes,
-          quality: 100,
-          name:
-              'doppy_profile_${widget.username}_${DateTime.now().millisecondsSinceEpoch}',
-        );
-
-        if (mounted) {
-          setState(() => _isDownloading = false);
-
-          if (result != null && result['isSuccess'] == true) {
-            ErrorHandler.showInfo(
-              context,
-              AppLocalizations.of(context).translate('image_saved'),
-            );
-          } else {
-            ErrorHandler.showError(
-              context,
-              AppLocalizations.of(context).translate('image_save_failed'),
-            );
-          }
-        }
-      } else {
-        if (mounted) {
-          setState(() => _isDownloading = false);
-          ErrorHandler.showError(
-            context,
-            AppLocalizations.of(context).translate('image_download_failed'),
-          );
-        }
-      }
-    } catch (e) {
-      debugPrint('[ProfileImageView] 다운로드 실패: $e');
-      if (mounted) {
-        setState(() => _isDownloading = false);
-        ErrorHandler.showError(
-          context,
-          AppLocalizations.of(context).translate('image_save_failed'),
-        );
-      }
-    }
   }
 
   /// 미디어 피커 표시

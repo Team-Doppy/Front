@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/deep_link_service.dart';
@@ -14,14 +16,82 @@ import 'package:doppy/editor/service/post_reader_service.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
+import 'package:flutter/scheduler.dart';
 
 /// 🎯 딥링크 처리 헬퍼
 class DeepLinkHandler {
+  /// ✅ Navigator 조작은 레이아웃/빌드 중 실행되면 크래시가 날 수 있어
+  /// 항상 다음 프레임으로 미뤄서 실행한다.
+  static Future<void> _afterFrameVoid(
+    BuildContext context,
+    FutureOr<void> Function() fn,
+  ) {
+    final c = Completer<void>();
+    SchedulerBinding.instance.addPostFrameCallback((_) async {
+      if (!context.mounted) {
+        c.complete();
+        return;
+      }
+      try {
+        await fn();
+        c.complete();
+      } catch (e, st) {
+        c.completeError(e, st);
+      }
+    });
+    return c.future;
+  }
+
+  static PageRoute<void> _buildDeepLinkLoadingRoute() {
+    return PageRouteBuilder<void>(
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return const _DeepLinkLoadingScreen();
+      },
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+      opaque: true,
+    );
+  }
+
+  /// 딥링크 처리 중 홈/기존 화면이 보이지 않도록 불투명 로딩 라우트를 최상단에 올린다.
+  /// - 이후 pushReplacement로 타겟 화면을 올리면 로딩 라우트가 교체되어 "홈이 보이는 프레임"이 사라진다.
+  static Future<bool> _pushDeepLinkLoading(BuildContext context) async {
+    try {
+      final nav = Navigator.of(context, rootNavigator: true);
+      await _afterFrameVoid(context, () {
+        nav.push(_buildDeepLinkLoadingRoute());
+      });
+      // 다음 프레임까지 기다려 라우트가 실제로 올라오게 함
+      await Future<void>.delayed(Duration.zero);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static void _dismissDeepLinkLoadingIfNeeded(
+    BuildContext context, {
+    required bool loadingShown,
+  }) {
+    if (!loadingShown) return;
+    _afterFrameVoid(context, () {
+      try {
+        final nav = Navigator.of(context, rootNavigator: true);
+        if (nav.canPop()) {
+          nav.pop();
+        }
+      } catch (_) {}
+    });
+  }
+
   /// 딥링크 처리 및 네비게이션
   static Future<void> handleDeepLink(
     BuildContext context,
-    DeepLinkResult result,
-  ) async {
+    DeepLinkResult result, {
+    // Splash에서 처리할 때는 별도 로딩 라우트(링크 여는 중)를 올리지 않고
+    // 스플래시 오버레이 상태에서 바로 타겟 라우트로 전환하는 UX를 지원한다.
+    bool showLoadingOverlay = true,
+  }) async {
     try {
       switch (result.type) {
         case DeepLinkType.post:
@@ -29,7 +99,11 @@ class DeepLinkHandler {
         case DeepLinkType.postWithLikes:
         case DeepLinkType.postWithChat:
           if (result.postId != null && result.postId!.isNotEmpty) {
-            await _handlePostDeepLink(context, result);
+            await _handlePostDeepLink(
+              context,
+              result,
+              showLoadingOverlay: showLoadingOverlay,
+            );
           } else {
             debugPrint('[DeepLinkHandler] postId가 없습니다');
             ErrorHandler.showError(context, '포스트를 찾을 수 없습니다.');
@@ -38,7 +112,11 @@ class DeepLinkHandler {
 
         case DeepLinkType.profile:
           if (result.username != null && result.username!.isNotEmpty) {
-            await _handleProfileDeepLink(context, result.username!);
+            await _handleProfileDeepLink(
+              context,
+              result.username!,
+              showLoadingOverlay: showLoadingOverlay,
+            );
           } else {
             debugPrint('[DeepLinkHandler] username이 없습니다');
             ErrorHandler.showError(context, '프로필을 찾을 수 없습니다.');
@@ -46,7 +124,10 @@ class DeepLinkHandler {
           break;
 
         case DeepLinkType.friendRequest:
-          await _handleFriendRequestDeepLink(context);
+          await _handleFriendRequestDeepLink(
+            context,
+            showLoadingOverlay: showLoadingOverlay,
+          );
           break;
 
         case DeepLinkType.unknown:
@@ -65,13 +146,16 @@ class DeepLinkHandler {
   /// 🎯 필요한 데이터를 순서대로 로드한 후 화면으로 이동
   static Future<void> _handlePostDeepLink(
     BuildContext context,
-    DeepLinkResult result,
-  ) async {
+    DeepLinkResult result, {
+    required bool showLoadingOverlay,
+  }) async {
     final postId = result.postId!;
     final blogService = BlogService();
     final postReaderService = PostReaderService();
     final commentService = CommentService();
     final likeService = LikeService();
+    final bool loadingShown =
+        showLoadingOverlay ? await _pushDeepLinkLoading(context) : false;
 
     try {
       // 1️⃣ 포스트 데이터 로드 (메타데이터 + 컨텐츠 병렬)
@@ -200,22 +284,32 @@ class DeepLinkHandler {
 
       // PostReaderScreen으로 네비게이션 (이미 로드된 content 전달)
       if (context.mounted) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder:
-                (_) => PostReaderScreen(
-                  exported: exported,
-                  heroTag: 'deep-link-post-$postId',
-                  initialAction: initialAction,
-                  scrollToCommentId: scrollToCommentId,
-                  preloadedContent: content, // 🎯 이미 로드된 content 전달
-                ),
-          ),
+        final nav = Navigator.of(context, rootNavigator: true);
+        // ✅ 정책: RootShell(홈)은 "루트"로만 존재해야 한다.
+        // - 딥링크는 RootShell 위에만 쌓여야 하며, RootShell을 스택에서 제거하면 안 된다.
+        // - 따라서 로딩 라우트를 push한 뒤, 로딩 라우트를 타겟 화면으로 "교체(pushReplacement)"한다.
+        final targetRoute = MaterialPageRoute(
+          builder:
+              (_) => PostReaderScreen(
+                exported: exported,
+                heroTag: 'deep-link-post-$postId',
+                initialAction: initialAction,
+                scrollToCommentId: scrollToCommentId,
+                preloadedContent: content, // 🎯 이미 로드된 content 전달
+              ),
         );
+        await _afterFrameVoid(context, () {
+          if (loadingShown) {
+            nav.pushReplacement(targetRoute);
+          } else {
+            nav.push(targetRoute);
+          }
+        });
       }
     } catch (e) {
       debugPrint('[DeepLinkHandler] 포스트 딥링크 처리 오류: $e');
       if (context.mounted) {
+        _dismissDeepLinkLoadingIfNeeded(context, loadingShown: loadingShown);
         ErrorHandler.showError(context, '포스트를 불러올 수 없습니다.');
       }
     }
@@ -224,8 +318,11 @@ class DeepLinkHandler {
   /// 프로필 딥링크 처리
   static Future<void> _handleProfileDeepLink(
     BuildContext context,
-    String username,
-  ) async {
+    String username, {
+    required bool showLoadingOverlay,
+  }) async {
+    final bool loadingShown =
+        showLoadingOverlay ? await _pushDeepLinkLoading(context) : false;
     // ✅ 프로필 딥링크 안정화:
     // - 전역 싱글톤 Provider 캐시 때문에 "이전 유저가 잠깐 보이는" 현상이 날 수 있어
     //   진입 시점을 기준으로 데이터를 즉시 비우고, 목표 username으로 로딩을 트리거한다.
@@ -247,16 +344,39 @@ class DeepLinkHandler {
       debugPrint('[DeepLinkHandler] OtherProfileFeedProvider 준비 실패(무시): $e');
     }
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
+    try {
+      if (!context.mounted) return;
+      final nav = Navigator.of(context, rootNavigator: true);
+      final targetRoute = MaterialPageRoute<void>(
         builder: (_) => UserProfileScreen(otherUser: User(username: username)),
-      ),
-    );
+      );
+
+      // ✅ 로딩 라우트를 올렸다면 "교체(pushReplacement)"해서
+      // 로딩이 절대 화면 위에 남지 않도록 한다.
+      await _afterFrameVoid(context, () async {
+        if (loadingShown) {
+          await nav.pushReplacement(targetRoute);
+        } else {
+          await nav.push(targetRoute);
+        }
+      });
+    } catch (e) {
+      debugPrint('[DeepLinkHandler] 프로필 딥링크 네비게이션 실패: $e');
+      if (context.mounted) {
+        _dismissDeepLinkLoadingIfNeeded(context, loadingShown: loadingShown);
+        ErrorHandler.showError(context, '프로필을 열 수 없습니다.');
+      }
+    }
   }
 
   /// 친구 요청 딥링크 처리
   /// 🎯 필요한 데이터를 순서대로 로드한 후 화면으로 이동
-  static Future<void> _handleFriendRequestDeepLink(BuildContext context) async {
+  static Future<void> _handleFriendRequestDeepLink(
+    BuildContext context, {
+    required bool showLoadingOverlay,
+  }) async {
+    final bool loadingShown =
+        showLoadingOverlay ? await _pushDeepLinkLoading(context) : false;
     try {
       // 1️⃣ 친구 데이터 로드 (받은 요청 포함)
       debugPrint('[DeepLinkHandler] 1/2 친구 데이터 로드 중...');
@@ -272,21 +392,28 @@ class DeepLinkHandler {
 
       // 2️⃣ 내 그룹 화면으로 이동 (앱 시작 시 표시되는 바텀시트만 사용)
       debugPrint('[DeepLinkHandler] 2/2 내 그룹 화면으로 이동 중...');
-      await Navigator.of(context).push(
-        PageRouteBuilder(
-          pageBuilder:
-              (context, animation, secondaryAnimation) =>
-                  const GroupSelectionScreen(showReceivedRequests: false),
-          transitionDuration: const Duration(milliseconds: 220),
-          reverseTransitionDuration: const Duration(milliseconds: 220),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-        ),
+      final nav = Navigator.of(context, rootNavigator: true);
+      final targetRoute = PageRouteBuilder(
+        pageBuilder:
+            (context, animation, secondaryAnimation) =>
+                const GroupSelectionScreen(showReceivedRequests: false),
+        transitionDuration: const Duration(milliseconds: 220),
+        reverseTransitionDuration: const Duration(milliseconds: 220),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
       );
+      await _afterFrameVoid(context, () async {
+        if (loadingShown) {
+          await nav.pushReplacement(targetRoute);
+        } else {
+          await nav.push(targetRoute);
+        }
+      });
     } catch (e) {
       debugPrint('[DeepLinkHandler] 친구 요청 딥링크 처리 오류: $e');
       if (context.mounted) {
+        _dismissDeepLinkLoadingIfNeeded(context, loadingShown: loadingShown);
         ErrorHandler.showError(context, '친구 요청을 불러올 수 없습니다.');
       }
     }
@@ -326,5 +453,40 @@ class DeepLinkHandler {
       'isLiked': postData['isLiked'] == true,
       'stickers': [],
     };
+  }
+}
+
+class _DeepLinkLoadingScreen extends StatelessWidget {
+  const _DeepLinkLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        backgroundColor: colorScheme.background,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(height: 14),
+              Text(
+                '링크 여는 중...',
+                style: TextStyle(
+                  color: colorScheme.onBackground.withOpacity(0.75),
+                  fontSize: 14,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

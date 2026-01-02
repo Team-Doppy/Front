@@ -72,36 +72,42 @@ class CommentPreviewSection extends StatelessWidget {
               allComments,
             );
 
-            return CommentItem(
-              key: ValueKey(
-                '${comment.id}_${comment.createdAt}_preview_$index',
+            return GestureDetector(
+              // 🎯 프리뷰에서 댓글 전체를 탭하면 댓글 시트로 이동
+              onTap: onShowComments,
+              child: CommentItem(
+                key: ValueKey(
+                  '${comment.id}_${comment.createdAt}_preview_$index',
+                ),
+                comment: comment,
+                commentService: commentService,
+                currentUser: currentUser,
+                isMe: isMe,
+                showProfile: showProfile,
+                showAuthorInfo: showAuthorInfo,
+                // 🎯 프리뷰에서는 Hero 제거 (댓글 시트로 이동 시 이미지가 따라오는 문제 방지)
+                enableImageHero: false,
+                // 🎯 이미지 클릭 시 댓글 시트로 이동
+                onImageTap: onShowComments,
+                onReactionToggle: (commentId, emoji) {
+                  commentService.toggleReaction(commentId, emoji);
+                },
+                onLongPress: (offset, comment) {
+                  // 미리보기에서는 롱프레스 동작 없음
+                },
+                bounceAnimationValue: 1.0,
+                isAnimating: false,
+                onTapTargetComment: (commentId) {
+                  // 답글 대상 클릭 시 댓글창 열기
+                  onShowComments();
+                },
+                targetComment: targetComment,
+                globalKey: null,
+                onSwipeReply: () {
+                  // 미리보기에서는 스와이프 답글 없음
+                },
+                dragOffset: 0,
               ),
-              comment: comment,
-              commentService: commentService,
-              currentUser: currentUser,
-              isMe: isMe,
-              showProfile: showProfile,
-              showAuthorInfo: showAuthorInfo,
-              // ✅ 이미지 클릭 시 히어로 애니메이션으로 전체화면 뷰어 열기
-              enableImageHero: true,
-              onReactionToggle: (commentId, emoji) {
-                commentService.toggleReaction(commentId, emoji);
-              },
-              onLongPress: (offset, comment) {
-                // 미리보기에서는 롱프레스 동작 없음
-              },
-              bounceAnimationValue: 1.0,
-              isAnimating: false,
-              onTapTargetComment: (commentId) {
-                // 답글 대상 클릭 시 댓글창 열기
-                onShowComments();
-              },
-              targetComment: targetComment,
-              globalKey: null,
-              onSwipeReply: () {
-                // 미리보기에서는 스와이프 답글 없음
-              },
-              dragOffset: 0,
             );
           }),
 

@@ -454,7 +454,7 @@ class AccessLevelSheet {
               }),
         ] else if (groupProvider.isLoading) ...[
           // 로딩 중
-          const Padding(
+          Padding(
             padding: EdgeInsets.all(20.0),
             child: CircularProgressIndicator(),
           ),
@@ -678,8 +678,8 @@ class AccessLevelSheet {
               child:
                   _StateHelper.isLoading
                       ? SizedBox(
-                        width: 20,
-                        height: 22,
+                        width: 24,
+                        height: 24,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
                           valueColor: AlwaysStoppedAnimation<Color>(

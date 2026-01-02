@@ -1,4 +1,4 @@
-import 'package:doppy/main.dart';
+import 'package:doppy/main.dart' show kTestForceKorean, RootShell;
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -7,12 +7,16 @@ import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
+import 'package:doppy/data/services/region_service.dart';
+import 'package:doppy/utils/deep_link_store.dart';
+import 'package:doppy/utils/deep_link_handler.dart';
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:provider/provider.dart';
 
 /// 앱 부트스트랩 결과
@@ -89,13 +93,29 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   void startSequence() {
-    // 두둥 느낌: 타이밍에 맞춘 햅틱
     Future.delayed(const Duration(milliseconds: 550), () {
       HapticFeedback.heavyImpact();
     });
     Future.delayed(const Duration(milliseconds: 900), () {
       HapticFeedback.mediumImpact();
     });
+  }
+
+  Future<void> _maybeNavigateToPendingDeepLink() async {
+    final pending = DeepLinkStore.consume();
+    if (pending == null) return;
+
+    // ✅ Splash 진입에서는 별도 "링크 여는 중" 로딩 라우트 없이,
+    // 스플래시 오버레이 상태에서 바로 타겟 화면으로 전환한다.
+    try {
+      await DeepLinkHandler.handleDeepLink(
+        context,
+        pending,
+        showLoadingOverlay: false,
+      );
+    } catch (e) {
+      debugPrint('[SplashScreen] pending 딥링크 처리 실패(무시): $e');
+    }
   }
 
   /// 앱 부트스트랩: 인증 및 필수 데이터 로드
@@ -116,6 +136,88 @@ class _SplashScreenState extends State<SplashScreen>
 
       if (!mounted) {
         return _BootstrapResult.notLoggedIn();
+      }
+
+      // 🎯 디버그 모드에서만: JWT 토큰의 region과 kTestForceKorean 플래그 비교 및 동기화
+      // 프로덕션에서는 처음 계정별로 한번 결정된 지역이 변하면 안됨
+      if (kDebugMode) {
+        try {
+          // 🎯 main.dart의 테스트 플래그 확인
+          final expectedRegion =
+              kTestForceKorean == true
+                  ? 'KR'
+                  : (kTestForceKorean == false ? 'US' : null);
+
+          // 플래그가 null이면 비교하지 않음 (실제 OS 언어 사용)
+          if (expectedRegion == null) {
+            debugPrint(
+              '[SplashScreen] [DEBUG] kTestForceKorean=null, Region 동기화 스킵',
+            );
+          } else {
+            final regionService = RegionService();
+            final tokenRegion = await regionService.getRegionFromTokenAsync();
+
+            debugPrint(
+              '[SplashScreen] [DEBUG] Region 동기화 체크: 테스트 플래그=$expectedRegion, JWT=$tokenRegion',
+            );
+
+            // region이 다르면 업데이트 (디버그 모드에서만)
+            if (tokenRegion != null && tokenRegion != expectedRegion) {
+              debugPrint(
+                '[SplashScreen] [DEBUG] Region 불일치 감지! $tokenRegion → $expectedRegion로 업데이트',
+              );
+              final updated = await regionService.updateUserRegion(
+                expectedRegion,
+              );
+              if (updated) {
+                debugPrint(
+                  '[SplashScreen] [DEBUG] Region 업데이트 성공: $expectedRegion',
+                );
+                // 토큰이 갱신되었으므로 AuthProvider도 업데이트
+                await authProvider.validateAndRefreshToken();
+
+                // 🎯 업데이트 후 다시 확인
+                final newTokenRegion =
+                    await regionService.getRegionFromTokenAsync();
+                debugPrint(
+                  '[SplashScreen] [DEBUG] 업데이트 후 토큰 region 확인: $newTokenRegion (기대: $expectedRegion)',
+                );
+                if (newTokenRegion != expectedRegion) {
+                  debugPrint(
+                    '[SplashScreen] [DEBUG] ⚠️ 경고: 토큰 업데이트 후에도 region이 일치하지 않음!',
+                  );
+                }
+              } else {
+                debugPrint('[SplashScreen] [DEBUG] Region 업데이트 실패 (기존 토큰 사용)');
+              }
+            } else if (tokenRegion == null) {
+              // 토큰에 region이 없으면 업데이트 (초기 로그인 시 region이 없을 수 있음)
+              debugPrint(
+                '[SplashScreen] [DEBUG] JWT에 region이 없음. 테스트 플래그=$expectedRegion로 업데이트',
+              );
+              final updated = await regionService.updateUserRegion(
+                expectedRegion,
+              );
+              if (updated) {
+                debugPrint(
+                  '[SplashScreen] [DEBUG] Region 설정 성공: $expectedRegion',
+                );
+                await authProvider.validateAndRefreshToken();
+
+                // 🎯 업데이트 후 다시 확인
+                final newTokenRegion =
+                    await regionService.getRegionFromTokenAsync();
+                debugPrint(
+                  '[SplashScreen] [DEBUG] 업데이트 후 토큰 region 확인: $newTokenRegion (기대: $expectedRegion)',
+                );
+              }
+            } else {
+              debugPrint('[SplashScreen] [DEBUG] Region 일치: $expectedRegion');
+            }
+          }
+        } catch (e) {
+          debugPrint('[SplashScreen] [DEBUG] Region 동기화 중 오류 (무시): $e');
+        }
       }
 
       // 2. FCM 토큰 검사 및 필요시 재발급 (비동기로 처리하여 앱 시작을 막지 않음)
@@ -272,17 +374,20 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
 
     if (result.loggedIn) {
-      // ✅ RootShell을 먼저 "아래에" 렌더링해두고, 스플래시 오버레이만 페이드아웃
+      // ✅ RootShell은 항상 초기화 (홈 화면은 항상 생성됨)
+      // 앱이 종료된 상태에서 딥링크로 열릴 때는 스플래시를 보여주고 초기화 후 타겟 페이지로 이동
+      // RootShell을 먼저 "아래에" 렌더링해두고, 스플래시 오버레이만 페이드아웃
       // 화면 전환 시 포스트 리스트/배경이 "빡" 하고 늦게 나타나는 느낌을 줄인다.
       setState(() {
         _preloadedHomeData = result.homeData;
         _showRootShell = true;
       });
 
-      // RootShell/HomeScreen/PostList가 최소 1~2프레임 렌더링될 시간을 확보
-      // (PostList의 배경 이미지 콜백이 addPostFrameCallback 기반이라 한 프레임 늦게 올 수 있음)
+      // RootShell이 트리에 붙고, 그 다음 pending 딥링크가 있으면 "로딩 화면"을 먼저 올린다.
       await SchedulerBinding.instance.endOfFrame;
-      await SchedulerBinding.instance.endOfFrame;
+      if (!mounted) return;
+
+      await _maybeNavigateToPendingDeepLink();
       if (!mounted) return;
 
       // 🎯 로딩 완료 후 doppy 로고 페이드아웃 애니메이션 완료까지 대기
@@ -290,6 +395,7 @@ class _SplashScreenState extends State<SplashScreen>
       if (!mounted) return;
 
       // 오버레이 제거 (이제 RootShell만 보이게)
+      // 딥링크가 있으면 DeepLinkCoordinator가 처리하여 타겟 페이지로 이동함
       setState(() {
         _hideSplashOverlay = true;
       });
@@ -362,15 +468,17 @@ class _SplashScreenState extends State<SplashScreen>
                                 ? _fadeOutOpacity.value
                                 : _fadeInOpacity.value;
 
-                        return DoppyLoadingLogo(
-                          opacity: currentOpacity,
-                          // Splash에서는 외부 애니메이션 컨트롤러가 opacity를 이미 제어하므로
-                          // 내부 AnimatedOpacity 지연(400ms)을 제거해서 "완전히 사라진 뒤" 전환되게 함
-                          opacityDuration: Duration.zero,
-                          dTextSize: 40,
-                          ppyTextSize: 40,
-                          spinnerStrokeWidth: 4.5,
-                          spinnerColor: Theme.of(context).colorScheme.primary,
+                        return RepaintBoundary(
+                          child: DoppyLoadingLogo(
+                            opacity: currentOpacity,
+                            // Splash에서는 외부 애니메이션 컨트롤러가 opacity를 이미 제어하므로
+                            // 내부 AnimatedOpacity 지연(400ms)을 제거해서 "완전히 사라진 뒤" 전환되게 함
+                            opacityDuration: Duration.zero,
+                            dTextSize: 40,
+                            ppyTextSize: 40,
+                            spinnerStrokeWidth: 4.5,
+                            spinnerColor: Theme.of(context).colorScheme.primary,
+                          ),
                         );
                       },
                     ),

@@ -1148,11 +1148,8 @@ class BlogService {
       final data = response.data;
       final posts = List<Map<String, dynamic>>.from(data['content'] ?? []);
 
-      // 포스트가 없으면 home으로 fallback
-      if (posts.isEmpty) {
-        return getFriendsPosts(page: page, size: size);
-      }
-
+      // 🎯 fallback 제거: 전체글 새로고침 시 친구글 API 호출 방지
+      // 포스트가 없어도 빈 배열 반환 (친구글 API 호출하지 않음)
       return posts;
     } catch (e) {
       // 네트워크 에러는 상위로 전파 (fallback 하지 않음)

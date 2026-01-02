@@ -22,6 +22,7 @@ class VideoEditSpec {
     this.vignette = 0.0,
     this.filterName,
     this.filterIntensity = 1.0,
+    this.playbackSpeed = 1.0,
   });
 
   /// 미세 회전(°): -45 ~ 45
@@ -70,6 +71,9 @@ class VideoEditSpec {
   final String? filterName;
   final double filterIntensity;
 
+  /// 미리보기/최종 결과 재생 속도 (0.5 ~ 2.0 권장)
+  final double playbackSpeed;
+
   VideoEditSpec copyWith({
     int? rotation,
     int? rotationQuarterTurns,
@@ -87,6 +91,7 @@ class VideoEditSpec {
     double? vignette,
     String? filterName,
     double? filterIntensity,
+    double? playbackSpeed,
   }) {
     return VideoEditSpec(
       rotation: rotation ?? this.rotation,
@@ -105,6 +110,7 @@ class VideoEditSpec {
       vignette: vignette ?? this.vignette,
       filterName: filterName ?? this.filterName,
       filterIntensity: filterIntensity ?? this.filterIntensity,
+      playbackSpeed: playbackSpeed ?? this.playbackSpeed,
     );
   }
 
@@ -134,6 +140,7 @@ class VideoEditSpec {
       'vignette': vignette,
       'filterName': filterName,
       'filterIntensity': filterIntensity,
+      'playbackSpeed': playbackSpeed,
     };
   }
 
@@ -167,6 +174,7 @@ class VideoEditSpec {
       vignette: (json['vignette'] as num?)?.toDouble() ?? 0.0,
       filterName: json['filterName'] as String?,
       filterIntensity: (json['filterIntensity'] as num?)?.toDouble() ?? 1.0,
+      playbackSpeed: (json['playbackSpeed'] as num?)?.toDouble() ?? 1.0,
     );
   }
 }

@@ -41,6 +41,7 @@ class Step1ThumbnailEdit extends StatefulWidget {
   final ValueChanged<bool> onEditModeChanged;
   final VoidCallback onEditFocusChange;
   final bool isThumbnailEditMode; // 썸네일 편집 모드로 들어왔는지 여부
+  final bool isLoading; // 로딩 중인지 여부 (placeholder 숨김용)
 
   const Step1ThumbnailEdit({
     super.key,
@@ -65,6 +66,7 @@ class Step1ThumbnailEdit extends StatefulWidget {
     required this.onEditModeChanged,
     required this.onEditFocusChange,
     this.isThumbnailEditMode = false,
+    this.isLoading = false,
   });
 
   @override
@@ -158,7 +160,19 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   void didUpdateWidget(covariant Step1ThumbnailEdit oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoController != widget.videoController) {
-      _attachPosterListener(widget.videoController);
+      // 🎯 dispose 체크: 새 컨트롤러 유효성 확인
+      if (widget.videoController != null) {
+        try {
+          // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+          final _ = widget.videoController!.value;
+          _attachPosterListener(widget.videoController);
+        } catch (e) {
+          debugPrint('[Step1] didUpdateWidget: dispose된 컨트롤러 무시: $e');
+          _attachPosterListener(null);
+        }
+      } else {
+        _attachPosterListener(null);
+      }
     }
 
     // ✅ 이미지 URL이 변경되면 미리 캐시
@@ -227,19 +241,33 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     _showVideoPoster = true;
 
     void listener() {
-      // 🎯 dispose 체크: 컨트롤러 유효성 확인
+      // 🎯 dispose 체크: 위젯이 mounted인지 확인
       if (!_isMounted()) {
         _detachPosterListener();
         return;
       }
 
+      // 🎯 dispose 체크: 컨트롤러 참조 저장 (클로저에서 사용)
+      final controllerRef = controller;
+
       try {
-        // 🎯 dispose 체크: 컨트롤러 유효성 확인
-        final v = controller.value;
+        // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+        final v = controllerRef.value;
+
         // position이 조금이라도 진행되면(첫 프레임 디코딩/표시 이후) 포스터를 내린다.
         if (v.isInitialized && v.position > const Duration(milliseconds: 50)) {
-          if (!_showVideoPoster || !_isMounted()) return;
-          setState(() => _showVideoPoster = false);
+          // 🎯 dispose 체크: setState 전에 위젯이 여전히 mounted인지 재확인
+          if (!_isMounted() || !_showVideoPoster) return;
+
+          try {
+            // 🎯 dispose 체크: setState 전에 컨트롤러 유효성 재확인
+            final _ = controllerRef.value;
+            setState(() => _showVideoPoster = false);
+          } catch (e) {
+            // dispose된 컨트롤러
+            debugPrint('[Step1] 포스터 리스너 setState 전 오류 (dispose됨): $e');
+            _detachPosterListener();
+          }
         }
       } catch (e) {
         // dispose된 컨트롤러
@@ -454,12 +482,20 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                     Builder(
                       builder: (context) {
                         // 🎯 dispose 체크: 컨트롤러 유효성 확인
+                        if (widget.videoController == null) {
+                          return const SizedBox.shrink();
+                        }
+
                         try {
-                          if (!widget.videoController!.value.isInitialized) {
+                          // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+                          final isInitialized =
+                              widget.videoController!.value.isInitialized;
+                          if (!isInitialized) {
                             return const SizedBox.shrink();
                           }
                         } catch (e) {
                           // dispose된 컨트롤러
+                          debugPrint('[Step1] 음소거 버튼 빌드 오류 (dispose됨): $e');
                           return const SizedBox.shrink();
                         }
 
@@ -472,23 +508,38 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                               duration: const Duration(milliseconds: 150),
                               child: GestureDetector(
                                 onTap: () {
+                                  // 🎯 dispose 체크: 컨트롤러 유효성 확인
+                                  if (widget.videoController == null) return;
+
                                   try {
-                                    // 🎯 dispose 체크: 컨트롤러 유효성 확인
-                                    if (widget.videoController == null ||
-                                        !widget
-                                            .videoController!
-                                            .value
-                                            .isInitialized) {
-                                      return;
+                                    // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+                                    final controller = widget.videoController!;
+                                    final isInitialized =
+                                        controller.value.isInitialized;
+
+                                    if (!isInitialized) return;
+
+                                    // 🎯 dispose 체크: volume 접근 전에 컨트롤러 유효성 재확인
+                                    final currentVolume =
+                                        controller.value.volume;
+
+                                    if (mounted) {
+                                      setState(() {
+                                        try {
+                                          // 🎯 dispose 체크: setVolume 전에 컨트롤러 유효성 재확인
+                                          final _ = controller.value;
+                                          if (currentVolume > 0) {
+                                            controller.setVolume(0);
+                                          } else {
+                                            controller.setVolume(1);
+                                          }
+                                        } catch (e) {
+                                          debugPrint(
+                                            '[Step1] 음소거 버튼 setVolume 오류 (dispose됨): $e',
+                                          );
+                                        }
+                                      });
                                     }
-                                    setState(() {
-                                      if (widget.videoController!.value.volume >
-                                          0) {
-                                        widget.videoController!.setVolume(0);
-                                      } else {
-                                        widget.videoController!.setVolume(1);
-                                      }
-                                    });
                                   } catch (e) {
                                     debugPrint(
                                       '[Step1] 음소거 버튼 오류 (dispose됨): $e',
@@ -497,10 +548,16 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                                 },
                                 child: Builder(
                                   builder: (context) {
+                                    if (widget.videoController == null) {
+                                      return const SizedBox.shrink();
+                                    }
+
                                     try {
-                                      final isMuted =
-                                          widget.videoController!.value.volume >
-                                          0;
+                                      // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+                                      final volume =
+                                          widget.videoController!.value.volume;
+                                      final isMuted = volume > 0;
+
                                       return Container(
                                         padding: const EdgeInsets.all(8),
                                         decoration: BoxDecoration(
@@ -516,6 +573,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                                         ),
                                       );
                                     } catch (e) {
+                                      debugPrint(
+                                        '[Step1] 음소거 버튼 아이콘 빌드 오류 (dispose됨): $e',
+                                      );
                                       return const SizedBox.shrink();
                                     }
                                   },
@@ -546,7 +606,19 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     );
   }
 
+  /// 🎯 URL이 비디오인지 확인하는 헬퍼 메서드
+  static bool _isVideoUrl(String url) {
+    if (url.isEmpty) return false;
+    final lowerUrl = url.toLowerCase();
+    return lowerUrl.endsWith('.mp4') ||
+        lowerUrl.endsWith('.mov') ||
+        lowerUrl.endsWith('.m4v') ||
+        lowerUrl.contains('/videos/') ||
+        lowerUrl.contains('video');
+  }
+
   Widget _buildThumbnailContent() {
+    // 🎯 로컬 비디오 파일이 있는 경우
     if (widget.localVideoFile != null && widget.videoController != null) {
       return SizedBox.expand(
         key: ValueKey('video_${widget.localVideoFile!.path}'),
@@ -569,13 +641,20 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             Builder(
               builder: (context) {
                 // 🎯 dispose 체크: 컨트롤러 유효성 확인
+                if (widget.videoController == null) {
+                  return const SizedBox.shrink();
+                }
+
                 try {
-                  if (widget.videoController == null ||
-                      !widget.videoController!.value.isInitialized) {
+                  // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+                  final controller = widget.videoController!;
+                  final isInitialized = controller.value.isInitialized;
+
+                  if (!isInitialized) {
                     return const SizedBox.shrink();
                   }
 
-                  final controller = widget.videoController!;
+                  // 🎯 dispose 체크: size 접근 전에 컨트롤러 유효성 재확인
                   final size = controller.value.size;
 
                   return AnimatedOpacity(
@@ -601,17 +680,94 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
           ],
         ),
       );
-    } else if (widget.localThumbnailFile != null) {
+    }
+
+    // 🎯 서버 비디오 URL인 경우 (videoController가 이미 설정됨)
+    // 썸네일 편집 모드가 아니어도 비디오 URL이면 비디오 플레이어 표시
+    if (widget.exportedThumbnailImageUrl.isNotEmpty &&
+        _isVideoUrl(widget.exportedThumbnailImageUrl) &&
+        widget.videoController != null) {
+      return SizedBox.expand(
+        key: ValueKey('server_video_${widget.exportedThumbnailImageUrl}'),
+        child: Builder(
+          builder: (context) {
+            // 🎯 dispose 체크: 컨트롤러 유효성 확인
+            if (widget.videoController == null) {
+              return const ShimmerBox(
+                width: double.infinity,
+                height: double.infinity,
+                borderRadius: BorderRadius.zero,
+              );
+            }
+
+            try {
+              // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+              final controller = widget.videoController!;
+              final isInitialized = controller.value.isInitialized;
+
+              if (!isInitialized) {
+                return const ShimmerBox(
+                  width: double.infinity,
+                  height: double.infinity,
+                  borderRadius: BorderRadius.zero,
+                );
+              }
+
+              // 🎯 dispose 체크: size 접근 전에 컨트롤러 유효성 재확인
+              final size = controller.value.size;
+
+              return FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: size.width,
+                  height: size.height,
+                  child: VideoPlayer(controller),
+                ),
+              );
+            } catch (e) {
+              // dispose된 컨트롤러
+              debugPrint('[Step1] 서버 비디오 렌더링 오류 (dispose됨): $e');
+              return const ShimmerBox(
+                width: double.infinity,
+                height: double.infinity,
+                borderRadius: BorderRadius.zero,
+              );
+            }
+          },
+        ),
+      );
+    }
+
+    // 🎯 로컬 썸네일 파일이 있는 경우
+    if (widget.localThumbnailFile != null) {
       return SizedBox.expand(
         key: ValueKey('local_${widget.localThumbnailFile!.path}'),
         child: Image.file(widget.localThumbnailFile!, fit: BoxFit.cover),
       );
-    } else if (widget.exportedThumbnailImageUrl.isEmpty) {
+    }
+
+    // 🎯 빈 썸네일 상태
+    if (widget.exportedThumbnailImageUrl.isEmpty) {
       // ✅ 빈 썸네일 상태:
       // - 포커스 중이거나, 피커 전환 중에는 placeholder를 숨긴다.
+      // - 로딩 중일 때는 placeholder를 숨기고 쉬머만 보인다.
       // - "empty ↔ hidden"을 서로 다른 key로 스위칭하면 AnimatedSwitcher가
       //   짧은 시간에 여러 번 트리거되어 번쩍임이 생길 수 있으므로 key를 고정한다.
-      final shouldShow = !_hasTextFocus && !_suppressEmptyPlaceholder;
+      final shouldShow =
+          !_hasTextFocus && !_suppressEmptyPlaceholder && !widget.isLoading;
+
+      // 로딩 중일 때는 쉬머만 보이기
+      if (widget.isLoading) {
+        return SizedBox.expand(
+          key: const ValueKey('loading'),
+          child: ShimmerBox(
+            width: double.infinity,
+            height: double.infinity,
+            borderRadius: BorderRadius.zero,
+          ),
+        );
+      }
+
       return SizedBox.expand(
         key: const ValueKey('empty'),
         child: IgnorePointer(
@@ -625,8 +781,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         ),
       );
     } else {
-      // 🎯 EditorImageProvider를 사용하여 single_image_component/row_image_component와
+      // 🎯 네트워크 이미지 URL인 경우: EditorImageProvider를 사용하여 single_image_component/row_image_component와
       // 동일한 캐시 키(ResizeImage)를 사용하여 캐시 재사용률을 높임
+      // 🎯 비디오 URL인 경우는 이미 위에서 처리했으므로 여기서는 이미지만 처리
       final screenWidth = MediaQuery.sizeOf(context).width;
       final decodeWidth = EditorImageProvider.editingDecodeWidth(
         context,
@@ -671,9 +828,19 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   }
 
   Widget _buildTitleField() {
-    // 🎯 썸네일 편집 모드일 때는 onSurface 색상 사용
+    // 🎯 로딩 중일 때는 쉬머 표시
+    if (widget.isLoading) {
+      return Center(
+        child: ShimmerBox(
+          width: MediaQuery.of(context).size.width * 0.6,
+          height: 35,
+        ),
+      );
+    }
+
+    // 🎯 썸네일 편집 모드이거나 썸네일 이미지가 없을 때는 onSurface 색상 사용
     final textColor =
-        widget.isThumbnailEditMode
+        (widget.isThumbnailEditMode || widget.exportedThumbnailImageUrl.isEmpty)
             ? Theme.of(context).colorScheme.onSurface
             : Colors.white.withOpacity(0.85);
 
@@ -703,7 +870,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                 hintText: AppLocalizations.of(
                   context,
                 ).t('title_input_placeholder'),
-                hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                hintStyle: TextStyle(color: textColor.withOpacity(0.3)),
                 border: InputBorder.none,
                 isCollapsed: true,
                 contentPadding: EdgeInsets.zero,
@@ -721,9 +888,33 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   }
 
   Widget _buildExcerptField() {
-    // 🎯 썸네일 편집 모드일 때는 onSurface 색상 사용
+    // 🎯 로딩 중일 때는 쉬머 표시
+    if (widget.isLoading) {
+      return Center(
+        child: Column(
+          children: [
+            ShimmerBox(
+              width: MediaQuery.of(context).size.width * 0.8,
+              height: 18,
+            ),
+            const SizedBox(height: 8),
+            ShimmerBox(
+              width: MediaQuery.of(context).size.width * 0.75,
+              height: 18,
+            ),
+            const SizedBox(height: 8),
+            ShimmerBox(
+              width: MediaQuery.of(context).size.width * 0.7,
+              height: 18,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 🎯 썸네일 편집 모드이거나 썸네일 이미지가 없을 때는 onSurface 색상 사용
     final textColor =
-        widget.isThumbnailEditMode
+        (widget.isThumbnailEditMode || widget.exportedThumbnailImageUrl.isEmpty)
             ? Theme.of(context).colorScheme.onSurface
             : Colors.white.withOpacity(0.85);
 
@@ -745,7 +936,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       scrollPhysics: const NeverScrollableScrollPhysics(),
       decoration: InputDecoration(
         hintText: AppLocalizations.of(context).t('content_input_placeholder'),
-        hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+        hintStyle: TextStyle(color: textColor.withOpacity(0.3)),
         border: InputBorder.none,
         isCollapsed: true,
         contentPadding: EdgeInsets.zero,
@@ -999,11 +1190,24 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
 
               // 🎯 controllerRef만 사용하여 dispose 체크
               try {
-                if (controllerRef.value.isInitialized) {
+                // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+                final isInitialized = controllerRef.value.isInitialized;
+
+                if (isInitialized) {
+                  // 🎯 dispose 체크: play/setLooping 전에 컨트롤러 유효성 재확인
+                  final _ = controllerRef.value;
                   controllerRef.play();
                   controllerRef.setLooping(true);
+
+                  // 🎯 dispose 체크: setState 전에 위젯이 여전히 mounted인지 재확인
                   if (_isMounted()) {
-                    setState(() {});
+                    try {
+                      // 🎯 dispose 체크: setState 전에 컨트롤러 유효성 재확인
+                      final _ = controllerRef.value;
+                      setState(() {});
+                    } catch (e) {
+                      debugPrint('[Step1] 비디오 컨트롤러 setState 오류 (dispose됨): $e');
+                    }
                   }
                 }
               } catch (e) {
@@ -1072,11 +1276,26 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
 
                 // 🎯 controllerRef만 사용하여 dispose 체크
                 try {
-                  if (controllerRef.value.isInitialized) {
+                  // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+                  final isInitialized = controllerRef.value.isInitialized;
+
+                  if (isInitialized) {
+                    // 🎯 dispose 체크: play/setLooping 전에 컨트롤러 유효성 재확인
+                    final _ = controllerRef.value;
                     controllerRef.play();
                     controllerRef.setLooping(true);
+
+                    // 🎯 dispose 체크: setState 전에 위젯이 여전히 mounted인지 재확인
                     if (_isMounted()) {
-                      setState(() {});
+                      try {
+                        // 🎯 dispose 체크: setState 전에 컨트롤러 유효성 재확인
+                        final _ = controllerRef.value;
+                        setState(() {});
+                      } catch (e) {
+                        debugPrint(
+                          '[Step1] 압축 후 비디오 컨트롤러 setState 오류 (dispose됨): $e',
+                        );
+                      }
                     }
                   }
                 } catch (e) {

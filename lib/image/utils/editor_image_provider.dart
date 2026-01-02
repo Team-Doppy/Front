@@ -33,6 +33,20 @@ class EditorImageProvider {
     return v.clamp(1, 1000000);
   }
 
+  /// 읽기 모드(리더)에서 사용할 decodeWidth.
+  ///
+  /// - 디코딩/업로드 비용을 줄여 UI 블로킹(프레임 드랍)을 완화한다.
+  /// - width만 제한하므로 원본 비율은 유지된다(ResizeImage가 height를 비율대로 계산).
+  static int readingDecodeWidth(
+    BuildContext context,
+    double screenWidth, {
+    int max = 1920,
+  }) {
+    final dpr = View.of(context).devicePixelRatio;
+    final v = (screenWidth * dpr).round();
+    return v.clamp(1, max);
+  }
+
   static String normalizeUrl(String url) {
     if (url.startsWith('file://')) return url.substring(7);
     return url;

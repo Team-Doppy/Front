@@ -7,7 +7,9 @@ import 'package:doppy/utils/dialog_utils.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'auth_service.dart';
+import 'region_service.dart';
 import '../../main.dart';
 import 'dart:async'; // Added for Completer
 
@@ -62,6 +64,14 @@ class BaseApiService {
       debugPrint('[BaseApiService] 토큰 만료 시간 추출 실패: $e');
       return null;
     }
+  }
+
+  /// 🎯 디버그용: JWT 토큰에서 region 추출 (RegionService 사용)
+  /// [token] - JWT 토큰 문자열
+  /// 반환: 'KR' 또는 'US', 실패 시 null
+  String? _getRegionFromToken(String token) {
+    // 🎯 RegionService의 정적 메서드 사용
+    return RegionService.getRegionFromTokenString(token);
   }
 
   void _setupInterceptors() {
@@ -177,6 +187,17 @@ class BaseApiService {
                 // 만료 시간 추출 실패 또는 이미 만료된 경우 기존 토큰 사용 (401 시 갱신)
                 options.headers['Authorization'] = 'Bearer $token';
               }
+            }
+          }
+
+          // 🎯 임시 디버그: JWT 토큰에서 region 파싱하여 로그 출력 (디버그 모드에서만)
+          if (kDebugMode && !isAuthEndpoint) {
+            final token = await _authService.getToken();
+            if (token != null && token.isNotEmpty) {
+              final region = _getRegionFromToken(token);
+              debugPrint(
+                '[BaseApiService] 🌍 API 요청: ${options.method} ${options.path} | JWT Region: ${region ?? "없음"}',
+              );
             }
           }
 

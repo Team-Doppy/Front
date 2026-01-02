@@ -39,12 +39,16 @@ import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/overlay/draft_list_overlay.dart';
 import 'package:doppy/editor/overlay/resume_writing_bottom_sheet.dart';
+import 'package:doppy/editor/overlay/thumbnail_edit_overlay.dart';
+import 'package:doppy/editor/overlay/empty_editor_state.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/utils/mentioned_usernames_extractor.dart';
+import 'package:doppy/utils/time_utils.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
+import 'package:doppy/pages/components/retry_cancel_bottom_sheet.dart';
 
 /// 글 공개 범위 옵션
 enum VisibilityOption { public, partial, private }
@@ -110,6 +114,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     false,
   );
 
+  // 🎯 빈 상태 감지 (키보드가 내려가고 문서가 비어있을 때)
+  final ValueNotifier<bool> _isEmptyNotifier = ValueNotifier<bool>(false);
+  Timer? _emptyStateCheckTimer;
+
   // 공개범위 설정 (편집 모드용)
   String _editVisibility = 'public';
   List<int> _editGroupIds = [];
@@ -125,7 +133,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   bool _isSaving = false;
   bool _isAutoSaving = false; // 자동 저장 중 상태
   Timer? _autoSaveTimer; // 자동 저장 타이머
-  bool _isExiting = false; // ✅ 나가기 정리/자동저장 중 오버레이 표시용
   bool _didExplicitDraftSave = false; // ✅ "명시적 임시저장" 완료 여부 (autoDraft는 제외)
   bool _shouldRefreshMyFeed = false; // 수정사항 발생 시 한 번만 새로고침
   bool _categoryChanged = false; // 카테고리 변경 여부
@@ -250,10 +257,19 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 새 글 작성 모드이면 빈 문서 생성
     if (widget.isEditingMode && widget.exportedDataForEdit != null) {
       try {
+        debugPrint('[PostwriteScreen] initState: 문서 복원 시작');
+        debugPrint(
+          '  - exportedDataForEdit의 content.nodes: ${((widget.exportedDataForEdit!['content'] as Map?)?['nodes'] as List?)?.length ?? 0}개',
+        );
+
         // PostReaderService를 사용하여 문서 복원
         final postReaderService = PostReaderService();
         document = postReaderService.rebuildDocumentForRead(
           widget.exportedDataForEdit!,
+        );
+
+        debugPrint(
+          '[PostwriteScreen] initState: 문서 복원 완료 (nodes: ${document.length}개)',
         );
 
         // 기존 공개범위 정보 복원
@@ -333,6 +349,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     editorService.setDocumentLayoutKey(_documentLayoutKey);
     editorService.setScrollController(scrollController);
     textStylingService = TextStylingService(editor: editor, composer: composer);
+    // 🎯 히스토리 저장을 위해 EditorService 참조 설정
+    textStylingService.setEditorService(editorService);
 
     //service 초기화2
 
@@ -405,8 +423,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         Future<void> delayFocusAfterBottomSheetDismiss() async {
           // 다음 프레임까지 대기 (route transition 정리)
           await WidgetsBinding.instance.endOfFrame;
+          if (!mounted) return; // 뒤로가기로 나갔는지 체크
           // dismiss 애니메이션 + 레이아웃 안정화 여유
-          await Future<void>.delayed(const Duration(milliseconds: 400));
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+          if (!mounted) return; // 지연 중 뒤로가기로 나갔는지 체크
         }
 
         if (!widget.isEditingMode) {
@@ -427,6 +447,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 : null;
 
         if (targetNode != null) {
+          if (!mounted) return; // 지연 중 뒤로가기로 나갔는지 체크
           final offset = targetNode.text.text.length;
           composer.setSelectionWithReason(
             DocumentSelection.collapsed(
@@ -437,7 +458,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             ),
             SelectionReason.userInteraction,
           );
+          if (!mounted) return; // 키보드 올라오기 전 뒤로가기 체크
           _editorFocusNode.requestFocus();
+        } else {
+          // 🎯 포커스를 줄 노드가 없으면 초기 빈 상태 체크
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (mounted) {
+              _checkEmptyStateAfterKeyboardDismiss();
+            }
+          });
         }
 
         try {
@@ -494,6 +523,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             nodeService.clearHighlightedSelection();
           }
         }
+
+        // 🎯 문서 구조 변경 시 빈 상태 체크 (키보드가 내려가 있을 때만)
+        final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+        if (!keyboardVisible && !_editorFocusNode.hasFocus) {
+          _checkEmptyStateAfterKeyboardDismiss();
+        }
       });
     }
   }
@@ -514,6 +549,67 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     setState(() {});
   }
 
+  /// 🎯 키보드를 명시적으로 내린 후 빈 상태 체크
+  /// ✅ 최적화: 모든 조건을 한 번에 체크하여 ValueListenableBuilder에서 중복 체크 불필요
+  void _checkEmptyStateAfterKeyboardDismiss() {
+    if (!mounted) return;
+
+    // 🎯 Debounce: 키보드 애니메이션 완료 대기
+    _emptyStateCheckTimer?.cancel();
+    _emptyStateCheckTimer = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+
+      // ✅ 최적화: 빠른 실패를 위해 가벼운 체크를 먼저 수행
+      // 1. 키보드가 완전히 내려갔는지 확인 (가장 빠른 체크)
+      final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
+      if (keyboardHeight > 0) {
+        _isEmptyNotifier.value = false;
+        return;
+      }
+
+      // 2. 커서가 없는지 확인 (빠른 체크)
+      if (composer.selection != null) {
+        _isEmptyNotifier.value = false;
+        return;
+      }
+
+      // 3. 문서가 비어있는지 확인 (상대적으로 무거운 체크)
+      final isEmpty = _isDocumentEmpty();
+      debugPrint(
+        '[PostwriteScreen] 빈 상태 체크: isEmpty=$isEmpty, keyboardHeight=$keyboardHeight, hasSelection=${composer.selection != null}',
+      );
+      _isEmptyNotifier.value = isEmpty;
+    });
+  }
+
+  /// 🎯 문서가 비어있는지 확인
+  /// ✅ 최적화: 빠른 실패를 위해 가벼운 체크를 먼저 수행
+  bool _isDocumentEmpty() {
+    // 1. 스티커 체크 (가장 빠른 체크)
+    if (stickerService.stickers.isNotEmpty) return false;
+
+    // 2. 문서 노드 체크
+    // ✅ 최적화: 노드가 없으면 즉시 true 반환
+    if (document.length == 0) return true;
+
+    // ✅ 최적화: 노드를 순회하면서 빠른 실패
+    for (int i = 0; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node == null) continue;
+
+      if (node is ParagraphNode) {
+        // 빈 문단이 아니면 비어있지 않음 (빠른 실패)
+        if (node.text.text.trim().isNotEmpty) return false;
+      } else {
+        // 이미지, divider 등 특수 노드가 있으면 비어있지 않음 (즉시 실패)
+        return false;
+      }
+    }
+
+    // 모든 노드가 빈 ParagraphNode인 경우
+    return true;
+  }
+
   // 🎯 스티커(드로잉) 추가/삭제는 EditorService 히스토리에 기록해야 한다.
   // - 이동/변형(transform)은 히스토리에 쌓지 않음 (스택 오염 방지)
   void _onStickerHistoryChange() {
@@ -527,6 +623,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         kind == StickerChangeKind.clear ||
         kind == StickerChangeKind.transform) {
       editorService.saveHistoryNow();
+
+      // 🎯 스티커 추가 시 빈 상태 UI 숨기기
+      if (kind == StickerChangeKind.add && stickerService.stickers.isNotEmpty) {
+        _isEmptyNotifier.value = false;
+      }
     }
   }
 
@@ -574,13 +675,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     required bool clearAutoDraft,
   }) async {
     if (!mounted) return;
-
-    setState(() {
-      _isExiting = true;
-    });
-
-    // 프레임 한 번 양보해서 오버레이가 보이게 함
-    await Future.delayed(Duration.zero);
     if (!mounted) return;
 
     try {
@@ -853,6 +947,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       stickerService.resetSession();
     } catch (_) {}
     _keyboardVisibleNotifier.dispose();
+    _isEmptyNotifier.dispose();
+    _emptyStateCheckTimer?.cancel();
 
     // 🎯 카테고리 변경 시 피드 프로바이더 캐시 초기화 + 새로고침
     if (_categoryChanged) {
@@ -906,15 +1002,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     super.dispose();
   }
 
-  String _formatRelativeTime(DateTime dateTime) {
-    final now = DateTime.now();
-    final diff = now.difference(dateTime);
-    if (diff.inDays > 0) return '${diff.inDays}일 전';
-    if (diff.inHours > 0) return '${diff.inHours}시간 전';
-    if (diff.inMinutes > 0) return '${diff.inMinutes}분 전';
-    return '방금 전';
-  }
-
   /// ✅ 자동저장(최근 1개)이 있으면 "이어 작성/새 글" 선택 바텀시트를 1회 표시
   /// 반환값: 바텀시트를 실제로 표시했는지 여부 (포커스 딜레이 판단용)
   Future<bool> _promptResumeWritingIfNeeded() async {
@@ -935,7 +1022,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       final choice = await ResumeWritingBottomSheet.show(
         context,
         title: autoDraft.title,
-        subtitle: _formatRelativeTime(autoDraft.updatedAt),
+        subtitle: TimeUtils.formatRelativeTime(context, autoDraft.updatedAt),
       );
       if (!mounted) return true; // 이미 시트는 표시됨
       if (choice == null) return true; // 시트 표시 후 사용자가 취소/바깥탭 등으로 닫음
@@ -969,6 +1056,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               summary: autoDraft.summary,
               thumbnailUrl: autoDraft.thumbnailUrl,
             );
+            // 🎯 임시저장 불러온 후 빈 상태 UI 숨기기
+            _isEmptyNotifier.value = false;
           }
         } else if (choice == ResumeWritingChoice.newDraft) {
           await draftService.clearAutoDraft();
@@ -993,6 +1082,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 🎯 EditorService에 context 설정 (노드 선택 해제용)
     // didChangeDependencies에서 호출하여 build마다 호출되지 않도록 최적화
     editorService.setContext(context);
+    editorService.setEditorFocusNode(_editorFocusNode);
   }
 
   @override
@@ -1007,6 +1097,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // ✅ 키보드 등장/퇴장은 문서 레이아웃(스크롤 위치 포함)을 바꾸므로
       // cached node rect를 반드시 무효화해서 hit-test/빈공간탭 판정이 정확해지게 한다.
       dragService.invalidateNodeRectCache();
+
+      // 🎯 키보드가 올라오면 빈 상태 아님
+      if (isKeyboardVisible) {
+        _isEmptyNotifier.value = false;
+      } else {
+        // 🎯 키보드가 내려가면 빈 상태 체크
+        _checkEmptyStateAfterKeyboardDismiss();
+      }
     }
 
     // 🎯 키보드 이벤트로 setState 제거 (스크롤 기반으로만 앱바 제어)
@@ -1049,13 +1147,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         // 1) 변경사항이 있으면 "임시저장/저장 안 함" 다이얼로그
         // 2) ✅ 명시적 임시저장 후 "변경사항이 없으면" 다이얼로그 없이 바로 나가기
         // 3) 그 외에는 "나가기/계속 작성" 다이얼로그
-        final hasAnyContent =
-            editorService.hasNonEmptyTitle() ||
-            editorService.hasNonEmptyBody(context: context);
-        final needPrompt = editorService.shouldPromptSaveOnExit(context);
+        // 🎯 본문 변경사항만 확인 (제목/요약/썸네일은 썸네일 편집 화면에서 독립적으로 관리)
+        final hasBodyContent = editorService.hasNonEmptyBody(context: context);
+        final needPrompt = editorService.shouldPromptSaveOnExitBodyOnly(
+          context,
+        );
 
-        // ✅ 오직 "명시적 임시저장 후 변경사항 없음"일 때만 다이얼로그 스킵
-        if (hasAnyContent && _didExplicitDraftSave && !needPrompt) {
+        // ✅ 오직 "명시적 임시저장 후 본문 변경사항 없음"일 때만 다이얼로그 스킵
+        if (hasBodyContent && _didExplicitDraftSave && !needPrompt) {
           await _exitEditor(
             forceAutoDraftIfChanged: false,
             clearAutoDraft: false,
@@ -1116,7 +1215,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             }
           }
           // null이면 아무 것도 안 함 (다이얼로그만 닫힘)
-        } else if (hasAnyContent) {
+        } else if (hasBodyContent) {
           final shouldExit = await DialogUtils.showConfirmDialog(
             context,
             title: context.tr('exit_writing_title'),
@@ -1149,7 +1248,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             }
 
             if (mounted) {
-              final changedNow = editorService.shouldPromptSaveOnExit(context);
+              // 🎯 본문 변경사항만 확인 (제목/요약/썸네일은 썸네일 편집 화면에서 독립적으로 관리)
+              final changedNow = editorService.shouldPromptSaveOnExitBodyOnly(
+                context,
+              );
               await _exitEditor(
                 forceAutoDraftIfChanged: changedNow,
                 clearAutoDraft: false,
@@ -1212,6 +1314,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                           });
                           _shouldRefreshMyFeed = true;
                         },
+                        onEditThumbnail: _openThumbnailEditOverlay,
+                        initialTitle: _serverAppliedTitle,
+                        initialSummary: _serverAppliedSummary,
+                        initialThumbnailUrl: _serverAppliedThumbnailUrl,
+                        sessionKey: currentDraftId ?? 'draft_temp',
+                        currentTitle: _serverAppliedTitle,
+                        currentSummary: _serverAppliedSummary,
+                        currentThumbnailUrl: _serverAppliedThumbnailUrl,
+                        originalExportedData: widget.exportedDataForEdit,
+                        stickerService: stickerService,
                       )
                       : EditorAppBar(
                         editorService: editorService,
@@ -1331,6 +1443,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                                   dragService: dragService,
                                   editor: editor,
                                   focusNode: _editorFocusNode,
+                                  isDarkMode: isDarkMode,
                                 ),
                                 LinkComponentBuilder(
                                   dragService: dragService,
@@ -1395,17 +1508,59 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   ),
                 ),
 
-                // 저장 중 전체 화면 블록 오버레이
-                if (_isExiting)
-                  Positioned.fill(
-                    child: AbsorbPointer(
-                      absorbing: true,
-                      child: Container(
-                        color: Colors.black.withOpacity(0.18),
-                        child: const Center(),
+                // 🎯 빈 상태 UI (키보드가 내려가고 문서가 비어있을 때)
+                // ✅ _isEmptyNotifier가 이미 모든 조건(키보드, 커서, 문서)을 체크한 최종 결과이므로
+                // ValueListenableBuilder에서는 isEmpty만 확인하면 됨
+                ValueListenableBuilder<bool>(
+                  valueListenable: _isEmptyNotifier,
+                  builder: (context, isEmpty, _) {
+                    // 🎯 처음 나올 때는 페이드 인 적용, 사라질 때는 페이드 아웃 없이 즉시 사라짐
+                    if (!isEmpty) {
+                      // 사라질 때는 즉시 제거 (페이드 아웃 없음)
+                      return const SizedBox.shrink();
+                    }
+
+                    // 나타날 때는 AnimatedOpacity 사용 (페이드 인만 적용)
+                    return Positioned.fill(
+                      child: IgnorePointer(
+                        ignoring: false,
+                        child: TweenAnimationBuilder<double>(
+                          tween: Tween<double>(begin: 0.0, end: 1.0),
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeIn,
+                          builder: (context, opacity, child) {
+                            return Opacity(opacity: opacity, child: child);
+                          },
+                          child: EmptyEditorState(
+                            onTap: () {
+                              // 빈 상태 UI를 탭하면 첫 번째 문단에 포커스
+                              if (document.isNotEmpty) {
+                                final firstNode = document.getNodeAt(0);
+                                if (firstNode is ParagraphNode) {
+                                  editor.execute([
+                                    ChangeSelectionRequest(
+                                      DocumentSelection.collapsed(
+                                        position: DocumentPosition(
+                                          nodeId: firstNode.id,
+                                          nodePosition: const TextNodePosition(
+                                            offset: 0,
+                                          ),
+                                        ),
+                                      ),
+                                      SelectionChangeType.placeCaret,
+                                      SelectionReason.userInteraction,
+                                    ),
+                                  ]);
+                                  _editorFocusNode.requestFocus();
+                                }
+                              }
+                            },
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
+                ),
               ],
             ),
 
@@ -1419,6 +1574,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               scrollController: scrollController,
               onDismissKeyboard: () {
                 _editorFocusNode.unfocus();
+                // 🎯 키보드를 명시적으로 내릴 때 빈 상태 체크
+                _checkEmptyStateAfterKeyboardDismiss();
               },
               onShowDraftList: _showDraftList,
               videoUploadIndicatorNotifier: _videoUploadIndicatorNotifier,
@@ -1437,18 +1594,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               onChangeMediaAlignment: _changeMediaAlignment,
             ),
           ),
-
-          // 수정 완료 중 전체 화면 투명 오버레이 (앱바까지 덮음, post_export_screen과 동일한 방식)
-          if (_isSaving)
-            Positioned.fill(
-              child: AbsorbPointer(
-                absorbing: true,
-                child: Container(
-                  color: Colors.black.withOpacity(0.3),
-                  child: const Center(),
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -1581,6 +1726,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     ]);
     debugPrint('[PostWriteScreen] 노드 교체 완료');
 
+    // 🎯 padding 변경을 히스토리에 저장
+    final editorService = Provider.of<EditorService>(context, listen: false);
+    editorService.saveHistoryNow();
+
     // 교체 후 확인
     final replacedNode = editor.document.getNodeById(selectedId);
     if (replacedNode != null) {
@@ -1705,6 +1854,53 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       debugPrint('[PostwriteScreen] 이미지 찾기 실패: $e');
     }
     return null;
+  }
+
+  /// 썸네일 편집 화면 열기 (수정 모드 전용)
+  Future<void> _openThumbnailEditOverlay() async {
+    if (widget.postId == null) return;
+
+    // 🎯 build phase 완료 후 Navigator.push 호출 (OverlayPortalController 에러 방지)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          pageBuilder:
+              (context, animation, secondaryAnimation) => ThumbnailEditOverlay(
+                postId: widget.postId!,
+                sessionKey: currentDraftId ?? 'draft_temp',
+                initialTitle: _serverAppliedTitle,
+                initialSummary: _serverAppliedSummary,
+                initialThumbnailUrl: _serverAppliedThumbnailUrl,
+                onThumbnailChanged: (url) {
+                  setState(() {
+                    _serverAppliedThumbnailUrl = url;
+                  });
+                  _shouldRefreshMyFeed = true;
+                },
+                onMetadataChanged: (title, summary) {
+                  setState(() {
+                    _serverAppliedTitle = title;
+                    _serverAppliedSummary = summary;
+                  });
+                  debugPrint(
+                    '[PostwriteScreen] 썸네일 편집 화면에서 제목/요약 업데이트: title=$title, summary=$summary',
+                  );
+                  _shouldRefreshMyFeed = true;
+                },
+              ),
+          transitionDuration: const Duration(milliseconds: 200),
+          reverseTransitionDuration: const Duration(milliseconds: 200),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          opaque: false,
+          // 🎯 배경 반투명 오버레이 제거
+          barrierColor: Colors.transparent,
+        ),
+      );
+    });
   }
 
   /// 수동 임시저장 (새 버전 생성)
@@ -1862,18 +2058,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return;
     }
 
-    // 1. 제목 검증
-    final hasTitle = editorService.hasNonEmptyTitle();
-    if (!hasTitle) {
-      await DialogUtils.showInfoDialog(
-        context,
-        title: context.tr('enter_title_first'),
-        message: context.tr('title_required_for_edit'),
-      );
-      return;
-    }
-
-    // 2. 변경사항 확인
+    // 변경사항 확인
     // 제목은 썸네일 편집 화면에서 입력하므로 원본 데이터 그대로 사용
     final originalForComparison = widget.exportedDataForEdit!;
 
@@ -1930,6 +2115,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         mentionedUsernames: mentionedUsernames,
       );
 
+      // 🎯 서버 업데이트 성공 후에만 실행
       debugPrint('[PostwriteScreen] ✅ 본문 수정 완료');
 
       // 10. 안정화 시간 (0.5초) 후 완료
@@ -1945,7 +2131,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           debugPrint('[PostwriteScreen] 드로잉 캔버스 정리 완료');
         } catch (_) {}
 
-        Navigator.of(context).pop();
+        // 🎯 서버 업데이트 완료 후 pop (서버에서 최신 데이터 받아오도록)
+        debugPrint('[PostwriteScreen] ✅ 수정 완료 - 로컬 exported 기반으로 즉시 반영');
+        Navigator.of(context).pop(<String, dynamic>{
+          'didEdit': true,
+          'postId': widget.postId,
+          // ✅ 서버 재조회 없이, 방금 export한 로컬 데이터로 PostReader를 갱신한다.
+          'exported': exported,
+          'content': content,
+        });
       }
     } catch (e) {
       debugPrint('[PostwriteScreen] ❌ 본문 수정 실패: $e');
@@ -1953,7 +2147,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 저장 중 상태 해제
       if (mounted) {
         setState(() => _isSaving = false);
-        ErrorHandler.handleError(context, e);
+        // 🎯 실패 UX: 스낵바 대신 재시도/취소 바텀시트
+        final action = await RetryCancelBottomSheet.show(
+          context,
+          title: context.tr('edit_failed_title'),
+          message: context.tr('retry_error_message'),
+          details: e.toString(),
+        );
+        if (!mounted) return;
+        if (action == RetryCancelAction.retry) {
+          await _saveEditedPost();
+        }
       }
     } finally {}
   }
@@ -2112,6 +2316,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     // 🎯 포커스 확실히 해제
                     _editorFocusNode.unfocus();
                     FocusManager.instance.primaryFocus?.unfocus();
+
+                    // 🎯 임시저장 불러온 후 빈 상태 UI 숨기기
+                    _isEmptyNotifier.value = false;
 
                     // 🎯 SuperEditor가 build에서 직접 생성되므로 setState로 자동 rebuild됨
                     // 레이아웃 캐시 무효화는 불필요 (자동 재계산됨)

@@ -14,6 +14,7 @@ import 'dart:math' as math;
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
+import 'package:doppy/utils/link_meta_fetcher.dart';
 
 /// 텍스트와 독립적인 링크 블록 노드
 class LinkNode extends BlockNode {
@@ -216,6 +217,9 @@ class _LinkComponentState extends State<_LinkComponent>
   // ✅ 링크 썸네일도 이미지 컴포넌트처럼 "마지막 성공 렌더"를 캐시해서 깜빡임을 줄인다.
   Widget? _lastRenderedThumbnail;
 
+  // 🎯 메타데이터 재조회 시도 여부 (1번만 시도)
+  bool _hasTriedFetchingMeta = false;
+
   Widget _buildThumbnail(BoxConstraints constraints) {
     final decodeWidth =
         widget.isEditing
@@ -335,6 +339,42 @@ class _LinkComponentState extends State<_LinkComponent>
       vsync: this,
       duration: const Duration(milliseconds: 160),
     );
+
+    // 🎯 thumbnailUrl이 비어있으면 메타데이터 재조회
+    if (widget.thumbnailUrl.isEmpty && widget.url.isNotEmpty) {
+      _fetchLinkMetaIfNeeded();
+    }
+  }
+
+  /// 링크 메타데이터 재조회 (thumbnailUrl이 비어있을 때, 1번만 시도)
+  Future<void> _fetchLinkMetaIfNeeded() async {
+    // 🎯 이미 시도했으면 재시도하지 않음
+    if (_hasTriedFetchingMeta || !mounted) return;
+
+    _hasTriedFetchingMeta = true;
+
+    final normalizedUrl = LinkMetaFetcher.normalizeUrl(widget.url);
+    if (normalizedUrl == null) return;
+
+    try {
+      final meta = await LinkMetaFetcher.fetchMeta(normalizedUrl);
+      if (meta != null && mounted) {
+        // 메타데이터가 있고 thumbnailUrl이 업데이트되었으면 노드 업데이트
+        if (meta.thumbnailUrl != null && meta.thumbnailUrl!.isNotEmpty) {
+          final editorService = widget.dragService?.editorService;
+          if (editorService != null) {
+            editorService.updateLinkNode(
+              nodeId: widget.nodeId,
+              title: meta.title,
+              description: meta.description,
+              thumbnailUrl: meta.thumbnailUrl,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[LinkComponent] 메타데이터 재조회 실패: $e');
+    }
   }
 
   @override

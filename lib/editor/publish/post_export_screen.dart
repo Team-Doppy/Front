@@ -25,6 +25,7 @@ import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/editor/component/clip_component.dart'
     show cleanupAllVideoPlayers;
 import 'package:doppy/pages/components/shimmer_box.dart';
+import 'package:doppy/pages/components/retry_cancel_bottom_sheet.dart';
 import 'dart:io';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
@@ -119,16 +120,9 @@ class _PostExportScreenState extends State<PostExportScreen>
       _excerptController.dispose();
       _excerptFocusNode.dispose();
 
-      // 🎯 로컬 비디오 컨트롤러 직접 dispose
+      // 🎯 비디오 컨트롤러 정리 (로컬/서버 구분하여 처리)
+      // _disposeVideoController 내부에서 _cachedVideoUrl 여부에 따라 처리
       _disposeVideoController(context: 'dispose');
-
-      // 캐시된 서버 비디오는 참조 해제
-      if (_cachedVideoUrl != null) {
-        VideoCacheService().releaseController(
-          _cachedVideoUrl!,
-          namespace: 'profile',
-        );
-      }
 
       // 🎯 업로드 태스크 취소
       _cancelUploadTasks();
@@ -192,26 +186,74 @@ class _PostExportScreenState extends State<PostExportScreen>
     );
 
     // ✅ 같은 캐시 매니저(EditImageCacheManager)로 precache해서 "즉시 표시" 확률을 높인다.
+    // 🎯 비디오 URL인 경우: precache 스킵 (이미지로 로드할 수 없음)
     final thumb = _exportedThumbnailImageUrl.trim();
     if (thumb.isNotEmpty &&
         (thumb.startsWith('http://') || thumb.startsWith('https://'))) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        try {
-          // 🎯 EditorImageProvider를 사용하여 step1_thumbnail_edit과 동일한 캐시 키 사용
-          final screenWidth = MediaQuery.sizeOf(context).width;
-          final decodeWidth = EditorImageProvider.editingDecodeWidth(
-            context,
-            screenWidth,
-          );
-          final built = EditorImageProvider.build(
-            url: thumb,
-            isEditing: true,
-            decodeWidth: decodeWidth,
-          );
-          precacheImage(built.effectiveProvider, context).catchError((_) {});
-        } catch (_) {}
-      });
+      // 🎯 비디오 URL인지 확인
+      final lowerUrl = thumb.toLowerCase();
+      final isVideo =
+          lowerUrl.endsWith('.mp4') ||
+          lowerUrl.endsWith('.mov') ||
+          lowerUrl.endsWith('.m4v') ||
+          lowerUrl.contains('/videos/') ||
+          lowerUrl.contains('video');
+
+      // 🎯 비디오 URL인 경우: VideoCacheService로 처리 (precache 스킵)
+      if (isVideo) {
+        _cachedVideoUrl = thumb;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          try {
+            final videoCache = VideoCacheService();
+            _videoController = videoCache.getOrCreateController(
+              thumb,
+              namespace: 'profile',
+            );
+
+            // 🎯 dispose 체크: 컨트롤러 유효성 확인
+            try {
+              // 이미 초기화된 경우 바로 재생
+              if (_videoController!.value.isInitialized) {
+                if (mounted) {
+                  _videoController!.play();
+                  _videoController!.setLooping(true);
+                  setState(() {});
+                }
+              } else {
+                // 초기화 대기
+                _videoController!.addListener(_onVideoControllerInitialized);
+              }
+            } catch (e) {
+              debugPrint('[PostExport] 서버 비디오 컨트롤러 접근 오류 (dispose됨): $e');
+              _videoController = null;
+              _cachedVideoUrl = null;
+            }
+          } catch (e) {
+            debugPrint('[PostExport] 서버 비디오 컨트롤러 생성 오류: $e');
+            _videoController = null;
+            _cachedVideoUrl = null;
+          }
+        });
+      } else {
+        // 🎯 이미지 URL인 경우: EditorImageProvider를 사용하여 step1_thumbnail_edit과 동일한 캐시 키 사용
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          try {
+            final screenWidth = MediaQuery.sizeOf(context).width;
+            final decodeWidth = EditorImageProvider.editingDecodeWidth(
+              context,
+              screenWidth,
+            );
+            final built = EditorImageProvider.build(
+              url: thumb,
+              isEditing: true,
+              decodeWidth: decodeWidth,
+            );
+            precacheImage(built.effectiveProvider, context).catchError((_) {});
+          } catch (_) {}
+        });
+      }
     }
 
     // 영상 파일만 복원 (persist 사용)
@@ -360,6 +402,33 @@ class _PostExportScreenState extends State<PostExportScreen>
   void _disposeVideoController({String? context}) {
     if (_videoController == null) return;
 
+    // 🎯 VideoCacheService에서 가져온 서버 비디오 컨트롤러는 dispose하지 않음
+    if (_cachedVideoUrl != null) {
+      // 서버 비디오: 리스너만 제거하고 releaseController 호출
+      try {
+        _videoController!.removeListener(_onVideoControllerInitialized);
+      } catch (e) {
+        debugPrint('[PostExport] ${context ?? "dispose"}: 리스너 제거 오류: $e');
+      }
+
+      // VideoCacheService에서 참조 해제
+      try {
+        VideoCacheService().releaseController(
+          _cachedVideoUrl!,
+          namespace: 'profile',
+        );
+        debugPrint(
+          '[PostExport] ${context ?? "dispose"}: 서버 비디오 컨트롤러 참조 해제 완료',
+        );
+      } catch (e) {
+        debugPrint('[PostExport] ${context ?? "dispose"}: 서버 비디오 참조 해제 오류: $e');
+      }
+
+      _videoController = null;
+      return;
+    }
+
+    // 🎯 로컬 비디오 컨트롤러만 dispose
     try {
       // 리스너 제거 (먼저 제거하여 콜백 방지)
       _videoController!.removeListener(_onVideoControllerInitialized);
@@ -486,7 +555,16 @@ class _PostExportScreenState extends State<PostExportScreen>
       return false;
     }
 
-    // 4. 카테고리는 기본값 0(미지정)이 있으므로 항상 유효
+    // 4. 카테고리 리스트 확인
+    // 🎯 카테고리 리스트가 비어있거나 null이면 게시 불가
+    if (_cachedCategories == null || _cachedCategories!.isEmpty) {
+      return false;
+    }
+
+    // 5. 카테고리가 선택되어 있어야 함
+    if (_selectedCategoryId == null) {
+      return false;
+    }
 
     return true;
   }
@@ -494,27 +572,34 @@ class _PostExportScreenState extends State<PostExportScreen>
   // 등록 불가능할 때 표시할 에러 메시지 (서버 API 스펙 준수)
   String _getPublishErrorMessage() {
     if (_isUploadingThumb) {
-      return '이미지 업로드 중입니다.';
+      return context.tr('image_uploading');
     }
     final editedTitle = _titleController.text.trim();
     final editedExcerpt = _excerptController.text.trim();
 
     if (editedTitle.isEmpty) {
-      return '제목을 입력해주세요.';
+      return context.tr('title_required');
     }
     if (editedExcerpt.isEmpty) {
-      return '본문 내용을 입력해주세요.';
+      return context.tr('content_required');
     }
     if (_exportedThumbnailImageUrl.trim().isEmpty) {
-      return '썸네일 이미지를 먼저 선택하세요.';
+      return context.tr('thumbnail_required');
     }
     if (!_audienceSelectAll &&
         !_audiencePrivateOnly &&
         !_audienceFriendsOnly &&
         _selectedAudienceGroupIds.isEmpty) {
-      return '그룹 공유를 선택했을 경우 최소 1개 이상의 그룹을 선택해주세요.';
+      return context.tr('group_required');
     }
-    return '등록할 수 없습니다.';
+    // 🎯 카테고리 리스트가 비어있으면 에러 메시지
+    if (_cachedCategories == null || _cachedCategories!.isEmpty) {
+      return context.tr('category_list_load_failed');
+    }
+    if (_selectedCategoryId == null) {
+      return context.tr('category_required');
+    }
+    return context.tr('cannot_publish');
   }
 
   Future<void> _publish() async {
@@ -878,8 +963,17 @@ class _PostExportScreenState extends State<PostExportScreen>
 
       if (!mounted) return;
 
-      // 에러 메시지 표시
-      ErrorHandler.handleError(context, e, customMessage: '업로드 중 오류가 발생했어요');
+      // 🎯 실패 UX: 스낵바 대신 재시도/취소 바텀시트 (등록/발행)
+      final action = await RetryCancelBottomSheet.show(
+        context,
+        title: context.tr('publish_failed_title'),
+        message: context.tr('retry_error_message'),
+        details: e.toString(),
+      );
+      if (!mounted) return;
+      if (action == RetryCancelAction.retry) {
+        await _publish();
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -889,6 +983,17 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
   }
 
+  /// 🎯 URL이 비디오인지 확인하는 헬퍼 메서드
+  static bool _isVideoUrl(String url) {
+    if (url.isEmpty) return false;
+    final lowerUrl = url.toLowerCase();
+    return lowerUrl.endsWith('.mp4') ||
+        lowerUrl.endsWith('.mov') ||
+        lowerUrl.endsWith('.m4v') ||
+        lowerUrl.contains('/videos/') ||
+        lowerUrl.contains('video');
+  }
+
   Widget _buildDynamicBackground() {
     return Positioned.fill(
       child: Stack(
@@ -896,13 +1001,40 @@ class _PostExportScreenState extends State<PostExportScreen>
           // 썸네일 이미지 또는 단색 배경
           Positioned.fill(
             child:
-                // 우선순위: 로컬 썸네일 > 서버 URL > 기본 배경
+                // 우선순위: 로컬 썸네일 > 서버 URL (비디오/이미지) > 기본 배경
                 _localThumbnailFile != null
                     ? Image.file(_localThumbnailFile!, fit: BoxFit.cover)
                     : _exportedThumbnailImageUrl.isNotEmpty
                     ? Builder(
                       builder: (context) {
-                        // 🎯 EditorImageProvider를 사용하여 step1_thumbnail_edit과
+                        // 🎯 비디오 URL인 경우: 비디오 플레이어 표시
+                        if (_isVideoUrl(_exportedThumbnailImageUrl)) {
+                          if (_videoController != null) {
+                            try {
+                              if (_videoController!.value.isInitialized) {
+                                final size = _videoController!.value.size;
+                                return FittedBox(
+                                  fit: BoxFit.cover,
+                                  child: SizedBox(
+                                    width: size.width,
+                                    height: size.height,
+                                    child: VideoPlayer(_videoController!),
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              debugPrint('[PostExportScreen] 비디오 컨트롤러 오류: $e');
+                            }
+                          }
+                          // 비디오 컨트롤러가 없거나 초기화되지 않은 경우 shimmer 표시
+                          return ShimmerBox(
+                            width: double.infinity,
+                            height: double.infinity,
+                            borderRadius: BorderRadius.zero,
+                          );
+                        }
+
+                        // 🎯 이미지 URL인 경우: EditorImageProvider를 사용하여 step1_thumbnail_edit과
                         // 동일한 캐시 키(ResizeImage)를 사용하여 캐시 재사용률을 높임
                         final screenWidth = MediaQuery.sizeOf(context).width;
                         final decodeWidth =
@@ -945,8 +1077,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                       },
                     )
                     : Container(color: Theme.of(context).colorScheme.surface),
-          ),
-          // 블러 오버레이 (썸네일이 있을 때만)
+          ), // 블러 오버레이 (썸네일이 있을 때만)
           if (_localThumbnailFile != null ||
               _exportedThumbnailImageUrl.isNotEmpty)
             Positioned.fill(
@@ -1039,6 +1170,7 @@ class _PostExportScreenState extends State<PostExportScreen>
   bool _canProceedToNextStep() {
     switch (_currentStep) {
       case 0: // Step 1: 썸네일 & 글 편집
+        // 🎯 썸네일, 제목, 요약이 모두 있어야 다음 버튼 활성화
         final editedTitle = _titleController.text.trim();
         final editedExcerpt = _excerptController.text.trim();
         final thumbnailUrl = _exportedThumbnailImageUrl.trim();
@@ -1046,12 +1178,17 @@ class _PostExportScreenState extends State<PostExportScreen>
             thumbnailUrl.startsWith('http://') ||
             thumbnailUrl.startsWith('https://');
 
-        return !_isUploadingThumb &&
-            !_hasActiveUploads() &&
-            thumbnailUrl.isNotEmpty &&
-            isHttpUrl &&
-            editedTitle.isNotEmpty &&
-            editedExcerpt.isNotEmpty;
+        // 🎯 업로드 중이면 비활성화
+        if (_isUploadingThumb || _hasActiveUploads()) {
+          return false;
+        }
+
+        // 🎯 썸네일, 제목, 요약이 모두 있어야 함
+        final hasThumbnail = thumbnailUrl.isNotEmpty && isHttpUrl;
+        final hasTitle = editedTitle.isNotEmpty;
+        final hasExcerpt = editedExcerpt.isNotEmpty;
+
+        return hasThumbnail && hasTitle && hasExcerpt;
       case 1: // Step 2: 공개 범위
         // 전체공개, 나만보기, 전체 친구 또는 그룹 중 하나는 선택되어야 함
         return _audienceSelectAll ||
@@ -1059,7 +1196,8 @@ class _PostExportScreenState extends State<PostExportScreen>
             _audienceFriendsOnly ||
             _selectedAudienceGroupIds.isNotEmpty;
       case 2: // Step 3: 카테고리
-        return true; // 항상 진행 가능
+        // 🎯 카테고리가 실제로 선택되어 있어야 다음 버튼 활성화
+        return _selectedCategoryId != null;
       default:
         return false;
     }
@@ -1131,6 +1269,10 @@ class _PostExportScreenState extends State<PostExportScreen>
                         // 🎯 기존 컨트롤러 안전하게 정리
                         if (_videoController != null &&
                             _videoController != controller) {
+                          // 🎯 서버 비디오 컨트롤러인 경우 _cachedVideoUrl 초기화
+                          if (_cachedVideoUrl != null) {
+                            _cachedVideoUrl = null;
+                          }
                           _disposeVideoController(
                             context: 'onVideoControllerChanged',
                           );
@@ -1140,6 +1282,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                         _videoController = controller;
                         if (controller != null) {
                           _localVideoFile = null; // Step1에서 새로 생성한 컨트롤러
+                          _cachedVideoUrl = null; // 로컬 비디오이므로 서버 비디오 URL 초기화
                           try {
                             // 🎯 dispose 체크: 컨트롤러 유효성 확인
                             if (!controller.value.isInitialized) {
@@ -1278,6 +1421,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                         });
                       },
                       isUploading: _isUploading, // 🎯 발행 중 상태 전달
+                      isActive: _currentStep == 2, // 🎯 step3가 활성화되어 있을 때만 true
                     ),
                   ],
                 ),

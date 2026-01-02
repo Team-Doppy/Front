@@ -21,6 +21,14 @@ class VideoCacheService {
 
   String _key(String namespace, String url) => '$namespace|$url';
 
+  /// 🎯 컨트롤러를 맵에서 제거하는 헬퍼 메서드 (중복 코드 제거)
+  void _removeController(String key) {
+    _controllers.remove(key);
+    _refCounts.remove(key);
+    _lastAccessed.remove(key);
+    _isDisposed[key] = true; // 일관성: remove 대신 true로 설정
+  }
+
   /// 비디오 컨트롤러 가져오기 (없으면 생성)
   ///
   /// [url] - 네트워크 URL 또는 로컬 파일 경로
@@ -56,10 +64,7 @@ class VideoCacheService {
             } catch (e) {
               debugPrint('[VideoCache] 재사용 차단 시 일시정지 오류: $e');
               // dispose된 컨트롤러는 맵에서 제거
-              _controllers.remove(key);
-              _refCounts.remove(key);
-              _lastAccessed.remove(key);
-              _isDisposed[key] = true;
+              _removeController(key);
             }
           }
         }
@@ -69,61 +74,50 @@ class VideoCacheService {
         if (existingController == null) {
           // 다른 스레드에서 제거되었을 수 있음, 새로 생성
         } else {
-          try {
-            // 🎯 컨트롤러가 dispose되었거나 초기화에 실패한 경우, 새로 생성
-            if (existingController.value.hasError) {
-              debugPrint(
-                '[VideoCache] ⚠️ 기존 컨트롤러에 에러가 있어 새로 생성: $key (에러: ${existingController.value.errorDescription})',
-              );
-              // 기존 컨트롤러 정리
-              try {
-                existingController.dispose();
-              } catch (_) {}
-              _controllers.remove(key);
-              _refCounts.remove(key);
-              _lastAccessed.remove(key);
-              _isDisposed[key] = true;
-              // 아래에서 새로 생성
-            } else {
-              // 🎯 dispose 상태 확인 및 컨트롤러 유효성 재확인
-              if (_isDisposed[key] == true) {
-                debugPrint('[VideoCache] ⚠️ dispose된 컨트롤러 접근, 새로 생성: $key');
-                _controllers.remove(key);
-                _refCounts.remove(key);
-                _lastAccessed.remove(key);
-                _isDisposed.remove(key);
+          // 🎯 dispose 상태를 먼저 확인 (value 접근 전)
+          if (_isDisposed[key] == true) {
+            debugPrint('[VideoCache] ⚠️ dispose된 컨트롤러 접근, 새로 생성: $key');
+            _removeController(key);
+            // 아래에서 새로 생성
+          } else {
+            try {
+              // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+              final hasError = existingController.value.hasError;
+
+              // 🎯 컨트롤러가 dispose되었거나 초기화에 실패한 경우, 새로 생성
+              if (hasError) {
+                // 🎯 dispose 체크: errorDescription 접근 안전화
+                String? errorDesc;
+                try {
+                  errorDesc = existingController.value.errorDescription;
+                } catch (_) {
+                  errorDesc = '알 수 없는 오류';
+                }
+                debugPrint(
+                  '[VideoCache] ⚠️ 기존 컨트롤러에 에러가 있어 새로 생성: $key (에러: $errorDesc)',
+                );
+                // 기존 컨트롤러 정리
+                try {
+                  existingController.dispose();
+                } catch (_) {}
+                _removeController(key);
                 // 아래에서 새로 생성
               } else {
                 // 🎯 컨트롤러 유효성 재확인 (다른 곳에서 dispose했을 수 있음)
-                try {
-                  // 접근 시도로 dispose 여부 확인
-                  final _ = existingController.value.isInitialized;
-                  // 정상적인 경우 재사용
-                  _refCounts[key] = (_refCounts[key] ?? 0) + 1;
-                  _lastAccessed[key] = DateTime.now(); // LRU 업데이트
-                  debugPrint('[VideoCache] 재사용: $key (참조: ${_refCounts[key]})');
-                  return existingController;
-                } catch (e) {
-                  // dispose된 컨트롤러
-                  debugPrint(
-                    '[VideoCache] ⚠️ dispose된 컨트롤러 접근, 새로 생성: $key - $e',
-                  );
-                  _controllers.remove(key);
-                  _refCounts.remove(key);
-                  _lastAccessed.remove(key);
-                  _isDisposed[key] = true;
-                  // 아래에서 새로 생성
-                }
+                // 접근 시도로 dispose 여부 확인
+                final _ = existingController.value.isInitialized;
+                // 정상적인 경우 재사용
+                _refCounts[key] = (_refCounts[key] ?? 0) + 1;
+                _lastAccessed[key] = DateTime.now(); // LRU 업데이트
+                debugPrint('[VideoCache] 재사용: $key (참조: ${_refCounts[key]})');
+                return existingController;
               }
+            } catch (e) {
+              // dispose된 컨트롤러 접근 시도
+              debugPrint('[VideoCache] ⚠️ dispose된 컨트롤러 접근, 새로 생성: $key - $e');
+              _removeController(key);
+              // 아래에서 새로 생성
             }
-          } catch (e) {
-            // dispose된 컨트롤러 접근 시도
-            debugPrint('[VideoCache] ⚠️ dispose된 컨트롤러 접근, 새로 생성: $key - $e');
-            _controllers.remove(key);
-            _refCounts.remove(key);
-            _lastAccessed.remove(key);
-            _isDisposed[key] = true;
-            // 아래에서 새로 생성
           }
         }
       }
@@ -180,26 +174,37 @@ class VideoCacheService {
                 try {
                   controller.dispose();
                 } catch (_) {}
-                _controllers.remove(actualKey);
-                _refCounts.remove(actualKey);
-                _lastAccessed.remove(actualKey);
+                _removeController(actualKey);
                 return;
               }
 
-              // 초기화만 하고, 재생/정지는 각 위젯에서 결정
-              if (controller.value.isInitialized) {
-                controller.setLooping(true);
-                controller.setVolume(0); // 기본 음소거
-                debugPrint('[VideoCache] ✅ 초기화 성공: $actualKey');
+              // 🎯 dispose 체크: value 접근 안전화
+              try {
+                // 초기화만 하고, 재생/정지는 각 위젯에서 결정
+                if (controller.value.isInitialized) {
+                  // 🎯 value 접근 후 즉시 사용할 값들을 로컬 변수에 저장
+                  final isInit = controller.value.isInitialized;
+                  if (isInit) {
+                    controller.setLooping(true);
+                    controller.setVolume(0); // 기본 음소거
+                    debugPrint('[VideoCache] ✅ 초기화 성공: $actualKey');
+                  }
+                }
+              } catch (e) {
+                debugPrint(
+                  '[VideoCache] ⚠️ 초기화 후 설정 오류 (dispose됨): $actualKey - $e',
+                );
+                // dispose된 경우 맵에서 제거
+                if (_controllers[actualKey] == controller) {
+                  _removeController(actualKey);
+                }
+                return;
               }
             } catch (e) {
               debugPrint('[VideoCache] ⚠️ 초기화 후 설정 오류: $actualKey - $e');
               // dispose된 경우 맵에서 제거
               if (_controllers[actualKey] == controller) {
-                _controllers.remove(actualKey);
-                _refCounts.remove(actualKey);
-                _lastAccessed.remove(actualKey);
-                _isDisposed[actualKey] = true;
+                _removeController(actualKey);
               }
             }
           } else {
@@ -214,16 +219,12 @@ class VideoCacheService {
         .catchError((e, stackTrace) {
           // 초기화 실패 시 맵에서 제거
           if (_controllers[actualKey] == controller) {
-            _controllers.remove(actualKey);
-            _refCounts.remove(actualKey);
-            _lastAccessed.remove(actualKey);
-            _isDisposed.remove(actualKey);
+            _removeController(actualKey);
           }
           // dispose 시도
           try {
             controller.dispose();
           } catch (_) {}
-          _isDisposed[actualKey] = true;
           debugPrint('[VideoCache] ⚠️ 초기화 실패: $actualKey - $e');
         });
 
@@ -304,13 +305,23 @@ class VideoCacheService {
       // 참조 카운트가 0이 되면 일시정지
       if (_refCounts[k] == 0) {
         final controller = _controllers[k];
-        if (controller != null && controller.value.isInitialized) {
+        if (controller != null) {
+          // 🎯 dispose 체크: value 접근 안전화
           try {
-            if (controller.value.isPlaying) {
-              controller.pause();
+            final isInitialized = controller.value.isInitialized;
+            if (isInitialized) {
+              // 🎯 value 접근 후 즉시 사용할 값들을 로컬 변수에 저장
+              final isPlaying = controller.value.isPlaying;
+              if (isPlaying) {
+                controller.pause();
+              }
             }
           } catch (e) {
             debugPrint('[VideoCache] 참조 해제 시 일시정지 오류 ($k): $e');
+            // dispose된 컨트롤러는 맵에서 제거
+            if (_controllers[k] == controller) {
+              _removeController(k);
+            }
           }
         }
       }
@@ -328,7 +339,19 @@ class VideoCacheService {
   }) {
     final cacheKey = localPath?.isNotEmpty == true ? localPath! : url;
     final key = _key(namespace, cacheKey);
-    return _controllers[key]?.value.isInitialized ?? false;
+    final controller = _controllers[key];
+    if (controller == null) return false;
+
+    // 🎯 dispose 체크: value 접근 안전화
+    try {
+      return controller.value.isInitialized;
+    } catch (e) {
+      // dispose된 컨트롤러는 맵에서 제거
+      if (_controllers[key] == controller) {
+        _removeController(key);
+      }
+      return false;
+    }
   }
 
   /// 해당 URL의 컨트롤러가 캐시에 존재하는지 여부
@@ -353,10 +376,13 @@ class VideoCacheService {
     for (final key in keysToPause) {
       final controller = _controllers[key];
       if (controller != null) {
+        // 🎯 dispose 체크: value 접근 안전화
         try {
-          // dispose 여부 확인
-          if (controller.value.isInitialized) {
-            if (controller.value.isPlaying) {
+          final isInitialized = controller.value.isInitialized;
+          if (isInitialized) {
+            // 🎯 value 접근 후 즉시 사용할 값들을 로컬 변수에 저장
+            final isPlaying = controller.value.isPlaying;
+            if (isPlaying) {
               controller.pause();
               pausedCount++;
               debugPrint('[VideoCache] 일시정지: $key');
@@ -366,10 +392,7 @@ class VideoCacheService {
           debugPrint('[VideoCache] 일시정지 오류 ($key): $e');
           // dispose된 컨트롤러는 맵에서 제거
           if (_controllers[key] == controller) {
-            _controllers.remove(key);
-            _refCounts.remove(key);
-            _lastAccessed.remove(key);
-            _isDisposed[key] = true;
+            _removeController(key);
           }
         }
       }
@@ -391,10 +414,13 @@ class VideoCacheService {
 
     for (final entry in entries) {
       final controller = entry.value;
+      // 🎯 dispose 체크: value 접근 안전화
       try {
-        // dispose 여부 확인
-        if (controller.value.isInitialized) {
-          if (controller.value.isPlaying) {
+        final isInitialized = controller.value.isInitialized;
+        if (isInitialized) {
+          // 🎯 value 접근 후 즉시 사용할 값들을 로컬 변수에 저장
+          final isPlaying = controller.value.isPlaying;
+          if (isPlaying) {
             controller.pause();
             pausedCount++;
           }
@@ -410,10 +436,7 @@ class VideoCacheService {
 
     // dispose된 컨트롤러 제거
     for (final key in keysToRemove) {
-      _controllers.remove(key);
-      _refCounts.remove(key);
-      _lastAccessed.remove(key);
-      _isDisposed[key] = true;
+      _removeController(key);
     }
 
     debugPrint(
@@ -464,8 +487,10 @@ class VideoCacheService {
     for (final key in temporaryKeys) {
       final controller = _controllers[key];
       if (controller != null) {
+        // 🎯 dispose 체크: value 접근 안전화
         try {
-          if (controller.value.isInitialized) {
+          final isInitialized = controller.value.isInitialized;
+          if (isInitialized) {
             controller.pause();
           }
           // 참조 카운트가 0이므로 dispose 가능
@@ -474,10 +499,7 @@ class VideoCacheService {
           debugPrint('[VideoCache] 임시 컨트롤러 정리 오류 ($key): $e');
         }
       }
-      _controllers.remove(key);
-      _refCounts.remove(key);
-      _lastAccessed.remove(key);
-      _isDisposed[key] = true;
+      _removeController(key);
     }
     debugPrint('[VideoCache] 임시 컨트롤러 정리 완료');
   }
@@ -498,8 +520,24 @@ class VideoCacheService {
   void printCacheStatus() {
     debugPrint('[VideoCache] ===== 캐시 상태 =====');
     debugPrint('[VideoCache] 총 컨트롤러 개수: ${_controllers.length}');
-    for (final key in _controllers.keys) {
-      final isInit = _controllers[key]?.value.isInitialized ?? false;
+    // 🎯 맵을 복사하여 순회 중 변경 방지
+    final keys = List<String>.from(_controllers.keys);
+    for (final key in keys) {
+      final controller = _controllers[key];
+      if (controller == null) continue;
+
+      // 🎯 dispose 체크: value 접근 안전화
+      bool isInit = false;
+      try {
+        isInit = controller.value.isInitialized;
+      } catch (e) {
+        // dispose된 컨트롤러는 맵에서 제거
+        if (_controllers[key] == controller) {
+          _removeController(key);
+        }
+        continue;
+      }
+
       final refCount = _refCounts[key] ?? 0;
       debugPrint('[VideoCache] - $key: 초기화=$isInit, 참조=$refCount');
     }
@@ -519,8 +557,10 @@ class VideoCacheService {
     for (final key in keys) {
       final controller = _controllers[key];
       if (controller == null) continue;
+      // 🎯 dispose 체크: value 접근 안전화
       try {
-        if (controller.value.isInitialized) {
+        final isInitialized = controller.value.isInitialized;
+        if (isInitialized) {
           controller.setVolume(volume);
           applied++;
         }
@@ -528,10 +568,7 @@ class VideoCacheService {
         debugPrint('[VideoCache] 볼륨 설정 오류 ($key): $e');
         // dispose된 컨트롤러는 맵에서 제거
         if (_controllers[key] == controller) {
-          _controllers.remove(key);
-          _refCounts.remove(key);
-          _lastAccessed.remove(key);
-          _isDisposed[key] = true;
+          _removeController(key);
         }
       }
     }

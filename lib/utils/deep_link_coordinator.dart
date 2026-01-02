@@ -22,6 +22,9 @@ class DeepLinkCoordinator {
   bool _navigatingToLogin = false;
   final List<DeepLinkResult> _queue = <DeepLinkResult>[];
 
+  /// 딥링크가 큐에 대기 중인지 확인
+  bool get hasPendingDeepLink => _queue.isNotEmpty;
+
   String? _lastHandledKey;
   DateTime? _lastHandledAt;
 
@@ -42,7 +45,13 @@ class DeepLinkCoordinator {
     DeepLinkResult result, {
     String source = 'unknown',
   }) async {
-    if (_isDuplicate(result)) return;
+    debugPrint(
+      '[DeepLinkCoordinator] handle 호출: type=${result.type}, postId=${result.postId}, source=$source, ready=$_ready',
+    );
+    if (_isDuplicate(result)) {
+      debugPrint('[DeepLinkCoordinator] 중복으로 인해 처리 건너뜀: ${_key(result)}');
+      return;
+    }
 
     if (!_ready) {
       // ✅ 최신 우선 정책:
@@ -61,7 +70,10 @@ class DeepLinkCoordinator {
   }
 
   void _flush() {
-    if (_queue.isEmpty) return;
+    if (_queue.isEmpty) {
+      debugPrint('[DeepLinkCoordinator] flush: 큐가 비어있음');
+      return;
+    }
     debugPrint('[DeepLinkCoordinator] 🚀 flush: ${_queue.length} item(s)');
 
     // FIFO 순서로 처리
@@ -70,7 +82,11 @@ class DeepLinkCoordinator {
 
     Future.microtask(() async {
       for (final r in pending) {
-        if (_isDuplicate(r)) continue;
+        if (_isDuplicate(r)) {
+          debugPrint('[DeepLinkCoordinator] flush: 중복 무시 - ${_key(r)}');
+          continue;
+        }
+        debugPrint('[DeepLinkCoordinator] flush: 처리 시작 - ${_key(r)}');
         await _execute(r, source: 'flush');
       }
     });
@@ -146,17 +162,10 @@ class DeepLinkCoordinator {
         '[DeepLinkCoordinator] ▶️ execute: ${_key(result)} (source=$source)',
       );
 
-      // ✅ 딥링크 처리의 일관성 확보:
-      // - 앱이 백그라운드에서 이미 열려있던 경우(현재 화면/모달/에디터 등)라도
-      //   항상 루트까지 pop 후 동일한 상태에서 push하도록 통일한다.
-      // - pop 직후 곧바로 push하면 애니메이션/프레임 타이밍 충돌이 날 수 있어
-      //   다음 프레임으로 넘겨 처리한다.
-      try {
-        navigatorKey.currentState?.popUntil((route) => route.isFirst);
-      } catch (e) {
-        debugPrint('[DeepLinkCoordinator] popUntil failed (ignored): $e');
-      }
-
+      // ✅ IMPORTANT:
+      // 딥링크/푸시 진입 시 홈이 "보이는" 순간을 없애기 위해 popUntil을 하지 않는다.
+      // - popUntil을 하면 RootShell(Home)이 노출되며, 네트워크 로딩 동안 홈 플레이스홀더가 보일 수 있음
+      // - 앱이 실행 중이라면 현재 화면 위에 타겟을 그대로 push(혹은 loading -> replacement)하는 편이 UX가 안정적
       await Future<void>.delayed(Duration.zero);
 
       final BuildContext? freshContext = navigatorKey.currentContext;
@@ -168,6 +177,10 @@ class DeepLinkCoordinator {
       }
 
       await DeepLinkHandler.handleDeepLink(freshContext, result);
+    } catch (e, stackTrace) {
+      // ✅ 딥링크 처리 중 에러 발생 시 상세 로그
+      debugPrint('[DeepLinkCoordinator] ❌ 딥링크 처리 오류: $e');
+      debugPrint('[DeepLinkCoordinator] 스택 트레이스: $stackTrace');
     } finally {
       _executing = false;
       // 처리 중에 큐가 쌓였으면 바로 플러시

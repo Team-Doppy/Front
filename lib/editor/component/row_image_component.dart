@@ -1929,10 +1929,16 @@ class _ImageRowComponentState extends State<ImageRowComponent>
   Widget _buildRowImageWidget(int index, String imageUrl, double maxWidth) {
     // ✅ 읽기 모드에서도 decodeWidth를 줘야 PostReaderService.preloadTopMedia(precacheImage)와
     // 동일한 ResizeImage(width) 캐시 키로 hit가 난다.
-    final decodeWidth = EditorImageProvider.editingDecodeWidth(
-      context,
-      widget.screenWidth,
-    );
+    final decodeWidth =
+        widget.isEditing
+            ? EditorImageProvider.editingDecodeWidth(
+              context,
+              widget.screenWidth,
+            )
+            : EditorImageProvider.readingDecodeWidth(
+              context,
+              widget.screenWidth,
+            );
 
     final built = EditorImageProvider.build(
       url: imageUrl,

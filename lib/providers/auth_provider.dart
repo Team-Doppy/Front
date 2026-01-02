@@ -156,8 +156,4 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
     debugPrint('[-] [AuthProvider] 인증 상태 업데이트: $username');
   }
-
-  Future<void> updateUserRegionAndRefreshToken(String region) async {
-    //await _authService.updateUserRegion(region);
-  }
 }

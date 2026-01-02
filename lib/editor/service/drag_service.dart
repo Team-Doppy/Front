@@ -313,6 +313,9 @@ class DragService extends ChangeNotifier {
 
   // 분리할 PageView 이미지 정보 설정
   void setSplitPageViewInfo(String pageViewId, int imageIndex) {
+    debugPrint(
+      '[DragService] 🔍 setSplitPageViewInfo 호출: pageViewId=$pageViewId, imageIndex=$imageIndex',
+    );
     _splitPageViewId = pageViewId;
     _splitPageViewIndex = imageIndex;
 
@@ -520,31 +523,56 @@ class DragService extends ChangeNotifier {
   }
 
   void endDrag() {
+    debugPrint('[DragService] 🎯 endDrag 호출됨');
+    debugPrint(
+      '[DragService] 🔍 endDrag 상태: hasSplitPageViewInfo=$hasSplitPageViewInfo, hasSplitImageInfo=$hasSplitImageInfo, dragMode=$dragMode, dropTarget=$dropTarget',
+    );
     draggingNodeIdNotifier.value = null;
     previewImageUrl = null; // 🎯 이미지 URL 정리
     previewImageLocalPath = null;
     if (draggingNodeId == null) {
+      debugPrint('[DragService] ⚠️ draggingNodeId가 null, 종료');
       _cleanup();
       return;
     }
 
     // 이미지 분리 예정이고, 원래 행으로 돌아왔으며 중앙 영역(=reorder) 드롭이면 분리 취소
+    // 🎯 단, dropTarget이 insertBetweenNodes이면 Row 위/아래로 분리하려는 의도이므로 취소하지 않음
     if (hasSplitImageInfo) {
       final backToOriginal =
           (targetNodeId != null && targetNodeId == _splitImageRowId) ||
           (_targetRowId != null && _targetRowId == _splitImageRowId);
-      if (backToOriginal && dragMode != DragType.imageRowMerge) {
+      final isSplittingToAdjacent =
+          dropTarget.kind == DropTargetKind.insertBetweenNodes;
+      debugPrint(
+        '[DragService] 🔍 Row 분리 취소 체크: backToOriginal=$backToOriginal, isSplittingToAdjacent=$isSplittingToAdjacent, targetNodeId=$targetNodeId, _splitImageRowId=$_splitImageRowId, _targetRowId=$_targetRowId, dragMode=$dragMode, dropTarget.kind=${dropTarget.kind}',
+      );
+      // 🎯 Row 위/아래로 분리하려는 경우(dropTarget이 insertBetweenNodes)는 취소하지 않음
+      if (backToOriginal &&
+          dragMode != DragType.imageRowMerge &&
+          !isSplittingToAdjacent) {
+        debugPrint('[DragService] ⚠️ Row 분리 취소: 원래 Row로 돌아옴 (중앙 영역)');
         _cleanup();
         return;
       }
     }
 
     // PageView 이미지 분리 예정이고, 원래 PageView로 돌아왔으며 중앙 영역(=reorder) 드롭이면 분리 취소
+    // 🎯 단, dropTarget이 insertBetweenNodes이면 PageView 위/아래로 분리하려는 의도이므로 취소하지 않음
     if (hasSplitPageViewInfo) {
       final backToOriginal =
           (targetNodeId != null && targetNodeId == _splitPageViewId) ||
           (_targetPageViewId != null && _targetPageViewId == _splitPageViewId);
-      if (backToOriginal && dragMode != DragType.imagePageViewMerge) {
+      final isSplittingToAdjacent =
+          dropTarget.kind == DropTargetKind.insertBetweenNodes;
+      debugPrint(
+        '[DragService] 🔍 PageView 분리 취소 체크: backToOriginal=$backToOriginal, isSplittingToAdjacent=$isSplittingToAdjacent, targetNodeId=$targetNodeId, _splitPageViewId=$_splitPageViewId, _targetPageViewId=$_targetPageViewId, dragMode=$dragMode, dropTarget.kind=${dropTarget.kind}',
+      );
+      // 🎯 PageView 위/아래로 분리하려는 경우(dropTarget이 insertBetweenNodes)는 취소하지 않음
+      if (backToOriginal &&
+          dragMode != DragType.imagePageViewMerge &&
+          !isSplittingToAdjacent) {
+        debugPrint('[DragService] ⚠️ PageView 분리 취소: 원래 PageView로 돌아옴 (중앙 영역)');
         _cleanup();
         return;
       }
@@ -581,11 +609,24 @@ class DragService extends ChangeNotifier {
                 ? dropIndex
                 : null;
 
+        // 🎯 로우 이미지 분리: 원래 로직 유지 (dragMode == DragType.reorder일 때만 insertIndex 설정)
+        // dropTarget을 확인하지 않고 원래대로 작동
+        int? insertIndex;
+        if (dragMode == DragType.reorder && validDropIndex != null) {
+          insertIndex = validDropIndex;
+        } else {
+          insertIndex = null;
+        }
+
+        debugPrint(
+          '[DragService] 🔍 Row 분리: dragMode=$dragMode, dropIndex=$dropIndex, validDropIndex=$validDropIndex, insertIndex=$insertIndex',
+        );
+
         // 분리 확정 시점: targetRowId가 있으면 그 행에 삽입, 없으면 기존 로우 근처 단독 삽입
         final splitImageId = editorService.splitImageFromRow(
           rowId,
           imageIndex,
-          insertIndex: (dragMode == DragType.reorder) ? validDropIndex : null,
+          insertIndex: insertIndex,
         );
         if (splitImageId != null) {
           draggingNodeId = splitImageId;
@@ -599,6 +640,9 @@ class DragService extends ChangeNotifier {
     }
 
     // PageView 이미지 분리 정보가 있으면 먼저 분리 실행
+    debugPrint(
+      '[DragService] 🔍 PageView 분리 체크: hasSplitPageViewInfo=$hasSplitPageViewInfo, _splitPageViewId=$_splitPageViewId, _splitPageViewIndex=$_splitPageViewIndex',
+    );
     if (hasSplitPageViewInfo) {
       final pageViewId = _splitPageViewId;
       final imageIndex = _splitPageViewIndex;
@@ -628,17 +672,46 @@ class DragService extends ChangeNotifier {
                 ? dropIndex
                 : null;
 
+        debugPrint(
+          '[DragService] 🔍 PageView 분리: dragMode=$dragMode, dropIndex=$dropIndex, validDropIndex=$validDropIndex, dropTarget.kind=${dropTarget.kind}, dropTarget.insertIndex=${dropTarget.insertIndex}',
+        );
+
         // 🎯 PageView 병합 모드인 경우 특정 인덱스에 삽입
         int? insertIndex;
         if (dragMode == DragType.imagePageViewMerge &&
             _targetPageViewId != null &&
             _targetPageViewInsertIndex != null) {
           insertIndex = null; // PageView 내부 삽입은 mergeImageIntoPageView에서 처리
-        } else if (dragMode == DragType.reorder) {
-          insertIndex = validDropIndex;
+          debugPrint(
+            '[DragService] 🔍 PageView 병합 모드: insertIndex=null (병합 처리)',
+          );
+        } else {
+          // 🎯 dropTarget이 insertBetweenNodes이면 insertIndex 설정 (dragMode와 무관하게)
+          // 드롭라인이 표시되었다는 것은 사용자가 해당 위치에 삽입하려는 의도
+          if (dropTarget.kind == DropTargetKind.insertBetweenNodes &&
+              dropTarget.insertIndex != null) {
+            insertIndex = dropTarget.insertIndex;
+            debugPrint(
+              '[DragService] 🔍 PageView 분리: dropTarget=insertBetweenNodes($insertIndex), insertIndex=$insertIndex',
+            );
+          } else if (dragMode == DragType.reorder && validDropIndex != null) {
+            // 🎯 reorder 모드이고 validDropIndex가 있으면 사용
+            insertIndex = validDropIndex;
+            debugPrint(
+              '[DragService] 🔍 PageView 분리: dragMode=reorder, insertIndex=$insertIndex',
+            );
+          } else {
+            insertIndex = null;
+            debugPrint(
+              '[DragService] 🔍 PageView 분리: insertIndex=null (dropTarget.kind=${dropTarget.kind}, dragMode=$dragMode)',
+            );
+          }
         }
 
         // 분리 확정 시점
+        debugPrint(
+          '[DragService] 🔍 splitImageFromPageView 호출: pageViewId=$pageViewId, imageIndex=$imageIndex, insertIndex=$insertIndex',
+        );
         final splitImageId = editorService.splitImageFromPageView(
           pageViewId,
           imageIndex,
@@ -647,6 +720,7 @@ class DragService extends ChangeNotifier {
         if (splitImageId != null) {
           draggingNodeId = splitImageId;
           draggingNodeType = editorService.getNodeType(splitImageId);
+          // 🎯 로우 이미지와 동일한 로직: reorder 모드이고 dropIndex가 있을 때만 처리 완료로 표시
           handledBySplitInsertion =
               (dragMode == DragType.reorder && dropIndex != null);
           // 🎯 분리 성공 시 즉시 캐시 무효화
@@ -1235,8 +1309,12 @@ class DragService extends ChangeNotifier {
         }
       }
 
+      // 🎯 페이지뷰 분리 중일 때는 병합 모드 비활성화 (드롭라인 표시 우선)
+      final isSplittingPageView = hasSplitPageViewInfo;
       dragMode =
-          (allowMergeCandidate && shouldEnablePageViewMerge)
+          (!isSplittingPageView &&
+                  allowMergeCandidate &&
+                  shouldEnablePageViewMerge)
               ? DragType.imagePageViewMerge
               : DragType.reorder;
     } else if ((targetNodeType == NodeType.image ||
@@ -1333,19 +1411,25 @@ class DragService extends ChangeNotifier {
     // 제목은 썸네일 편집 화면에서 입력하므로 제목 위로 드롭 불가 로직 제거됨
 
     // 가로배치 모드일 때는 dropIndex를 null로 설정 (가로라인 표시 안함)
-    if (dragMode == DragType.imageRowMerge) {
+    // 🎯 단, 로우 이미지 분리 중일 때는 UI 표시용으로 드롭라인을 표시
+    if (dragMode == DragType.imageRowMerge && !hasSplitImageInfo) {
       finalCandidate = null;
     }
 
     // PageView 병합 모드일 때는 dropIndex를 null로 설정
-    if (dragMode == DragType.imagePageViewMerge) {
+    // 🎯 단, 페이지뷰 분리 중일 때는 UI 표시용으로 드롭라인을 표시 (비즈니스 로직은 endDrag에서 처리)
+    if (dragMode == DragType.imagePageViewMerge && !hasSplitPageViewInfo) {
       finalCandidate = null;
     }
 
     // ✅ 분리 취소 감지(원래 행/페이지뷰 + "중앙 영역")에서만 라인을 숨긴다.
     // 기존 구현은 타겟이 원래 노드이면 전체 영역에서 드롭라인이 사라져
     // 위/아래 삽입이 "감지 범위가 너무 작은" 체감이 생길 수 있었다.
-    if (dragMode == DragType.reorder && targetRectForDropIndex != null) {
+    // 🎯 페이지뷰 분리 중일 때는 dragMode와 관계없이 분리 취소 로직 적용
+    if ((dragMode == DragType.reorder ||
+            (dragMode == DragType.imagePageViewMerge &&
+                hasSplitPageViewInfo)) &&
+        targetRectForDropIndex != null) {
       // Row split cancel
       if (hasSplitImageInfo && targetNodeId == _splitImageRowId) {
         final localY = localPosition.dy - targetRectForDropIndex.top;
@@ -1357,8 +1441,13 @@ class DragService extends ChangeNotifier {
             );
         final inCenter =
             localY > edgeY && localY < (targetRectForDropIndex.height - edgeY);
+        debugPrint(
+          '[DragService] 🔍 Row 분리 취소 체크: localY=$localY, edgeY=$edgeY, height=${targetRectForDropIndex.height}, inCenter=$inCenter, finalCandidate=$finalCandidate',
+        );
+        // 🎯 중앙 영역에서만 분리 취소 (위/아래 가장자리는 분리 허용)
         if (inCenter) {
           finalCandidate = null;
+          debugPrint('[DragService] ⚠️ Row 분리 취소: 중앙 영역 (finalCandidate=null)');
         }
       }
 
@@ -1377,7 +1466,10 @@ class DragService extends ChangeNotifier {
           finalCandidate = null;
         }
       }
-    } else if (dragMode == DragType.reorder && targetRectForDropIndex == null) {
+    } else if ((dragMode == DragType.reorder ||
+            (dragMode == DragType.imagePageViewMerge &&
+                hasSplitPageViewInfo)) &&
+        targetRectForDropIndex == null) {
       // rect를 못 얻으면 안전하게 취소 존으로 간주(기존 동작 유지)
       if (hasSplitImageInfo && targetNodeId == _splitImageRowId) {
         finalCandidate = null;

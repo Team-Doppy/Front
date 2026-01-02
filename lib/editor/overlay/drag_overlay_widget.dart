@@ -327,44 +327,28 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
       }
     }
 
-    Widget baseImage;
-    // 🚀 로컬 경로 우선 처리
+    // 🎯 최종 이미지 URL 결정 (원본 비율 유지를 위해 _SplitImagePreviewWithAspectRatio 사용)
+    String? finalImageUrl;
     if (localPath != null && localPath.isNotEmpty) {
-      baseImage = Image.file(File(localPath), fit: BoxFit.contain);
+      finalImageUrl = localPath;
     } else if (widget.previewImageUrl != null &&
         widget.previewImageUrl!.isNotEmpty) {
-      // previewImageUrl 사용 (네트워크 URL)
-      baseImage = _buildFastCachedNetworkImage(
-        context,
-        imageUrl: widget.previewImageUrl!,
-        fit: BoxFit.contain,
-        errorWidget: ImageErrorPlaceholder(),
-      );
-    } else if (EditorService.isNetworkUrl(imageUrl)) {
-      // 노드의 imageUrl이 네트워크 URL인 경우
-      baseImage = _buildFastCachedNetworkImage(
-        context,
-        imageUrl: imageUrl,
-        fit: BoxFit.contain,
-        errorWidget: ImageErrorPlaceholder(),
-      );
-    } else if (imageUrl.startsWith('file://')) {
-      baseImage = Image.file(
-        File(Uri.parse(imageUrl).toFilePath()),
-        fit: BoxFit.contain,
-      );
+      finalImageUrl = widget.previewImageUrl!;
     } else if (imageUrl.isNotEmpty) {
-      // 로컬 경로로 간주
-      baseImage = Image.file(File(imageUrl), fit: BoxFit.contain);
-    } else {
-      baseImage = ImageErrorPlaceholder();
+      finalImageUrl = imageUrl;
     }
 
+    // 🎯 원본 비율 유지: _SplitImagePreviewWithAspectRatio 사용
+    if (finalImageUrl != null && finalImageUrl.isNotEmpty) {
+      return _buildSplitImagePreview(finalImageUrl);
+    }
+
+    // 이미지 URL이 없으면 기본 placeholder
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 150, maxHeight: 220),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(4),
-        child: baseImage,
+        child: ImageErrorPlaceholder(),
       ),
     );
   }
@@ -530,38 +514,8 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
   }
 
   Widget _buildSplitImagePreview(String imageUrl) {
-    // 🚀 로컬-네트워크 혼용 구조: 로컬 경로인지 확인
-    final bool isNetwork = EditorService.isNetworkUrl(imageUrl);
-    final bool isFileUrl = imageUrl.startsWith('file://');
-    final bool isLocalPath = !isNetwork && !isFileUrl && imageUrl.isNotEmpty;
-
-    Widget imageWidget;
-    if (isNetwork) {
-      // 네트워크 이미지
-      imageWidget = _buildFastCachedNetworkImage(
-        context,
-        imageUrl: imageUrl,
-        width: 150,
-        height: 220,
-        fit: BoxFit.contain,
-        errorWidget: ImageErrorPlaceholder(),
-      );
-    } else if (isFileUrl || isLocalPath) {
-      // 로컬 파일 경로
-      final String path =
-          isFileUrl ? Uri.parse(imageUrl).toFilePath() : imageUrl;
-      imageWidget = Image.file(File(path), fit: BoxFit.contain);
-    } else {
-      imageWidget = ImageErrorPlaceholder();
-    }
-
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 150, maxHeight: 220),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(4),
-        child: imageWidget,
-      ),
-    );
+    // 🎯 원본 비율 유지를 위한 동적 크기 계산 위젯
+    return _SplitImagePreviewWithAspectRatio(imageUrl: imageUrl);
   }
 
   Widget _buildMentionPreview(MentionNode node, BuildContext context) {
@@ -671,6 +625,146 @@ class _DragOverlayWidgetState extends State<DragOverlayWidget>
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 🎯 이미지 원본 비율을 유지하면서 표시하는 위젯
+class _SplitImagePreviewWithAspectRatio extends StatefulWidget {
+  const _SplitImagePreviewWithAspectRatio({required this.imageUrl});
+
+  final String imageUrl;
+
+  @override
+  State<_SplitImagePreviewWithAspectRatio> createState() =>
+      _SplitImagePreviewWithAspectRatioState();
+}
+
+class _SplitImagePreviewWithAspectRatioState
+    extends State<_SplitImagePreviewWithAspectRatio> {
+  Size? _imageSize;
+  ImageProvider? _imageProvider;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadImageSize();
+  }
+
+  void _loadImageSize() {
+    final bool isNetwork = EditorService.isNetworkUrl(widget.imageUrl);
+    final bool isFileUrl = widget.imageUrl.startsWith('file://');
+    final bool isLocalPath =
+        !isNetwork && !isFileUrl && widget.imageUrl.isNotEmpty;
+
+    if (isNetwork) {
+      // 네트워크 이미지: CachedNetworkImageProvider 사용
+      _imageProvider = CachedNetworkImageProvider(
+        widget.imageUrl,
+        cacheKey: widget.imageUrl,
+        cacheManager: EditImageCacheManager.instance,
+      );
+    } else if (isFileUrl || isLocalPath) {
+      // 로컬 파일 경로
+      final String path =
+          isFileUrl ? Uri.parse(widget.imageUrl).toFilePath() : widget.imageUrl;
+      _imageProvider = FileImage(File(path));
+    }
+
+    if (_imageProvider != null) {
+      // 이미지 크기 확인
+      _imageProvider!
+          .resolve(const ImageConfiguration())
+          .addListener(
+            ImageStreamListener(
+              (ImageInfo info, bool _) {
+                if (mounted) {
+                  setState(() {
+                    _imageSize = Size(
+                      info.image.width.toDouble(),
+                      info.image.height.toDouble(),
+                    );
+                  });
+                }
+              },
+              onError: (exception, stackTrace) {
+                // 이미지 로드 실패 시 기본 크기 사용
+                if (mounted) {
+                  setState(() {
+                    _imageSize = const Size(150, 220); // 기본 비율
+                  });
+                }
+              },
+            ),
+          );
+    } else {
+      // 이미지 URL이 없으면 기본 크기 사용
+      _imageSize = const Size(150, 220);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 🎯 이미지 크기가 로드되면 원본 비율로 표시, 아니면 기본 크기
+    final Size displaySize = _imageSize ?? const Size(150, 220);
+    final double aspectRatio = displaySize.width / displaySize.height;
+
+    // 최대 크기 제약
+    const double maxWidth = 150.0;
+    const double maxHeight = 220.0;
+
+    // 원본 비율을 유지하면서 최대 크기 내에 맞추기
+    double width = maxWidth;
+    double height = maxHeight;
+
+    final double maxAspectRatio = maxWidth / maxHeight;
+    if (aspectRatio > maxAspectRatio) {
+      // 이미지가 더 넓음: 너비를 기준으로
+      width = maxWidth;
+      height = maxWidth / aspectRatio;
+    } else {
+      // 이미지가 더 높음: 높이를 기준으로
+      height = maxHeight;
+      width = maxHeight * aspectRatio;
+    }
+
+    final bool isNetwork = EditorService.isNetworkUrl(widget.imageUrl);
+    final bool isFileUrl = widget.imageUrl.startsWith('file://');
+    final bool isLocalPath =
+        !isNetwork && !isFileUrl && widget.imageUrl.isNotEmpty;
+
+    Widget imageWidget;
+    if (isNetwork) {
+      // 네트워크 이미지: 원본 비율 유지를 위해 크기 지정
+      imageWidget = _buildFastCachedNetworkImage(
+        context,
+        imageUrl: widget.imageUrl,
+        width: width,
+        height: height,
+        fit: BoxFit.contain,
+        errorWidget: ImageErrorPlaceholder(),
+      );
+    } else if (isFileUrl || isLocalPath) {
+      // 로컬 파일 경로: 원본 비율 유지
+      final String path =
+          isFileUrl ? Uri.parse(widget.imageUrl).toFilePath() : widget.imageUrl;
+      imageWidget = Image.file(
+        File(path),
+        width: width,
+        height: height,
+        fit: BoxFit.contain,
+      );
+    } else {
+      imageWidget = ImageErrorPlaceholder();
+    }
+
+    return SizedBox(
+      width: width,
+      height: height,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: imageWidget,
       ),
     );
   }

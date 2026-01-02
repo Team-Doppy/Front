@@ -806,6 +806,7 @@ class CropEditorBottomSheet extends StatefulWidget {
     required this.onToggleFlipHorizontal,
     required this.onToggleFlipVertical,
     required this.onResetAll,
+    this.enableRotation = true,
   });
 
   final String? selectedAspectRatio;
@@ -823,6 +824,9 @@ class CropEditorBottomSheet extends StatefulWidget {
   final VoidCallback onToggleFlipVertical;
 
   final VoidCallback onResetAll;
+
+  /// 영상 편집 등에서 회전 옵션을 숨기고 싶을 때 사용
+  final bool enableRotation;
 
   @override
   State<CropEditorBottomSheet> createState() => _CropEditorBottomSheetState();
@@ -1002,18 +1006,19 @@ class _CropEditorBottomSheetState extends State<CropEditorBottomSheet> {
 
         const SizedBox(height: 4),
 
-        // ✅ 하단: 회전 슬라이더는 항상 노출
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: RotationRulerSlider(
-            value: widget.rotation,
-            onChanged: widget.onRotationChanged,
-            onDragStart: () => setState(() => _isRotateDragging = true),
-            onDragEnd: () => setState(() => _isRotateDragging = false),
-            isDragging: _isRotateDragging,
-            textColor: fgColor,
+        // ✅ 하단: 회전 슬라이더 (옵션)
+        if (widget.enableRotation)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: RotationRulerSlider(
+              value: widget.rotation,
+              onChanged: widget.onRotationChanged,
+              onDragStart: () => setState(() => _isRotateDragging = true),
+              onDragEnd: () => setState(() => _isRotateDragging = false),
+              isDragging: _isRotateDragging,
+              textColor: fgColor,
+            ),
           ),
-        ),
       ],
     );
   }

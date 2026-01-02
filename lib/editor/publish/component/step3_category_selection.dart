@@ -17,6 +17,7 @@ class Step3CategorySelection extends StatefulWidget {
   final bool showCategoryLoading;
   final ValueChanged<bool> onShowCategoryLoadingChanged;
   final bool isUploading; // 🎯 발행 중 상태
+  final bool isActive; // 🎯 현재 step3가 활성화되어 있는지 여부
 
   const Step3CategorySelection({
     super.key,
@@ -29,6 +30,7 @@ class Step3CategorySelection extends StatefulWidget {
     required this.showCategoryLoading,
     required this.onShowCategoryLoadingChanged,
     this.isUploading = false, // 🎯 기본값 false
+    this.isActive = false, // 🎯 기본값 false
   });
 
   @override
@@ -38,6 +40,7 @@ class Step3CategorySelection extends StatefulWidget {
 class _Step3CategorySelectionState extends State<Step3CategorySelection> {
   bool _isCreatingCategory = false;
   final TextEditingController _newCategoryController = TextEditingController();
+  bool _hasShownEmptyBottomSheet = false; // 🎯 빈 상태 바텀시트 표시 여부
 
   @override
   void initState() {
@@ -50,6 +53,34 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
         _loadCategoriesOnce();
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(Step3CategorySelection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 🎯 step3가 활성화되어 있고, 카테고리가 빈 배열이 되었고, 아직 바텀시트를 띄우지 않았으면 자동으로 띄우기
+    if (widget.isActive &&
+        widget.cachedCategories != null &&
+        widget.cachedCategories!.isEmpty &&
+        !_hasShownEmptyBottomSheet &&
+        !widget.isLoadingCategories) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.isActive) {
+          _hasShownEmptyBottomSheet = true;
+          _showNetworkCheckBottomSheet();
+        }
+      });
+    }
+    // 🎯 카테고리가 다시 로드되면 플래그 리셋
+    if (oldWidget.cachedCategories?.isEmpty == true &&
+        widget.cachedCategories != null &&
+        widget.cachedCategories!.isNotEmpty) {
+      _hasShownEmptyBottomSheet = false;
+    }
+    // 🎯 step3가 비활성화되면 플래그 리셋
+    if (oldWidget.isActive && !widget.isActive) {
+      _hasShownEmptyBottomSheet = false;
+    }
   }
 
   @override
@@ -125,6 +156,30 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
         ],
       ),
     );
+  }
+
+  /// 🎯 네트워크 연결 확인 바텀시트 표시
+  void _showNetworkCheckBottomSheet() {
+    // 🎯 step3가 활성화되어 있지 않으면 바텀시트 표시하지 않음
+    if (!mounted || !widget.isActive) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      barrierColor: Colors.black.withOpacity(0.7),
+      builder:
+          (context) => _NetworkCheckBottomSheet(
+            onRetry: () {
+              Navigator.of(context).pop();
+              // 카테고리 다시 로드
+              _hasShownEmptyBottomSheet = false; // 재시도 시 플래그 리셋
+              _loadCategoriesOnce();
+            },
+          ),
+    ).then((_) {
+      // 🎯 바텀시트가 닫힐 때 플래그 리셋하지 않음 (한 번만 자동 표시)
+    });
   }
 
   Widget _buildCreateCategoryButton({required bool isDarkMode}) {
@@ -415,6 +470,11 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
         widget.onIsLoadingCategoriesChanged(false);
         widget.onShowCategoryLoadingChanged(false);
 
+        // 🎯 카테고리 로드 성공 시 플래그 리셋
+        if (categories.isNotEmpty) {
+          _hasShownEmptyBottomSheet = false;
+        }
+
         // 🎯 새로 만든 카테고리가 있으면 자동 선택
         if (newCategoryId != null) {
           final newCategory = categories.firstWhere(
@@ -445,10 +505,92 @@ class _Step3CategorySelectionState extends State<Step3CategorySelection> {
     } catch (e) {
       debugPrint('[Step3CategorySelection] 카테고리 로드 실패: $e');
       if (mounted) {
-        // 🎯 에러 발생 시 기존 캐시 유지 (빈 배열로 설정하지 않음)
+        // 🎯 에러 발생 시 빈 배열로 설정하여 빈 상태 UI 표시
+        widget.onCachedCategoriesChanged([]);
         widget.onIsLoadingCategoriesChanged(false);
         widget.onShowCategoryLoadingChanged(false);
       }
     }
+  }
+}
+
+/// 🎯 네트워크 연결 확인 바텀시트
+class _NetworkCheckBottomSheet extends StatelessWidget {
+  final VoidCallback onRetry;
+
+  const _NetworkCheckBottomSheet({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 핸들 바
+          Container(
+            width: 40,
+            height: 4,
+            margin: const EdgeInsets.only(bottom: 20),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.onSurface.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          // 아이콘
+          Icon(
+            Icons.wifi_off_rounded,
+            size: 54,
+            color: theme.colorScheme.onSurface.withOpacity(0.5),
+          ),
+          const SizedBox(height: 20),
+          // 제목
+          Text(
+            l10n.t('network_connection_required'),
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+              fontSize: 20,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          // 메시지
+          Text(
+            l10n.t('network_connection_message'),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withOpacity(0.7),
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 30),
+
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(
+              onPressed: () {
+                onRetry();
+                Navigator.of(context).pop();
+              },
+              child: Text(
+                l10n.t('retry'),
+                style: TextStyle(
+                  color: theme.colorScheme.onSurface.withOpacity(0.8),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          SizedBox(height: MediaQuery.of(context).viewInsets.bottom),
+        ],
+      ),
+    );
   }
 }

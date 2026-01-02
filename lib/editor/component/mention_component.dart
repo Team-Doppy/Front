@@ -38,11 +38,13 @@ class MentionComponentBuilder implements ComponentBuilder {
     this.editor,
     this.focusNode,
     this.onMentionTap,
+    this.isDarkMode = false,
   });
   final DragService? dragService;
   final Editor? editor;
   final FocusNode? focusNode;
   final void Function(List<String> usernames)? onMentionTap;
+  final bool isDarkMode;
 
   @override
   Widget? createComponent(
@@ -60,6 +62,7 @@ class MentionComponentBuilder implements ComponentBuilder {
         editor: editor,
         focusNode: focusNode,
         onMentionTap: onMentionTap,
+        isDarkMode: isDarkMode,
       );
     }
     return null;
@@ -129,6 +132,7 @@ class _MentionComponent extends StatefulWidget {
     this.editor,
     this.focusNode,
     this.onMentionTap,
+    this.isDarkMode = false,
   }) : _componentKey = componentKey,
        super(key: componentKey);
 
@@ -141,6 +145,7 @@ class _MentionComponent extends StatefulWidget {
   final Editor? editor;
   final FocusNode? focusNode;
   final void Function(List<String> usernames)? onMentionTap;
+  final bool isDarkMode;
 
   @override
   State<_MentionComponent> createState() => _MentionComponentState();
@@ -370,10 +375,6 @@ class _MentionComponentState extends State<_MentionComponent>
         isDownstreamSelected ||
         isSelectionHighlighted;
 
-    // 테마에 따른 텍스트 색상 결정
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final defaultTextColor = AppColors.getTextPrimary(isDark);
-
     final content = Container(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
       margin: EdgeInsets.only(top: marginTop, bottom: marginBottom),
@@ -382,21 +383,37 @@ class _MentionComponentState extends State<_MentionComponent>
         mainAxisSize: MainAxisSize.min,
         children:
             widget.usernames.map((username) {
-              return AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                style: TextStyle(
-                  color:
+              return Builder(
+                builder: (context) {
+                  final defaultTextColor =
+                      widget.isDarkMode
+                          ? AppColors.darkTextPrimary
+                          : AppColors.lightTextPrimary;
+                  final textColor =
                       shouldUsePrimaryColor
                           ? AppColors.primary
-                          : defaultTextColor,
-                  fontWeight: FontWeight.bold,
-                  fontSize: widget.fontSize,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Text('@$username'),
-                ),
+                          : defaultTextColor;
+                  return AnimatedDefaultTextStyle(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeInOut,
+                    style: TextStyle(
+                      color: textColor,
+                      fontWeight: FontWeight.bold,
+                      fontSize: widget.fontSize,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Text(
+                        '@$username',
+                        style: TextStyle(
+                          color: textColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: widget.fontSize,
+                        ),
+                      ),
+                    ),
+                  );
+                },
               );
             }).toList(),
       ),

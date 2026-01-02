@@ -7,6 +7,7 @@ import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/pages/components/comment_item.dart';
 import 'package:doppy/pages/components/comment_mention_overlay.dart';
+import 'package:doppy/pages/components/comment_image_full_viewer.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';

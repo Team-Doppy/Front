@@ -478,9 +478,6 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
   @override
   void dispose() {
     assert(() {
-      debugPrint(
-        '[ImgLife][PageView] dispose: nodeId=${widget.nodeId}, keyHash=${identityHashCode(widget.key)}, componentKeyHash=${identityHashCode(widget._componentKey)}',
-      );
       return true;
     }());
     _stopEdgeAutoPaging();
@@ -1143,8 +1140,8 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
                           child: IgnorePointer(
                             child: Center(
                               child: const SizedBox(
-                                width: 28,
-                                height: 28,
+                                width: 20,
+                                height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 4,
                                   color: Colors.white,
@@ -1273,10 +1270,16 @@ class _PageViewImageComponentState extends State<PageViewImageComponent>
   Widget _buildImageWidget(int index, String imageUrl) {
     // ✅ 읽기 모드에서도 decodeWidth를 줘야 PostReaderService.preloadTopMedia(precacheImage)와
     // 동일한 ResizeImage(width) 캐시 키로 hit가 난다.
-    final decodeWidth = EditorImageProvider.editingDecodeWidth(
-      context,
-      widget.screenWidth,
-    );
+    final decodeWidth =
+        widget.isEditing
+            ? EditorImageProvider.editingDecodeWidth(
+              context,
+              widget.screenWidth,
+            )
+            : EditorImageProvider.readingDecodeWidth(
+              context,
+              widget.screenWidth,
+            );
 
     final built = EditorImageProvider.build(
       url: imageUrl,

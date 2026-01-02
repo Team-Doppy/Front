@@ -38,6 +38,14 @@ class DeepLinkService {
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSubscription;
   StreamSubscription<Uri>? _uriLinkSubscription;
+  bool _hasInitialFcmMessage = false; // FCM 초기 메시지가 있는지 추적
+  String? _lastProcessedUrl; // ✅ 최근 처리한 URL 캐싱 (중복 방지)
+  DateTime? _lastProcessedAt; // ✅ 마지막 처리 시간
+
+  /// FCM 초기 메시지가 있음을 표시 (main()에서 호출)
+  void setHasInitialFcmMessage() {
+    _hasInitialFcmMessage = true;
+  }
 
   /// 딥링크 URL 파싱
   /// 지원 형식:
@@ -49,11 +57,21 @@ class DeepLinkService {
   /// - https://${AppConstants.webDomain}/{postId}/{slug}
   /// - https://${AppConstants.webDomain}/profile/{username}
   /// - https://doppy.app/{postId}/{slug} (리다이렉트되지만 파싱은 지원)
+  /// - /{postId} (경로만, 예: /334)
+  /// - /profile/{username} (경로만)
   static DeepLinkResult? parseDeepLink(String? url) {
     if (url == null || url.isEmpty) return null;
 
     try {
-      final uri = Uri.parse(url);
+      // ✅ 경로만 들어온 경우 (예: /334, /profile/username) 전체 URL로 보정
+      String normalizedUrl = url;
+      if (url.startsWith('/') &&
+          !url.startsWith('//') &&
+          !url.contains('://')) {
+        normalizedUrl = 'https://${AppConstants.webDomain}$url';
+      }
+
+      final uri = Uri.parse(normalizedUrl);
       String _cleanUsername(String raw) {
         final trimmed = raw.trim();
         return trimmed.startsWith('@') ? trimmed.substring(1) : trimmed;
@@ -182,6 +200,7 @@ class DeepLinkService {
       if (uri.scheme == 'https' &&
           (uri.host == AppConstants.webDomain || uri.host == 'doppy.app')) {
         final pathSegments = uri.pathSegments;
+        bool _isNumericId(String s) => RegExp(r'^\d+$').hasMatch(s);
 
         // www.doppy.app/profile/{username} 또는 https://doppy.app/profile/{username}
         if (pathSegments.isNotEmpty && pathSegments.first == 'profile') {
@@ -223,12 +242,24 @@ class DeepLinkService {
         }
 
         // www.doppy.app/{postId}/{slug}?commentId={commentId} 또는 https://doppy.app/{postId}/{slug}?commentId={commentId}
-        // 첫 번째 path segment가 'profile'이 아니면 포스트로 간주
+        // ✅ path-only(/334, /username) 케이스 처리:
+        // - 요구사항: /334 같은 숫자 경로는 포스트로 인식
+        // - 반면 /sojulover 같은 문자는 프로필로 인식 (기존 로직은 포스트로 오인해 400 발생 가능)
         if (pathSegments.isNotEmpty && pathSegments.first != 'profile') {
-          final postId = pathSegments.first;
+          final first = pathSegments.first;
           final commentId = uri.queryParameters['commentId'];
           final action = uri.queryParameters['action'];
 
+          // ✅ 숫자면 포스트 ID
+          if (!_isNumericId(first)) {
+            // ✅ 문자는 username으로 간주
+            return DeepLinkResult(
+              type: DeepLinkType.profile,
+              username: _cleanUsername(first),
+            );
+          }
+
+          final postId = first;
           if (commentId != null && commentId.isNotEmpty) {
             return DeepLinkResult(
               type: DeepLinkType.postWithComment,
@@ -254,19 +285,42 @@ class DeepLinkService {
       debugPrint('[DeepLinkService] URL 파싱 오류: $e');
     }
 
+    // ✅ unknown 타입 반환 시 URL 로그 (디버깅용)
+    debugPrint('[DeepLinkService] 알 수 없는 딥링크 형식: $url');
     return DeepLinkResult(type: DeepLinkType.unknown);
   }
 
   /// 딥링크 스트림 리스너 등록
-  void listenToDeepLinks(Function(DeepLinkResult) onDeepLink) {
+  /// [skipInitialLink]가 true이면 getInitialLink()를 호출하지 않음 (FCM 초기 메시지와 중복 방지)
+  void listenToDeepLinks(
+    Function(DeepLinkResult) onDeepLink, {
+    bool skipInitialLink = false,
+  }) {
     // 현재 앱이 실행 중일 때 딥링크 받기
     _linkSubscription?.cancel();
     _linkSubscription = _appLinks.uriLinkStream.listen(
       (Uri uri) {
-        debugPrint('[DeepLinkService] 딥링크 수신: $uri');
-        final result = parseDeepLink(uri.toString());
+        final uriString = uri.toString();
+        debugPrint('[DeepLinkService] 딥링크 수신: $uriString');
+
+        // ✅ URL 레벨 중복 방지 (DeepLinkCoordinator의 결과 레벨 중복 방지와 별개)
+        // 짧은 시간(1초) 내 동일 URL은 중복으로 간주
+        final now = DateTime.now();
+        if (_lastProcessedUrl == uriString &&
+            _lastProcessedAt != null &&
+            now.difference(_lastProcessedAt!).inMilliseconds < 1000) {
+          debugPrint('[DeepLinkService] 🔁 중복 URL 무시: $uriString');
+          return;
+        }
+        _lastProcessedUrl = uriString;
+        _lastProcessedAt = now;
+
+        final result = parseDeepLink(uriString);
         if (result != null && result.type != DeepLinkType.unknown) {
           onDeepLink(result);
+        } else if (result != null) {
+          // unknown 타입도 로그는 남김 (디버깅용)
+          debugPrint('[DeepLinkService] 알 수 없는 딥링크 타입: $uriString');
         }
       },
       onError: (err) {
@@ -275,18 +329,37 @@ class DeepLinkService {
     );
 
     // 앱이 종료된 상태에서 딥링크로 열린 경우
-    _appLinks.getInitialLink().then((Uri? uri) {
-      if (uri != null) {
-        debugPrint('[DeepLinkService] 초기 딥링크: $uri');
-        final result = parseDeepLink(uri.toString());
-        if (result != null && result.type != DeepLinkType.unknown) {
-          // 약간의 딜레이를 주어 앱 초기화 완료 후 처리
-          Future.delayed(const Duration(milliseconds: 500), () {
+    // FCM 초기 메시지가 있으면 getInitialLink()를 호출하지 않음 (중복 방지)
+    // ✅ 500ms 딜레이 제거: DeepLinkCoordinator가 큐잉 및 타이밍 제어를 담당
+    if (!skipInitialLink && !_hasInitialFcmMessage) {
+      _appLinks.getInitialLink().then((Uri? uri) {
+        if (uri != null) {
+          final uriString = uri.toString();
+          debugPrint('[DeepLinkService] 초기 딥링크: $uriString');
+
+          // ✅ URL 레벨 중복 방지
+          // 짧은 시간(1초) 내 동일 URL은 중복으로 간주
+          final now = DateTime.now();
+          if (_lastProcessedUrl == uriString &&
+              _lastProcessedAt != null &&
+              now.difference(_lastProcessedAt!).inMilliseconds < 1000) {
+            debugPrint('[DeepLinkService] 🔁 중복 초기 링크 무시: $uriString');
+            return;
+          }
+          _lastProcessedUrl = uriString;
+          _lastProcessedAt = now;
+
+          final result = parseDeepLink(uriString);
+          if (result != null && result.type != DeepLinkType.unknown) {
+            // DeepLinkCoordinator가 앱 준비 상태를 확인하고 큐잉하므로 딜레이 불필요
             onDeepLink(result);
-          });
+          } else if (result != null) {
+            // unknown 타입도 로그는 남김 (디버깅용)
+            debugPrint('[DeepLinkService] 알 수 없는 딥링크 타입: $uriString');
+          }
         }
-      }
-    });
+      });
+    }
 
     debugPrint('[DeepLinkService] 딥링크 리스너 등록 완료');
   }

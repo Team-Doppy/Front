@@ -1,13 +1,19 @@
 import 'dart:io';
 import 'package:doppy/data/services/blog_service.dart';
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/editor/publish/component/step1_thumbnail_edit.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
-import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
+import 'package:doppy/pages/components/access_level_sheet.dart';
+import 'package:doppy/pages/components/category_select_sheet.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/editor/utils/post_metadata_change_detector.dart';
+import 'package:doppy/pages/components/retry_cancel_bottom_sheet.dart';
 
 /// 🎯 썸네일 편집 오버레이 (Step1ThumbnailEdit 재사용)
 class ThumbnailEditOverlay extends StatefulWidget {
@@ -60,6 +66,17 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
   String _originalSummary = '';
   String _originalThumbnailUrl = '';
 
+  // 카테고리 및 공개범위 정보
+  int? _currentCategoryId;
+  String _currentAccessLevel = 'PUBLIC';
+  List<int>? _currentSharedGroupIds;
+  List<String>? _currentSharedGroupNames;
+
+  // 원본 카테고리 및 공개범위 (변경 감지용)
+  int? _originalCategoryId;
+  String _originalAccessLevel = 'PUBLIC';
+  List<int>? _originalSharedGroupIds;
+
   // 애니메이션 컨트롤러 (Step1ThumbnailEdit에서 필요)
   late final AnimationController _animationController = AnimationController(
     vsync: this,
@@ -90,6 +107,25 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
       if (widget.initialThumbnailUrl != null &&
           widget.initialTitle != null &&
           widget.initialSummary != null) {
+        // 🎯 공개범위 정보를 위해 메타데이터 조회 (카테고리는 로컬에서 가져옴)
+        final blogService = BlogService();
+        final metadata = await blogService.getPostMetadata(widget.postId);
+
+        // 🎯 로컬 피드에서 카테고리 정보 가져오기
+        final feedProvider = MyProfileFeedProvider();
+        int? localCategoryId;
+        for (final categoryId in feedProvider.postsByCategory.keys) {
+          final posts = feedProvider.postsByCategory[categoryId]!;
+          final foundPost = posts.firstWhere(
+            (p) => '${p['id']}' == widget.postId,
+            orElse: () => <String, dynamic>{},
+          );
+          if (foundPost.isNotEmpty) {
+            localCategoryId = int.tryParse(categoryId);
+            break;
+          }
+        }
+
         if (mounted) {
           final title = widget.initialTitle!;
           final summary = widget.initialSummary!;
@@ -116,8 +152,26 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
             _thumbnailUrl = thumbnailUrl;
             _originalThumbnailUrl = thumbnailUrl;
 
+            // 🎯 카테고리는 로컬에서 가져온 값 사용, 공개범위는 서버에서 가져옴
+            _currentCategoryId = localCategoryId;
+            _currentAccessLevel =
+                metadata['accessLevel'] as String? ?? 'PUBLIC';
+            _currentSharedGroupIds = metadata['sharedGroupIds'] as List<int>?;
+            _currentSharedGroupNames =
+                metadata['sharedGroupNames'] as List<String>?;
+
+            // 원본 카테고리 및 공개범위 저장 (변경 감지용)
+            _originalCategoryId = _currentCategoryId;
+            _originalAccessLevel = _currentAccessLevel;
+            _originalSharedGroupIds =
+                _currentSharedGroupIds != null
+                    ? List<int>.from(_currentSharedGroupIds!)
+                    : null;
+
             _isLoading = false;
           });
+
+          debugPrint('✅!!!!isVideo: $isVideo');
 
           // 영상이면 VideoPlayer 초기화 (캐시 사용)
           if (isVideo && thumbnailUrl.isNotEmpty) {
@@ -127,13 +181,21 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
               namespace: 'profile',
             );
 
-            // 이미 초기화된 경우 바로 재생, 아니면 리스너 등록 후 재생
-            if (_videoController!.value.isInitialized) {
-              _videoController!.setLooping(true);
-              _videoController!.play();
-              if (mounted) setState(() {});
-            } else {
-              _videoController!.addListener(_onServerVideoInitialized);
+            // 🎯 dispose 체크: 컨트롤러 유효성 확인
+            try {
+              // 이미 초기화된 경우 바로 재생, 아니면 리스너 등록 후 재생
+              if (_videoController!.value.isInitialized) {
+                _videoController!.setLooping(true);
+                _videoController!.play();
+                if (mounted) setState(() {});
+              } else {
+                _videoController!.addListener(_onServerVideoInitialized);
+              }
+            } catch (e) {
+              debugPrint(
+                '[ThumbnailEditOverlay] 서버 비디오 컨트롤러 설정 오류 (dispose됨): $e',
+              );
+              _videoController = null;
             }
           }
 
@@ -148,6 +210,21 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
       // 🎯 기존 데이터가 없으면 메타데이터 조회
       final blogService = BlogService();
       final metadata = await blogService.getPostMetadata(widget.postId);
+
+      // 🎯 로컬 피드에서 카테고리 정보 가져오기
+      final feedProvider = MyProfileFeedProvider();
+      int? localCategoryId;
+      for (final categoryId in feedProvider.postsByCategory.keys) {
+        final posts = feedProvider.postsByCategory[categoryId]!;
+        final foundPost = posts.firstWhere(
+          (p) => '${p['id']}' == widget.postId,
+          orElse: () => <String, dynamic>{},
+        );
+        if (foundPost.isNotEmpty) {
+          localCategoryId = int.tryParse(categoryId);
+          break;
+        }
+      }
 
       if (mounted) {
         final title = metadata['title'] ?? '';
@@ -175,6 +252,21 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
           _thumbnailUrl = thumbnailUrl;
           _originalThumbnailUrl = thumbnailUrl;
 
+          // 🎯 카테고리는 로컬에서 가져온 값 사용, 공개범위는 서버에서 가져옴
+          _currentCategoryId = localCategoryId;
+          _currentAccessLevel = metadata['accessLevel'] as String? ?? 'PUBLIC';
+          _currentSharedGroupIds = metadata['sharedGroupIds'] as List<int>?;
+          _currentSharedGroupNames =
+              metadata['sharedGroupNames'] as List<String>?;
+
+          // 원본 카테고리 및 공개범위 저장 (변경 감지용)
+          _originalCategoryId = _currentCategoryId;
+          _originalAccessLevel = _currentAccessLevel;
+          _originalSharedGroupIds =
+              _currentSharedGroupIds != null
+                  ? List<int>.from(_currentSharedGroupIds!)
+                  : null;
+
           _isLoading = false;
         });
 
@@ -186,13 +278,21 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
             namespace: 'profile',
           );
 
-          // 이미 초기화된 경우 바로 재생, 아니면 리스너 등록 후 재생
-          if (_videoController!.value.isInitialized) {
-            _videoController!.setLooping(true);
-            _videoController!.play();
-            if (mounted) setState(() {});
-          } else {
-            _videoController!.addListener(_onServerVideoInitialized);
+          // 🎯 dispose 체크: 컨트롤러 유효성 확인
+          try {
+            // 이미 초기화된 경우 바로 재생, 아니면 리스너 등록 후 재생
+            if (_videoController!.value.isInitialized) {
+              _videoController!.setLooping(true);
+              _videoController!.play();
+              if (mounted) setState(() {});
+            } else {
+              _videoController!.addListener(_onServerVideoInitialized);
+            }
+          } catch (e) {
+            debugPrint(
+              '[ThumbnailEditOverlay] 서버 비디오 컨트롤러 설정 오류 (dispose됨): $e',
+            );
+            _videoController = null;
           }
         }
 
@@ -219,9 +319,17 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
     _animationController.dispose();
 
     // 비디오 소리만 끄기 (컨트롤러는 dispose하지 않음)
-    try {
-      _videoController?.setVolume(0);
-    } catch (_) {}
+    // 🎯 dispose 체크: 컨트롤러 유효성 확인
+    if (_videoController != null) {
+      try {
+        // 🎯 dispose 체크: value 접근으로 컨트롤러 유효성 확인
+        final _ = _videoController!.value;
+        _videoController!.setVolume(0);
+      } catch (e) {
+        // dispose된 컨트롤러는 무시
+        debugPrint('[ThumbnailEditOverlay] dispose 시 볼륨 조절 오류 (dispose됨): $e');
+      }
+    }
 
     // 비디오 컨트롤러는 절대 dispose하지 않음
     // - 캐시된 서버 비디오: VideoCacheService가 관리
@@ -231,63 +339,34 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
   }
 
   void _onServerVideoInitialized() {
-    if (_videoController?.value.isInitialized ?? false) {
-      _videoController?.removeListener(_onServerVideoInitialized);
+    // 🎯 dispose 체크: 컨트롤러 유효성 확인
+    if (!mounted || _videoController == null) return;
+
+    try {
+      // 🎯 dispose 체크: value 접근 전에 컨트롤러 유효성 확인
+      final controller = _videoController!;
+      final isInitialized = controller.value.isInitialized;
+
+      if (isInitialized) {
+        try {
+          controller.removeListener(_onServerVideoInitialized);
+          controller.setLooping(true);
+          controller.play();
+          if (mounted) setState(() {});
+        } catch (e) {
+          debugPrint(
+            '[ThumbnailEditOverlay] 서버 비디오 초기화 후 재생 오류 (dispose됨): $e',
+          );
+        }
+      }
+    } catch (e) {
+      // dispose된 컨트롤러
+      debugPrint('[ThumbnailEditOverlay] 서버 비디오 초기화 리스너 오류 (dispose됨): $e');
+      // 리스너 제거 시도 (안전하게)
       try {
-        _videoController?.setLooping(true);
-        _videoController?.play();
+        _videoController?.removeListener(_onServerVideoInitialized);
       } catch (_) {}
-      if (mounted) setState(() {});
     }
-  }
-
-  Widget _buildLoadingSkeleton() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final cardRadius = 20.0;
-
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Spacer(flex: 1),
-        // 썸네일 영역 (4:5 비율)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 50.0),
-          child: AspectRatio(
-            aspectRatio: 4 / 5,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(cardRadius),
-              child: ShimmerBox(
-                width: screenWidth,
-                height: (screenWidth - 100) * 5 / 4,
-              ),
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 40),
-
-        // 텍스트 영역 (제목, 요약 쉬머)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40.0),
-          child: Column(
-            children: [
-              // 제목 쉬머 (1줄)
-              ShimmerBox(width: screenWidth * 0.6, height: 35),
-              const SizedBox(height: 20),
-              // 요약 쉬머 (3줄)
-              ShimmerBox(width: screenWidth * 0.8, height: 18),
-              const SizedBox(height: 8),
-              ShimmerBox(width: screenWidth * 0.75, height: 18),
-              const SizedBox(height: 8),
-              ShimmerBox(width: screenWidth * 0.7, height: 18),
-            ],
-          ),
-        ),
-
-        const Spacer(flex: 3),
-        const SizedBox(height: 10),
-      ],
-    );
   }
 
   Future<void> _saveChanges() async {
@@ -301,13 +380,28 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
     debugPrint('[ThumbnailEditOverlay] 현재 요약: "$summary"');
     debugPrint('[ThumbnailEditOverlay] 원본 썸네일: "$_originalThumbnailUrl"');
     debugPrint('[ThumbnailEditOverlay] 현재 썸네일: "$_thumbnailUrl"');
+    debugPrint('[ThumbnailEditOverlay] 원본 카테고리: $_originalCategoryId');
+    debugPrint('[ThumbnailEditOverlay] 현재 카테고리: $_currentCategoryId');
+    debugPrint('[ThumbnailEditOverlay] 원본 공개범위: $_originalAccessLevel');
+    debugPrint('[ThumbnailEditOverlay] 현재 공개범위: $_currentAccessLevel');
 
-    // 변경사항 확인
-    final titleChanged = title != _originalTitle;
-    final summaryChanged = summary != _originalSummary;
-    final thumbnailChanged = _thumbnailUrl != _originalThumbnailUrl;
+    // 🎯 변경사항 확인 (공통 유틸 사용)
+    final changeResult = detectPostMetadataChanges(
+      currentTitle: title,
+      originalTitle: _originalTitle,
+      currentSummary: summary,
+      originalSummary: _originalSummary,
+      currentThumbnailUrl: _thumbnailUrl,
+      originalThumbnailUrl: _originalThumbnailUrl,
+      currentCategoryId: _currentCategoryId,
+      originalCategoryId: _originalCategoryId,
+      currentAccessLevel: _currentAccessLevel,
+      originalAccessLevel: _originalAccessLevel,
+      currentSharedGroupIds: _currentSharedGroupIds,
+      originalSharedGroupIds: _originalSharedGroupIds,
+    );
 
-    if (!titleChanged && !summaryChanged && !thumbnailChanged) {
+    if (!changeResult.hasChanges) {
       debugPrint('[ThumbnailEditOverlay] 변경사항 없음 - 서버 요청 스킵');
 
       // 변경사항이 없어도 제목/요약을 부모에게 알림 (동기화 유지)
@@ -320,9 +414,17 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
 
     debugPrint('[ThumbnailEditOverlay] ===== 변경사항 저장 시작 =====');
     debugPrint('[ThumbnailEditOverlay] postId: ${widget.postId}');
-    debugPrint('[ThumbnailEditOverlay] 제목 변경: $titleChanged');
-    debugPrint('[ThumbnailEditOverlay] 요약 변경: $summaryChanged');
-    debugPrint('[ThumbnailEditOverlay] 썸네일 변경: $thumbnailChanged');
+    debugPrint('[ThumbnailEditOverlay] 제목 변경: ${changeResult.titleChanged}');
+    debugPrint('[ThumbnailEditOverlay] 요약 변경: ${changeResult.summaryChanged}');
+    debugPrint(
+      '[ThumbnailEditOverlay] 썸네일 변경: ${changeResult.thumbnailChanged}',
+    );
+    debugPrint(
+      '[ThumbnailEditOverlay] 카테고리 변경: ${changeResult.categoryChanged}',
+    );
+    debugPrint(
+      '[ThumbnailEditOverlay] 공개범위 변경: ${changeResult.hasAccessLevelChanges}',
+    );
 
     // 🎯 저장 시작 시 로딩 상태 활성화
     if (mounted) {
@@ -334,45 +436,107 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
     try {
       // 변경된 항목만 전송
       final String? thumbnailParam =
-          thumbnailChanged && _thumbnailUrl.isNotEmpty ? _thumbnailUrl : null;
+          changeResult.thumbnailChanged && _thumbnailUrl.isNotEmpty
+              ? _thumbnailUrl
+              : null;
       final String? titleParam =
-          titleChanged ? (title.isNotEmpty ? title : null) : null;
+          changeResult.titleChanged ? (title.isNotEmpty ? title : null) : null;
       final String? summaryParam =
-          summaryChanged ? (summary.isNotEmpty ? summary : null) : null;
+          changeResult.summaryChanged
+              ? (summary.isNotEmpty ? summary : null)
+              : null;
 
       debugPrint('[ThumbnailEditOverlay] 전송 파라미터:');
       debugPrint('  - thumbnailImageUrl: $thumbnailParam');
       debugPrint('  - title: $titleParam');
       debugPrint('  - summary: $summaryParam');
 
-      await BlogService().updatePostThumbnail(
-        postId: int.parse(widget.postId),
-        thumbnailImageUrl: thumbnailParam,
-        title: titleParam,
-        summary: summaryParam,
-      );
+      final blogService = BlogService();
+
+      // 썸네일/제목/요약 변경이 있으면 업데이트
+      if (changeResult.hasMetadataChanges) {
+        await blogService.updatePostThumbnail(
+          postId: int.parse(widget.postId),
+          thumbnailImageUrl: thumbnailParam,
+          title: titleParam,
+          summary: summaryParam,
+        );
+      }
+
+      // 카테고리 변경이 있으면 업데이트
+      if (changeResult.categoryChanged && _currentCategoryId != null) {
+        await blogService.movePostToCategory(
+          postId: int.parse(widget.postId),
+          targetCategoryId: _currentCategoryId!,
+        );
+
+        // 🎯 피드 프로바이더에서 로컬 피드 구조 재배치
+        try {
+          final feedProvider = MyProfileFeedProvider();
+          feedProvider.movePostLocally(widget.postId, _currentCategoryId!);
+          debugPrint(
+            '[ThumbnailEditOverlay] 피드 프로바이더 로컬 재배치 완료: postId=${widget.postId}, categoryId=$_currentCategoryId',
+          );
+        } catch (e) {
+          debugPrint('[ThumbnailEditOverlay] 피드 프로바이더 로컬 재배치 실패: $e');
+        }
+      }
+
+      // 공개범위 변경이 있으면 업데이트
+      if (changeResult.hasAccessLevelChanges) {
+        await blogService.updatePostAccessLevel(
+          postId: int.parse(widget.postId),
+          accessLevel: _currentAccessLevel,
+          sharedGroupIds: _currentSharedGroupIds,
+        );
+
+        // 🎯 피드 프로바이더에서 메타데이터 업데이트 (공개범위 변경)
+        try {
+          final feedProvider = MyProfileFeedProvider();
+          feedProvider.updatePostMetadata(
+            widget.postId,
+            accessLevel: _currentAccessLevel,
+            sharedGroupIds: _currentSharedGroupIds,
+          );
+          debugPrint(
+            '[ThumbnailEditOverlay] 피드 프로바이더 메타데이터 업데이트 완료: postId=${widget.postId}, accessLevel=$_currentAccessLevel',
+          );
+        } catch (e) {
+          debugPrint('[ThumbnailEditOverlay] 피드 프로바이더 메타데이터 업데이트 실패: $e');
+        }
+      }
 
       debugPrint('[ThumbnailEditOverlay] ✅ 서버 업데이트 성공');
       // 서버 반영 성공 후에만 원본 스냅샷 갱신
-      if (thumbnailChanged) {
+      if (changeResult.thumbnailChanged) {
         _originalThumbnailUrl = _thumbnailUrl;
       }
-      if (titleChanged) {
+      if (changeResult.titleChanged) {
         _originalTitle = title;
       }
-      if (summaryChanged) {
+      if (changeResult.summaryChanged) {
         _originalSummary = summary;
+      }
+      if (changeResult.categoryChanged) {
+        _originalCategoryId = _currentCategoryId;
+      }
+      if (changeResult.hasAccessLevelChanges) {
+        _originalAccessLevel = _currentAccessLevel;
+        _originalSharedGroupIds =
+            _currentSharedGroupIds != null
+                ? List<int>.from(_currentSharedGroupIds!)
+                : null;
       }
 
       if (mounted) {
         // 제목/요약이 변경되었을 때만 부모에게 알림 (피드 새로고침 트리거)
-        if (titleChanged || summaryChanged) {
+        if (changeResult.titleChanged || changeResult.summaryChanged) {
           widget.onMetadataChanged?.call(title, summary);
           debugPrint('[ThumbnailEditOverlay] 메타데이터 변경 콜백 호출');
         }
 
         // 썸네일이 변경되었을 때만 onThumbnailChanged 호출 (피드 새로고침 트리거)
-        if (thumbnailChanged) {
+        if (changeResult.thumbnailChanged) {
           widget.onThumbnailChanged(_thumbnailUrl);
           debugPrint('[ThumbnailEditOverlay] 썸네일 변경 콜백 호출');
         }
@@ -386,7 +550,19 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
         setState(() {
           _isSaving = false; // 🎯 저장 실패 시 로딩 상태 해제
         });
-        ErrorHandler.handleError(context, e);
+
+        // 🎯 실패 UX: 스낵바 대신 재시도/취소 바텀시트
+        final action = await RetryCancelBottomSheet.show(
+          context,
+          title: context.tr('edit_failed_title'),
+          message: context.tr('retry_error_message'),
+          details: e.toString(),
+        );
+        if (!mounted) return;
+        if (action == RetryCancelAction.retry) {
+          // 재시도
+          await _saveChanges();
+        }
       }
     } finally {
       // 🎯 저장 완료/실패 모두 로딩 상태 해제 (안전장치)
@@ -404,127 +580,270 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
     setState(() => _editMode = false);
   }
 
+  /// 카테고리 변경 시트 표시
+  void _showCategorySheet(BuildContext context) {
+    CategorySelectSheet.show(
+      context,
+      postId: widget.postId,
+      currentCategoryId: _currentCategoryId,
+      onChanged: (categoryId) {
+        if (mounted) {
+          setState(() {
+            _currentCategoryId = categoryId;
+          });
+        }
+      },
+    );
+  }
+
+  /// 공개범위 변경 시트 표시
+  void _showAccessLevelSheet(BuildContext context) {
+    AccessLevelSheet.show(
+      context,
+      postId: widget.postId,
+      currentAccessLevel: _currentAccessLevel,
+      currentSharedGroupIds: _currentSharedGroupIds,
+      currentSharedGroupNames: _currentSharedGroupNames,
+      isBatchMode: false,
+      onChanged: (String accessLevel, List<int>? sharedGroupIds) async {
+        if (mounted) {
+          setState(() {
+            _currentAccessLevel = accessLevel;
+            _currentSharedGroupIds = sharedGroupIds;
+          });
+        }
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cardRadius = 20.0;
 
-    return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        backgroundColor: Theme.of(context).colorScheme.background,
-        elevation: 0,
-        leading:
-            _editMode
-                ? null // 편집모드에서는 X 버튼 숨김
-                : IconButton(
-                  icon: Icon(
-                    Icons.close,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.5),
-                  ),
-                  onPressed: () async {
-                    // 업로드 중인지 확인
-                    if (_isUploadingThumb) {
-                      final shouldExit = await DialogUtils.showConfirmDialog(
-                        context,
-                        title: context.tr('uploading_title'),
-                        message: context.tr('uploading_message'),
-                        confirmText: context.tr('cancel_and_exit'),
-                        cancelText: context.tr('continue_upload'),
-                      );
-                      if (shouldExit == true && mounted) {
-                        // 업로드 중이므로 컨트롤러는 정리하지 않고 그냥 나가기
-                        Navigator.of(context).pop();
-                      }
-                      return;
-                    }
-
-                    // 썸네일 변경사항이 있는지 확인
-                    final thumbnailChanged =
-                        _thumbnailUrl != _originalThumbnailUrl;
-
-                    if (thumbnailChanged) {
-                      final shouldExit = await DialogUtils.showConfirmDialog(
-                        context,
-                        title: context.tr('has_changes_title'),
-                        message: context.tr('has_changes_message'),
-                        confirmText: context.tr('exit'),
-                        cancelText: context.tr('cancel'),
-                      );
-                      if (shouldExit != true) return;
-                    }
-
-                    // 변경사항 여부와 관계없이 그냥 나가기
-                    if (mounted) {
-                      Navigator.of(context).pop();
-                    }
-                  },
-                ),
-        actions: [
-          // 편집모드: "완료" (편집모드만 종료), 비편집모드: "수정 완료" (서버 저장 후 화면 닫기)
-          TextButton(
-            onPressed:
-                (_isUploadingThumb || _isSaving)
-                    ? null // 업로드 중이거나 저장 중이면 비활성화
-                    : (_editMode ? _exitEditMode : _saveChanges),
-            child:
-                (_isSaving && !_editMode)
-                    ? SizedBox(
-                      width: 26,
-                      height: 26,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 4,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          Theme.of(context).colorScheme.onSurface,
-                        ),
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: Theme.of(context).colorScheme.background,
+          appBar: AppBar(
+            automaticallyImplyLeading: false,
+            backgroundColor: Theme.of(context).colorScheme.background,
+            elevation: 0,
+            leading:
+                _editMode
+                    ? null // 편집모드에서는 X 버튼 숨김
+                    : IconButton(
+                      icon: Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        size: 24,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.75),
                       ),
-                    )
-                    : Text(
-                      _editMode
-                          ? context.tr('done')
-                          : context.tr('modify_complete'),
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color:
-                            (!_editMode && (_isUploadingThumb || _isSaving))
-                                ? Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.3)
-                                : Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.9),
-                      ),
+                      onPressed: () async {
+                        // 업로드 중인지 확인
+                        if (_isUploadingThumb) {
+                          final shouldExit =
+                              await DialogUtils.showConfirmDialog(
+                                context,
+                                title: context.tr('uploading_title'),
+                                message: context.tr('uploading_message'),
+                                confirmText: context.tr('cancel_and_exit'),
+                                cancelText: context.tr('continue_upload'),
+                              );
+                          if (shouldExit == true && mounted) {
+                            // 🎯 업로드 취소
+                            try {
+                              final upload = context.read<UploadService>();
+                              final thumbRefId = 'thumb_${widget.sessionKey}';
+                              upload.cancelByRef(thumbRefId);
+                              debugPrint(
+                                '[ThumbnailEditOverlay] 업로드 취소: refId=$thumbRefId',
+                              );
+                            } catch (e) {
+                              debugPrint(
+                                '[ThumbnailEditOverlay] 업로드 취소 중 오류: $e',
+                              );
+                            }
+                            Navigator.of(context).pop();
+                          }
+                          return;
+                        }
+
+                        // 🎯 변경사항 확인 (공통 유틸 사용)
+                        final title = _titleController.text.trim();
+                        final summary = _excerptController.text.trim();
+                        final changeResult = detectPostMetadataChanges(
+                          currentTitle: title,
+                          originalTitle: _originalTitle,
+                          currentSummary: summary,
+                          originalSummary: _originalSummary,
+                          currentThumbnailUrl: _thumbnailUrl,
+                          originalThumbnailUrl: _originalThumbnailUrl,
+                          currentCategoryId: _currentCategoryId,
+                          originalCategoryId: _originalCategoryId,
+                          currentAccessLevel: _currentAccessLevel,
+                          originalAccessLevel: _originalAccessLevel,
+                          currentSharedGroupIds: _currentSharedGroupIds,
+                          originalSharedGroupIds: _originalSharedGroupIds,
+                        );
+
+                        if (changeResult.hasChanges) {
+                          final shouldExit =
+                              await DialogUtils.showConfirmDialog(
+                                context,
+                                title: context.tr('has_changes_title'),
+                                message: context.tr('has_changes_message'),
+                                confirmText: context.tr('exit'),
+                                cancelText: context.tr('cancel'),
+                              );
+                          if (shouldExit != true) return;
+                        }
+
+                        // 변경사항이 없거나 확인 다이얼로그에서 나가기 선택한 경우
+                        if (mounted) {
+                          Navigator.of(context).pop();
+                        }
+                      },
                     ),
-          ),
-          const SizedBox(width: 10),
-        ],
-      ),
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 420),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInCubic,
-        transitionBuilder:
-            (child, animation) => FadeTransition(
-              opacity: CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeInOutCubic,
+            title:
+                (!_editMode &&
+                        !_titleFocusNode.hasFocus &&
+                        !_excerptFocusNode.hasFocus)
+                    ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // 카테고리 변경 버튼
+                        GestureDetector(
+                          onTap: () => _showCategorySheet(context),
+                          child: Container(
+                            width: 35,
+                            height: 35,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                            child: Icon(
+                              Icons.category_rounded,
+                              color: Theme.of(context).colorScheme.surface,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // 공개범위 변경 버튼
+                        GestureDetector(
+                          onTap: () => _showAccessLevelSheet(context),
+                          child: Container(
+                            width: 35,
+                            height: 35,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                            child: Icon(
+                              Icons.lock_outline_rounded,
+                              color: Theme.of(context).colorScheme.surface,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                    : null,
+            centerTitle: false,
+            actions: [
+              // 편집모드: "완료" (편집모드만 종료), 비편집모드: "수정 완료" (서버 저장 후 화면 닫기)
+              Builder(
+                builder: (context) {
+                  // 제목, 요약, 썸네일 중 하나라도 비어있으면 비활성화
+                  final title = _titleController.text.trim();
+                  final summary = _excerptController.text.trim();
+                  final hasTitle = title.isNotEmpty;
+                  final hasSummary = summary.isNotEmpty;
+                  final hasThumbnail = _thumbnailUrl.isNotEmpty;
+                  final isValid = hasTitle && hasSummary && hasThumbnail;
+
+                  // 🎯 변경사항 확인 (공통 유틸 사용)
+                  final changeResult = detectPostMetadataChanges(
+                    currentTitle: title,
+                    originalTitle: _originalTitle,
+                    currentSummary: summary,
+                    originalSummary: _originalSummary,
+                    currentThumbnailUrl: _thumbnailUrl,
+                    originalThumbnailUrl: _originalThumbnailUrl,
+                    currentCategoryId: _currentCategoryId,
+                    originalCategoryId: _originalCategoryId,
+                    currentAccessLevel: _currentAccessLevel,
+                    originalAccessLevel: _originalAccessLevel,
+                    currentSharedGroupIds: _currentSharedGroupIds,
+                    originalSharedGroupIds: _originalSharedGroupIds,
+                  );
+
+                  final isDisabled =
+                      _isUploadingThumb ||
+                      _isSaving ||
+                      (!_editMode && (!isValid || !changeResult.hasChanges));
+
+                  return TextButton(
+                    onPressed:
+                        isDisabled
+                            ? null
+                            : (_editMode ? _exitEditMode : _saveChanges),
+                    child:
+                        (_isSaving && !_editMode)
+                            ? SizedBox(
+                              width: 26,
+                              height: 26,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 4,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
+                            )
+                            : Text(
+                              _editMode
+                                  ? context.tr('done')
+                                  : context.tr('modify_complete'),
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color:
+                                    isDisabled
+                                        ? Theme.of(
+                                          context,
+                                        ).colorScheme.onSurface.withOpacity(0.3)
+                                        : Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.9),
+                              ),
+                            ),
+                  );
+                },
               ),
-              child: child,
-            ),
-        child:
-            _isLoading
-                ? KeyedSubtree(
-                  key: const ValueKey('skeleton'),
-                  child: _buildLoadingSkeleton(),
-                )
-                : KeyedSubtree(
+              const SizedBox(width: 10),
+            ],
+          ),
+          body: Stack(
+            children: [
+              // 메인 콘텐츠
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 420),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder:
+                    (child, animation) => FadeTransition(
+                      opacity: CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeInOutCubic,
+                      ),
+                      child: child,
+                    ),
+                child: KeyedSubtree(
                   key: const ValueKey('content'),
                   child: Stack(
                     children: [
-                      // 🎯 Step1ThumbnailEdit 재사용
                       Step1ThumbnailEdit(
                         sessionKey: widget.sessionKey,
                         cardRadius: cardRadius,
@@ -540,6 +859,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
                         videoController: _videoController,
                         controller: _animationController,
                         isThumbnailEditMode: true, // 🎯 썸네일 편집 모드
+                        isLoading: _isLoading, // 🎯 로딩 중일 때 placeholder 숨김
                         onThumbnailUrlChanged: (url) {
                           setState(() {
                             _thumbnailUrl = url;
@@ -557,7 +877,19 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
                         },
                         onVideoControllerChanged: (controller) {
                           setState(() {
-                            _videoController?.dispose();
+                            // 🎯 VideoCacheService에서 가져온 컨트롤러는 dispose하지 않음
+                            // 로컬 비디오 컨트롤러만 dispose
+                            if (_videoController != null &&
+                                _cachedVideoUrl == null) {
+                              // 로컬 비디오 컨트롤러인 경우에만 dispose
+                              try {
+                                _videoController?.dispose();
+                              } catch (e) {
+                                debugPrint(
+                                  '[ThumbnailEditOverlay] 컨트롤러 dispose 오류 (무시): $e',
+                                );
+                              }
+                            }
                             _videoController = controller;
                           });
                         },
@@ -573,35 +905,14 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
                         },
                         onEditFocusChange: () {},
                       ),
-
-                      // 수정 완료 중 전체 화면 투명 오버레이 (post_export_screen과 동일한 방식)
-                      if (_isSaving)
-                        Positioned.fill(
-                          child: AbsorbPointer(
-                            absorbing: true,
-                            child: Container(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.3),
-                              child: Center(
-                                child: SizedBox(
-                                  width: 26,
-                                  height: 26,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 4,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Theme.of(context).colorScheme.onSurface,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
                     ],
                   ),
                 ),
-      ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

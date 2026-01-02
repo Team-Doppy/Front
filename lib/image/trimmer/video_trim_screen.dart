@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:doppy/image/video_trim_spec.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -416,7 +417,7 @@ class VideoViewer extends StatelessWidget {
 
         return Stack(
           children: [
-            // 영상을 cover로 표시
+            // 영상을 원본 비율 유지하며 가운데 표시
             Positioned.fill(
               child: GestureDetector(
                 onTap: () {
@@ -424,11 +425,10 @@ class VideoViewer extends StatelessWidget {
                   trimmer.videoPlaybackControl();
                 },
                 behavior: HitTestBehavior.opaque,
-                child: FittedBox(
-                  fit: BoxFit.cover,
-                  child: SizedBox(
-                    width: trimmer.videoPlayerController!.value.size.width,
-                    height: trimmer.videoPlayerController!.value.size.height,
+                child: Center(
+                  child: AspectRatio(
+                    aspectRatio:
+                        trimmer.videoPlayerController!.value.aspectRatio,
                     child: VideoPlayer(trimmer.videoPlayerController!),
                   ),
                 ),
@@ -455,6 +455,150 @@ class VideoViewer extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+/// 크롭 핸들 UI 커스텀 페인터 (핸들 + 가로선)
+class _CropHandlePainter extends CustomPainter {
+  final Color color;
+  final double startX;
+  final double endX;
+  final double handleWidth;
+  final double timelineHeight;
+  final double handleExtension; // 위아래 확장 크기 (2px)
+
+  _CropHandlePainter({
+    required this.color,
+    required this.startX,
+    required this.endX,
+    required this.handleWidth,
+    required this.timelineHeight,
+    this.handleExtension = 2.0,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint =
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.fill;
+
+    // 🎯 실제 타임라인 높이 사용 (size.height)
+    final actualTimelineHeight = size.height;
+
+    // 🎯 위쪽 가로선
+    canvas.drawRect(
+      Rect.fromLTWH(startX, -handleExtension, endX - startX, handleExtension),
+      paint,
+    );
+
+    // 🎯 아래쪽 가로선
+    canvas.drawRect(
+      Rect.fromLTWH(
+        startX,
+        actualTimelineHeight,
+        endX - startX,
+        handleExtension,
+      ),
+      paint,
+    );
+
+    // 🎯 왼쪽 핸들
+    final leftHandleX = startX - handleWidth / 2;
+    final leftHandleRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        leftHandleX,
+        -handleExtension,
+        handleWidth,
+        actualTimelineHeight + handleExtension * 2,
+      ),
+      const Radius.circular(2),
+    );
+    canvas.drawRRect(leftHandleRect, paint);
+
+    // 🎯 오른쪽 핸들
+    final rightHandleX = endX - handleWidth / 2;
+    final rightHandleRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        rightHandleX,
+        -handleExtension,
+        handleWidth,
+        actualTimelineHeight + handleExtension * 2,
+      ),
+      const Radius.circular(2),
+    );
+    canvas.drawRRect(rightHandleRect, paint);
+
+    // 🎯 핸들 내부 세로선 패턴
+    final linePaint =
+        Paint()
+          ..color = color.withOpacity(0.3)
+          ..strokeWidth = 1
+          ..style = PaintingStyle.stroke;
+
+    final leftCenterX = leftHandleX + handleWidth / 2;
+    final rightCenterX = rightHandleX + handleWidth / 2;
+    canvas.drawLine(
+      Offset(leftCenterX, -handleExtension),
+      Offset(leftCenterX, actualTimelineHeight + handleExtension),
+      linePaint,
+    );
+    canvas.drawLine(
+      Offset(rightCenterX, -handleExtension),
+      Offset(rightCenterX, actualTimelineHeight + handleExtension),
+      linePaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CropHandlePainter oldDelegate) {
+    return oldDelegate.color != color ||
+        oldDelegate.startX != startX ||
+        oldDelegate.endX != endX ||
+        oldDelegate.handleWidth != handleWidth ||
+        oldDelegate.timelineHeight != timelineHeight;
+  }
+}
+
+/// 핸들 커스텀 페인터 (개별 핸들용 - 레거시)
+class _HandlePainter extends CustomPainter {
+  final Color color;
+  final bool isDragging;
+
+  _HandlePainter({required this.color, this.isDragging = false});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint =
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.fill;
+
+    // 🎯 핸들 박스 그리기 (중앙 정렬)
+    final handleRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      const Radius.circular(2),
+    );
+    canvas.drawRRect(handleRect, paint);
+
+    // 🎯 내부 세로선 패턴 (선택적)
+    final linePaint =
+        Paint()
+          ..color = color.withOpacity(0.3)
+          ..strokeWidth = 1
+          ..style = PaintingStyle.stroke;
+
+    final centerX = size.width / 2;
+    canvas.drawLine(
+      Offset(centerX, 0),
+      Offset(centerX, size.height),
+      linePaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_HandlePainter oldDelegate) {
+    return oldDelegate.color != color || oldDelegate.isDragging != isDragging;
   }
 }
 
@@ -502,12 +646,7 @@ class _TrimEditorState extends State<TrimEditor> {
   double? _playbackBarDragStartTimelineX; // timeline absolute px
   double? _playbackBarDragStartPosition; // seconds
 
-  // 🎯 오버레이 드래그 시작 기준값 (타임라인 스크롤용)
-  double? _overlayDragStartTimelineX; // timeline absolute px
-  double? _overlayDragStartScrollOffset; // 스크롤 오프셋 (핸들 위치 고정용)
-  double? _overlayDragStartStartValue; // 시작 핸들 값 (핸들 위치 고정용)
-  double? _overlayDragStartEndValue; // 끝 핸들 값 (핸들 위치 고정용)
-  double? _overlayDragStartCurrentPosition; // 재생바 위치 (재생바 위치 고정용)
+  // 🎯 오버레이 드래그는 핸들 드래그와 동일한 변수 사용 (_dragStartValue, _dragStartOppositeValue, _dragStartTimelineX)
 
   @override
   void initState() {
@@ -605,235 +744,231 @@ class _TrimEditorState extends State<TrimEditor> {
         final rightOverlayWidth = totalWidth - rightOverlayStart;
 
         // 🎯 핸들/드래그 영역 기준 통일: 핸들 중심 기준으로 계산
-        const handleWidth = 14.0;
+        const handleWidth = 8.0; // 핸들 두께 줄임
 
-        return ClipRect(
-          child: Stack(
-            key: _timelineKey,
-            children: [
-              // 썸네일 스트립 배경 (화면 전체 채우기)
-              Positioned.fill(
-                child: Builder(
-                  builder: (context) {
-                    final colorScheme = Theme.of(context).colorScheme;
-                    return Container(color: colorScheme.surface);
-                  },
-                ),
-              ),
-
-              // 썸네일 스트립 (ScrollController 사용)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: SingleChildScrollView(
-                  controller: _scrollController,
-                  scrollDirection: Axis.horizontal,
-                  // 🎯 핸들/재생바/오버레이 드래그 중 스크롤 잠금: 좌표계 흔들림(점프/걸림) 방지
-                  physics:
-                      (_isHandleDragging ||
-                              _isPlaybackBarDragging ||
-                              _isOverlayDragging)
-                          ? const NeverScrollableScrollPhysics()
-                          : const ClampingScrollPhysics(),
-                  child: SizedBox(
-                    width: thumbnailStripWidth,
-                    child: Row(
-                      children:
-                          widget.trimmer.thumbnails.isEmpty
-                              ? [
-                                Expanded(
-                                  child: Builder(
-                                    builder: (context) {
-                                      final colorScheme =
-                                          Theme.of(context).colorScheme;
-                                      return Container(
-                                        color:
-                                            colorScheme.surfaceContainerHighest,
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ]
-                              : widget.trimmer.thumbnails
-                                  .map(
-                                    (thumb) => SizedBox(
-                                      // 🎯 각 프레임 최소 너비 설정 (더 길게)
-                                      width:
-                                          thumbnailStripWidth /
-                                          widget.trimmer.thumbnails.length,
-                                      child:
-                                          thumb != null
-                                              ? Image.memory(
-                                                thumb,
-                                                fit: BoxFit.cover,
-                                                height: double.infinity,
-                                                errorBuilder:
-                                                    (
-                                                      context,
-                                                      error,
-                                                      stackTrace,
-                                                    ) => Container(),
-                                              )
-                                              : Builder(
-                                                builder: (context) {
-                                                  final colorScheme =
-                                                      Theme.of(
-                                                        context,
-                                                      ).colorScheme;
-                                                  return Container(
-                                                    color:
-                                                        colorScheme
-                                                            .surfaceContainerHighest,
-                                                  );
-                                                },
-                                              ),
-                                    ),
-                                  )
-                                  .toList(),
+        return Stack(
+          key: _timelineKey,
+          clipBehavior: Clip.none, // 🎯 핸들이 타임라인 밖으로 나가도 잘리지 않도록
+          children: [
+            // 🎯 ClipRect로 감싼 타임라인 콘텐츠
+            ClipRect(
+              child: Stack(
+                children: [
+                  // 썸네일 스트립 배경 (화면 전체 채우기)
+                  Positioned.fill(
+                    child: Builder(
+                      builder: (context) {
+                        final colorScheme = Theme.of(context).colorScheme;
+                        return Container(color: colorScheme.surface);
+                      },
                     ),
                   ),
-                ),
-              ),
 
-              // 🎯 선택 범위 외부 어두운 오버레이 (왼쪽) - 드래그 가능
-              if (leftOverlayWidth > 0)
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: leftOverlayWidth,
-                  child: _buildDraggableOverlay(
-                    isStart: true,
-                    pxPerSecond: pxPerSecond,
-                    scrollOffset: scrollOffset,
-                    totalSeconds: totalSeconds,
-                    maxTrimLength: maxTrimLength,
-                    selectionMinGap: selectionMinGap,
-                    showOverlay: true,
+                  // 썸네일 스트립 (ScrollController 사용)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: SingleChildScrollView(
+                      controller: _scrollController,
+                      scrollDirection: Axis.horizontal,
+                      // 🎯 핸들/재생바/오버레이 드래그 중 스크롤 잠금: 좌표계 흔들림(점프/걸림) 방지
+                      physics:
+                          (_isHandleDragging ||
+                                  _isPlaybackBarDragging ||
+                                  _isOverlayDragging)
+                              ? const NeverScrollableScrollPhysics()
+                              : const ClampingScrollPhysics(),
+                      child: SizedBox(
+                        width: thumbnailStripWidth,
+                        child: Row(
+                          children:
+                              widget.trimmer.thumbnails.isEmpty
+                                  ? [
+                                    Expanded(
+                                      child: Builder(
+                                        builder: (context) {
+                                          final colorScheme =
+                                              Theme.of(context).colorScheme;
+                                          return Container(
+                                            color:
+                                                colorScheme
+                                                    .surfaceContainerHighest,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ]
+                                  : widget.trimmer.thumbnails
+                                      .map(
+                                        (thumb) => SizedBox(
+                                          // 🎯 각 프레임 최소 너비 설정 (더 길게)
+                                          width:
+                                              thumbnailStripWidth /
+                                              widget.trimmer.thumbnails.length,
+                                          child:
+                                              thumb != null
+                                                  ? Image.memory(
+                                                    thumb,
+                                                    fit: BoxFit.cover,
+                                                    height: double.infinity,
+                                                    errorBuilder:
+                                                        (
+                                                          context,
+                                                          error,
+                                                          stackTrace,
+                                                        ) => Container(),
+                                                  )
+                                                  : Builder(
+                                                    builder: (context) {
+                                                      final colorScheme =
+                                                          Theme.of(
+                                                            context,
+                                                          ).colorScheme;
+                                                      return Container(
+                                                        color:
+                                                            colorScheme
+                                                                .surfaceContainerHighest,
+                                                      );
+                                                    },
+                                                  ),
+                                        ),
+                                      )
+                                      .toList(),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
 
-              // 🎯 왼쪽 경계선 드래그 영역 (오버레이가 없을 때도 드래그 가능, 투명)
-              if (leftOverlayWidth == 0 &&
-                  startBoundaryX >= 0 &&
-                  startBoundaryX <= totalWidth)
-                Positioned(
-                  left: (startBoundaryX - 20).clamp(0.0, totalWidth - 40),
-                  top: 0,
-                  bottom: 0,
-                  width: 40,
-                  child: _buildDraggableOverlay(
-                    isStart: true,
-                    pxPerSecond: pxPerSecond,
-                    scrollOffset: scrollOffset,
-                    totalSeconds: totalSeconds,
-                    maxTrimLength: maxTrimLength,
-                    selectionMinGap: selectionMinGap,
-                    showOverlay: false, // 🎯 투명하게 (오버레이 없을 때만)
-                  ),
-                ),
+                  // 🎯 선택 범위 외부 어두운 오버레이 (왼쪽) - 드래그 가능
+                  if (leftOverlayWidth > 0)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: leftOverlayWidth,
+                      child: _buildDraggableOverlay(
+                        isStart: true,
+                        pxPerSecond: pxPerSecond,
+                        scrollOffset: scrollOffset,
+                        totalSeconds: totalSeconds,
+                        maxTrimLength: maxTrimLength,
+                        selectionMinGap: selectionMinGap,
+                        showOverlay: true,
+                      ),
+                    ),
 
-              // 🎯 선택 범위 외부 어두운 오버레이 (오른쪽) - 드래그 가능
-              if (rightOverlayWidth > 0 && rightOverlayStart < totalWidth)
-                Positioned(
-                  left: rightOverlayStart,
-                  top: 0,
-                  bottom: 0,
-                  right: 0,
-                  child: _buildDraggableOverlay(
-                    isStart: false,
-                    pxPerSecond: pxPerSecond,
-                    scrollOffset: scrollOffset,
-                    totalSeconds: totalSeconds,
-                    maxTrimLength: maxTrimLength,
-                    selectionMinGap: selectionMinGap,
-                    showOverlay: true,
-                  ),
-                ),
+                  // 🎯 왼쪽 경계선 드래그 영역 (오버레이가 없을 때도 드래그 가능, 투명)
+                  if (leftOverlayWidth == 0 &&
+                      startBoundaryX >= 0 &&
+                      startBoundaryX <= totalWidth)
+                    Positioned(
+                      left: (startBoundaryX - 20).clamp(0.0, totalWidth - 40),
+                      top: 0,
+                      bottom: 0,
+                      width: 40,
+                      child: _buildDraggableOverlay(
+                        isStart: true,
+                        pxPerSecond: pxPerSecond,
+                        scrollOffset: scrollOffset,
+                        totalSeconds: totalSeconds,
+                        maxTrimLength: maxTrimLength,
+                        selectionMinGap: selectionMinGap,
+                        showOverlay: false, // 🎯 투명하게 (오버레이 없을 때만)
+                      ),
+                    ),
 
-              // 🎯 오른쪽 경계선 드래그 영역 (오버레이가 없을 때도 드래그 가능, 투명)
-              if (rightOverlayWidth == 0 &&
-                  endBoundaryX >= 0 &&
-                  endBoundaryX <= totalWidth)
-                Positioned(
-                  left: (endBoundaryX - 20).clamp(0.0, totalWidth - 40),
-                  top: 0,
-                  bottom: 0,
-                  width: 40,
-                  child: _buildDraggableOverlay(
-                    isStart: false,
-                    pxPerSecond: pxPerSecond,
-                    scrollOffset: scrollOffset,
-                    totalSeconds: totalSeconds,
-                    maxTrimLength: maxTrimLength,
-                    selectionMinGap: selectionMinGap,
-                    showOverlay: false, // 🎯 투명하게 (오버레이 없을 때만)
-                  ),
-                ),
+                  // 🎯 선택 범위 외부 어두운 오버레이 (오른쪽) - 드래그 가능
+                  if (rightOverlayWidth > 0 && rightOverlayStart < totalWidth)
+                    Positioned(
+                      left: rightOverlayStart,
+                      top: 0,
+                      bottom: 0,
+                      right: 0,
+                      child: _buildDraggableOverlay(
+                        isStart: false,
+                        pxPerSecond: pxPerSecond,
+                        scrollOffset: scrollOffset,
+                        totalSeconds: totalSeconds,
+                        maxTrimLength: maxTrimLength,
+                        selectionMinGap: selectionMinGap,
+                        showOverlay: true,
+                      ),
+                    ),
 
-              // 🎯 왼쪽 경계선 핸들 (핸들 중심 기준)
-              Positioned(
-                left: (startBoundaryX - handleWidth / 2).clamp(
-                  0.0,
-                  totalWidth - handleWidth,
-                ),
-                top: 0,
-                bottom: 0,
-                width: handleWidth,
-                child: OverflowBox(
-                  minHeight: 0,
-                  maxHeight: 120, // 타임라인 높이
-                  child: _buildHandle(
-                    isStart: true,
-                    pxPerSecond: pxPerSecond,
-                    scrollOffset: scrollOffset,
-                    totalSeconds: totalSeconds,
-                    totalWidth: totalWidth,
-                    maxTrimLength: maxTrimLength,
-                    selectionMinGap: selectionMinGap,
-                  ),
-                ),
-              ),
+                  // 🎯 오른쪽 경계선 드래그 영역 (오버레이가 없을 때도 드래그 가능, 투명)
+                  if (rightOverlayWidth == 0 &&
+                      endBoundaryX >= 0 &&
+                      endBoundaryX <= totalWidth)
+                    Positioned(
+                      left: (endBoundaryX - 20).clamp(0.0, totalWidth - 40),
+                      top: 0,
+                      bottom: 0,
+                      width: 40,
+                      child: _buildDraggableOverlay(
+                        isStart: false,
+                        pxPerSecond: pxPerSecond,
+                        scrollOffset: scrollOffset,
+                        totalSeconds: totalSeconds,
+                        maxTrimLength: maxTrimLength,
+                        selectionMinGap: selectionMinGap,
+                        showOverlay: false, // 🎯 투명하게 (오버레이 없을 때만)
+                      ),
+                    ),
 
-              // 🎯 오른쪽 경계선 핸들 (핸들 중심 기준)
-              Positioned(
-                left: (endBoundaryX - handleWidth / 2).clamp(
-                  0.0,
-                  totalWidth - handleWidth,
-                ),
-                top: 0,
-                bottom: 0,
-                width: handleWidth,
-                child: OverflowBox(
-                  minHeight: 0,
-                  maxHeight: 120, // 타임라인 높이
-                  child: _buildHandle(
-                    isStart: false,
-                    pxPerSecond: pxPerSecond,
-                    scrollOffset: scrollOffset,
-                    totalSeconds: totalSeconds,
-                    totalWidth: totalWidth,
-                    maxTrimLength: maxTrimLength,
-                    selectionMinGap: selectionMinGap,
-                  ),
-                ),
-              ),
-
-              // 🎯 재생 시간 표시 (선택 구간 표시 박스 위에, 가운데 정렬)
-              Positioned(
-                top: -60,
-                left: startBoundaryX + (endBoundaryX - startBoundaryX) / 2,
-                child: Transform.translate(
-                  offset: const Offset(-30, 0),
-                  child: Builder(
-                    builder: (context) {
-                      final colorScheme = Theme.of(context).colorScheme;
-                      return ValueListenableBuilder<double>(
-                        valueListenable: widget.trimmer.currentPositionNotifier,
-                        builder: (context, currentPosition, _) {
-                          final clampedPosition = currentPosition.clamp(
-                            widget.trimmer.startValue,
-                            widget.trimmer.endValue,
+                  // 🎯 재생 시간 표시 (선택 구간 표시 박스 위에, 가운데 정렬)
+                  Positioned(
+                    top: -60,
+                    left: startBoundaryX + (endBoundaryX - startBoundaryX) / 2,
+                    child: Transform.translate(
+                      offset: const Offset(-30, 0),
+                      child: Builder(
+                        builder: (context) {
+                          final colorScheme = Theme.of(context).colorScheme;
+                          return ValueListenableBuilder<double>(
+                            valueListenable:
+                                widget.trimmer.currentPositionNotifier,
+                            builder: (context, currentPosition, _) {
+                              final clampedPosition = currentPosition.clamp(
+                                widget.trimmer.startValue,
+                                widget.trimmer.endValue,
+                              );
+                              return Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                    color: colorScheme.outline.withOpacity(0.2),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Text(
+                                  _formatDurationMMSS(clampedPosition),
+                                  style: TextStyle(
+                                    color: colorScheme.onSurface,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              );
+                            },
                           );
+                        },
+                      ),
+                    ),
+                  ),
+
+                  // 🎯 선택 구간 표시 박스 (경계선 사이 위에) - 항상 표시
+                  Positioned(
+                    top: -30,
+                    left: startBoundaryX + (endBoundaryX - startBoundaryX) / 2,
+                    child: Transform.translate(
+                      offset: const Offset(-50, 0),
+                      child: Builder(
+                        builder: (context) {
+                          final colorScheme = Theme.of(context).colorScheme;
                           return Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,
@@ -848,66 +983,91 @@ class _TrimEditorState extends State<TrimEditor> {
                               ),
                             ),
                             child: Text(
-                              _formatDurationMMSS(clampedPosition),
+                              '${_formatDuration(widget.trimmer.startValue)} - ${_formatDuration(widget.trimmer.endValue)} (${_formatDuration(widget.trimmer.endValue - widget.trimmer.startValue)})',
                               style: TextStyle(
                                 color: colorScheme.onSurface,
-                                fontSize: 14,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
                           );
                         },
-                      );
-                    },
+                      ),
+                    ),
                   ),
+
+                  // 🎯 재생 위치 바 (경계선 사이)
+                  _buildPlaybackBar(
+                    startX: startBoundaryX,
+                    endX: endBoundaryX,
+                    pxPerSecond: pxPerSecond,
+                    maxVisibleWidth: totalWidth,
+                  ),
+                ],
+              ),
+            ),
+
+            // 🎯 크롭 핸들 UI (CustomPainter로 통합) - 드래그 영역 위에 그리기
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Builder(
+                  builder: (context) {
+                    final colorScheme = Theme.of(context).colorScheme;
+                    return CustomPaint(
+                      painter: _CropHandlePainter(
+                        color: colorScheme.primary,
+                        startX: startBoundaryX,
+                        endX: endBoundaryX,
+                        handleWidth: handleWidth,
+                        timelineHeight: 120.0, // 기본값 (실제로는 size.height 사용)
+                        handleExtension: 2.0,
+                      ),
+                    );
+                  },
                 ),
               ),
+            ),
 
-              // 🎯 선택 구간 표시 박스 (경계선 사이 위에) - 항상 표시
-              Positioned(
-                top: -30,
-                left: startBoundaryX + (endBoundaryX - startBoundaryX) / 2,
-                child: Transform.translate(
-                  offset: const Offset(-50, 0),
-                  child: Builder(
-                    builder: (context) {
-                      final colorScheme = Theme.of(context).colorScheme;
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(
-                            color: colorScheme.outline.withOpacity(0.2),
-                            width: 1,
-                          ),
-                        ),
-                        child: Text(
-                          '${_formatDuration(widget.trimmer.startValue)} - ${_formatDuration(widget.trimmer.endValue)} (${_formatDuration(widget.trimmer.endValue - widget.trimmer.startValue)})',
-                          style: TextStyle(
-                            color: colorScheme.onSurface,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
+            // 🎯 왼쪽 핸들 드래그 영역
+            Positioned(
+              left: (startBoundaryX - handleWidth / 2).clamp(
+                0.0,
+                totalWidth - handleWidth,
               ),
-
-              // 🎯 재생 위치 바 (경계선 사이)
-              _buildPlaybackBar(
-                startX: startBoundaryX,
-                endX: endBoundaryX,
+              top: -2,
+              bottom: -2,
+              width: handleWidth,
+              child: _buildHandle(
+                isStart: true,
                 pxPerSecond: pxPerSecond,
-                maxVisibleWidth: totalWidth,
+                scrollOffset: scrollOffset,
+                totalSeconds: totalSeconds,
+                totalWidth: totalWidth,
+                maxTrimLength: maxTrimLength,
+                selectionMinGap: selectionMinGap,
               ),
-            ],
-          ),
+            ),
+
+            // 🎯 오른쪽 핸들 드래그 영역
+            Positioned(
+              left: (endBoundaryX - handleWidth / 2).clamp(
+                0.0,
+                totalWidth - handleWidth,
+              ),
+              top: -2,
+              bottom: -2,
+              width: handleWidth,
+              child: _buildHandle(
+                isStart: false,
+                pxPerSecond: pxPerSecond,
+                scrollOffset: scrollOffset,
+                totalSeconds: totalSeconds,
+                totalWidth: totalWidth,
+                maxTrimLength: maxTrimLength,
+                selectionMinGap: selectionMinGap,
+              ),
+            ),
+          ],
         );
       },
     );
@@ -1060,7 +1220,7 @@ class _TrimEditorState extends State<TrimEditor> {
     );
   }
 
-  /// 드래그 가능한 오버레이 (타임라인 스크롤, 구간 조절은 핸들에서만)
+  /// 드래그 가능한 오버레이 (핸들 드래그 로직 사용)
   Widget _buildDraggableOverlay({
     required bool isStart,
     required double pxPerSecond,
@@ -1082,98 +1242,145 @@ class _TrimEditorState extends State<TrimEditor> {
         final localX = box.globalToLocal(details.globalPosition).dx;
 
         setState(() {
-          // 🎯 오버레이 드래그는 타임라인 스크롤
+          // 🎯 오버레이 드래그도 핸들 드래그 로직 사용
           _isOverlayDragging = true; // 오버레이 드래그 상태 설정
           // 재생 중이면 일시정지
           if (widget.trimmer.isPlaying) {
             widget.trimmer.videoPlaybackControl();
           }
-          _overlayDragStartTimelineX = localX;
-          // 🎯 드래그 시작 시점의 스크롤 오프셋, 핸들 값, 재생바 위치 저장
-          _overlayDragStartScrollOffset =
-              _scrollController.hasClients ? _scrollController.offset : 0.0;
-          _overlayDragStartStartValue = widget.trimmer.startValue;
-          _overlayDragStartEndValue = widget.trimmer.endValue;
-          _overlayDragStartCurrentPosition = widget.trimmer.currentPosition;
+          // 🎯 핸들 드래그와 동일한 로직: 드래그할 핸들 값 저장
+          _dragStartValue =
+              isStart ? widget.trimmer.startValue : widget.trimmer.endValue;
+          // 🎯 반대쪽 핸들 값 저장 (역전 방지용)
+          _dragStartOppositeValue =
+              isStart ? widget.trimmer.endValue : widget.trimmer.startValue;
+          _dragStartTimelineX = localX + scrollOffset;
         });
+        widget.trimmer.setHandleDragging(true);
       },
       onPanUpdate: (details) {
         if (!_isOverlayDragging ||
-            _overlayDragStartTimelineX == null ||
-            _overlayDragStartScrollOffset == null ||
-            _overlayDragStartStartValue == null ||
-            _overlayDragStartEndValue == null ||
-            _overlayDragStartCurrentPosition == null)
+            _dragStartValue == null ||
+            _dragStartTimelineX == null ||
+            _dragStartOppositeValue == null)
           return;
-
-        if (!_scrollController.hasClients) return;
 
         final box =
             _timelineKey.currentContext?.findRenderObject() as RenderBox?;
         if (box == null) return;
         final localX = box.globalToLocal(details.globalPosition).dx;
+        final currentScrollOffset =
+            _scrollController.hasClients ? _scrollController.offset : 0.0;
+        final timelineX = localX + currentScrollOffset;
 
-        // 🎯 픽셀 변화 계산 (로컬 좌표 기준)
-        final dx = localX - _overlayDragStartTimelineX!;
+        // 🎯 핸들 드래그와 동일한 계산 로직 (더 안전한 검증 추가)
+        final dx = timelineX - _dragStartTimelineX!;
 
-        // 🎯 스크롤 감도 약간 낮추기 (0.85배)
-        final adjustedDx = dx * 0.85;
-
-        // 🎯 현재 스크롤 위치에서 반대 방향으로 스크롤 (드래그 방향과 반대로)
-        final currentOffset = _scrollController.offset;
-        final newOffset = (currentOffset - adjustedDx).clamp(
-          0.0,
-          _scrollController.position.maxScrollExtent,
-        );
-
-        // 🎯 스크롤 오프셋 변화량 계산
-        final deltaScrollOffset = newOffset - _overlayDragStartScrollOffset!;
-
-        // 🎯 스크롤 변화량을 시간으로 변환
-        final deltaSeconds = deltaScrollOffset / pxPerSecond;
-
-        // 🎯 핸들 값들을 스크롤 변화량만큼 업데이트 (화면상 위치 고정)
-        final newStartValue = (_overlayDragStartStartValue! + deltaSeconds)
-            .clamp(0.0, totalSeconds);
-        final newEndValue = (_overlayDragStartEndValue! + deltaSeconds).clamp(
-          0.0,
-          totalSeconds,
-        );
-
-        // 🎯 재생바 위치도 스크롤 변화량만큼 업데이트 (화면상 위치 고정)
-        final newCurrentPosition = (_overlayDragStartCurrentPosition! +
-                deltaSeconds)
-            .clamp(0.0, totalSeconds);
-
-        // 🎯 핸들 값 업데이트 (역전 방지)
-        if (newStartValue < newEndValue) {
-          widget.trimmer.onChangeStart(newStartValue);
-          widget.trimmer.onChangeEnd(newEndValue);
-          widget.onChangeStart?.call(newStartValue);
-          widget.onChangeEnd?.call(newEndValue);
+        // 🎯 pxPerSecond가 0이거나 유효하지 않으면 무시
+        if (pxPerSecond <= 0 || pxPerSecond.isNaN || pxPerSecond.isInfinite) {
+          return;
         }
 
-        // 🎯 재생바 위치 업데이트 (범위 내로 클램프)
-        final clampedCurrentPos = newCurrentPosition.clamp(
-          newStartValue,
-          newEndValue,
-        );
-        widget.trimmer.seekTo(clampedCurrentPos, clampToRange: true);
+        // 🎯 오버레이 드래그 감도 조정 (너무 민감하지 않도록)
+        final adjustedDx = dx * 0.9;
+        final deltaSeconds = adjustedDx / pxPerSecond;
+        final minLength = widget.trimmer.minLength;
 
-        // 🎯 타임라인 스크롤 (부드럽게 즉시 이동)
-        _scrollController.jumpTo(newOffset);
+        // 🎯 deltaSeconds가 너무 크면 무시 (비정상적인 값 방지)
+        if (deltaSeconds.abs() > totalSeconds * 2) {
+          return;
+        }
 
-        setState(() {}); // UI 업데이트
+        // 🎯 deltaSeconds가 너무 작으면 무시 (미세한 움직임 무시)
+        if (deltaSeconds.abs() < 0.01) {
+          return;
+        }
+
+        if (isStart) {
+          var newStart = _dragStartValue! + deltaSeconds;
+
+          // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
+          if (newStart >= _dragStartOppositeValue!) return;
+
+          // 🎯 유효성 검증 먼저 수행
+          if (newStart.isNaN || newStart.isInfinite) return;
+
+          newStart = newStart.clamp(
+            0.0,
+            (_dragStartOppositeValue! - minLength).clamp(0.0, totalSeconds),
+          );
+
+          if (newStart < 0) return;
+
+          // 🎯 최종 역전 체크 (clamp 후에도)
+          if (newStart >= _dragStartOppositeValue!) return;
+
+          final proposedLength = _dragStartOppositeValue! - newStart;
+          if (proposedLength < minLength) return;
+          if (proposedLength > maxTrimLength) return;
+
+          // 🎯 최종 클램프 및 검증
+          newStart = newStart.clamp(0.0, totalSeconds);
+          if (newStart.isNaN || newStart.isInfinite) return;
+
+          widget.trimmer.onChangeStart(newStart);
+          widget.onChangeStart?.call(newStart);
+          setState(() {});
+        } else {
+          var newEnd = _dragStartValue! + deltaSeconds;
+
+          // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
+          if (newEnd <= _dragStartOppositeValue!) return;
+
+          // 🎯 유효성 검증 먼저 수행
+          if (newEnd.isNaN || newEnd.isInfinite) return;
+
+          newEnd = newEnd.clamp(
+            (_dragStartOppositeValue! + minLength).clamp(0.0, totalSeconds),
+            totalSeconds,
+          );
+
+          if (newEnd < 0) return;
+
+          // 🎯 최종 역전 체크 (clamp 후에도)
+          if (newEnd <= _dragStartOppositeValue!) return;
+
+          final proposedLength = newEnd - _dragStartOppositeValue!;
+          if (proposedLength < minLength) return;
+          if (proposedLength > maxTrimLength) return;
+
+          // 🎯 최종 클램프 및 검증
+          newEnd = newEnd.clamp(0.0, totalSeconds);
+          if (newEnd.isNaN || newEnd.isInfinite) return;
+
+          widget.trimmer.onChangeEnd(newEnd);
+          widget.onChangeEnd?.call(newEnd);
+          setState(() {});
+        }
       },
       onPanEnd: (_) {
         setState(() {
           _isOverlayDragging = false;
-          _overlayDragStartTimelineX = null;
-          _overlayDragStartScrollOffset = null;
-          _overlayDragStartStartValue = null;
-          _overlayDragStartEndValue = null;
-          _overlayDragStartCurrentPosition = null;
+          _dragStartValue = null;
+          _dragStartOppositeValue = null;
+          _dragStartTimelineX = null;
         });
+        widget.trimmer.setHandleDragging(false);
+
+        // 🎯 핸들 드래그 종료 시 비디오 위치를 범위 내로 조정
+        final currentPos = widget.trimmer.currentPosition;
+        final startValue = widget.trimmer.startValue;
+        final endValue = widget.trimmer.endValue;
+
+        // 현재 위치가 범위를 벗어나면 조정
+        if (currentPos < startValue) {
+          widget.trimmer.seekTo(startValue);
+        } else if (currentPos > endValue) {
+          widget.trimmer.seekTo(endValue);
+        } else {
+          // 범위 내에 있으면 현재 위치 유지 (핸들 위치에 맞게)
+          widget.trimmer.seekTo(currentPos);
+        }
       },
       child: Container(
         decoration: BoxDecoration(
@@ -1238,9 +1445,19 @@ class _TrimEditorState extends State<TrimEditor> {
             _scrollController.hasClients ? _scrollController.offset : 0.0;
         final timelineX = localX + currentScrollOffset;
 
+        // 🎯 pxPerSecond 유효성 검증
+        if (pxPerSecond <= 0 || pxPerSecond.isNaN || pxPerSecond.isInfinite) {
+          return;
+        }
+
         final dx = timelineX - _dragStartTimelineX!;
         final deltaSeconds = dx / pxPerSecond;
         final minLength = widget.trimmer.minLength;
+
+        // 🎯 deltaSeconds가 너무 크면 무시 (비정상적인 값 방지)
+        if (deltaSeconds.abs() > totalSeconds * 2) {
+          return;
+        }
 
         if (isStart) {
           var newStart = _dragStartValue! + deltaSeconds;
@@ -1248,12 +1465,15 @@ class _TrimEditorState extends State<TrimEditor> {
           // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
           if (newStart >= _dragStartOppositeValue!) return;
 
+          // 🎯 유효성 검증 먼저 수행
+          if (newStart.isNaN || newStart.isInfinite) return;
+
           newStart = newStart.clamp(
             0.0,
             (_dragStartOppositeValue! - minLength).clamp(0.0, totalSeconds),
           );
 
-          if (newStart.isNaN || newStart.isInfinite || newStart < 0) return;
+          if (newStart < 0) return;
 
           // 🎯 최종 역전 체크 (clamp 후에도)
           if (newStart >= _dragStartOppositeValue!) return;
@@ -1261,7 +1481,10 @@ class _TrimEditorState extends State<TrimEditor> {
           final proposedLength = _dragStartOppositeValue! - newStart;
           if (proposedLength < minLength) return;
           if (proposedLength > maxTrimLength) return;
+
+          // 🎯 최종 클램프 및 검증
           newStart = newStart.clamp(0.0, totalSeconds);
+          if (newStart.isNaN || newStart.isInfinite) return;
 
           widget.trimmer.onChangeStart(newStart);
           widget.onChangeStart?.call(newStart);
@@ -1272,12 +1495,15 @@ class _TrimEditorState extends State<TrimEditor> {
           // 🎯 핸들 위치 역전 방지: 드래그 시작 시 저장된 반대쪽 값과 비교
           if (newEnd <= _dragStartOppositeValue!) return;
 
+          // 🎯 유효성 검증 먼저 수행
+          if (newEnd.isNaN || newEnd.isInfinite) return;
+
           newEnd = newEnd.clamp(
             (_dragStartOppositeValue! + minLength).clamp(0.0, totalSeconds),
             totalSeconds,
           );
 
-          if (newEnd.isNaN || newEnd.isInfinite || newEnd < 0) return;
+          if (newEnd < 0) return;
 
           // 🎯 최종 역전 체크 (clamp 후에도)
           if (newEnd <= _dragStartOppositeValue!) return;
@@ -1285,7 +1511,10 @@ class _TrimEditorState extends State<TrimEditor> {
           final proposedLength = newEnd - _dragStartOppositeValue!;
           if (proposedLength < minLength) return;
           if (proposedLength > maxTrimLength) return;
+
+          // 🎯 최종 클램프 및 검증
           newEnd = newEnd.clamp(0.0, totalSeconds);
+          if (newEnd.isNaN || newEnd.isInfinite) return;
 
           widget.trimmer.onChangeEnd(newEnd);
           widget.onChangeEnd?.call(newEnd);
@@ -1319,24 +1548,12 @@ class _TrimEditorState extends State<TrimEditor> {
       child: Builder(
         builder: (context) {
           final colorScheme = Theme.of(context).colorScheme;
-          return Container(
-            width: 14, // 핸들 두께
-            // 🎯 vertical margin 제거 (ClipRect 영향 제거)
-            decoration: BoxDecoration(
-              color: colorScheme.onSurface,
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(
-                color: colorScheme.primary.withOpacity(0.6),
-                width: 1.5,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: colorScheme.shadow.withOpacity(0.4),
-                  blurRadius: _isHandleDragging ? 8 : 6,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+          return CustomPaint(
+            painter: _HandlePainter(
+              color: colorScheme.primary,
+              isDragging: _isHandleDragging,
             ),
+            size: const Size(8, double.infinity),
           );
         },
       ),
@@ -1351,13 +1568,11 @@ class _TrimEditorState extends State<TrimEditor> {
       child: Column(
         children: [
           // 타임라인
-          ClipRect(
-            child: Container(
-              height: 120,
-              color: colorScheme.surfaceContainerHighest,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: _buildTimeline(),
-            ),
+          Container(
+            height: 120,
+            color: colorScheme.surfaceContainerHighest,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: _buildTimeline(),
           ),
           // 시간 표시
           Container(
@@ -1544,24 +1759,43 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
                   ),
         ),
       ),
-      child: SafeArea(
-        child: Column(
-          children: [
-            Expanded(child: VideoViewer(trimmer: _trimmer)),
-            TrimEditor(
-              trimmer: _trimmer,
-              onChangeStart: (value) {
-                // 콜백 처리
-              },
-              onChangeEnd: (value) {
-                // 콜백 처리
-              },
-              onChangePlaybackState: (value) {
-                // 콜백 처리
-              },
+      child: Stack(
+        children: [
+          SafeArea(
+            child: Column(
+              children: [
+                Expanded(child: VideoViewer(trimmer: _trimmer)),
+                TrimEditor(
+                  trimmer: _trimmer,
+                  onChangeStart: (value) {
+                    // 콜백 처리
+                  },
+                  onChangeEnd: (value) {
+                    // 콜백 처리
+                  },
+                  onChangePlaybackState: (value) {
+                    // 콜백 처리
+                  },
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+          // ✅ 비디오 히스토리 UI 준비 중 로딩 오버레이
+          ListenableBuilder(
+            listenable: _trimmer,
+            builder: (context, _) {
+              if (_trimmer.isLoadingThumbnails) {
+                return Positioned.fill(
+                  child: Container(
+                    color: colorScheme.surface.withOpacity(0.95),
+                    child: const DoppyLoadingLogo(),
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+        ],
       ),
     );
   }

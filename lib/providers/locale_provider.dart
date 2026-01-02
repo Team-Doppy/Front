@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:doppy/main.dart' show kTestForceKorean;
 
 class LocaleProvider extends ChangeNotifier {
   // OS 언어 기반으로 초기값 설정
@@ -8,8 +8,31 @@ class LocaleProvider extends ChangeNotifier {
   Locale get locale => _locale;
 
   /// 지역 코드 (JWT에 사용)
-  /// 한국어면 KR, 아니면 다 US
+  /// 🎯 기기 로케일의 국가 코드 우선 사용, 없으면 언어 코드로 판단
+  /// - 국가 코드가 'KR'이면 → 'KR'
+  /// - 국가 코드가 'US', 'GB', 'CA', 'AU', 'NZ' 등 영어권이면 → 'US'
+  /// - 국가 코드가 없으면 언어 코드로 판단 (ko → KR, 그 외 → US)
   String get regionCode {
+    // 🎯 1순위: 국가 코드 활용 (더 정확)
+    if (_locale.countryCode != null && _locale.countryCode!.isNotEmpty) {
+      final countryCode = _locale.countryCode!.toUpperCase();
+
+      // 한국
+      if (countryCode == 'KR') {
+        return 'KR';
+      }
+
+      // 영어권 국가들 (US, GB, CA, AU, NZ, IE, SG 등)
+      // 이들은 모두 'US' region으로 그룹화
+      if (['US', 'GB', 'CA', 'AU', 'NZ', 'IE', 'SG'].contains(countryCode)) {
+        return 'US';
+      }
+
+      // 기타 국가는 언어 코드로 판단
+      // (예: 'JP', 'CN' 등은 언어 코드 확인)
+    }
+
+    // 🎯 2순위: 언어 코드로 판단 (국가 코드가 없거나 위에 없는 경우)
     if (_locale.languageCode == 'ko') {
       return 'KR';
     } else {
@@ -18,21 +41,33 @@ class LocaleProvider extends ChangeNotifier {
   }
 
   LocaleProvider() {
-    // OS 언어 기반으로 초기화
-    _initializeFromSystem();
+    // OS 언어만 사용 (언어 변경 불가)
+    _initialize();
   }
 
   /// OS 언어를 동기적으로 감지하여 초기 Locale 설정
+  /// 🎯 테스트 플래그(kTestForceKorean)가 있으면 우선 사용
   static Locale _getSystemLocale() {
     try {
-      final systemLocale = WidgetsBinding.instance.platformDispatcher.locale;
-
-      // 한국어면 KR, 아니면 US
-      if (systemLocale.languageCode == 'ko') {
+      // 🎯 테스트용 플래그 확인
+      if (kTestForceKorean == true) {
+        debugPrint('[LocaleProvider] 테스트 플래그: 한국어 강제');
         return const Locale('ko', 'KR');
-      } else {
+      } else if (kTestForceKorean == false) {
+        debugPrint('[LocaleProvider] 테스트 플래그: 영어 강제');
         return const Locale('en', 'US');
       }
+
+      // 실제 OS 로케일 사용 (언어 + 국가 코드)
+      final systemLocale = WidgetsBinding.instance.platformDispatcher.locale;
+
+      debugPrint(
+        '[LocaleProvider] OS 로케일: language=${systemLocale.languageCode}, country=${systemLocale.countryCode ?? "없음"}',
+      );
+
+      // 🎯 기기 로케일 그대로 사용 (언어 코드 + 국가 코드 모두 포함)
+      // Locale 객체는 이미 languageCode와 countryCode를 모두 가지고 있음
+      return systemLocale;
     } catch (e) {
       debugPrint('[LocaleProvider] 시스템 언어 감지 실패: $e');
       // 기본값: 영어
@@ -40,68 +75,15 @@ class LocaleProvider extends ChangeNotifier {
     }
   }
 
-  /// OS 언어 기반으로 초기화 (비동기로 저장)
-  Future<void> _initializeFromSystem() async {
+  /// OS 언어 기반으로 초기화 (언어 변경 불가)
+  Future<void> _initialize() async {
     try {
-      // OS 언어 감지
-      final systemLocale = WidgetsBinding.instance.platformDispatcher.locale;
-
-      if (systemLocale.languageCode == 'ko') {
-        _locale = const Locale('ko', 'KR');
-      } else {
-        _locale = const Locale('en', 'US');
-      }
-
-      // 감지된 언어 저장
-      await _saveLocale();
-      notifyListeners();
-
+      // 🎯 항상 OS 언어 사용 (저장된 언어 무시)
+      _locale = _getSystemLocale();
       debugPrint('[LocaleProvider] OS 언어 기반 초기화: ${_locale.languageCode}');
+      notifyListeners();
     } catch (e) {
-      debugPrint('[LocaleProvider] OS 언어 기반 초기화 실패: $e');
-    }
-  }
-
-  /// 언어 변경
-  Future<void> setLocale(Locale locale) async {
-    if (_locale == locale) return;
-
-    _locale = locale;
-    await _saveLocale();
-    notifyListeners();
-
-    debugPrint('[LocaleProvider] 언어 변경: ${locale.languageCode}');
-  }
-
-  /// 언어 설정 저장
-  Future<void> _saveLocale() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('languageCode', _locale.languageCode);
-      if (_locale.countryCode != null) {
-        await prefs.setString('countryCode', _locale.countryCode!);
-      }
-    } catch (e) {
-      debugPrint('[LocaleProvider] 언어 설정 저장 실패: $e');
-    }
-  }
-
-  /// 한국어로 전환
-  Future<void> setKorean() async {
-    await setLocale(const Locale('ko', 'KR'));
-  }
-
-  /// 영어로 전환
-  Future<void> setEnglish() async {
-    await setLocale(const Locale('en', 'US'));
-  }
-
-  /// 토글 (한/영 전환)
-  Future<void> toggleLocale() async {
-    if (_locale.languageCode == 'ko') {
-      await setEnglish();
-    } else {
-      await setKorean();
+      debugPrint('[LocaleProvider] 초기화 실패: $e');
     }
   }
 

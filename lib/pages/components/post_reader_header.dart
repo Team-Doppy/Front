@@ -437,13 +437,14 @@ class PostReaderAppBar extends StatelessWidget {
                         GestureDetector(
                           onTap: onViewCountTap,
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8.0,
-                              vertical: 2.0,
+                            padding: const EdgeInsets.only(
+                              right: 8.0,
+                              top: 3.0,
+                              left: 8.0,
                             ),
                             child: Icon(
                               Icons.people_outline,
-                              size: 28,
+                              size: 30,
                               color: Theme.of(
                                 context,
                               ).colorScheme.onSurface.withOpacity(0.7),
@@ -458,8 +459,8 @@ class PostReaderAppBar extends StatelessWidget {
                           padding: const EdgeInsets.all(8.0),
                           child: SvgPicture.asset(
                             'assets/icons/pen.svg',
-                            width: 22,
-                            height: 22,
+                            width: 26,
+                            height: 26,
                             color: Theme.of(
                               context,
                             ).colorScheme.onSurface.withOpacity(0.7),
@@ -475,8 +476,8 @@ class PostReaderAppBar extends StatelessWidget {
                           padding: const EdgeInsets.all(8.0),
                           child: SvgPicture.asset(
                             'assets/icons/delete.svg',
-                            width: 22,
-                            height: 22,
+                            width: 26,
+                            height: 26,
                             color: Colors.red.withOpacity(0.7),
                           ),
                         ),

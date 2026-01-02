@@ -18,7 +18,6 @@ import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:doppy/pages/components/fullscreen_video_player.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/data/services/like_service.dart';
-import 'package:doppy/pages/components/liked_users_bottom_sheet.dart';
 
 class FullscreenMediaViewer extends StatefulWidget {
   final String imageUrl;
@@ -86,10 +85,6 @@ class _FullscreenMediaViewerState extends State<FullscreenMediaViewer>
   final TransformationController _videoZoomController =
       TransformationController();
   double _imageGestureMinScale = 1.0;
-
-  // 🎯 좋아요 관련 상태
-  bool _isLiked = false;
-  int _likeCount = 0;
 
   @override
   void initState() {
@@ -160,59 +155,9 @@ class _FullscreenMediaViewerState extends State<FullscreenMediaViewer>
   void _loadLikeData() {
     if (widget.postId == null || widget.likeService == null) return;
 
-    final likeService = widget.likeService!;
-    final postId = widget.postId!;
-
-    _isLiked = likeService.isPostLiked(postId);
-    _likeCount = likeService.getPostLikeCount(postId);
-
-    // 좋아요 서비스 변경 감지
-    likeService.addListener(_onLikeServiceChanged);
-
     if (mounted) {
       setState(() {});
     }
-  }
-
-  // 🎯 좋아요 서비스 변경 감지
-  void _onLikeServiceChanged() {
-    if (widget.postId == null || widget.likeService == null) return;
-
-    final likeService = widget.likeService!;
-    final postId = widget.postId!;
-
-    if (mounted) {
-      setState(() {
-        _isLiked = likeService.isPostLiked(postId);
-        _likeCount = likeService.getPostLikeCount(postId);
-      });
-    }
-  }
-
-  // 🎯 좋아요 토글
-  Future<void> _toggleLike() async {
-    if (widget.postId == null || widget.likeService == null) return;
-
-    try {
-      await widget.likeService!.togglePostLike(widget.postId!);
-    } catch (e) {
-      debugPrint('[FullscreenMediaViewer] 좋아요 처리 중 오류: $e');
-    }
-  }
-
-  // 🎯 좋아요한 사람 목록 보기
-  Future<void> _openLikedUsers() async {
-    if (widget.postId == null) return;
-
-    final postId = widget.postId!;
-    final likeCount = _likeCount;
-
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder:
-            (_) => LikedUsersBottomSheet(postId: postId, likeCount: likeCount),
-      ),
-    );
   }
 
   void _onCommentScroll() {
@@ -694,11 +639,6 @@ class _FullscreenMediaViewerState extends State<FullscreenMediaViewer>
       _commentController.dispose();
       _commentFocus.dispose();
       _disposeCommentPreviewControllers();
-
-      // 🎯 좋아요 서비스 리스너 제거
-      if (widget.likeService != null) {
-        widget.likeService!.removeListener(_onLikeServiceChanged);
-      }
 
       // 댓글 Map 초기화
       _commentsByImage.clear();
@@ -1928,53 +1868,9 @@ class _FullscreenMediaViewerState extends State<FullscreenMediaViewer>
                               ),
                             ),
                             const SizedBox(width: 12),
-                            // 🎯 좋아요 아이콘 + 개수 (postId가 있을 때만 표시)
-                            if (widget.postId != null)
-                              GestureDetector(
-                                onTap: _toggleLike,
-                                onLongPress: _openLikedUsers,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    SvgPicture.asset(
-                                      'assets/icons/heart.svg',
-                                      color:
-                                          _isLiked
-                                              ? const Color.fromARGB(
-                                                255,
-                                                255,
-                                                89,
-                                                89,
-                                              )
-                                              : Colors.white,
-                                      width: 24,
-                                      height: 24,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      '$_likeCount',
-                                      style: TextStyle(
-                                        color:
-                                            _isLiked
-                                                ? const Color.fromARGB(
-                                                  255,
-                                                  255,
-                                                  89,
-                                                  89,
-                                                )
-                                                : Colors.white,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+
                             // 댓글 아이콘 + 개수 (로드 완료 후에만 표시)
-                            if (_isCommentsLoaded[_currentImageUrl] ==
-                                true) ...[
-                              if (widget.postId != null)
-                                const SizedBox(width: 16),
+                            if (_isCommentsLoaded[_currentImageUrl] == true)
                               GestureDetector(
                                 onTap: showComments,
                                 child: Row(
@@ -1998,7 +1894,6 @@ class _FullscreenMediaViewerState extends State<FullscreenMediaViewer>
                                   ],
                                 ),
                               ),
-                            ],
                           ],
                         ),
                       ),

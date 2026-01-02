@@ -152,10 +152,9 @@ class PostReaderStickers extends StatelessWidget {
                   // 🎯 PNG 드로잉 (URL + 크기 정보)
                   // ✅ 프리로드와 동일한 EditorImageProvider 사용으로 캐시 히트 보장
                   final screenWidth = constraints.maxWidth;
-                  final dpr = MediaQuery.of(context).devicePixelRatio;
-                  final decodeWidth = (screenWidth * dpr).round().clamp(
-                    1,
-                    1000000,
+                  final decodeWidth = EditorImageProvider.readingDecodeWidth(
+                    context,
+                    screenWidth,
                   );
 
                   final imageProviderResult = EditorImageProvider.build(

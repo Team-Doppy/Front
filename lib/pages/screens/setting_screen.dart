@@ -5,7 +5,6 @@ import 'package:doppy/pages/components/license_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
-import 'package:doppy/providers/locale_provider.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/dialog_utils.dart';
@@ -280,33 +279,7 @@ class _SettingScreenState extends State<SettingScreen> {
                   context.read<ThemeProvider>().toggleTheme();
                 },
               ),
-              _SettingTile(
-                icon: Icons.language_outlined,
-                label: context.tr('language_settings'),
-                trailing: Text(
-                  context.watch<LocaleProvider>().isKorean ? '한국어' : 'English',
-                  style: TextStyle(
-                    fontSize: 15,
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                onTap: () async {
-                  await context.read<LocaleProvider>().toggleLocale();
-                  final authProvider = context.read<AuthProvider>();
-                  if (authProvider.isLoggedIn &&
-                      authProvider.username != null) {
-                    final newRegion = context.read<LocaleProvider>().regionCode;
-                    try {
-                      await AuthProvider().updateUserRegionAndRefreshToken(
-                        newRegion,
-                      );
-                    } catch (e) {
-                      debugPrint('[SettingScreen] Region 업데이트 에러 무시: $e');
-                    }
-                  }
-                },
-              ),
+              // 🎯 언어 설정 제거: OS 언어만 사용 (한국 사용자는 영어로 변경 불가, 영어 사용자는 한국어로 변경 불가)
             ],
           ),
           const SizedBox(height: 16),

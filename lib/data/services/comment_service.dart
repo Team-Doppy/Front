@@ -1633,29 +1633,36 @@ class CommentService extends ChangeNotifier {
         notifyListeners();
         debugPrint('[CommentService] 이미지 댓글 전송 성공: ${serverComment.id}');
       } else {
-        // 실패: pending → failed로 변경
+        // 실패: pending → failed로 변경 (즉시 UI 업데이트)
         final index = _comments.indexWhere((c) => c.id == tempCommentId);
         if (index != -1) {
           _comments[index] = _comments[index].copyWith(
             isPending: false,
             isFailed: true,
           );
+          // 🎯 즉시 UI 업데이트 (재시도 버튼 표시)
           notifyListeners();
+          debugPrint(
+            '[CommentService] 이미지 댓글 전송 실패 - failed 상태로 변경 및 UI 업데이트: ${response.statusCode}',
+          );
         }
-        debugPrint('[CommentService] 이미지 댓글 전송 실패: ${response.statusCode}');
-        throw HttpException('이미지 댓글 전송 실패: ${response.statusCode}');
+        // 🎯 throw 하지 않고 바로 return (catch 블록에서 중복 처리 방지)
+        return;
       }
     } catch (e) {
       debugPrint('[CommentService] 이미지 댓글 전송 오류 - failed 상태로 변경: $e');
 
-      // 실패 시: pending → failed로 변경
+      // 실패 시: pending → failed로 변경 (이미 실패 상태가 아닌 경우에만)
       final index = _comments.indexWhere((c) => c.id == tempCommentId);
       if (index != -1) {
-        _comments[index] = _comments[index].copyWith(
-          isPending: false,
-          isFailed: true,
-        );
-        notifyListeners();
+        final comment = _comments[index];
+        // 🎯 이미 실패 상태가 아니면 변경 (즉시 UI 업데이트)
+        if (!comment.isFailed) {
+          _comments[index] = comment.copyWith(isPending: false, isFailed: true);
+          // 🎯 즉시 UI 업데이트 (재시도 버튼 표시)
+          notifyListeners();
+          debugPrint('[CommentService] 이미지 댓글 전송 오류 - failed 상태로 변경 및 UI 업데이트');
+        }
       }
 
       if (e is DioException) {
@@ -1806,29 +1813,36 @@ class CommentService extends ChangeNotifier {
         notifyListeners();
         debugPrint('[CommentService] 이미지 댓글 전송 성공: ${serverComment.id}');
       } else {
-        // 실패: pending → failed로 변경
+        // 실패: pending → failed로 변경 (즉시 UI 업데이트)
         final index = _comments.indexWhere((c) => c.id == tempCommentId);
         if (index != -1) {
           _comments[index] = _comments[index].copyWith(
             isPending: false,
             isFailed: true,
           );
+          // 🎯 즉시 UI 업데이트 (재시도 버튼 표시)
           notifyListeners();
+          debugPrint(
+            '[CommentService] 이미지 댓글 전송 실패 - failed 상태로 변경 및 UI 업데이트: ${response.statusCode}',
+          );
         }
-        debugPrint('[CommentService] 이미지 댓글 전송 실패: ${response.statusCode}');
-        throw HttpException('이미지 댓글 전송 실패: ${response.statusCode}');
+        // 🎯 throw 하지 않고 바로 return (catch 블록에서 중복 처리 방지)
+        return;
       }
     } catch (e) {
       debugPrint('[CommentService] 이미지 댓글 전송 오류 - failed 상태로 변경: $e');
 
-      // 실패 시: pending → failed로 변경
+      // 실패 시: pending → failed로 변경 (이미 실패 상태가 아닌 경우에만)
       final index = _comments.indexWhere((c) => c.id == tempCommentId);
       if (index != -1) {
-        _comments[index] = _comments[index].copyWith(
-          isPending: false,
-          isFailed: true,
-        );
-        notifyListeners();
+        final comment = _comments[index];
+        // 🎯 이미 실패 상태가 아니면 변경 (즉시 UI 업데이트)
+        if (!comment.isFailed) {
+          _comments[index] = comment.copyWith(isPending: false, isFailed: true);
+          // 🎯 즉시 UI 업데이트 (재시도 버튼 표시)
+          notifyListeners();
+          debugPrint('[CommentService] 이미지 댓글 전송 오류 - failed 상태로 변경 및 UI 업데이트');
+        }
       }
 
       if (e is DioException) {
@@ -2090,29 +2104,36 @@ class CommentService extends ChangeNotifier {
         notifyListeners();
         debugPrint('[CommentService] 댓글 추가 성공: ${serverComment.id}');
       } else {
-        // 실패: pending → failed로 변경
+        // 실패: pending → failed로 변경 (즉시 UI 업데이트)
         final index = _comments.indexWhere((c) => c.id == tempId);
         if (index != -1) {
           _comments[index] = _comments[index].copyWith(
             isPending: false,
             isFailed: true,
           );
+          // 🎯 즉시 UI 업데이트 (재시도 버튼 표시)
           notifyListeners();
+          debugPrint(
+            '[CommentService] 댓글 추가 실패 - failed 상태로 변경 및 UI 업데이트: ${response.statusCode}',
+          );
         }
-        debugPrint('[CommentService] 댓글 추가 실패: ${response.statusCode}');
-        throw HttpException('댓글 추가 실패: ${response.statusCode}');
+        // 🎯 throw 하지 않고 바로 return (catch 블록에서 중복 처리 방지)
+        return;
       }
     } catch (e) {
       debugPrint('[CommentService] 댓글 추가 오류 - failed 상태로 변경: $e');
 
-      // 4️⃣ 실패 시: pending → failed로 변경
+      // 4️⃣ 실패 시: pending → failed로 변경 (이미 실패 상태가 아닌 경우에만)
       final index = _comments.indexWhere((c) => c.id == tempId);
       if (index != -1) {
-        _comments[index] = _comments[index].copyWith(
-          isPending: false,
-          isFailed: true,
-        );
-        notifyListeners(); // UI에 실패 상태 표시
+        final comment = _comments[index];
+        // 🎯 이미 실패 상태가 아니면 변경 (즉시 UI 업데이트)
+        if (!comment.isFailed) {
+          _comments[index] = comment.copyWith(isPending: false, isFailed: true);
+          // 🎯 즉시 UI 업데이트 (재시도 버튼 표시)
+          notifyListeners();
+          debugPrint('[CommentService] 댓글 추가 오류 - failed 상태로 변경 및 UI 업데이트');
+        }
       }
 
       if (e is DioException) {
@@ -2209,21 +2230,190 @@ class CommentService extends ChangeNotifier {
 
     final comment = _comments[index];
 
+    // 🎯 재시도 중 플래그 설정 (무한 루프 방지)
+    if (comment.isPending) {
+      debugPrint('[CommentService] ⚠️ 이미 재시도 중인 댓글: $tempId');
+      return;
+    }
+
     // failed → pending으로 변경
     _comments[index] = comment.copyWith(isPending: true, isFailed: false);
     notifyListeners();
 
-    // 재시도
-    await addComment(
-      username: comment.author,
-      content: comment.content,
-      parentId: comment.parentId,
-      imageUrl: comment.imageUrl,
-    );
+    try {
+      // 🎯 기존 댓글의 정보를 사용해서 직접 서버에 요청 (새로운 댓글 생성 방지)
+      // 언급 파싱
+      var mentionedUsernames = MentionParser.extractMentions(comment.content);
+      final currentUsername = await _getCurrentUsername();
+      if (currentUsername != null) {
+        mentionedUsernames =
+            mentionedUsernames.where((u) => u != currentUsername).toList();
+      }
 
-    // 기존 임시 댓글 제거
-    _comments.removeWhere((c) => c.id == tempId);
-    notifyListeners();
+      // 🎯 postId를 정수로 변환
+      final postIdInt = int.tryParse(_currentPostId!);
+      if (postIdInt == null) {
+        throw Exception('postId를 정수로 변환할 수 없습니다: $_currentPostId');
+      }
+
+      // 🎯 parentId를 정수로 변환
+      int? parentIdInt;
+      if (comment.parentId != null) {
+        parentIdInt = int.tryParse(comment.parentId!);
+        if (parentIdInt == null) {
+          throw Exception('parentId를 정수로 변환할 수 없습니다: ${comment.parentId}');
+        }
+      }
+
+      // 🎯 content 처리: 이미지가 있으면 [IMAGE] url 형식
+      String finalContent = comment.content;
+      String? validImageUrl = comment.imageUrl;
+
+      // 🎯 R2 URL인지 확인
+      if (validImageUrl != null && validImageUrl.isNotEmpty) {
+        if (validImageUrl.startsWith('pending://') ||
+            validImageUrl.startsWith('file://') ||
+            validImageUrl.startsWith('/') ||
+            (!validImageUrl.startsWith('http://') &&
+                !validImageUrl.startsWith('https://'))) {
+          debugPrint('[CommentService] ⚠️ 유효하지 않은 URL 제외: $validImageUrl');
+          validImageUrl = null;
+        }
+      }
+
+      if (validImageUrl != null) {
+        final trimmedContent = comment.content.trim();
+        if (trimmedContent.isEmpty || trimmedContent == '[IMAGE]') {
+          finalContent = '[IMAGE] $validImageUrl';
+        } else if (!trimmedContent.contains('[IMAGE]')) {
+          finalContent = '$trimmedContent\n[IMAGE] $validImageUrl';
+        }
+      }
+
+      final requestBody = <String, dynamic>{
+        'content': finalContent,
+        'postId': postIdInt,
+        if (parentIdInt != null) 'parentId': parentIdInt,
+        'visibility': comment.visibility,
+        if (validImageUrl != null) 'usedUrls': [validImageUrl],
+        if (mentionedUsernames.isNotEmpty)
+          'mentionedUsernames': mentionedUsernames,
+      };
+
+      debugPrint('[CommentService] 재시도 댓글 전송 요청: $requestBody');
+
+      final response = await _dio.post(
+        '/api/comments',
+        data: requestBody,
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      debugPrint(
+        '[CommentService] 재시도 댓글 전송 응답: ${response.statusCode} - ${response.data}',
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        // 성공: 서버 응답 데이터로 기존 댓글 교체
+        final responseData =
+            response.data is Map<String, dynamic>
+                ? Map<String, dynamic>.from(response.data)
+                : <String, dynamic>{};
+        final originalContent = responseData['content']?.toString() ?? '';
+        final checkedContent = await _checkPrivateCommentAccess(
+          responseData,
+          originalContent,
+        );
+        responseData['content'] = checkedContent;
+
+        // 🎯 비밀댓글인 경우 이모지 반응도 권한 체크
+        final visibility = responseData['visibility']?.toString() ?? 'PUBLIC';
+        final isPrivate = visibility == 'PRIVATE';
+        if (isPrivate) {
+          final author =
+              responseData['author']?.toString() ??
+              responseData['authorUsername']?.toString() ??
+              '';
+          final canViewPrivate =
+              author == currentUsername ||
+              (_currentPostAuthorUsername != null &&
+                  _currentPostAuthorUsername == currentUsername);
+          if (!canViewPrivate) {
+            responseData['emotionCounts'] = <String, dynamic>{};
+            responseData['myEmotions'] = <String, dynamic>{};
+            responseData['emotionUsers'] = <String, dynamic>{};
+          }
+        }
+
+        final serverComment = Comment.fromJson(responseData);
+
+        // 같은 ID가 이미 있는지 확인 (WebSocket이 먼저 추가했을 수 있음)
+        final existingServerCommentIndex = _comments.indexWhere(
+          (c) => c.id == serverComment.id,
+        );
+        if (existingServerCommentIndex != -1) {
+          debugPrint(
+            '[CommentService] ⚠️ 서버 응답 댓글이 이미 존재함 (WebSocket 먼저 도착) - ID: ${serverComment.id}',
+          );
+          // 기존 임시 댓글만 제거
+          _comments.removeWhere((c) => c.id == tempId);
+          notifyListeners();
+          return;
+        }
+
+        // 기존 임시 댓글을 서버 댓글로 교체
+        final tempIndex = _comments.indexWhere((c) => c.id == tempId);
+        if (tempIndex != -1) {
+          debugPrint(
+            '[CommentService] 🔄 재시도 성공: 임시 댓글 교체: $tempId → ${serverComment.id}',
+          );
+          // 🎯 로컬 이미지 경로 유지 (깜빡임 방지)
+          final tempComment = _comments[tempIndex];
+          _comments[tempIndex] = serverComment.copyWith(
+            localImagePath: tempComment.localImagePath,
+          );
+        } else {
+          debugPrint('[CommentService] ⚠️ 임시 댓글이 없음 (이미 제거됨?)');
+          return;
+        }
+        notifyListeners();
+        debugPrint('[CommentService] 재시도 댓글 전송 성공: ${serverComment.id}');
+      } else {
+        // 실패: pending → failed로 변경
+        final failedIndex = _comments.indexWhere((c) => c.id == tempId);
+        if (failedIndex != -1) {
+          _comments[failedIndex] = _comments[failedIndex].copyWith(
+            isPending: false,
+            isFailed: true,
+          );
+          notifyListeners();
+        }
+        debugPrint('[CommentService] 재시도 댓글 전송 실패: ${response.statusCode}');
+        // 🎯 throw 하지 않고 바로 return (catch 블록에서 중복 처리 방지)
+        return;
+      }
+    } catch (e) {
+      debugPrint('[CommentService] 재시도 댓글 전송 오류 - failed 상태로 변경: $e');
+
+      // 실패 시: pending → failed로 변경 (이미 실패 상태가 아닌 경우에만)
+      final failedIndex = _comments.indexWhere((c) => c.id == tempId);
+      if (failedIndex != -1) {
+        final comment = _comments[failedIndex];
+        // 🎯 이미 실패 상태가 아니면 변경 (중복 notifyListeners 방지)
+        if (!comment.isFailed) {
+          _comments[failedIndex] = comment.copyWith(
+            isPending: false,
+            isFailed: true,
+          );
+          notifyListeners();
+        }
+      }
+
+      if (e is DioException) {
+        debugPrint(
+          '[CommentService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
+    }
   }
 
   /// 실패한 댓글 삭제
@@ -2232,16 +2422,18 @@ class CommentService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 댓글을 실패 상태로 표시
+  /// 댓글을 실패 상태로 표시 (즉시 UI 업데이트)
   void markCommentAsFailed(String commentId) {
     final index = _comments.indexWhere((c) => c.id == commentId);
     if (index != -1) {
-      _comments[index] = _comments[index].copyWith(
-        isPending: false,
-        isFailed: true,
-      );
-      notifyListeners();
-      debugPrint('[CommentService] 댓글을 실패 상태로 표시: $commentId');
+      final comment = _comments[index];
+      // 🎯 이미 실패 상태가 아니면 변경 (즉시 UI 업데이트)
+      if (!comment.isFailed) {
+        _comments[index] = comment.copyWith(isPending: false, isFailed: true);
+        // 🎯 즉시 UI 업데이트 (재시도 버튼 표시)
+        notifyListeners();
+        debugPrint('[CommentService] 댓글을 실패 상태로 표시 및 UI 업데이트: $commentId');
+      }
     }
   }
 

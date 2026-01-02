@@ -11,24 +11,19 @@ import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/editor/component/clip_component.dart' show ClipNode;
 import 'package:doppy/data/services/video_cache_service.dart';
+import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/font_preload_service.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/editor/style/text_attributions.dart';
+import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:video_player/video_player.dart';
 
 /// 읽기 전용 포스트 복구 서비스
 /// PostReaderScreen에서 사용하는 MutableDocument 복원 로직
 class PostReaderService {
-  int _readDecodeWidth(BuildContext context) {
-    final dpr = View.of(context).devicePixelRatio;
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final v = (screenWidth * dpr).round();
-    return v.clamp(1, 1000000);
-  }
-
   bool _isDebug() {
     var v = false;
     assert(() {
@@ -43,9 +38,7 @@ class PostReaderService {
   }
 
   /// Exported 데이터로부터 읽기 전용 MutableDocument를 복구한다.
-  MutableDocument rebuildDocumentForRead(
-    Map<String, dynamic> exported,
-  ) {
+  MutableDocument rebuildDocumentForRead(Map<String, dynamic> exported) {
     // 저장 포맷(document | content 모두)과 과거 포맷까지 호환
     // 타입을 안전하게 검사하여 잘못된 캐스팅 예외 방지
     List nodes = const [];
@@ -59,6 +52,23 @@ class PostReaderService {
       nodes = content;
     } else {
       nodes = const [];
+    }
+
+    // 🎯 디버그: 첫 번째 paragraph 노드의 텍스트 확인
+    if (nodes.isNotEmpty) {
+      for (final raw in nodes) {
+        if (raw is Map) {
+          final m = raw.cast<String, dynamic>();
+          final type = (m['type'] ?? '').toString();
+          if (type == 'paragraph') {
+            final text = (m['text'] ?? '').toString();
+            debugPrint(
+              '[PostReaderService] 🔍 rebuildDocumentForRead: 첫 paragraph 노드 텍스트="$text"',
+            );
+            break;
+          }
+        }
+      }
     }
     final rebuilt = <DocumentNode>[];
     final nodeService = NodeComponentService();
@@ -892,79 +902,102 @@ class PostReaderService {
 
     if (imageUrls.isEmpty && clipUrls.isEmpty && stickerImageUrls.isEmpty) {
       debugPrint('[PostReaderService] ⚠️ 프리로드할 미디어가 없습니다');
-      // 🎯 미디어가 없어도 폰트는 프리로드 (백그라운드)
-      _preloadFontsInBackground(content);
+      // 🎯 미디어가 없어도 폰트는 동기적으로 프리로드
+      await _preloadFonts(context, content);
       return;
     }
 
-    _d(
-      '[PostReaderService] 🚀 첫 $mediaNodeCount개 미디어 노드 프리로드 시작: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개, 스티커 ${stickerImageUrls.length}개',
+    // 🎯 눈에 잘 띄는 동기 프리로드 시작 로그
+    debugPrint('');
+    debugPrint('═══════════════════════════════════════════════════════════');
+    debugPrint('🚀 [동기 프리로드 시작] 첫 $mediaNodeCount개 미디어 노드');
+    debugPrint('   📸 이미지: ${imageUrls.length}개');
+    debugPrint('   🎬 비디오: ${clipUrls.length}개');
+    debugPrint('   🎨 스티커: ${stickerImageUrls.length}개');
+    debugPrint('═══════════════════════════════════════════════════════════');
+    debugPrint('');
+
+    // 🎯 이미지와 비디오, 스티커를 순차 실행으로 프리로드 (Future.wait 제거 - dispose 안전성)
+    final decodeWidth = EditorImageProvider.readingDecodeWidth(
+      context,
+      MediaQuery.sizeOf(context).width,
     );
 
-    // 🎯 이미지와 비디오, 스티커를 병렬로 프리로드 (크기 측정 제거 - 서버 응답에 이미 포함)
-    final futures = <Future>[];
+    // 🎯 Future.wait는 중단 불가능하므로, 순차 실행으로 변경 (dispose 안전성)
+    // 이미지와 스티커는 순차 실행, 비디오는 병렬 실행 (이미 순차 내부 처리)
 
-    final decodeWidth = _readDecodeWidth(context);
-
-    // 이미지 프리로드 (effectiveProvider 사용 - 렌더링과 최대한 동일한 provider)
+    // 이미지 프리로드 (순차 실행)
     if (imageUrls.isNotEmpty) {
       for (final url in imageUrls) {
-        futures.add(() async {
-          try {
-            final built = EditorImageProvider.build(
-              url: url,
-              isEditing: false, // 읽기 모드
-              // ✅ 읽기 모드도 decodeWidth를 줘서 원본(대용량) 디코딩/캐시 점유를 줄이고,
-              // 홈 화면 썸네일/배경 캐시가 밀려나는 현상을 완화한다.
-              decodeWidth: decodeWidth,
-            );
-            // 🎯 effectiveProvider를 프리로드 (렌더링 시 사용하는 것과 정확히 동일)
-            await precacheImage(built.effectiveProvider, context);
-            debugPrint('[PostReaderService] ✅ 이미지 프리로드 완료: $url');
-          } catch (e) {
-            debugPrint('[PostReaderService] ❌ 이미지 프리로드 실패: $url - $e');
+        // 🎯 context dispose 체크
+        if (!context.mounted) {
+          debugPrint('[PostReaderService] ⚠️ context dispose됨 - 이미지 프리로드 중단');
+          return;
+        }
+        try {
+          final built = EditorImageProvider.build(
+            url: url,
+            isEditing: false, // 읽기 모드
+            // ✅ 읽기 모드도 decodeWidth를 줘서 원본(대용량) 디코딩/캐시 점유를 줄이고,
+            // 홈 화면 썸네일/배경 캐시가 밀려나는 현상을 완화한다.
+            decodeWidth: decodeWidth,
+          );
+          // 🎯 effectiveProvider를 프리로드 (렌더링 시 사용하는 것과 정확히 동일)
+          await precacheImage(built.effectiveProvider, context);
+          debugPrint('[PostReaderService] ✅ 이미지 프리로드 완료: $url');
+        } catch (e) {
+          if (e.toString().contains('dispose') ||
+              e.toString().contains('mounted')) {
+            debugPrint('[PostReaderService] ⚠️ context dispose로 인한 중단: $url');
+            return;
           }
-        }());
+          debugPrint('[PostReaderService] ❌ 이미지 프리로드 실패: $url - $e');
+        }
       }
     }
 
-    // 스티커 이미지 프리로드 (위쪽 스티커)
+    // 스티커 이미지 프리로드 (순차 실행)
     if (stickerImageUrls.isNotEmpty) {
       for (final url in stickerImageUrls) {
-        futures.add(() async {
-          try {
-            final built = EditorImageProvider.build(
-              url: url,
-              isEditing: false, // 읽기 모드
-              decodeWidth: decodeWidth,
-            );
-            await precacheImage(built.effectiveProvider, context);
-            debugPrint('[PostReaderService] ✅ 스티커 이미지 프리로드 완료: $url');
-          } catch (e) {
-            debugPrint('[PostReaderService] ❌ 스티커 이미지 프리로드 실패: $url - $e');
+        // 🎯 context dispose 체크
+        if (!context.mounted) {
+          debugPrint('[PostReaderService] ⚠️ context dispose됨 - 스티커 프리로드 중단');
+          return;
+        }
+        try {
+          final built = EditorImageProvider.build(
+            url: url,
+            isEditing: false, // 읽기 모드
+            decodeWidth: decodeWidth,
+          );
+          await precacheImage(built.effectiveProvider, context);
+          debugPrint('[PostReaderService] ✅ 스티커 이미지 프리로드 완료: $url');
+        } catch (e) {
+          if (e.toString().contains('dispose') ||
+              e.toString().contains('mounted')) {
+            debugPrint('[PostReaderService] ⚠️ context dispose로 인한 중단: $url');
+            return;
           }
-        }());
+          debugPrint('[PostReaderService] ❌ 스티커 이미지 프리로드 실패: $url - $e');
+        }
       }
     }
 
-    // 비디오 프리로드
+    // 비디오 프리로드 (순차 실행 - 각 비디오는 내부적으로 초기화 대기)
     if (clipUrls.isNotEmpty) {
       for (final url in clipUrls) {
-        futures.add(
-          preloadVideoForReader(url).catchError((e) {
-            debugPrint('[PostReaderService] ⚠️ 비디오 프리로드 실패 (계속 진행): $url - $e');
-            // 에러를 무시하고 계속 진행
-            return null;
-          }),
-        );
+        // 🎯 context dispose 체크
+        if (!context.mounted) {
+          debugPrint('[PostReaderService] ⚠️ context dispose됨 - 비디오 프리로드 중단');
+          return;
+        }
+        try {
+          await preloadVideoForReader(url);
+        } catch (e) {
+          debugPrint('[PostReaderService] ⚠️ 비디오 프리로드 실패 (계속 진행): $url - $e');
+          // 에러를 무시하고 계속 진행
+        }
       }
-    }
-
-    // 모든 프리로드 완료 대기 (실패해도 계속 진행)
-    try {
-      await Future.wait(futures, eagerError: false);
-    } catch (e) {
-      debugPrint('[PostReaderService] ⚠️ 프리로드 중 일부 실패 (무시): $e');
     }
 
     // 🎯 캐시 적용을 위해 한 프레임 대기
@@ -974,59 +1007,89 @@ class PostReaderService {
     });
     await completer.future;
 
-    _d(
-      '[PostReaderService] ✅ 상위 미디어 프리로드 완료: 이미지 ${imageUrls.length}개, 비디오 ${clipUrls.length}개, 스티커 ${stickerImageUrls.length}개',
-    );
+    // 🎯 폰트 프리로드 (동기적으로 실행)
+    await _preloadFonts(context, content);
 
-    // 🎯 폰트 프리로드 (백그라운드에서 비동기로 실행, 미디어 프리로드와 병렬)
-    _preloadFontsInBackground(content);
+    // 🎯 눈에 잘 띄는 동기 프리로드 완료 로그
+    debugPrint('');
+    debugPrint('═══════════════════════════════════════════════════════════');
+    debugPrint('✅ [동기 프리로드 완료] 첫 $mediaNodeCount개 미디어 노드');
+    debugPrint('   📸 이미지: ${imageUrls.length}개');
+    debugPrint('   🎬 비디오: ${clipUrls.length}개');
+    debugPrint('   🎨 스티커: ${stickerImageUrls.length}개');
+    debugPrint('═══════════════════════════════════════════════════════════');
+    debugPrint('');
   }
 
-  /// 백그라운드에서 폰트 프리로드 (비동기, 에러 무시)
-  void _preloadFontsInBackground(Map<String, dynamic> content) {
-    Future.microtask(() async {
-      try {
-        final fontIdentifiers = extractUsedFonts(content);
-        if (fontIdentifiers.isEmpty) {
-          debugPrint('[PostReaderService] 🔤 프리로드할 폰트 없음');
-          return;
-        }
+  /// 동기적으로 폰트 프리로드 (에러 무시)
+  Future<void> _preloadFonts(
+    BuildContext context,
+    Map<String, dynamic> content,
+  ) async {
+    // 🎯 context dispose 체크
+    if (!context.mounted) {
+      debugPrint('[PostReaderService] ⚠️ context dispose됨 - 폰트 프리로드 중단');
+      return;
+    }
 
-        final fontPreloadService = FontPreloadService();
-        final fontsToLoad = <FontItem>[];
-
-        for (final identifier in fontIdentifiers) {
-          final font = FontCatalog.findByIdentifier(identifier);
-          if (font != null && !fontPreloadService.isPreloaded(identifier)) {
-            fontsToLoad.add(font);
-          }
-        }
-
-        if (fontsToLoad.isEmpty) {
-          debugPrint('[PostReaderService] 🔤 모든 폰트가 이미 로드됨');
-          return;
-        }
-
-        debugPrint('[PostReaderService] 🔤 폰트 프리로드 시작: ${fontsToLoad.length}개');
-
-        // 병렬로 폰트 로드 (최대 5개씩)
-        for (int i = 0; i < fontsToLoad.length; i += 5) {
-          final batch = fontsToLoad.skip(i).take(5).toList();
-          await Future.wait(
-            batch.map((font) => fontPreloadService.preloadFont(font)),
-            eagerError: false,
-          );
-          // 배치 간 짧은 딜레이
-          if (i + 5 < fontsToLoad.length) {
-            await Future.delayed(const Duration(milliseconds: 50));
-          }
-        }
-
-        debugPrint('[PostReaderService] ✅ 폰트 프리로드 완료: ${fontsToLoad.length}개');
-      } catch (e) {
-        debugPrint('[PostReaderService] ⚠️ 폰트 프리로드 실패 (무시): $e');
+    try {
+      final fontIdentifiers = extractUsedFonts(content);
+      if (fontIdentifiers.isEmpty) {
+        debugPrint('[PostReaderService] 🔤 프리로드할 폰트 없음');
+        return;
       }
-    });
+
+      final fontPreloadService = FontPreloadService();
+      final fontsToLoad = <FontItem>[];
+
+      for (final identifier in fontIdentifiers) {
+        // 🎯 context dispose 체크
+        if (!context.mounted) {
+          debugPrint('[PostReaderService] ⚠️ context dispose됨 - 폰트 프리로드 중단');
+          return;
+        }
+
+        final font = FontCatalog.findByIdentifier(identifier);
+        if (font != null && !fontPreloadService.isPreloaded(identifier)) {
+          fontsToLoad.add(font);
+        }
+      }
+
+      if (fontsToLoad.isEmpty) {
+        debugPrint('[PostReaderService] 🔤 모든 폰트가 이미 로드됨');
+        return;
+      }
+
+      debugPrint('[PostReaderService] 🔤 폰트 프리로드 시작: ${fontsToLoad.length}개');
+
+      // 병렬로 폰트 로드 (최대 5개씩)
+      for (int i = 0; i < fontsToLoad.length; i += 5) {
+        // 🎯 context dispose 체크
+        if (!context.mounted) {
+          debugPrint('[PostReaderService] ⚠️ context dispose됨 - 폰트 프리로드 중단');
+          return;
+        }
+
+        final batch = fontsToLoad.skip(i).take(5).toList();
+        await Future.wait(
+          batch.map((font) => fontPreloadService.preloadFont(font)),
+          eagerError: false,
+        );
+        // 배치 간 짧은 딜레이
+        if (i + 5 < fontsToLoad.length) {
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
+      }
+
+      debugPrint('[PostReaderService] ✅ 폰트 프리로드 완료: ${fontsToLoad.length}개');
+    } catch (e) {
+      if (e.toString().contains('dispose') ||
+          e.toString().contains('mounted')) {
+        debugPrint('[PostReaderService] ⚠️ context dispose로 인한 중단: 폰트 프리로드');
+        return;
+      }
+      debugPrint('[PostReaderService] ⚠️ 폰트 프리로드 실패 (무시): $e');
+    }
   }
 
   /// 이미지를 미리 로드한다
@@ -1046,19 +1109,36 @@ class PostReaderService {
     _d('[PostReaderService] 🖼️ 이미지 ${imagesToPreload.length}개 미리 로드 시작');
     _d('[PostReaderService] 🖼️ 프리로드할 URL 목록: ${imagesToPreload.join(", ")}');
 
-    final decodeWidth = _readDecodeWidth(context);
+    final decodeWidth = EditorImageProvider.readingDecodeWidth(
+      context,
+      MediaQuery.sizeOf(context).width,
+    );
 
     try {
       // ✅ Future.wait는 취소가 불가능해서, pop 시 캐시를 계속 밀어내는 원인이 될 수 있다.
       // 따라서 순차 실행 + shouldContinue() 체크로 중단 가능하게 한다.
       for (final url in imagesToPreload) {
         if (shouldContinue != null && !shouldContinue()) return;
+
+        // 🎯 context dispose 체크: precacheImage 호출 전에 확인
+        if (!context.mounted) {
+          debugPrint('[PostReaderService] ⚠️ context dispose됨 - 이미지 프리로드 중단');
+          return;
+        }
+
         try {
           final built = EditorImageProvider.build(
             url: url,
             isEditing: false, // 읽기 모드
             decodeWidth: decodeWidth,
           );
+
+          // 🎯 context dispose 체크: precacheImage 호출 직전에 다시 확인
+          if (!context.mounted) {
+            debugPrint('[PostReaderService] ⚠️ context dispose됨 - 이미지 프리로드 중단');
+            return;
+          }
+
           await precacheImage(
             built.effectiveProvider,
             context,
@@ -1067,7 +1147,17 @@ class PostReaderService {
             },
           );
           _d('[PostReaderService] ✅ 이미지 프리캐싱 완료: $url');
+
+          // 🎯 UI 끊김(스피너 점프) 완화: 매 이미지 프리캐시 후 프레임을 양보
+          // - 디코딩/업로드가 몰리면 렌더 프레임이 크게 드랍될 수 있어, 작업을 확실히 분산한다.
+          await Future<void>.delayed(const Duration(milliseconds: 16));
         } catch (e) {
+          // 🎯 context dispose 에러는 무시 (정상적인 상황)
+          if (e.toString().contains('dispose') ||
+              e.toString().contains('mounted')) {
+            debugPrint('[PostReaderService] ⚠️ context dispose로 인한 중단: $url');
+            return;
+          }
           debugPrint('[PostReaderService] ❌ 이미지 프리캐싱 중 오류: $url - $e');
         }
       }
@@ -1107,12 +1197,15 @@ class PostReaderService {
     // 🎯 VideoCacheService에서 먼저 확인
     final videoCache = VideoCacheService();
     if (videoCache.hasController(url, namespace: 'editor')) {
-      final controller = videoCache.getOrCreateController(url, namespace: 'editor');
+      final controller = videoCache.getOrCreateController(
+        url,
+        namespace: 'editor',
+      );
       // 참조 카운트는 유지 (다른 곳에서 사용 중일 수 있음)
       debugPrint('[PostReaderService] VideoCacheService에서 컨트롤러 반환: $url');
       return controller;
     }
-    
+
     // 🎯 레거시 캐시에서 마이그레이션
     _preloadTimestamps.remove(url);
     final controller = _preloadedControllers.remove(url);
@@ -1136,7 +1229,7 @@ class PostReaderService {
     if (videoCache.hasController(url, namespace: 'editor')) {
       return videoCache.getOrCreateController(url, namespace: 'editor');
     }
-    
+
     // 🎯 레거시 캐시 확인
     return _preloadedControllers[url];
   }
@@ -1152,7 +1245,7 @@ class PostReaderService {
     }
     _preloadedControllers.clear();
     _preloadTimestamps.clear();
-    
+
     // 🎯 VideoCacheService는 전역 싱글톤이므로 여기서 dispose하지 않음
     // (다른 곳에서 사용 중일 수 있음)
     debugPrint('[PostReaderService] 레거시 프리로드 컨트롤러 정리 완료');
@@ -1168,11 +1261,13 @@ class PostReaderService {
 
     // 🎯 VideoCacheService 사용 (namespace: 'editor')
     final videoCache = VideoCacheService();
-    
+
     // 이미 프리로드된 경우 스킵
     if (videoCache.hasController(url, namespace: 'editor')) {
       if (videoCache.isInitialized(url, namespace: 'editor')) {
-        debugPrint('[PostReaderService] 이미 프리로드된 비디오 (VideoCacheService): $url');
+        debugPrint(
+          '[PostReaderService] 이미 프리로드된 비디오 (VideoCacheService): $url',
+        );
         _notifyClipPreloaded(url);
         return;
       }
@@ -1187,7 +1282,9 @@ class PostReaderService {
           if (controller.value.isInitialized) {
             // VideoCacheService에 등록 (참조 카운트 증가)
             videoCache.getOrCreateController(url, namespace: 'editor');
-            debugPrint('[PostReaderService] ✅ 레거시 캐시에서 VideoCacheService로 이동: $url');
+            debugPrint(
+              '[PostReaderService] ✅ 레거시 캐시에서 VideoCacheService로 이동: $url',
+            );
             _notifyClipPreloaded(url);
             return;
           }
@@ -1202,9 +1299,14 @@ class PostReaderService {
     }
 
     try {
-      debugPrint('[PostReaderService] 🚀 비디오 프리로드 시작 (VideoCacheService): $url');
-      final controller = videoCache.getOrCreateController(url, namespace: 'editor');
-      
+      debugPrint(
+        '[PostReaderService] 🚀 비디오 프리로드 시작 (VideoCacheService): $url',
+      );
+      final controller = videoCache.getOrCreateController(
+        url,
+        namespace: 'editor',
+      );
+
       // 이미 초기화된 경우 스킵
       if (controller.value.isInitialized) {
         debugPrint('[PostReaderService] ✅ 비디오 프리로드 완료 (이미 초기화됨): $url');
@@ -1217,11 +1319,11 @@ class PostReaderService {
       int maxWaitMs = 10000;
       int waitedMs = 0;
       const checkInterval = Duration(milliseconds: 100);
-      
+
       while (!controller.value.isInitialized && waitedMs < maxWaitMs) {
         await Future.delayed(checkInterval);
         waitedMs += checkInterval.inMilliseconds;
-        
+
         // 🎯 dispose 체크: 컨트롤러 유효성 확인
         try {
           if (controller.value.hasError) {
@@ -1235,7 +1337,9 @@ class PostReaderService {
 
       if (controller.value.isInitialized) {
         _notifyClipPreloaded(url);
-        debugPrint('[PostReaderService] ✅ 비디오 프리로드 완료 (VideoCacheService): $url');
+        debugPrint(
+          '[PostReaderService] ✅ 비디오 프리로드 완료 (VideoCacheService): $url',
+        );
       } else if (waitedMs >= maxWaitMs) {
         debugPrint('[PostReaderService] ⚠️ 비디오 프리로드 타임아웃: $url');
         throw TimeoutException('비디오 초기화 타임아웃', const Duration(seconds: 10));
@@ -1243,7 +1347,9 @@ class PostReaderService {
         throw Exception('비디오 초기화 실패');
       }
     } catch (e) {
-      debugPrint('[PostReaderService] ❌ 비디오 프리로드 실패 (VideoCacheService): $url - $e');
+      debugPrint(
+        '[PostReaderService] ❌ 비디오 프리로드 실패 (VideoCacheService): $url - $e',
+      );
       rethrow;
     }
   }
@@ -1261,7 +1367,9 @@ class PostReaderService {
     final videoCache = VideoCacheService();
     if (videoCache.hasController(url, namespace: 'reader')) {
       if (videoCache.isInitialized(url, namespace: 'reader')) {
-        debugPrint('[PostReaderService] ✅ 이미 프리로드된 비디오 (VideoCacheService): $url');
+        debugPrint(
+          '[PostReaderService] ✅ 이미 프리로드된 비디오 (VideoCacheService): $url',
+        );
         return;
       }
     }
@@ -1275,7 +1383,9 @@ class PostReaderService {
           if (controller.value.isInitialized) {
             // VideoCacheService에 등록 (참조 카운트 증가)
             videoCache.getOrCreateController(url, namespace: 'reader');
-            debugPrint('[PostReaderService] ✅ 캐시에서 VideoCacheService로 이동: $url');
+            debugPrint(
+              '[PostReaderService] ✅ 캐시에서 VideoCacheService로 이동: $url',
+            );
             return;
           }
         } catch (e) {
@@ -1286,10 +1396,15 @@ class PostReaderService {
 
     // 🎯 VideoCacheService를 통해 컨트롤러 생성 및 초기화
     try {
-      debugPrint('[PostReaderService] 🚀 비디오 프리로드 시작 (VideoCacheService): $url');
+      debugPrint(
+        '[PostReaderService] 🚀 비디오 프리로드 시작 (VideoCacheService): $url',
+      );
 
-      final controller = videoCache.getOrCreateController(url, namespace: 'reader');
-      
+      final controller = videoCache.getOrCreateController(
+        url,
+        namespace: 'reader',
+      );
+
       // 이미 초기화된 경우 스킵
       if (controller.value.isInitialized) {
         debugPrint('[PostReaderService] ✅ 비디오 프리로드 완료 (이미 초기화됨): $url');
@@ -1299,16 +1414,16 @@ class PostReaderService {
       // 🎯 VideoCacheService가 이미 initialize()를 시작했을 수 있으므로
       // 초기화 완료를 대기하는 헬퍼 사용
       final stopwatch = Stopwatch()..start();
-      
+
       // 초기화 완료 대기 (최대 10초)
       int maxWaitMs = 10000;
       int waitedMs = 0;
       const checkInterval = Duration(milliseconds: 100);
-      
+
       while (!controller.value.isInitialized && waitedMs < maxWaitMs) {
         await Future.delayed(checkInterval);
         waitedMs += checkInterval.inMilliseconds;
-        
+
         // 🎯 dispose 체크: 컨트롤러 유효성 확인
         try {
           if (controller.value.hasError) {
@@ -1319,7 +1434,7 @@ class PostReaderService {
           break;
         }
       }
-      
+
       stopwatch.stop();
 
       // 🎯 초기화 완료 확인
@@ -1338,7 +1453,9 @@ class PostReaderService {
         // best-effort
       }
     } catch (e, stackTrace) {
-      debugPrint('[PostReaderService] ❌ 비디오 프리로드 실패 (VideoCacheService): $url - $e');
+      debugPrint(
+        '[PostReaderService] ❌ 비디오 프리로드 실패 (VideoCacheService): $url - $e',
+      );
       debugPrint('[PostReaderService] 스택: $stackTrace');
       // 에러를 다시 던지지 않음 (다른 비디오 프리로드에 영향 없도록)
     }
@@ -1368,6 +1485,89 @@ class PostReaderService {
       }
     } catch (e) {
       debugPrint('[PostReaderService] Error restoring stickers: $e');
+    }
+  }
+
+  /// 편집 화면 열기
+  static Future<Object?> openEditScreen(
+    BuildContext context, {
+    required Map<String, dynamic> exportedData,
+    required String postId,
+  }) async {
+    if (postId.isEmpty) {
+      debugPrint('[PostReaderService] postId가 없습니다');
+      return null;
+    }
+
+    debugPrint('[PostReaderService] openEditScreen: 편집 화면 열기');
+    debugPrint(
+      '  - 전달할 exportedData의 content.nodes: ${((exportedData['content'] as Map?)?['nodes'] as List?)?.length ?? 0}개',
+    );
+
+    final result = await Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder:
+            (context, animation, secondaryAnimation) => PostwriteScreen(
+              isEditingMode: true,
+              exportedDataForEdit: exportedData,
+              postId: postId,
+            ),
+        transitionDuration: const Duration(milliseconds: 200),
+        reverseTransitionDuration: const Duration(milliseconds: 200),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
+    );
+    return result;
+  }
+
+  /// 수정 완료 후 문서 재배치 (서버에서 최신 문서 가져와서 재구성)
+  /// 반환값: (refreshedDocument, mergedData)
+  static Future<(MutableDocument, Map<String, dynamic>)>
+  refreshDocumentAfterEdit(
+    BuildContext context,
+    String postId, {
+    required Map<String, dynamic> currentExportedData,
+  }) async {
+    try {
+      debugPrint('[PostReaderService] 수정 완료 후 문서 재배치 시작: postId=$postId');
+
+      // 서버에서 최신 content 가져오기
+      final blogService = BlogService();
+      final response = await blogService.getPostContent(postId);
+
+      // 최신 content로 merged 데이터 구성
+      final merged = Map<String, dynamic>.from(currentExportedData);
+      merged['content'] = response['content'] ?? {};
+
+      // 공개범위 정보도 업데이트
+      if (response.containsKey('accessLevel')) {
+        merged['accessLevel'] = response['accessLevel'];
+      }
+      if (response.containsKey('sharedGroupIds')) {
+        merged['sharedGroupIds'] = response['sharedGroupIds'];
+      }
+      if (response.containsKey('sharedGroupNames')) {
+        merged['sharedGroupNames'] = response['sharedGroupNames'];
+      }
+
+      // 최신 문서로 재구성
+      final postReaderService = PostReaderService();
+      final refreshedDocument = postReaderService.rebuildDocumentForRead(
+        merged,
+      );
+
+      debugPrint('[PostReaderService] ✅ 문서 재배치 완료');
+      return (refreshedDocument, merged);
+    } catch (e) {
+      debugPrint('[PostReaderService] ❌ 문서 재배치 실패: $e');
+      // 실패 시 기존 문서 반환
+      final postReaderService = PostReaderService();
+      return (
+        postReaderService.rebuildDocumentForRead(currentExportedData),
+        currentExportedData,
+      );
     }
   }
 }

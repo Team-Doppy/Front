@@ -63,6 +63,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   // 블로그 조르기 로딩 상태
   bool _isNudging = false;
+  // 블로그 조르기 버튼 숨김 상태 (5분 후 다시 표시)
+  DateTime? _lastNudgeTime;
+  Timer? _nudgeTimer;
 
   static final CategoryDropDown _categoryDropDown = CategoryDropDown();
   static final Feed _feed = Feed();
@@ -308,6 +311,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     if (_profileUploadTask != null && _profileTaskListener != null) {
       _profileUploadTask!.removeListener(_profileTaskListener!);
     }
+    _nudgeTimer?.cancel();
     super.dispose();
   }
 
@@ -672,14 +676,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                             ),
                                           ),
                                           // 탭/업로드 인디케이터는 Hero 바깥에서 처리(비행 중 변형 독립)
-                                          if (_isOwnProfile && !isUploading)
+                                          if (!isUploading)
                                             Positioned.fill(
                                               child: Material(
                                                 color: Colors.transparent,
                                                 child: InkWell(
                                                   customBorder:
                                                       const CircleBorder(),
-                                                  onTap: _changeProfileImage,
+                                                  onTap:
+                                                      _isOwnProfile
+                                                          ? _changeProfileImage
+                                                          : _viewOtherProfileImage,
                                                 ),
                                               ),
                                             ),
@@ -1057,6 +1064,29 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
+  /// 조르기 버튼이 표시되어야 하는지 확인 (5분 경과 여부)
+  bool _shouldShowNudgeButton() {
+    if (_lastNudgeTime == null) return true;
+    final now = DateTime.now();
+    final difference = now.difference(_lastNudgeTime!);
+    return difference.inMinutes >= 5;
+  }
+
+  /// 조르기 버튼을 누른 후 타이머 시작
+  void _startNudgeTimer() {
+    _nudgeTimer?.cancel();
+    _lastNudgeTime = DateTime.now();
+
+    // 5분 후 버튼 다시 표시
+    _nudgeTimer = Timer(const Duration(minutes: 5), () {
+      if (mounted) {
+        setState(() {
+          _lastNudgeTime = null;
+        });
+      }
+    });
+  }
+
   Widget _buildOtherProfileButton() {
     return Consumer2<FriendProvider, BaseFeedProvider>(
       builder: (context, friendProvider, feedProvider, _) {
@@ -1196,6 +1226,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 // 🎯 친구인 경우 두 개의 버튼을 나란히 표시
                 final isFriend =
                     friendProvider.friendStatus == FriendRequestStatus.accepted;
+                final showNudgeButton = _shouldShowNudgeButton();
 
                 return Padding(
                   padding: const EdgeInsets.only(
@@ -1211,6 +1242,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             ? Row(
                               children: [
                                 Expanded(
+                                  flex: showNudgeButton ? 1 : 2,
                                   child: _buildFilledButton(
                                     text: buttonText,
                                     onTap: buttonAction,
@@ -1219,77 +1251,167 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                     isBlocked: false,
                                   ),
                                 ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: _buildFilledButton(
-                                    text: l10n.t('request_blog'),
-                                    onTap: () async {
-                                      // 🎯 블로그 조르기 API 호출
-                                      if (widget.otherUser == null ||
-                                          _isNudging)
-                                        return;
+                                if (showNudgeButton)
+                                  Expanded(
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(left: 6),
+                                      child: _buildFilledButton(
+                                        text: l10n.t('request_blog'),
+                                        onTap: () async {
+                                          // 🎯 블로그 조르기 API 호출
+                                          if (widget.otherUser == null ||
+                                              _isNudging)
+                                            return;
 
-                                      setState(() {
-                                        _isNudging = true;
-                                      });
-
-                                      try {
-                                        final blogService = BlogService();
-                                        await blogService.nudge(
-                                          widget.otherUser!.username,
-                                        );
-
-                                        if (mounted) {
-                                          // 스낵바로 성공 메시지 표시
-                                          ErrorHandler.showInfo(
-                                            context,
-                                            l10n.t('nudge_sent'),
-                                            fgColor: Colors.white,
-                                            bgColor:
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.primary,
-                                            duration: const Duration(
-                                              seconds: 2,
-                                            ),
-                                          );
-                                        }
-                                      } catch (e) {
-                                        if (mounted) {
-                                          ErrorHandler.showError(
-                                            context,
-                                            e.toString().replaceAll(
-                                              'Exception: ',
-                                              '',
-                                            ),
-                                          );
-                                        }
-                                      } finally {
-                                        if (mounted) {
                                           setState(() {
-                                            _isNudging = false;
+                                            _isNudging = true;
                                           });
-                                        }
-                                      }
+
+                                          try {
+                                            final blogService = BlogService();
+                                            await blogService.nudge(
+                                              widget.otherUser!.username,
+                                            );
+
+                                            if (mounted) {
+                                              // 스낵바로 성공 메시지 표시
+                                              ErrorHandler.showInfo(
+                                                context,
+                                                l10n.t('nudge_sent'),
+                                                fgColor: Colors.white,
+                                                bgColor:
+                                                    Theme.of(
+                                                      context,
+                                                    ).colorScheme.primary,
+                                                duration: const Duration(
+                                                  seconds: 2,
+                                                ),
+                                              );
+                                              // 조르기 버튼 숨기기
+                                              _startNudgeTimer();
+                                              setState(() {
+                                                _isNudging = false;
+                                              });
+                                            }
+                                          } catch (e) {
+                                            if (mounted) {
+                                              ErrorHandler.showError(
+                                                context,
+                                                e.toString().replaceAll(
+                                                  'Exception: ',
+                                                  '',
+                                                ),
+                                              );
+                                              setState(() {
+                                                _isNudging = false;
+                                              });
+                                            }
+                                          }
+                                        },
+                                        isLoading: _isNudging,
+                                        isFilled: true,
+                                        isBlocked: false,
+                                      ),
+                                    ),
+                                  ),
+                                // 🎯 공유 버튼은 항상 표시 (조르기 버튼이 있어도)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 6),
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      if (widget.otherUser == null) return;
+                                      ShareProfileBottomSheet.show(
+                                        context,
+                                        username: widget.otherUser!.username,
+                                        profileImageUrl:
+                                            widget.otherUser!.profileImageUrl,
+                                        bio: widget.otherUser!.selfIntroduction,
+                                        friendCount:
+                                            widget.otherUser!.friendCount ?? 0,
+                                      );
                                     },
-                                    isLoading: _isNudging,
-                                    isFilled: true,
-                                    isBlocked: false,
+                                    child: Container(
+                                      width: 40,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(8),
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.1),
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 2,
+                                        ),
+                                        child: Icon(
+                                          Icons.ios_share,
+                                          size: 18,
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ],
                             )
-                            : _buildFilledButton(
-                              text: buttonText,
-                              onTap: buttonAction,
-                              isLoading: friendProvider.isLoadingStatus,
-                              isFilled:
-                                  friendProvider.friendStatus ==
-                                  FriendRequestStatus.none,
-                              isBlocked:
-                                  friendProvider.friendStatus ==
-                                  FriendRequestStatus
-                                      .blocked, // 🎯 차단된 경우 스타일 변경
+                            : Row(
+                              children: [
+                                Expanded(
+                                  child: _buildFilledButton(
+                                    text: buttonText,
+                                    onTap: buttonAction,
+                                    isLoading: friendProvider.isLoadingStatus,
+                                    isFilled:
+                                        friendProvider.friendStatus ==
+                                        FriendRequestStatus.none,
+                                    isBlocked:
+                                        friendProvider.friendStatus ==
+                                        FriendRequestStatus
+                                            .blocked, // 🎯 차단된 경우 스타일 변경
+                                  ),
+                                ),
+                                // 🎯 공유 버튼은 항상 표시
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 6),
+                                  child: GestureDetector(
+                                    onTap: () {
+                                      if (widget.otherUser == null) return;
+                                      ShareProfileBottomSheet.show(
+                                        context,
+                                        username: widget.otherUser!.username,
+                                        profileImageUrl:
+                                            widget.otherUser!.profileImageUrl,
+                                        bio: widget.otherUser!.selfIntroduction,
+                                        friendCount:
+                                            widget.otherUser!.friendCount ?? 0,
+                                      );
+                                    },
+                                    child: Container(
+                                      width: 40,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(8),
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.1),
+                                      ),
+                                      child: Icon(
+                                        Icons.ios_share,
+                                        size: 20,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                   ),
                 );
@@ -1314,7 +1436,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         height: 44, // 고정 높이로 UI 흔들림 방지
         padding: const EdgeInsets.symmetric(horizontal: 24),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
           color:
               isBlocked
                   ? Colors.transparent
@@ -1350,7 +1472,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                               : Theme.of(
                                 context,
                               ).colorScheme.onSurface.withOpacity(0.5),
-                      fontSize: 16,
+                      fontSize: 14,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -1458,6 +1580,74 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           // 나갈 때: 페이지 전환만 빠르게 (히어로 애니메이션은 자동으로 무시됨)
           // 들어올 때: 히어로 애니메이션과 함께 나타남
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
+    );
+  }
+
+  /// 타인 프로필 이미지 보기 (읽기 모드)
+  void _viewOtherProfileImage() {
+    if (widget.otherUser == null) return;
+
+    final otherUser = widget.otherUser!;
+    final userProvider = context.read<UserProvider>();
+    final viewedUser = userProvider.viewedUser ?? otherUser;
+
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 300),
+        reverseTransitionDuration: const Duration(milliseconds: 150),
+        pageBuilder:
+            (context, animation, secondaryAnimation) => ProfileImageViewScreen(
+              profileImageUrl: viewedUser.profileImageUrl,
+              username: viewedUser.username,
+              isOwnProfile: false, // 읽기 모드
+              alias: viewedUser.alias,
+              selfIntroduction: viewedUser.selfIntroduction,
+              links: viewedUser.links,
+              linkTitles: viewedUser.linkTitles,
+              linkThumbnails: viewedUser.linkThumbnails,
+              onShareProfile: () {
+                ShareProfileBottomSheet.show(
+                  context,
+                  username: viewedUser.username,
+                  profileImageUrl: viewedUser.profileImageUrl,
+                  bio: viewedUser.selfIntroduction,
+                  friendCount: viewedUser.friendCount ?? 0,
+                );
+              },
+              onCopyProfileLink: () async {
+                final profileUrl =
+                    'https://doppy.world/@${viewedUser.username}';
+                await Clipboard.setData(ClipboardData(text: profileUrl));
+
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        AppLocalizations.of(context).translate('link_copied'),
+                      ),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+              },
+              onGallerySelected: (_) {
+                // 읽기 모드에서는 편집 불가
+              },
+              onSetDefaultImage: () {
+                // 읽기 모드에서는 편집 불가
+              },
+              onFollowStatusChanged: () {
+                // 팔로우 상태 변경 시 프로필 화면 새로고침
+                if (mounted) {
+                  setState(() {});
+                }
+              },
+            ),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(opacity: animation, child: child);
         },
       ),

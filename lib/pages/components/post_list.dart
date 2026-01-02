@@ -383,35 +383,65 @@ class _PostListState extends State<PostList> {
                   ),
                 ),
               )
-              // 🎯 전체글이 비어있을 때는 빈 상태 표시
+              // 🎯 전체글이 비어있을 때는 빈 상태 표시 (위로 스와이프 지원)
               : SliverFillRemaining(
                 hasScrollBody: false,
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.article_outlined,
-                          size: 64,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.3),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          '포스트가 없습니다',
-                          style: GoogleFonts.notoSansKr(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w500,
+                child: Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: (details) {
+                    _gestureAccumY = 0.0;
+                    _gestureAccumX = 0.0;
+                    _isGestureActive = true;
+                    _isHorizontalGesture = false;
+                  },
+                  onPointerMove: (details) {
+                    if (!_isGestureActive) return;
+
+                    // 세로 제스처만 처리 (빈 상태에서는 가로 제스처 없음)
+                    _gestureAccumY += details.delta.dy;
+
+                    // 위로 스와이프 감지 (섹션 전환용)
+                    if (_gestureAccumY < -_verticalSwipeThreshold &&
+                        widget.onFilterTap != null) {
+                      debugPrint('⬆️ 빈 상태에서 위로 스와이프 감지! 섹션 전환');
+                      widget.onFilterTap!();
+                      _isGestureActive = false;
+                      return;
+                    }
+                  },
+                  onPointerUp: (details) {
+                    _isGestureActive = false;
+                    _isHorizontalGesture = false;
+                    _gestureAccumY = 0.0;
+                    _gestureAccumX = 0.0;
+                  },
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.article_outlined,
+                            size: 64,
                             color: Theme.of(
                               context,
-                            ).colorScheme.onSurface.withOpacity(0.7),
+                            ).colorScheme.onSurface.withOpacity(0.3),
                           ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
+                          const SizedBox(height: 16),
+                          Text(
+                            AppLocalizations.of(context).translate('no_posts'),
+                            style: GoogleFonts.notoSansKr(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w500,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.7),
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
