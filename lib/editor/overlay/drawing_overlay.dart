@@ -225,20 +225,14 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                       child: Row(
                         children: [
                           // 뒤로가기 버튼
-                          GestureDetector(
-                            onTap: () => Navigator.of(context).pop(),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              child: Icon(
-                                Icons.arrow_back_ios_new_rounded,
-                                size: 24,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.75),
-                              ),
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: Icon(
+                              Icons.arrow_back_ios_new_rounded,
+                              size: 24,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.75),
                             ),
                           ),
 
@@ -300,40 +294,56 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                                 (_isUploading || !_hasDrawing) ? null : _export,
                             child: Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
+                                horizontal: 6,
+                                vertical: 4,
                               ),
+                              decoration: BoxDecoration(),
+
                               child:
                                   _isUploading
-                                      ? SizedBox(
-                                        width: 26,
-                                        height: 26,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 3,
-                                          valueColor:
-                                              AlwaysStoppedAnimation<Color>(
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.primary,
-                                              ),
+                                      ? Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 2,
+                                        ),
+                                        child: SizedBox(
+                                          width: 26,
+                                          height: 26,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 3,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary,
+                                                ),
+                                          ),
                                         ),
                                       )
-                                      : Text(
-                                        AppLocalizations.of(
-                                          context,
-                                        ).t('complete'),
-                                        style: TextStyle(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface.withOpacity(
-                                            _hasDrawing ? 0.9 : 0.3,
+                                      : Row(
+                                        children: [
+                                          Text(
+                                            AppLocalizations.of(
+                                              context,
+                                            ).t('complete'),
+                                            style: TextStyle(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(
+                                                    _hasDrawing ? 0.9 : 0.3,
+                                                  ),
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 16,
+                                            ),
                                           ),
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 16,
-                                        ),
+                                          const SizedBox(width: 16),
+                                        ],
                                       ),
                             ),
                           ),
+
+                          const SizedBox(width: 4),
                         ],
                       ),
                     ),
@@ -611,6 +621,8 @@ class _DrawingOverlayState extends State<DrawingOverlay>
     required bool isSelected,
     required VoidCallback onTap,
   }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return GestureDetector(
       onTap: () {
         onTap(); // 원래 동작 실행
@@ -621,9 +633,11 @@ class _DrawingOverlayState extends State<DrawingOverlay>
         decoration: BoxDecoration(
           color:
               isSelected
-                  ? Theme.of(context).colorScheme.onSurface.withOpacity(
-                    0.45,
-                  ) // 선택됨: 더 밝게
+                  ? (isDark
+                      ? Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.45)
+                      : Colors.black.withOpacity(0.85)) // 화이트 모드: 거의 검정
                   : Theme.of(
                     context,
                   ).colorScheme.onSurface.withOpacity(0.1), // 기본
@@ -677,7 +691,15 @@ class _DrawingOverlayState extends State<DrawingOverlay>
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return GestureDetector(
-      onTap: () => _toggleMenu(_Menu.color),
+      onTap: () {
+        // 🎯 지우개 모드일 때 색상 버튼을 누르면 펜 모드로 전환
+        if (_eraser) {
+          setState(() {
+            _applyPenTool();
+          });
+        }
+        _toggleMenu(_Menu.color);
+      },
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
@@ -685,10 +707,10 @@ class _DrawingOverlayState extends State<DrawingOverlay>
               active
                   ? (isDark
                       ? Colors.white.withOpacity(0.35) // 다크 모드: 더 밝은 회색
-                      : Colors.black.withOpacity(0.25)) // 라이트 모드: 더 어두운 회색
+                      : Colors.black.withOpacity(0.85)) // 라이트 모드: 거의 검정
                   : (isDark
                       ? Colors.white.withOpacity(0.10)
-                      : Colors.black.withOpacity(0.08)),
+                      : Colors.black.withOpacity(0.15)), // 라이트 모드: 활성화 색상을 기본으로
           borderRadius: BorderRadius.circular(30),
         ),
         child: Stack(
@@ -697,23 +719,8 @@ class _DrawingOverlayState extends State<DrawingOverlay>
             Icon(
               Icons.color_lens_outlined,
               color: active ? Colors.white : Colors.white.withOpacity(0.5),
-              size: 24,
+              size: 32,
             ),
-            // 선택된 색상을 작은 원으로 표시
-            if (!_eraser)
-              Positioned(
-                bottom: 0,
-                right: 0,
-                child: Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _color,
-                    border: Border.all(color: Colors.white, width: 1),
-                  ),
-                ),
-              ),
           ],
         ),
       ),
@@ -738,16 +745,16 @@ class _DrawingOverlayState extends State<DrawingOverlay>
               active
                   ? (isDark
                       ? Colors.white.withOpacity(0.35) // 다크 모드: 더 밝은 회색
-                      : Colors.black.withOpacity(0.25)) // 라이트 모드: 더 어두운 회색
+                      : Colors.black.withOpacity(0.85)) // 라이트 모드: 거의 검정
                   : (isDark
                       ? Colors.white.withOpacity(0.10)
-                      : Colors.black.withOpacity(0.08)),
+                      : Colors.black.withOpacity(0.15)), // 라이트 모드: 활성화 색상을 기본으로
           borderRadius: BorderRadius.circular(30),
         ),
         child: SvgPicture.asset(
           svgPath,
-          width: width ?? 24,
-          height: height ?? 24,
+          width: width ?? 32,
+          height: height ?? 32,
           colorFilter: ColorFilter.mode(
             active ? Colors.white : Colors.white.withOpacity(0.5),
             BlendMode.srcIn,

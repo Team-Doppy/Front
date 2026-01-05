@@ -29,6 +29,7 @@ import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/components/profile_edit_sheet.dart';
 import 'package:doppy/pages/components/link_bottom_sheet.dart';
+import 'package:doppy/pages/screens/friend_requests_screen.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:io';
 import 'dart:ui';
@@ -476,52 +477,86 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   opacity: 1.0 - _pullProgress,
                                   child: Row(
                                     children: [
-                                      // 🎯 링크 아이콘 (링크가 있을 때만 표시)
-                                      if ((isOther &&
-                                              other?.links != null &&
-                                              other!.links!.isNotEmpty) ||
-                                          (!isOther &&
-                                              me?.links != null &&
-                                              me!.links!.isNotEmpty))
-                                        GestureDetector(
-                                          onTap: () {
-                                            final links =
-                                                isOther
-                                                    ? (other?.links ?? [])
-                                                    : (me?.links ?? []);
-                                            final linkTitles =
-                                                isOther
-                                                    ? (other?.linkTitles)
-                                                    : (me?.linkTitles);
-                                            final linkThumbnails =
-                                                isOther
-                                                    ? (other?.linkThumbnails)
-                                                    : (me?.linkThumbnails);
-                                            if (links.isNotEmpty) {
-                                              LinkBottomSheet.show(
-                                                context,
-                                                links: links,
-                                                linkTitles: linkTitles,
-                                                linkThumbnails: linkThumbnails,
-                                                otherUser: widget.otherUser,
-                                              );
-                                            }
+                                      // 🎯 보낸 요청 아이콘 (내 프로필일 때만 표시)
+                                      if (_isOwnProfile)
+                                        Consumer<FriendProvider>(
+                                          builder: (
+                                            context,
+                                            friendProvider,
+                                            _,
+                                          ) {
+                                            final receivedCount =
+                                                friendProvider
+                                                    .receivedRequests
+                                                    .length;
+                                            return Stack(
+                                              clipBehavior: Clip.none,
+                                              children: [
+                                                IconButton(
+                                                  onPressed: () {
+                                                    Navigator.of(context).push(
+                                                      MaterialPageRoute(
+                                                        builder:
+                                                            (_) =>
+                                                                const FriendRequestsScreen(),
+                                                      ),
+                                                    );
+                                                  },
+                                                  icon: SvgPicture.asset(
+                                                    'assets/icons/person_add_alt_1.svg',
+                                                    width: 26,
+                                                    height: 26,
+                                                    colorFilter:
+                                                        ColorFilter.mode(
+                                                          Theme.of(context)
+                                                              .colorScheme
+                                                              .onSurface,
+                                                          BlendMode.srcIn,
+                                                        ),
+                                                  ),
+                                                  tooltip: context.tr(
+                                                    'sent_requests',
+                                                  ),
+                                                ),
+                                                if (receivedCount > 0)
+                                                  Positioned(
+                                                    right: 7,
+                                                    top: 9,
+                                                    child: Container(
+                                                      padding:
+                                                          const EdgeInsets.all(
+                                                            4,
+                                                          ),
+                                                      decoration: BoxDecoration(
+                                                        color:
+                                                            Theme.of(
+                                                              context,
+                                                            ).colorScheme.error,
+                                                        shape: BoxShape.circle,
+                                                      ),
+                                                      constraints:
+                                                          const BoxConstraints(
+                                                            minWidth: 16,
+                                                            minHeight: 16,
+                                                          ),
+                                                      child: Text(
+                                                        receivedCount > 99
+                                                            ? '99+'
+                                                            : '$receivedCount',
+                                                        style: const TextStyle(
+                                                          color: Colors.white,
+                                                          fontSize: 10,
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
+                                                        textAlign:
+                                                            TextAlign.center,
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
+                                            );
                                           },
-                                          child: Container(
-                                            padding: const EdgeInsets.all(8),
-                                            child: SvgPicture.asset(
-                                              'assets/icons/link.svg',
-                                              width: 30,
-                                              height: 30,
-                                              colorFilter: ColorFilter.mode(
-                                                Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurface
-                                                    .withOpacity(0.85),
-                                                BlendMode.srcIn,
-                                              ),
-                                            ),
-                                          ),
                                         ),
                                       if (_isOwnProfile) ...[
                                         SizedBox(width: 10),
@@ -659,6 +694,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                       // Hero 애니메이션 적용
                                       return Stack(
                                         alignment: Alignment.center,
+                                        clipBehavior: Clip.none,
                                         children: [
                                           Hero(
                                             tag:
@@ -702,6 +738,83 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                         context,
                                                       ).colorScheme.primary,
                                                     ),
+                                              ),
+                                            ),
+                                          // 🎯 링크 아이콘 (프로필 원형의 우측 하단에 배치)
+                                          if ((isOther &&
+                                                  other?.links != null &&
+                                                  other!.links!.isNotEmpty) ||
+                                              (!isOther &&
+                                                  me?.links != null &&
+                                                  me!.links!.isNotEmpty))
+                                            Positioned(
+                                              right: -5,
+                                              bottom: -5,
+                                              child: GestureDetector(
+                                                onTap: () {
+                                                  final links =
+                                                      isOther
+                                                          ? (other?.links ?? [])
+                                                          : (me?.links ?? []);
+                                                  final linkTitles =
+                                                      isOther
+                                                          ? (other?.linkTitles)
+                                                          : (me?.linkTitles);
+                                                  final linkThumbnails =
+                                                      isOther
+                                                          ? (other
+                                                              ?.linkThumbnails)
+                                                          : (me
+                                                              ?.linkThumbnails);
+                                                  if (links.isNotEmpty) {
+                                                    LinkBottomSheet.show(
+                                                      context,
+                                                      links: links,
+                                                      linkTitles: linkTitles,
+                                                      linkThumbnails:
+                                                          linkThumbnails,
+                                                      otherUser:
+                                                          widget.otherUser,
+                                                    );
+                                                  }
+                                                },
+                                                child: Container(
+                                                  width: 40,
+                                                  height: 40,
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        Theme.of(context)
+                                                            .colorScheme
+                                                            .background,
+                                                    shape: BoxShape.circle,
+                                                    boxShadow: [
+                                                      BoxShadow(
+                                                        color: Colors.black
+                                                            .withOpacity(0.1),
+                                                        blurRadius: 4,
+                                                        offset: Offset(0, 2),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  padding: const EdgeInsets.all(
+                                                    8,
+                                                  ),
+                                                  child: SvgPicture.asset(
+                                                    'assets/icons/link.svg',
+                                                    width: 24,
+                                                    height: 24,
+                                                    colorFilter:
+                                                        ColorFilter.mode(
+                                                          Theme.of(context)
+                                                              .colorScheme
+                                                              .onSurface
+                                                              .withOpacity(
+                                                                0.85,
+                                                              ),
+                                                          BlendMode.srcIn,
+                                                        ),
+                                                  ),
+                                                ),
                                               ),
                                             ),
                                         ],

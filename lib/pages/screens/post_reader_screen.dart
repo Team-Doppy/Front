@@ -105,6 +105,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   final ScrollController _scrollCtrl = ScrollController();
   final GlobalKey _layoutKey = GlobalKey();
   static final GlobalKey _stackKey = GlobalKey();
+  final GlobalKey _documentStartMarkerKey = GlobalKey(); // 🎯 문서 시작점 측정용
   final BlogService _blogService = BlogService();
   final PostReaderService _postReaderService = PostReaderService();
   final PostReaderScrollPreloadService _scrollPreloadService =
@@ -1511,7 +1512,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   MediaQuery.removeViewInsets(
                     context: context,
                     removeBottom: true,
+                    // ✅ PostReaderStickers가 topInset을 계산할 때 기준이 되는 Stack.
+                    // stackKey가 실제 트리에 붙어있지 않으면 stackContext가 null이 되어
+                    // topInset 측정이 영원히 실패한다.
                     child: Stack(
+                      key: _stackKey,
                       children: [
                         // 전체 스크롤
                         NotificationListener<ScrollNotification>(
@@ -1608,6 +1613,13 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                           ), // ← 추가
                                         ),
                                       ),
+                                    ),
+                                  ),
+                                  // 🎯 문서 시작점 마커 (SuperEditor 바로 앞)
+                                  SliverToBoxAdapter(
+                                    child: SizedBox(
+                                      key: _documentStartMarkerKey,
+                                      height: 0,
                                     ),
                                   ),
                                   // SuperEditor 슬리버
@@ -1739,8 +1751,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               layoutKey: _layoutKey,
                               stackKey: _stackKey,
                               scrollController: _scrollCtrl,
+                              // 🎯 리더에서 스티커가 약간 아래로 치우치는 현상 보정
+                              // - 값은 디바이스/레이아웃 변화에 따라 조정 가능
+                              positionCorrection: const Offset(0, -26),
 
-                              topInset: (_appBarHeight + gapHeight),
+                              documentStartMarkerKey:
+                                  _documentStartMarkerKey, // 🎯 문서 시작점 자동 측정
                             ),
                           ),
                         ),

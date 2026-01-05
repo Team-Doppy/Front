@@ -5,6 +5,7 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/pages/screens/setting_screen.dart';
 import 'package:doppy/main.dart' show AppConstants;
+import 'package:doppy/pages/components/email_verification_flow.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../data/services/auth_service.dart';
@@ -25,6 +26,7 @@ class _JoinScreenState extends State<JoinScreen> {
 
   // 각 단계별 컨트롤러들
   final TextEditingController _idController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
@@ -40,6 +42,7 @@ class _JoinScreenState extends State<JoinScreen> {
   bool _isPasswordMatch = false;
   bool _isCheckingDuplicate = false;
   bool _isIdLengthChecked = false; // ID 길이 체크 시도 여부
+  String? _verifiedEmail;
 
   // 비밀번호 표시 여부
   bool _obscurePassword = true;
@@ -52,6 +55,7 @@ class _JoinScreenState extends State<JoinScreen> {
       return [context.tr('login')];
     }
     return [
+      context.tr('join_step_email'),
       context.tr('join_step_id'),
       context.tr('join_step_password'),
       context.tr('join_step_confirm_password'),
@@ -62,6 +66,7 @@ class _JoinScreenState extends State<JoinScreen> {
   @override
   void dispose() {
     _idController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _loginIdFocusNode.dispose();
@@ -126,12 +131,36 @@ class _JoinScreenState extends State<JoinScreen> {
                 ? [_buildModeSelectionStep(), _buildLoginStep()]
                 : [
                   _buildModeSelectionStep(),
+                  _buildEmailVerificationStep(),
                   _buildIdStep(),
                   _buildPasswordStep(),
                   _buildConfirmPasswordStep(),
                   _buildCompleteStep(),
                 ],
       ),
+    );
+  }
+
+  Widget _buildEmailVerificationStep() {
+    return Column(
+      children: [
+        Expanded(
+          child: EmailVerificationFlow(
+            title: context.tr('join_enter_email_title'),
+            subtitle: context.tr('join_enter_email_subtitle'),
+            initialEmail: _verifiedEmail ?? _emailController.text,
+            enabledEmailEdit: true,
+            onVerified: (email) async {
+              if (!mounted) return;
+              setState(() {
+                _verifiedEmail = email;
+                _emailController.text = email;
+              });
+              _nextStep();
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -442,6 +471,82 @@ class _JoinScreenState extends State<JoinScreen> {
                 onChanged: (value) {
                   setState(() {});
                 },
+              ),
+
+              // 비밀번호 변경, 아이디 찾기, 비밀번호 찾기 링크
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        // TODO: 아이디 찾기 화면으로 이동
+                      },
+                      child: Text(
+                        context.tr('find_id'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Text(
+                        '|',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.3),
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () {
+                        // TODO: 비밀번호 찾기 화면으로 이동
+                      },
+                      child: Text(
+                        context.tr('find_password'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Text(
+                        '|',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.3),
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () {
+                        // TODO: 비밀번호 변경 화면으로 이동
+                      },
+                      child: Text(
+                        context.tr('change_password'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -1126,7 +1231,7 @@ class _JoinScreenState extends State<JoinScreen> {
       setState(() {
         _currentStep++;
         // 🎯 비밀번호 재확인 페이지(step 3)에 들어갈 때마다 현재 입력값 확인
-        if (_currentStep == 3) {
+        if (_selectedMode == AuthMode.signup && _currentStep == 4) {
           _isPasswordMatch =
               _confirmPasswordController.text.isNotEmpty &&
               _confirmPasswordController.text == _passwordController.text;
@@ -1143,6 +1248,7 @@ class _JoinScreenState extends State<JoinScreen> {
         if (_currentStep == 0) {
           _selectedMode = null;
           _idController.clear();
+          _emailController.clear();
           _passwordController.clear();
           _confirmPasswordController.clear();
           _isIdDuplicateChecked = false;
@@ -1150,9 +1256,10 @@ class _JoinScreenState extends State<JoinScreen> {
           _isPasswordValid = false;
           _isPasswordMatch = false;
           _isIdLengthChecked = false;
+          _verifiedEmail = null;
         }
         // 🎯 비밀번호 재확인 페이지(step 3)로 돌아올 때도 현재 입력값 확인
-        else if (_currentStep == 3) {
+        else if (_selectedMode == AuthMode.signup && _currentStep == 4) {
           _isPasswordMatch =
               _confirmPasswordController.text.isNotEmpty &&
               _confirmPasswordController.text == _passwordController.text;
@@ -1219,6 +1326,7 @@ class _JoinScreenState extends State<JoinScreen> {
       final success = await _authService.register(
         username: _idController.text,
         password: _passwordController.text,
+        email: _verifiedEmail ?? _emailController.text,
         alias: _idController.text, // username을 alias로 사용
         region: region,
       );

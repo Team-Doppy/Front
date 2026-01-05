@@ -1216,7 +1216,8 @@ class UploadService with ChangeNotifier {
   Future<void> uploadEditorImages({
     required List<File> files,
     required String Function(String localPath) onCreateNode,
-    required Future<void> Function(String nodeId, String url) onUploadComplete,
+    required Future<void> Function(String nodeId, String localPath, String url)
+    onUploadComplete,
     required void Function(String nodeId) onDeleteNode,
     required bool Function() isMounted,
     required BuildContext? context,
@@ -1234,8 +1235,9 @@ class UploadService with ChangeNotifier {
     final Set<String> createdNodes = <String>{}; // 🎯 생성된 노드 추적
 
     for (final file in files) {
+      final localPath = file.path;
       // 1. 노드 생성
-      final nodeId = onCreateNode(file.path);
+      final nodeId = onCreateNode(localPath);
 
       // 🎯 같은 노드 ID가 이미 생성되었으면 재사용 (그룹 이미지용)
       final isNewNode = createdNodes.add(nodeId);
@@ -1268,7 +1270,7 @@ class UploadService with ChangeNotifier {
           debugPrint(
             '[UploadService] ✅ 이미지 업로드 완료: nodeId=$nodeId, url=${task.url}',
           );
-          await onUploadComplete(nodeId, task.url!);
+          await onUploadComplete(nodeId, localPath, task.url!);
           completed++;
         } else if (task.state == UploadState.cancelled) {
           // ✅ 취소(삭제/undo/사용자 취소 등)는 실패 다이얼로그 대상이 아니다.

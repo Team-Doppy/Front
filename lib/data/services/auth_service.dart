@@ -1,6 +1,7 @@
 import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/data/services/fcm_service.dart';
 import 'package:doppy/data/services/user_service.dart';
+import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,6 +9,8 @@ import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import 'dart:convert';
 import '../models/login_response_model.dart';
+import '../models/api_error_model.dart';
+import '../models/email_verification_models.dart';
 
 class AuthService {
   static final AuthService _instance = AuthService._internal();
@@ -43,6 +46,7 @@ class AuthService {
   Future<bool> register({
     required String username,
     required String password,
+    required String email,
     String? alias,
     String? region, // 'KR' 또는 'US'
   }) async {
@@ -56,7 +60,7 @@ class AuthService {
       debugPrint('[AuthService] FCM 토큰 발급 중 오류 (무시): $e');
     }
 
-    final body = {'username': username, 'password': password};
+    final body = {'username': username, 'password': password, 'email': email};
     if (alias != null) body['alias'] = alias;
     if (region != null) body['region'] = region;
     if (fcmToken != null && fcmToken.isNotEmpty) {
@@ -372,6 +376,297 @@ class AuthService {
     debugPrint('[-] [AuthService] logout success');
   }
 
+  Map<String, dynamic>? _decodeJwtPayload(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+      final payload = parts[1];
+      final normalized = base64Url.normalize(payload);
+      final decoded = base64Url.decode(normalized);
+      return jsonDecode(utf8.decode(decoded)) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// JWT payload의 email (없으면 null)
+  Future<String?> getEmailFromToken() async {
+    final token = await getToken();
+    if (token == null || token.isEmpty) return null;
+    final payload = _decodeJwtPayload(token);
+    final email = payload?['email'];
+    if (email == null) return null;
+    final s = email.toString().trim();
+    return s.isEmpty ? null : s;
+  }
+
+  /// 현재 refreshToken으로 토큰을 "강제로" 갱신
+  Future<bool> refreshTokenNow() async {
+    return await _refreshToken();
+  }
+
+  /// 이메일 인증 코드 발송
+  /// - 회원가입 전에도 사용되므로 Authorization 없이도 동작해야 함
+  /// - 로그인 후(email null 강제 플로우)에서도 사용할 수 있도록 토큰이 있으면 함께 보냄
+  Future<EmailSendCodeResult> sendEmailVerificationCode({
+    required String email,
+    required String region,
+  }) async {
+    try {
+      final url = Uri.parse('$baseUrl/api/auth/email/send-code');
+      final token = await getToken();
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
+      final response = await http.post(
+        url,
+        headers: headers,
+        body: jsonEncode({'email': email, 'region': region}),
+      );
+
+      Map<String, dynamic>? decoded;
+      try {
+        decoded =
+            response.bodyBytes.isNotEmpty
+                ? jsonDecode(utf8.decode(response.bodyBytes))
+                    as Map<String, dynamic>?
+                : null;
+      } catch (e) {
+        // JSON 파싱 실패 시 (502 Bad Gateway 등)
+        debugPrint('[AuthService] JSON 파싱 실패: $e');
+        return EmailSendCodeResult(
+          success: false,
+          statusCode: response.statusCode,
+          message: ErrorHandler.getHttpErrorMessage(response.statusCode),
+          error: ApiErrorModel(
+            error: 'PARSE_ERROR',
+            message: '서버 응답을 처리하는 중 오류가 발생했습니다.',
+          ),
+        );
+      }
+
+      if (response.statusCode == 200) {
+        // 서버에서 만료시간 파싱
+        DateTime? expiresAt;
+        int? expiresIn;
+
+        // expiresAt이 ISO 8601 문자열로 오는 경우
+        if (decoded?['expiresAt'] != null) {
+          try {
+            expiresAt = DateTime.parse(decoded!['expiresAt'].toString());
+          } catch (e) {
+            debugPrint('[AuthService] expiresAt 파싱 실패: $e');
+          }
+        }
+
+        // expiresIn이 초 단위로 오는 경우
+        if (decoded?['expiresIn'] != null) {
+          try {
+            expiresIn = int.tryParse(decoded!['expiresIn'].toString());
+          } catch (e) {
+            debugPrint('[AuthService] expiresIn 파싱 실패: $e');
+          }
+        }
+
+        return EmailSendCodeResult(
+          success: true,
+          statusCode: response.statusCode,
+          message: decoded?['message']?.toString(),
+          expiresAt: expiresAt,
+          expiresIn: expiresIn,
+        );
+      }
+
+      ApiErrorModel? err;
+      if (decoded is Map<String, dynamic>) {
+        try {
+          err = ApiErrorModel.fromJson(decoded);
+        } catch (e) {
+          debugPrint('[AuthService] ApiErrorModel 파싱 실패: $e');
+        }
+      }
+      return EmailSendCodeResult(
+        success: false,
+        statusCode: response.statusCode,
+        message:
+            err?.message ??
+            ErrorHandler.getHttpErrorMessage(response.statusCode),
+        error: err,
+      );
+    } catch (e) {
+      debugPrint('[AuthService] sendEmailVerificationCode 예외: $e');
+      return EmailSendCodeResult(
+        success: false,
+        statusCode: null,
+        message: ErrorHandler.getErrorMessage(e),
+        error: ApiErrorModel(
+          error: 'NETWORK_ERROR',
+          message: ErrorHandler.getErrorMessage(e),
+        ),
+      );
+    }
+  }
+
+  /// 이메일 업데이트 (인증 완료된 이메일로 업데이트 + 새 토큰 발급)
+  /// 강제 인증 플로우에서 사용: verify-code 성공 후 호출
+  Future<LoginResponse?> updateEmail({required String email}) async {
+    try {
+      final token = await getToken();
+      if (token == null || token.isEmpty) {
+        debugPrint('[AuthService] updateEmail: 토큰이 없습니다');
+        return null;
+      }
+
+      final url = Uri.parse('$baseUrl/api/auth/update-email');
+      final response = await http.patch(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'email': email}),
+      );
+
+      Map<String, dynamic>? decoded;
+      try {
+        decoded =
+            response.bodyBytes.isNotEmpty
+                ? jsonDecode(utf8.decode(response.bodyBytes))
+                    as Map<String, dynamic>?
+                : null;
+      } catch (e) {
+        // JSON 파싱 실패 시 (502 Bad Gateway 등)
+        debugPrint('[AuthService] updateEmail JSON 파싱 실패: $e');
+        return null;
+      }
+
+      if (response.statusCode == 200 && decoded is Map<String, dynamic>) {
+        // 응답 구조: { "success": true, "data": { "accessToken": "...", ... }, "message": "..." }
+        final data = decoded['data'];
+        if (data is Map<String, dynamic>) {
+          final loginResponse = LoginResponse(
+            token: data['accessToken'] ?? data['token'] ?? '',
+            refreshToken: data['refreshToken'] ?? '',
+            type: data['tokenType'] ?? 'Bearer',
+            username: data['username'] ?? '',
+          );
+
+          // 새 토큰 저장
+          await _saveToken(loginResponse.token);
+          await _saveRefreshToken(loginResponse.refreshToken);
+          await _saveUsername(loginResponse.username);
+          await initAfterLogin();
+
+          debugPrint('[AuthService] ✅ 이메일 업데이트 및 토큰 재발급 완료: $email');
+          return loginResponse;
+        }
+      }
+
+      // 에러 처리
+      ApiErrorModel? err;
+      if (decoded is Map<String, dynamic>) {
+        try {
+          err = ApiErrorModel.fromJson(decoded);
+        } catch (e) {
+          debugPrint('[AuthService] ApiErrorModel 파싱 실패: $e');
+        }
+      }
+      final errorMsg =
+          err?.message ??
+          decoded?['message']?.toString() ??
+          ErrorHandler.getHttpErrorMessage(response.statusCode);
+      debugPrint('[AuthService] ❌ 이메일 업데이트 실패: $errorMsg');
+      return null;
+    } catch (e) {
+      debugPrint('[AuthService] ❌ 이메일 업데이트 오류: $e');
+      return null;
+    }
+  }
+
+  /// 이메일 인증 코드 검증
+  Future<EmailVerifyCodeResult> verifyEmailCode({
+    required String email,
+    required String code,
+  }) async {
+    try {
+      final url = Uri.parse('$baseUrl/api/auth/email/verify-code');
+      final token = await getToken();
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
+      final response = await http.post(
+        url,
+        headers: headers,
+        body: jsonEncode({'email': email, 'code': code}),
+      );
+
+      Map<String, dynamic>? decoded;
+      try {
+        decoded =
+            response.bodyBytes.isNotEmpty
+                ? jsonDecode(utf8.decode(response.bodyBytes))
+                    as Map<String, dynamic>?
+                : null;
+      } catch (e) {
+        // JSON 파싱 실패 시 (502 Bad Gateway 등)
+        debugPrint('[AuthService] JSON 파싱 실패: $e');
+        return EmailVerifyCodeResult(
+          success: false,
+          statusCode: response.statusCode,
+          message: ErrorHandler.getHttpErrorMessage(response.statusCode),
+          error: ApiErrorModel(
+            error: 'PARSE_ERROR',
+            message: '서버 응답을 처리하는 중 오류가 발생했습니다.',
+          ),
+        );
+      }
+
+      if (response.statusCode == 200) {
+        final verifiedRaw = decoded?['verified']?.toString();
+        final verified =
+            verifiedRaw == null ? null : (verifiedRaw.toLowerCase() == 'true');
+        return EmailVerifyCodeResult(
+          success: true,
+          verified: verified ?? true,
+          statusCode: response.statusCode,
+          message: decoded?['message']?.toString(),
+        );
+      }
+
+      ApiErrorModel? err;
+      if (decoded is Map<String, dynamic>) {
+        try {
+          err = ApiErrorModel.fromJson(decoded);
+        } catch (e) {
+          debugPrint('[AuthService] ApiErrorModel 파싱 실패: $e');
+        }
+      }
+      return EmailVerifyCodeResult(
+        success: false,
+        statusCode: response.statusCode,
+        message:
+            err?.message ??
+            ErrorHandler.getHttpErrorMessage(response.statusCode),
+        error: err,
+      );
+    } catch (e) {
+      debugPrint('[AuthService] verifyEmailCode 예외: $e');
+      return EmailVerifyCodeResult(
+        success: false,
+        statusCode: null,
+        message: ErrorHandler.getErrorMessage(e),
+        error: ApiErrorModel(
+          error: 'NETWORK_ERROR',
+          message: ErrorHandler.getErrorMessage(e),
+        ),
+      );
+    }
+  }
+
   /// 4. 토큰 검증 및 갱신 (클라이언트 사이드)
   Future<bool> validateAndRefreshToken() async {
     final token = await getToken();
@@ -391,11 +686,7 @@ class AuthService {
       }
 
       // JWT payload 디코딩
-      final payload = parts[1];
-      // Base64 패딩 추가
-      final normalized = base64.normalize(payload);
-      final resp = utf8.decode(base64.decode(normalized));
-      final payloadMap = jsonDecode(resp);
+      final payloadMap = _decodeJwtPayload(token) ?? {};
 
       // 만료 시간 확인
       final exp = payloadMap['exp'] as int?;

@@ -209,40 +209,31 @@ class MediaUploadHandler {
         // 이미 생성된 그룹 노드 ID 반환
         return groupPlaceholderId;
       },
-      onUploadComplete: (nodeId, url) async {
-        // 🎯 성능 최적화: Set 사용으로 O(1) 조회
-        String? targetLocalPath;
-        for (final path in localPaths) {
-          if (!uploadedPathsSet.contains(path)) {
-            targetLocalPath = path;
-            break;
-          }
+      onUploadComplete: (nodeId, localPath, url) async {
+        // ✅ 순서 보장: 업로드 완료된 "그 파일의 localPath"에 정확히 매핑한다.
+        if (!localPaths.contains(localPath)) {
+          assert(() {
+            debugPrint(
+              '[MediaUploadHandler] ⚠️ PageView URL 매핑 스킵: localPath가 그룹에 없음 (nodeId=$nodeId, localPath=$localPath)',
+            );
+            return true;
+          }());
+          return;
         }
 
-        if (targetLocalPath != null) {
-          uploadedPathsSet.add(targetLocalPath);
-          pendingUrls[targetLocalPath] = url;
+        uploadedPathsSet.add(localPath);
+        pendingUrls[localPath] = url;
 
-          assert(() {
-            debugPrint(
-              '[MediaUploadHandler] 📦 PageView URL 배치 대기 (${pendingUrls.length}/${files.length}): $targetLocalPath → $url',
-            );
-            return true;
-          }());
+        assert(() {
+          debugPrint(
+            '[MediaUploadHandler] 📦 PageView URL 배치 대기 (${pendingUrls.length}/${files.length}): $localPath → $url',
+          );
+          return true;
+        }());
 
-          // 🎯 모든 이미지가 완료되면 즉시 배치 처리
-          // 1-6개라는 작은 수이므로 타이머 없이 즉시 처리
-          if (pendingUrls.length == files.length) {
-            await flushBatch();
-          }
-          // 일부만 완료된 경우는 다음 완료 시점에 처리 (타이머 불필요)
-        } else {
-          assert(() {
-            debugPrint(
-              '[MediaUploadHandler] ⚠️ PageView URL 교체 실패: targetLocalPath를 찾을 수 없음 (nodeId=$nodeId)',
-            );
-            return true;
-          }());
+        // 1-6개라는 작은 수이므로, 모두 모이면 즉시 배치 처리
+        if (pendingUrls.length == files.length) {
+          await flushBatch();
         }
       },
       onDeleteNode: (nodeId) {
@@ -369,40 +360,30 @@ class MediaUploadHandler {
         // 이미 생성된 그룹 노드 ID 반환
         return groupPlaceholderId;
       },
-      onUploadComplete: (nodeId, url) async {
-        // 🎯 성능 최적화: Set 사용으로 O(1) 조회
-        String? targetLocalPath;
-        for (final path in localPaths) {
-          if (!uploadedPathsSet.contains(path)) {
-            targetLocalPath = path;
-            break;
-          }
+      onUploadComplete: (nodeId, localPath, url) async {
+        // ✅ 순서 보장: 업로드 완료된 "그 파일의 localPath"에 정확히 매핑한다.
+        if (!localPaths.contains(localPath)) {
+          assert(() {
+            debugPrint(
+              '[MediaUploadHandler] ⚠️ ImageRow URL 매핑 스킵: localPath가 그룹에 없음 (nodeId=$nodeId, localPath=$localPath)',
+            );
+            return true;
+          }());
+          return;
         }
 
-        if (targetLocalPath != null) {
-          uploadedPathsSet.add(targetLocalPath);
-          pendingUrls[targetLocalPath] = url;
+        uploadedPathsSet.add(localPath);
+        pendingUrls[localPath] = url;
 
-          assert(() {
-            debugPrint(
-              '[MediaUploadHandler] 📦 ImageRow URL 배치 대기 (${pendingUrls.length}/${groupFiles.length}): $targetLocalPath → $url',
-            );
-            return true;
-          }());
+        assert(() {
+          debugPrint(
+            '[MediaUploadHandler] 📦 ImageRow URL 배치 대기 (${pendingUrls.length}/${groupFiles.length}): $localPath → $url',
+          );
+          return true;
+        }());
 
-          // 🎯 모든 이미지가 완료되면 즉시 배치 처리
-          // 1-6개라는 작은 수이므로 타이머 없이 즉시 처리
-          if (pendingUrls.length == groupFiles.length) {
-            await flushBatch();
-          }
-          // 일부만 완료된 경우는 다음 완료 시점에 처리 (타이머 불필요)
-        } else {
-          assert(() {
-            debugPrint(
-              '[MediaUploadHandler] ⚠️ ImageRow URL 교체 실패: targetLocalPath를 찾을 수 없음 (nodeId=$nodeId)',
-            );
-            return true;
-          }());
+        if (pendingUrls.length == groupFiles.length) {
+          await flushBatch();
         }
       },
       onDeleteNode: (nodeId) {
@@ -437,13 +418,13 @@ class MediaUploadHandler {
         nodeIdToLocalPath[nodeId] = localPath; // 매핑 저장
         return nodeId;
       },
-      onUploadComplete: (nodeId, url) async {
+      onUploadComplete: (nodeId, localPath, url) async {
         // 🎯 매핑에서 정확한 localPath 가져오기
-        final localPath = nodeIdToLocalPath[nodeId];
-        if (localPath != null) {
+        final mappedLocalPath = nodeIdToLocalPath[nodeId];
+        if (mappedLocalPath != null) {
           await editorService.replaceImageUrlByPath(
             nodeId: nodeId,
-            localPath: localPath,
+            localPath: mappedLocalPath,
             url: url,
           );
         } else {

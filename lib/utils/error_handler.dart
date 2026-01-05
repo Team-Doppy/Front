@@ -128,15 +128,40 @@ class ErrorHandler {
 
     final errorString = error.toString();
 
+    // FormatException (JSON 파싱 에러 등)
+    if (errorString.contains('FormatException') ||
+        errorString.contains('Unexpected character')) {
+      return '서버 응답을 처리하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+    }
+
+    // JSON 파싱 에러
+    if (errorString.contains('jsonDecode') || errorString.contains('JSON')) {
+      return '서버 응답을 처리하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+    }
+
     // 네트워크 오류
     if (errorString.contains('SocketException') ||
-        errorString.contains('NetworkException')) {
+        errorString.contains('NetworkException') ||
+        errorString.contains('Failed host lookup') ||
+        errorString.contains('Connection refused')) {
       return '인터넷 연결을 확인해주세요.';
     }
 
     // 타임아웃 오류
-    if (errorString.contains('TimeoutException')) {
+    if (errorString.contains('TimeoutException') ||
+        errorString.contains('timeout')) {
       return '요청 시간이 초과되었습니다. 다시 시도해주세요.';
+    }
+
+    // 502 Bad Gateway 에러
+    if (errorString.contains('502') || errorString.contains('Bad Gateway')) {
+      return '서버 연결에 실패했습니다. 잠시 후 다시 시도해주세요.';
+    }
+
+    // 500 Internal Server Error
+    if (errorString.contains('500') ||
+        errorString.contains('Internal Server Error')) {
+      return '서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
     }
 
     // JWT 토큰 만료
@@ -150,27 +175,66 @@ class ErrorHandler {
       return '인증 정보를 갱신할 수 없습니다. 다시 로그인해주세요.';
     }
 
-    // HTTP 에러
-    if (errorString.contains('HttpException')) {
-      final statusCodeMatch = RegExp(r'(\d{3})').firstMatch(errorString);
-      if (statusCodeMatch != null) {
-        final statusCode = int.parse(statusCodeMatch.group(1)!);
+    // HTTP 에러 코드 추출 (예: "error code: 502")
+    final statusCodeMatch = RegExp(
+      r'(?:error code:|status code:|code:)\s*(\d{3})',
+      caseSensitive: false,
+    ).firstMatch(errorString);
+    if (statusCodeMatch != null) {
+      final statusCode = int.tryParse(statusCodeMatch.group(1)!);
+      if (statusCode != null) {
         return getHttpErrorMessage(statusCode);
       }
     }
 
-    // StateError 메시지 추출
+    // HTTP 에러
+    if (errorString.contains('HttpException')) {
+      final statusCodeMatch = RegExp(r'(\d{3})').firstMatch(errorString);
+      if (statusCodeMatch != null) {
+        final statusCode = int.tryParse(statusCodeMatch.group(1)!);
+        if (statusCode != null) {
+          return getHttpErrorMessage(statusCode);
+        }
+      }
+    }
+
+    // StateError 메시지 추출 (기술적 메시지 제거)
     if (errorString.startsWith('StateError: ')) {
-      return errorString.substring('StateError: '.length);
+      final msg = errorString.substring('StateError: '.length);
+      // 기술적 메시지면 일반 메시지로 변환
+      if (msg.contains('FormatException') || msg.contains('Unexpected')) {
+        return '서버 응답을 처리하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+      }
+      return msg;
     }
 
-    // Exception 메시지 추출
+    // Exception 메시지 추출 (기술적 메시지 제거)
     if (errorString.startsWith('Exception: ')) {
-      return errorString.substring('Exception: '.length);
+      final msg = errorString.substring('Exception: '.length);
+      // 기술적 메시지면 일반 메시지로 변환
+      if (msg.contains('FormatException') || msg.contains('Unexpected')) {
+        return '서버 응답을 처리하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+      }
+      return msg;
     }
 
-    // 기본 메시지
-    return errorString.length > 100 ? '오류가 발생했습니다.' : errorString;
+    // 기술적 에러 메시지 필터링
+    if (errorString.contains('FormatException') ||
+        errorString.contains('Unexpected character') ||
+        errorString.contains('at character') ||
+        errorString.contains('jsonDecode')) {
+      return '서버 응답을 처리하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+    }
+
+    // 기본 메시지 (너무 길거나 기술적이면 일반 메시지로)
+    if (errorString.length > 100 ||
+        errorString.contains('Exception') ||
+        errorString.contains('Error:') ||
+        errorString.contains('at ')) {
+      return '오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+    }
+
+    return errorString;
   }
 
   /// 에러를 처리하고 스낵바 표시

@@ -1868,7 +1868,10 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
           } catch (_) {}
         }
         // 썸네일 생성(best-effort, 비동기)
+        // ✅ 리더 모드에서는 원격 비디오 썸네일 생성이 iOS(AVFoundation)에서 간헐적으로 실패하며
+        // 로그 스팸/비용만 유발할 수 있다. (드래그 오버레이 재사용 목적은 편집 모드에 한정)
         if (mounted &&
+            widget.isEditing &&
             widget.localPath.isEmpty &&
             !videoThumbnailCache.containsKey(cacheKey)) {
           _generateThumbnailForCache(cacheKey);
@@ -1912,6 +1915,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
 
   /// 🎯 비디오 URL로 썸네일 생성하여 전역 캐시에 저장 (드래그 오버레이에서 재사용)
   Future<void> _generateThumbnailForCache(String videoUrl) async {
+    // ✅ 드래그 오버레이 재사용 목적: 편집 모드에서만 생성
+    if (!widget.isEditing) return;
     // 이미 캐시에 있으면 스킵
     if (videoThumbnailCache.containsKey(videoUrl)) {
       debugPrint('[ClipComponent] 썸네일 이미 캐시에 있음: $videoUrl');
@@ -2008,6 +2013,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
         final cacheKey =
             widget.localPath.isNotEmpty ? widget.localPath : widget.url;
         if (mounted &&
+            widget.isEditing &&
             widget.localPath.isEmpty &&
             !videoThumbnailCache.containsKey(cacheKey)) {
           _generateThumbnailForCache(cacheKey);

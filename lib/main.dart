@@ -11,6 +11,7 @@ import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/received_request_bottom_sheet.dart';
 import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
+import 'package:doppy/pages/screens/email_verification_screen.dart';
 
 import 'package:doppy/pages/screens/onboarding_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
@@ -420,6 +421,7 @@ class MyApp extends StatelessWidget {
               '/splash': (_) => const SplashScreen(),
               '/login': (_) => const LoginScreen(),
               '/post-write': (_) => PostwriteScreen(isEditingMode: false),
+              '/email-verify': (_) => const EmailVerificationScreen(),
             },
 
             // ✅ IMPORTANT: iOS/Android App Links가 "엔진 initialRoute"로 들어올 수 있음 (예: /334)

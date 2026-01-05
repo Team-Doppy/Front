@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/image/simple_image_editor_screen.dart';
 import 'package:doppy/image/simple_video_editor_screen.dart';
@@ -1355,7 +1356,26 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
             ],
           ),
         ),
-        child: SafeArea(child: _buildBody()),
+        child: Stack(
+          children: [
+            SafeArea(child: _buildBody()),
+            // 🎯 로딩 중일 때 어두운 배경과 블러 효과
+            if (_isLoading || _isSubmitting || _isLoadingMore)
+              Positioned.fill(
+                child: ClipRRect(
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                    child: Container(
+                      color: Colors.black.withOpacity(0.6),
+                      child: const Center(
+                        child: CupertinoActivityIndicator(radius: 16),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

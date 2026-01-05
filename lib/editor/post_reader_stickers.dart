@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
 
 /// 스티커 오버레이 (리더/에디터 공용)
@@ -11,14 +12,18 @@ class PostReaderStickers extends StatefulWidget {
     required this.layoutKey,
     required this.stackKey,
     required this.scrollController,
-    this.topInset = 0,
+    this.topInset,
+    this.documentStartMarkerKey, // 🎯 문서 시작점 측정용 (우선순위 높음)
+    this.positionCorrection = Offset.zero, // 🎯 미세 보정 (리더/환경별 튜닝용)
   });
 
   final List stickers;
   final GlobalKey layoutKey;
   final GlobalKey stackKey;
   final ScrollController scrollController;
-  final double topInset;
+  final double? topInset; // 🎯 null이면 자동 측정
+  final GlobalKey? documentStartMarkerKey; // 🎯 문서 시작점 마커
+  final Offset positionCorrection; // ✅ 최종 렌더 좌표에 더해질 보정값(px)
 
   @override
   State<PostReaderStickers> createState() => _PostReaderStickersState();
@@ -30,6 +35,34 @@ class _PostReaderStickersState extends State<PostReaderStickers> {
   // - base64Decode: 스티커 id 기준으로 1회만 수행
   List<Map<String, dynamic>> _sorted = const [];
   final Map<String, Uint8List> _decodedBytesByKey = <String, Uint8List>{};
+
+  // ✅ 리더에서 스티커를 "문서(본문) 시작점" 기준으로 맞추기 위한 topInset 자동 측정 캐시
+  // - Reader에는 PostReaderHeader(제목/메타) 등이 문서 위에 추가로 존재하므로
+  //   writer에서 저장된 좌표(문서 기준)가 그대로 매핑되지 않을 수 있다.
+  // - documentStartMarkerKey(문서 시작 마커)와 stackKey(오버레이 좌표계)의 글로벌 좌표 차이로 보정한다.
+  double? _cachedAutoTopInset;
+
+  double _measureAutoTopInset() {
+    final markerCtx = widget.documentStartMarkerKey?.currentContext;
+    final stackCtx = widget.stackKey.currentContext;
+    if (markerCtx == null || stackCtx == null) return 0.0;
+
+    final markerRo = markerCtx.findRenderObject();
+    final stackRo = stackCtx.findRenderObject();
+    final markerBox = markerRo is RenderBox ? markerRo : null;
+    final stackBox = stackRo is RenderBox ? stackRo : null;
+    if (markerBox == null || stackBox == null) return 0.0;
+    if (!markerBox.hasSize || !stackBox.hasSize) return 0.0;
+
+    final markerTop = markerBox.localToGlobal(Offset.zero).dy;
+    final stackTop = stackBox.localToGlobal(Offset.zero).dy;
+    final inset = markerTop - stackTop;
+    if (inset.isFinite && inset > 0) {
+      _cachedAutoTopInset = inset;
+      return inset;
+    }
+    return 0.0;
+  }
 
   @override
   void initState() {
@@ -79,6 +112,25 @@ class _PostReaderStickersState extends State<PostReaderStickers> {
                 widget.scrollController.hasClients
                     ? widget.scrollController.offset
                     : 0.0;
+
+            // ✅ topInset 결정:
+            // 1) 호출자가 topInset을 명시하면 그 값을 사용 (고정)
+            // 2) 아니면 문서 시작 마커를 기준으로 자동 측정
+            double autoInset = _cachedAutoTopInset ?? 0.0;
+            if (widget.topInset == null && autoInset == 0.0) {
+              autoInset = _measureAutoTopInset();
+              if (autoInset == 0.0 && widget.documentStartMarkerKey != null) {
+                // 레이아웃이 아직 안 잡힌 프레임이면 다음 프레임에 1회 재시도
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  if (widget.topInset != null) return;
+                  if ((_cachedAutoTopInset ?? 0.0) > 0) return;
+                  final retry = _measureAutoTopInset();
+                  if (retry > 0) setState(() {});
+                });
+              }
+            }
+            final baseTopInset = widget.topInset ?? autoInset;
 
             // ✅ URL 이미지 decodeWidth는 스티커마다 동일하므로 루프 밖에서 1회만 계산
             final screenWidth = constraints.maxWidth;
@@ -221,11 +273,9 @@ class _PostReaderStickersState extends State<PostReaderStickers> {
               // 최종 스케일: 저장된 스케일 * 앵커 스케일 보정
               final double finalScale = baseScale * anchorScale;
 
-              // ✅ 문서 좌표계에서 Stack 좌표계로 변환: topInset 추가
-              // - absPos.dy는 문서 좌표계, scrollY를 빼면 문서 내 상대 위치
-              // - topInset(헤더 높이)을 더해서 Stack 내 절대 위치로 변환
-              double left = absPos.dx;
-              double top = topPos + widget.topInset;
+              double left = absPos.dx + widget.positionCorrection.dx;
+              double top =
+                  topPos + baseTopInset + widget.positionCorrection.dy - 26;
               // ✅ PostwriteScreen 방식: 중심 보정 없음 (좌상단 기준)
 
               children.add(

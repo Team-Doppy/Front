@@ -324,7 +324,38 @@ class _PostListState extends State<PostList> {
               ),
             ),
             centerTitle: false,
-            actions: [],
+            actions: [
+              Stack(
+                children: [
+                  IconButton(
+                    onPressed: () {},
+                    icon: Icon(Icons.notifications_none_outlined),
+                  ),
+                  if (1 > 0)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.error,
+                          shape: BoxShape.circle,
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          '1',
+                          style: TextStyle(color: Colors.white),
+                          textAlign: TextAlign.center,
+                          textScaleFactor: 0.8,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
           ),
         SliverToBoxAdapter(
           child: Container(

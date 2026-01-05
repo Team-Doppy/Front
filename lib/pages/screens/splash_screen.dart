@@ -10,6 +10,7 @@ import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/data/services/region_service.dart';
 import 'package:doppy/utils/deep_link_store.dart';
 import 'package:doppy/utils/deep_link_handler.dart';
+import 'package:doppy/pages/screens/email_verification_screen.dart';
 
 import 'dart:async';
 
@@ -23,8 +24,13 @@ import 'package:provider/provider.dart';
 class _BootstrapResult {
   final bool loggedIn;
   final HomeData? homeData;
+  final bool requiresEmailVerification;
 
-  const _BootstrapResult({required this.loggedIn, this.homeData});
+  const _BootstrapResult({
+    required this.loggedIn,
+    this.homeData,
+    this.requiresEmailVerification = false,
+  });
 
   factory _BootstrapResult.notLoggedIn() {
     return const _BootstrapResult(loggedIn: false, homeData: null);
@@ -32,6 +38,14 @@ class _BootstrapResult {
 
   factory _BootstrapResult.loggedIn(HomeData? homeData) {
     return _BootstrapResult(loggedIn: true, homeData: homeData);
+  }
+
+  factory _BootstrapResult.emailVerificationRequired() {
+    return const _BootstrapResult(
+      loggedIn: true,
+      homeData: null,
+      requiresEmailVerification: true,
+    );
   }
 }
 
@@ -137,6 +151,14 @@ class _SplashScreenState extends State<SplashScreen>
       if (!mounted) {
         return _BootstrapResult.notLoggedIn();
       }
+
+      // ✅ 이메일 인증 강제: JWT payload의 email이 null/empty면 이메일 인증 화면으로 보냄
+      try {
+        final email = await AuthService().getEmailFromToken();
+        if (email == null) {
+          return _BootstrapResult.emailVerificationRequired();
+        }
+      } catch (_) {}
 
       // 🎯 디버그 모드에서만: JWT 토큰의 region과 kTestForceKorean 플래그 비교 및 동기화
       // 프로덕션에서는 처음 계정별로 한번 결정된 지역이 변하면 안됨
@@ -384,6 +406,28 @@ class _SplashScreenState extends State<SplashScreen>
     // 부트스트랩 결과에 따라 네비게이션
     final result = await _bootstrapFuture;
     if (!mounted) return;
+
+    // 이메일 인증이 필요하면: 홈 대신 이메일 인증 화면으로 이동
+    if (result.loggedIn && result.requiresEmailVerification) {
+      await _fadeOutController.forward();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (_, __, ___) => const EmailVerificationScreen(),
+          transitionDuration: const Duration(milliseconds: 250),
+          transitionsBuilder: (_, animation, __, child) {
+            return FadeTransition(
+              opacity: CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeInOut,
+              ),
+              child: child,
+            );
+          },
+        ),
+      );
+      return;
+    }
 
     if (result.loggedIn) {
       // ✅ RootShell은 항상 초기화 (홈 화면은 항상 생성됨)
