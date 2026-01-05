@@ -11,8 +11,7 @@ enum AdjustmentType {
   exposure('노출', Icons.exposure),
   sharpness('선명도', Icons.blur_off),
   temperature('색온도', Icons.thermostat),
-  blur('블러', Icons.blur_on),
-  vignette('비네팅', Icons.vignette);
+  blur('블러', Icons.blur_on);
 
   const AdjustmentType(this.label, this.icon);
   final String label;
@@ -29,7 +28,6 @@ class AdjustmentState {
   double sharpness = 0.0; // 0 ~ 100
   double temperature = 0.0; // -100 ~ 100 (차갑게 ~ 따뜻하게)
   double blur = 0.0; // 0 ~ 100
-  double vignette = 0.0; // 0 ~ 100
 
   double getValue(AdjustmentType type) {
     switch (type) {
@@ -49,8 +47,6 @@ class AdjustmentState {
         return temperature;
       case AdjustmentType.blur:
         return blur;
-      case AdjustmentType.vignette:
-        return vignette;
     }
   }
 
@@ -83,9 +79,6 @@ class AdjustmentState {
       case AdjustmentType.blur:
         blur = v;
         break;
-      case AdjustmentType.vignette:
-        vignette = v;
-        break;
     }
   }
 
@@ -98,7 +91,6 @@ class AdjustmentState {
     double? sharpness,
     double? temperature,
     double? blur,
-    double? vignette,
   }) {
     return AdjustmentState()
       ..brightness = brightness ?? this.brightness
@@ -108,8 +100,7 @@ class AdjustmentState {
       ..exposure = exposure ?? this.exposure
       ..sharpness = sharpness ?? this.sharpness
       ..temperature = temperature ?? this.temperature
-      ..blur = blur ?? this.blur
-      ..vignette = vignette ?? this.vignette;
+      ..blur = blur ?? this.blur;
   }
 }
 
@@ -613,9 +604,7 @@ class AdjustmentEditorBottomSheetState
   Widget _buildSliderView(Color fgColor, AdjustmentType type) {
     final value = widget.state.getValue(type);
     final min =
-        (type == AdjustmentType.sharpness ||
-                type == AdjustmentType.blur ||
-                type == AdjustmentType.vignette)
+        (type == AdjustmentType.sharpness || type == AdjustmentType.blur)
             ? 0.0
             : -100.0;
     final max = 100.0;

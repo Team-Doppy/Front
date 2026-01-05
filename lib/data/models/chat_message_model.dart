@@ -1,4 +1,19 @@
+import 'package:flutter/foundation.dart';
+
 class ChatMessage {
+  // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+  static DateTime _parseUtcDateTime(String? value) {
+    if (value == null || value.isEmpty) return DateTime.now().toUtc();
+    try {
+      final dateTime = DateTime.parse(value);
+      // UTC가 아니면 UTC로 변환
+      return dateTime.isUtc ? dateTime : dateTime.toUtc();
+    } catch (e) {
+      debugPrint('[ChatMessage] UTC 시간 파싱 실패: $value, 에러: $e');
+      return DateTime.now().toUtc();
+    }
+  }
+
   final String messageId;
   final String chatRoomId;
   final String message;
@@ -40,14 +55,9 @@ class ChatMessage {
       authorUsername: json['authorUsername'] as String?,
       authorAlias: json['authorAlias'] as String?,
       authorProfileImageUrl: json['authorProfileImageUrl'] as String?,
-      createdAt:
-          json['createdAt'] != null
-              ? DateTime.parse(json['createdAt'] as String)
-              : DateTime.now(),
-      updatedAt:
-          json['updatedAt'] != null
-              ? DateTime.parse(json['updatedAt'] as String)
-              : DateTime.now(),
+      // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+      createdAt: _parseUtcDateTime(json['createdAt'] as String?),
+      updatedAt: _parseUtcDateTime(json['updatedAt'] as String?),
       isSecret: json['isSecret'] as bool? ?? false,
       isRestricted: json['isRestricted'] as bool? ?? false,
       visibleToUserIds:
@@ -80,8 +90,11 @@ class ChatMessage {
       'authorUsername': authorUsername,
       'authorAlias': authorAlias,
       'authorProfileImageUrl': authorProfileImageUrl,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      // ✅ UTC로 저장 (UTC가 아니면 변환)
+      'createdAt':
+          (createdAt.isUtc ? createdAt : createdAt.toUtc()).toIso8601String(),
+      'updatedAt':
+          (updatedAt.isUtc ? updatedAt : updatedAt.toUtc()).toIso8601String(),
       'isSecret': isSecret,
       'isRestricted': isRestricted,
       'visibleToUserIds': visibleToUserIds,

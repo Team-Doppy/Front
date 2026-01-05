@@ -23,11 +23,14 @@ class DrawingOverlay extends StatefulWidget {
   onSubmitDrawing;
   final List<Map<String, dynamic>>? initialStrokes;
   final ScrollController? scrollController;
+  // ✅ 노드 id가 없는 업로드(드로잉 PNG)를 editor 세션 refId로 묶기 위한 값
+  final String? uploadRefId;
 
   const DrawingOverlay({
     required this.onSubmitDrawing,
     this.initialStrokes,
     this.scrollController,
+    this.uploadRefId,
   });
 
   @override
@@ -303,10 +306,10 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                               child:
                                   _isUploading
                                       ? SizedBox(
-                                        width: 20,
-                                        height: 20,
+                                        width: 26,
+                                        height: 26,
                                         child: CircularProgressIndicator(
-                                          strokeWidth: 3.5,
+                                          strokeWidth: 3,
                                           valueColor:
                                               AlwaysStoppedAnimation<Color>(
                                                 Theme.of(
@@ -836,8 +839,9 @@ class _DrawingOverlayState extends State<DrawingOverlay>
       final uploadService = UploadService();
       final task = uploadService.enqueueBytes(
         croppedImageData,
-        kind: UploadKind.editorImage,
+        kind: UploadKind.drawing,
         fileName: 'drawing_${DateTime.now().millisecondsSinceEpoch}.png',
+        refId: widget.uploadRefId,
       );
 
       debugPrint('[DrawingOverlay] 업로드 시작, 대기 중...');

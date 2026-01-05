@@ -11,8 +11,6 @@ import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
-import 'package:http/http.dart' as http;
-import 'package:image_gallery_saver/image_gallery_saver.dart';
 // NOTE: 댓글 이미지는 editor처럼 단순 NetworkImage + cacheWidth로만 처리 (CachedNetworkImage 사용 금지)
 import 'dart:io';
 import 'dart:ui';

@@ -138,11 +138,11 @@ class PostData {
       accessLevel: accessLevel,
       sharedGroupIds: null,
       sharedGroupNames: null,
-      createdAt: data['createdAt'] ?? DateTime.now().toIso8601String(),
+      createdAt: data['createdAt'] ?? DateTime.now().toUtc().toIso8601String(),
       updatedAt:
           data['updatedAt'] ??
           data['createdAt'] ??
-          DateTime.now().toIso8601String(),
+          DateTime.now().toUtc().toIso8601String(),
       viewCount:
           (data['viewCount'] is int)
               ? (data['viewCount'] as int)
@@ -222,11 +222,11 @@ class PostData {
       accessLevel: accessLevel,
       sharedGroupIds: sharedGroupIds,
       sharedGroupNames: sharedGroupNames,
-      createdAt: data['createdAt'] ?? DateTime.now().toIso8601String(),
+      createdAt: data['createdAt'] ?? DateTime.now().toUtc().toIso8601String(),
       updatedAt:
           data['updatedAt'] ??
           data['createdAt'] ??
-          DateTime.now().toIso8601String(),
+          DateTime.now().toUtc().toIso8601String(),
       viewCount:
           (data['viewCount'] is int)
               ? (data['viewCount'] as int)
@@ -361,9 +361,11 @@ class PostData {
       sharedGroupIds: (data['sharedGroupIds'] as List?)?.cast<int>(),
       sharedGroupNames: (data['sharedGroupNames'] as List?)?.cast<String>(),
       createdAt:
-          data['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
+          data['createdAt']?.toString() ??
+          DateTime.now().toUtc().toIso8601String(),
       updatedAt:
-          data['updatedAt']?.toString() ?? DateTime.now().toIso8601String(),
+          data['updatedAt']?.toString() ??
+          DateTime.now().toUtc().toIso8601String(),
       viewCount:
           (data['viewCount'] is int)
               ? data['viewCount'] as int

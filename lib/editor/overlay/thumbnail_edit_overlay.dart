@@ -627,128 +627,134 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
             automaticallyImplyLeading: false,
             backgroundColor: Theme.of(context).colorScheme.background,
             elevation: 0,
-            leading:
-                _editMode
-                    ? null // 편집모드에서는 X 버튼 숨김
-                    : IconButton(
-                      icon: Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        size: 24,
-                        color: Theme.of(
+            leadingWidth: 0,
+            leading: const SizedBox.shrink(),
+            titleSpacing: 0,
+            title: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (!_editMode)
+                  IconButton(
+                    icon: Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 24,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.75),
+                    ),
+                    onPressed: () async {
+                      // 업로드 중인지 확인
+                      if (_isUploadingThumb) {
+                        final shouldExit = await DialogUtils.showConfirmDialog(
                           context,
-                        ).colorScheme.onSurface.withOpacity(0.75),
-                      ),
-                      onPressed: () async {
-                        // 업로드 중인지 확인
-                        if (_isUploadingThumb) {
-                          final shouldExit =
-                              await DialogUtils.showConfirmDialog(
-                                context,
-                                title: context.tr('uploading_title'),
-                                message: context.tr('uploading_message'),
-                                confirmText: context.tr('cancel_and_exit'),
-                                cancelText: context.tr('continue_upload'),
-                              );
-                          if (shouldExit == true && mounted) {
-                            // 🎯 업로드 취소
-                            try {
-                              final upload = context.read<UploadService>();
-                              final thumbRefId = 'thumb_${widget.sessionKey}';
-                              upload.cancelByRef(thumbRefId);
-                              debugPrint(
-                                '[ThumbnailEditOverlay] 업로드 취소: refId=$thumbRefId',
-                              );
-                            } catch (e) {
-                              debugPrint(
-                                '[ThumbnailEditOverlay] 업로드 취소 중 오류: $e',
-                              );
-                            }
-                            Navigator.of(context).pop();
-                          }
-                          return;
-                        }
-
-                        // 🎯 변경사항 확인 (공통 유틸 사용)
-                        final title = _titleController.text.trim();
-                        final summary = _excerptController.text.trim();
-                        final changeResult = detectPostMetadataChanges(
-                          currentTitle: title,
-                          originalTitle: _originalTitle,
-                          currentSummary: summary,
-                          originalSummary: _originalSummary,
-                          currentThumbnailUrl: _thumbnailUrl,
-                          originalThumbnailUrl: _originalThumbnailUrl,
-                          currentCategoryId: _currentCategoryId,
-                          originalCategoryId: _originalCategoryId,
-                          currentAccessLevel: _currentAccessLevel,
-                          originalAccessLevel: _originalAccessLevel,
-                          currentSharedGroupIds: _currentSharedGroupIds,
-                          originalSharedGroupIds: _originalSharedGroupIds,
+                          title: context.tr('uploading_title'),
+                          message: context.tr('uploading_message'),
+                          confirmText: context.tr('cancel_and_exit'),
+                          cancelText: context.tr('continue_upload'),
                         );
-
-                        if (changeResult.hasChanges) {
-                          final shouldExit =
-                              await DialogUtils.showConfirmDialog(
-                                context,
-                                title: context.tr('has_changes_title'),
-                                message: context.tr('has_changes_message'),
-                                confirmText: context.tr('exit'),
-                                cancelText: context.tr('cancel'),
-                              );
-                          if (shouldExit != true) return;
-                        }
-
-                        // 변경사항이 없거나 확인 다이얼로그에서 나가기 선택한 경우
-                        if (mounted) {
+                        if (shouldExit == true && mounted) {
+                          // 🎯 업로드 취소
+                          try {
+                            final upload = context.read<UploadService>();
+                            final thumbRefId = 'thumb_${widget.sessionKey}';
+                            upload.cancelByRef(thumbRefId);
+                            debugPrint(
+                              '[ThumbnailEditOverlay] 업로드 취소: refId=$thumbRefId',
+                            );
+                          } catch (e) {
+                            debugPrint(
+                              '[ThumbnailEditOverlay] 업로드 취소 중 오류: $e',
+                            );
+                          }
                           Navigator.of(context).pop();
                         }
-                      },
-                    ),
-            title:
-                (!_editMode &&
-                        !_titleFocusNode.hasFocus &&
-                        !_excerptFocusNode.hasFocus)
-                    ? Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // 카테고리 변경 버튼
-                        GestureDetector(
-                          onTap: () => _showCategorySheet(context),
-                          child: Container(
-                            width: 35,
-                            height: 35,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Theme.of(context).colorScheme.onSurface,
-                            ),
-                            child: Icon(
-                              Icons.category_rounded,
-                              color: Theme.of(context).colorScheme.surface,
-                              size: 18,
-                            ),
+                        return;
+                      }
+
+                      // 🎯 변경사항 확인 (공통 유틸 사용)
+                      final title = _titleController.text.trim();
+                      final summary = _excerptController.text.trim();
+                      final changeResult = detectPostMetadataChanges(
+                        currentTitle: title,
+                        originalTitle: _originalTitle,
+                        currentSummary: summary,
+                        originalSummary: _originalSummary,
+                        currentThumbnailUrl: _thumbnailUrl,
+                        originalThumbnailUrl: _originalThumbnailUrl,
+                        currentCategoryId: _currentCategoryId,
+                        originalCategoryId: _originalCategoryId,
+                        currentAccessLevel: _currentAccessLevel,
+                        originalAccessLevel: _originalAccessLevel,
+                        currentSharedGroupIds: _currentSharedGroupIds,
+                        originalSharedGroupIds: _originalSharedGroupIds,
+                      );
+
+                      if (changeResult.hasChanges) {
+                        final shouldExit = await DialogUtils.showConfirmDialog(
+                          context,
+                          title: context.tr('has_changes_title'),
+                          message: context.tr('has_changes_message'),
+                          confirmText: context.tr('exit'),
+                          cancelText: context.tr('cancel'),
+                        );
+                        if (shouldExit != true) return;
+                      }
+
+                      // 변경사항이 없거나 확인 다이얼로그에서 나가기 선택한 경우
+                      if (mounted) {
+                        Navigator.of(context).pop();
+                      }
+                    },
+                  ),
+                if (!_editMode) const SizedBox(width: 8),
+                if (!_editMode &&
+                    !_titleFocusNode.hasFocus &&
+                    !_excerptFocusNode.hasFocus)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 카테고리 변경 버튼
+                      GestureDetector(
+                        onTap: () => _showCategorySheet(context),
+                        child: Container(
+                          width: 35,
+                          height: 35,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                          child: Icon(
+                            Icons.category_rounded,
+                            color: Theme.of(context).colorScheme.surface,
+                            size: 18,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        // 공개범위 변경 버튼
-                        GestureDetector(
-                          onTap: () => _showAccessLevelSheet(context),
-                          child: Container(
-                            width: 35,
-                            height: 35,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Theme.of(context).colorScheme.onSurface,
-                            ),
-                            child: Icon(
-                              Icons.lock_outline_rounded,
-                              color: Theme.of(context).colorScheme.surface,
-                              size: 18,
-                            ),
+                      ),
+                      const SizedBox(width: 8),
+                      // 공개범위 변경 버튼
+                      GestureDetector(
+                        onTap: () => _showAccessLevelSheet(context),
+                        child: Container(
+                          width: 35,
+                          height: 35,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                          child: Icon(
+                            Icons.lock_outline_rounded,
+                            color: Theme.of(context).colorScheme.surface,
+                            size: 18,
                           ),
                         ),
-                      ],
-                    )
-                    : null,
+                      ),
+                    ],
+                  )
+                else
+                  const Spacer(),
+              ],
+            ),
+
             centerTitle: false,
             actions: [
               // 편집모드: "완료" (편집모드만 종료), 비편집모드: "수정 완료" (서버 저장 후 화면 닫기)
@@ -794,7 +800,7 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
                               width: 26,
                               height: 26,
                               child: CircularProgressIndicator(
-                                strokeWidth: 4,
+                                strokeWidth: 3,
                                 valueColor: AlwaysStoppedAnimation<Color>(
                                   Theme.of(context).colorScheme.primary,
                                 ),

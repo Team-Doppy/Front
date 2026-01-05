@@ -8,8 +8,8 @@ import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
-import 'package:doppy/utils/time_utils.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 // 🎯 그룹 포스트 읽은 사람 리스트 바텀시트
 class GroupPostReadersBottomSheet extends StatefulWidget {
@@ -25,6 +25,18 @@ class GroupPostReadersBottomSheet extends StatefulWidget {
 
 class _GroupPostReadersBottomSheetState
     extends State<GroupPostReadersBottomSheet> {
+  // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+  DateTime _parseUtcDateTime(String value) {
+    try {
+      final dateTime = DateTime.parse(value);
+      // UTC가 아니면 UTC로 변환
+      return dateTime.isUtc ? dateTime : dateTime.toUtc();
+    } catch (e) {
+      debugPrint('[GroupPostReadersBottomSheet] UTC 시간 파싱 실패: $value, 에러: $e');
+      return DateTime.now().toUtc();
+    }
+  }
+
   List<Map<String, dynamic>> _readers = [];
   bool _isLoading = false; // 🎯 초기 로딩은 false (새로고침할 때만 true)
   bool _isRefreshing = false; // 🎯 새로고침 중 여부
@@ -67,8 +79,10 @@ class _GroupPostReadersBottomSheetState
 
   // 읽은 시간 포맷
   String _formatReadTime(BuildContext context, DateTime readAt) {
-    final now = DateTime.now();
-    final difference = now.difference(readAt);
+    // ✅ UTC 기준으로 시간 차이 계산 (타임존 문제 없음)
+    final nowUtc = DateTime.now().toUtc();
+    final readAtUtc = readAt.isUtc ? readAt : readAt.toUtc();
+    final difference = nowUtc.difference(readAtUtc);
 
     if (difference.inMinutes < 1) {
       return context.tr('just_now');
@@ -115,7 +129,7 @@ class _GroupPostReadersBottomSheetState
               'profileImageUrl': viewer['profileImageUrl'],
               'readAt':
                   viewer['viewedAt'] != null
-                      ? TimeUtils.toLocalTime(viewer['viewedAt'].toString())
+                      ? _parseUtcDateTime(viewer['viewedAt'].toString())
                       : null,
             };
           }).toList();
@@ -198,7 +212,7 @@ class _GroupPostReadersBottomSheetState
               'profileImageUrl': viewer['profileImageUrl'],
               'readAt':
                   viewer['viewedAt'] != null
-                      ? TimeUtils.toLocalTime(viewer['viewedAt'].toString())
+                      ? _parseUtcDateTime(viewer['viewedAt'].toString())
                       : null,
             };
           }).toList();

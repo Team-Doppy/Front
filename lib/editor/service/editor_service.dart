@@ -50,13 +50,21 @@ class _SpecialNodeInfo {
 
 class EditorService extends ChangeNotifier {
   // ===== 디버그 로깅 =====
-  // 히스토리/스킵/복구 판정은 매우 미묘한 타이밍 이슈가 많아서,
-  // 문제 재현 시 "왜 스택에 안 쌓였는지"를 로그로 1:1 추적할 수 있도록 한다.
-  static const bool _kHistoryVerboseLogs = kDebugMode;
+  // 히스토리 상세 로그는 필요시에만 활성화 (기본적으로 비활성화)
+  static const bool _kHistoryVerboseLogs = false;
+  // 트랜잭션(취소+히스토리 purge) 디버그 로그 (assert로만 출력됨)
+  static const bool _kTxVerboseLogs = false;
 
   void _hlog(String message) {
     if (!_kHistoryVerboseLogs) return;
     debugPrint('[HistoryDbg] $message');
+  }
+
+  void _txlog(String message) {
+    assert(() {
+      if (_kTxVerboseLogs) debugPrint('[TxDbg] $message');
+      return true;
+    }());
   }
 
   late final Editor editor;
@@ -88,6 +96,464 @@ class EditorService extends ChangeNotifier {
   final List<_DocumentSnapshot> _undoStack = [];
   final List<_DocumentSnapshot> _redoStack = [];
   bool _isExecutingHistory = false;
+
+  /// ✅ 업로드 완료 결과를 노드가 "잠시 없을 때"(삭제/undo/redo 타이밍) 보관했다가
+  /// 노드가 다시 등장하면 metadata(uploadedUrls)에 반영한다.
+  ///
+  /// - 삭제 시 업로드를 취소하지 않는 정책과 호환
+  /// - undo/redo로 복원되는 경우에도 업로드 완료 결과를 놓치지 않음
+  final Map<String, Map<String, String>> _pendingUploadedUrlsByNodeId = {};
+  final Map<String, Map<String, String>> _pendingUploadedUrlsByGroupId = {};
+
+  /// ✅ 업로드/압축 진행 중인 refId만 선별
+  Set<String> _filterBusyRefIds(Iterable<String> candidateIds) {
+    // ✅ UploadService는 singleton이므로, Provider 컨텍스트가 없거나 read 실패여도 동작해야 한다.
+    // (툴바 삭제 버튼 등 일부 경로에서 EditorService._context가 아직 세팅되지 않을 수 있음)
+    UploadService uploadService;
+    try {
+      uploadService = _context?.read<UploadService>() ?? UploadService();
+    } catch (_) {
+      uploadService = UploadService();
+    }
+
+    final busy = <String>{};
+    for (final id in candidateIds) {
+      if (id.isEmpty) continue;
+      if (uploadService.isBusyRef(id)) {
+        busy.add(id);
+      }
+    }
+    _txlog(
+      'filterBusyRefIds: candidates=${candidateIds.length} busy=${busy.length} busyIds=$busy',
+    );
+    return busy;
+  }
+
+  _DocumentSnapshot _purgedSnapshot(_DocumentSnapshot s, Set<String> purgeIds) {
+    if (purgeIds.isEmpty) return s;
+    bool changed = false;
+
+    final newOrder = <String>[];
+    for (final id in s.order) {
+      if (purgeIds.contains(id)) {
+        changed = true;
+        continue;
+      }
+      newOrder.add(id);
+    }
+
+    // order 변화가 없으면 nodes도 변화 없다고 가정 가능하지만,
+    // 안전을 위해 nodes도 같이 purge한다.
+    final newNodes = <String, DocumentNode>{};
+    for (final e in s.nodes.entries) {
+      if (purgeIds.contains(e.key)) {
+        changed = true;
+        continue;
+      }
+      newNodes[e.key] = e.value;
+    }
+
+    // ✅ 스티커(드로잉 포함)도 purge 대상이면 스냅샷에서 제거한다.
+    // 드로잉 업로드는 refId=stickerId로 잡히는 경우가 있어, undo/redo에서도 동일 트랜잭션이 필요하다.
+    List<Sticker> newStickers = s.stickers;
+    if (s.stickers.isNotEmpty) {
+      final filtered = <Sticker>[];
+      for (final st in s.stickers) {
+        if (purgeIds.contains(st.id)) {
+          changed = true;
+          continue;
+        }
+        filtered.add(st);
+      }
+      if (changed) {
+        newStickers = List<Sticker>.unmodifiable(filtered);
+      }
+    }
+
+    DocumentPosition? newAnchor = s.anchor;
+    try {
+      if (newAnchor != null && purgeIds.contains(newAnchor.nodeId)) {
+        newAnchor = null;
+        changed = true;
+      }
+    } catch (_) {}
+
+    DocumentSelection? newSelection = s.selection;
+    try {
+      if (newSelection != null &&
+          (purgeIds.contains(newSelection.base.nodeId) ||
+              purgeIds.contains(newSelection.extent.nodeId))) {
+        newSelection = null;
+        changed = true;
+      }
+    } catch (_) {}
+
+    if (!changed) return s;
+    return _DocumentSnapshot(
+      nodes: newNodes,
+      order: newOrder,
+      stickers: newStickers,
+      version: s.version,
+      selection: newSelection,
+      anchor: newAnchor,
+    );
+  }
+
+  /// ✅ 취소 대상(refId)을 undo/redo 스택에서 완전히 제거한다.
+  /// - 스냅샷 기반이라, 스택 내 모든 스냅샷에서 nodeId를 purge해야 "redo로 다시 등장"을 막을 수 있다.
+  void _purgeNodeIdsFromHistoryStacks(Set<String> purgeIds) {
+    if (purgeIds.isEmpty) return;
+
+    for (int i = 0; i < _undoStack.length; i++) {
+      _undoStack[i] = _purgedSnapshot(_undoStack[i], purgeIds);
+    }
+    for (int i = 0; i < _redoStack.length; i++) {
+      _redoStack[i] = _purgedSnapshot(_redoStack[i], purgeIds);
+    }
+
+    // pending 캐시도 같이 제거 (취소한 업로드 결과가 나중에 "유령"으로 붙지 않게)
+    _pendingUploadedUrlsByNodeId.removeWhere((id, _) => purgeIds.contains(id));
+    _pendingUploadedUrlsByGroupId.removeWhere((id, _) => purgeIds.contains(id));
+
+    // ✅ purge 이후 "의미 없는 redo(현재와 동일)"가 남아 canRedo가 켜지는 문제 방지:
+    // - redo top이 현재 undo last와 동일하면 제거
+    // - undo/redo 스택 내부의 연속 중복 스냅샷도 압축
+    _compactHistoryStacksAfterPurge();
+  }
+
+  void _compactHistoryStacksAfterPurge() {
+    // 1) 연속 중복 제거 (undo)
+    if (_undoStack.length >= 2) {
+      final compacted = <_DocumentSnapshot>[];
+      for (final s in _undoStack) {
+        if (compacted.isNotEmpty && _areSnapshotsEqual(compacted.last, s)) {
+          continue;
+        }
+        compacted.add(s);
+      }
+      _undoStack
+        ..clear()
+        ..addAll(compacted);
+    }
+
+    // undo는 최소 1개 유지
+    if (_undoStack.isEmpty) {
+      _undoStack.add(_copyAllNodes());
+      _initialStateSaved = true;
+    }
+
+    // 2) 연속 중복 제거 (redo)
+    if (_redoStack.length >= 2) {
+      final compacted = <_DocumentSnapshot>[];
+      for (final s in _redoStack) {
+        if (compacted.isNotEmpty && _areSnapshotsEqual(compacted.last, s)) {
+          continue;
+        }
+        compacted.add(s);
+      }
+      _redoStack
+        ..clear()
+        ..addAll(compacted);
+    }
+
+    // 3) redo top이 현재와 동일하면 제거 (redo는 LIFO라 last가 다음 상태)
+    if (_redoStack.isNotEmpty && _undoStack.isNotEmpty) {
+      while (_redoStack.isNotEmpty &&
+          _areSnapshotsEqual(_redoStack.last, _undoStack.last)) {
+        _redoStack.removeLast();
+      }
+    }
+  }
+
+  /// ✅ 트랜잭션: (busy인 refId만) 업로드/압축 취소 + 히스토리에서 완전 제거
+  void _cancelAndPurgeUploadingRefs(Set<String> candidateIds) {
+    _txlog(
+      'cancelAndPurge: ENTER candidates=${candidateIds.length} ids=$candidateIds',
+    );
+    final purgeIds = _filterBusyRefIds(candidateIds);
+    if (purgeIds.isEmpty) return;
+
+    try {
+      final uploadService =
+          _context?.read<UploadService>() ?? UploadService(); // ✅ fallback
+      for (final id in purgeIds) {
+        _txlog('cancelAndPurge: cancelByRef($id)');
+        uploadService.cancelByRef(id);
+      }
+    } catch (_) {
+      // cancel 실패여도 "히스토리에서 제거"는 강행해 UX/정합성을 맞춘다.
+    }
+
+    _txlog('cancelAndPurge: purgeFromHistory ids=$purgeIds');
+    _purgeNodeIdsFromHistoryStacks(purgeIds);
+    _txlog(
+      'cancelAndPurge: DONE undo=${_undoStack.length} redo=${_redoStack.length}',
+    );
+  }
+
+  /// ✅ 외부(툴바 삭제 등)에서 호출 가능한 트랜잭션:
+  /// 업로드/압축 중인 refId만 취소하고, undo/redo 히스토리에서도 완전 제거한다.
+  ///
+  /// - 일부 삭제 경로는 DocumentChangeLog(NodeRemovedEvent)가 EditorService로 전달되지 않을 수 있어
+  ///   (예: 외부에서 document.deleteNode를 직접 호출), 그 경우를 위해 "직접 호출" API를 제공한다.
+  void cancelAndPurgeIfUploading(Set<String> candidateIds) {
+    _cancelAndPurgeUploadingRefs(candidateIds);
+  }
+
+  void _stashPendingUploadUrl({
+    required String nodeId,
+    required String localPath,
+    required String url,
+  }) {
+    if (nodeId.isEmpty || localPath.isEmpty || url.isEmpty) return;
+    final m = _pendingUploadedUrlsByNodeId.putIfAbsent(nodeId, () => {});
+    m[localPath] = url;
+  }
+
+  void _stashPendingGroupUploadUrls({
+    required String groupNodeId,
+    required Map<String, String> urlMap,
+  }) {
+    if (groupNodeId.isEmpty || urlMap.isEmpty) return;
+    final m = _pendingUploadedUrlsByGroupId.putIfAbsent(groupNodeId, () => {});
+    m.addAll(urlMap);
+  }
+
+  /// ✅ pending 업로드 캐시는 undo/redo로 과거 스냅샷을 복원할 때 재적용하기 위해 유지된다.
+  /// 다만 더 이상 도달할 수 없는(문서/undo/redo 어디에도 없는) 노드의 캐시는 정리하여 누적을 막는다.
+  void _prunePendingUploadCaches() {
+    try {
+      final reachable = <String>{};
+
+      // 1) 현재 문서
+      for (int i = 0; i < document.nodeCount; i++) {
+        final n = document.getNodeAt(i);
+        if (n != null) reachable.add(n.id);
+      }
+
+      // 2) undo/redo 스택(최대 30개라 비용 허용)
+      for (final s in _undoStack) {
+        reachable.addAll(s.order);
+      }
+      for (final s in _redoStack) {
+        reachable.addAll(s.order);
+      }
+
+      // 3) pending 캐시 정리
+      _pendingUploadedUrlsByNodeId.removeWhere(
+        (id, map) => map.isEmpty || !reachable.contains(id),
+      );
+      _pendingUploadedUrlsByGroupId.removeWhere(
+        (id, map) => map.isEmpty || !reachable.contains(id),
+      );
+    } catch (_) {
+      // 정리는 best-effort (실패해도 기능에 영향 없음)
+    }
+  }
+
+  void _applyPendingUploadResultsIfPossible() {
+    if (_pendingUploadedUrlsByNodeId.isEmpty &&
+        _pendingUploadedUrlsByGroupId.isEmpty) {
+      return;
+    }
+
+    // ✅ 업로드 완료 metadata 반영은 undo/redo/복원 흐름에서 발생할 수 있으므로,
+    // 히스토리에 새로운 undo step을 만들지 않게 history tracking을 억제한다.
+    final prevExecuting = _isExecutingHistory;
+    _isExecutingHistory = true;
+    try {
+      // 단일 노드 pending 적용 (이미지/비디오)
+      final nodeEntries = _pendingUploadedUrlsByNodeId.entries.toList();
+      for (final e in nodeEntries) {
+        final nodeId = e.key;
+        final urlMap = e.value;
+        if (urlMap.isEmpty) {
+          _pendingUploadedUrlsByNodeId.remove(nodeId);
+          continue;
+        }
+        final node = document.getNodeById(nodeId);
+        if (node == null) continue;
+
+        try {
+          // ImageNode
+          if (node is ImageNode) {
+            final meta = node.metadata;
+            final uploadedUrls = Map<String, String>.from(
+              (meta['uploadedUrls'] as Map<String, dynamic>?)
+                      ?.cast<String, String>() ??
+                  {},
+            );
+            bool changed = false;
+            for (final entry in urlMap.entries) {
+              final k = entry.key;
+              final v = entry.value;
+              if (k.isEmpty || v.isEmpty) continue;
+              if (uploadedUrls[k] != v) {
+                uploadedUrls[k] = v;
+                changed = true;
+              }
+            }
+            if (!changed) {
+              continue;
+            }
+            final updated = AppImageNode(
+              id: nodeId,
+              imageUrl: node.imageUrl,
+              altText: node.altText,
+              metadata: {...meta, 'uploadedUrls': uploadedUrls},
+            );
+            document.replaceNodeById(nodeId, updated);
+            continue;
+          }
+
+          // ClipNode (비디오)
+          if (node is ClipNode) {
+            final meta = node.metadata;
+            final uploadedUrls = Map<String, String>.from(
+              (meta['uploadedUrls'] as Map<String, dynamic>?)
+                      ?.cast<String, String>() ??
+                  {},
+            );
+            bool changed = false;
+            for (final entry in urlMap.entries) {
+              final k = entry.key;
+              final v = entry.value;
+              if (k.isEmpty || v.isEmpty) continue;
+              if (uploadedUrls[k] != v) {
+                uploadedUrls[k] = v;
+                changed = true;
+              }
+            }
+
+            // ✅ 업로드 완료 콜백이 "노드가 잠시 없던" 타이밍에 들어오면
+            // pending으로 uploadedUrls만 붙고 node.url이 비어있는 상태가 남을 수 있다.
+            // PostExporter는 발행/검증에서 url을 보고 실패할 수 있으므로,
+            // url이 비어있으면 가능한 네트워크 URL을 하나 채워준다.
+            String nextUrl = node.url;
+            if (nextUrl.isEmpty) {
+              // 1) localPath 키로 매칭되는 값 우선
+              final v1 = uploadedUrls[node.localPath];
+              if (v1 != null && v1.isNotEmpty) {
+                nextUrl = v1;
+              } else {
+                // 2) originalLocalPath가 있으면 매칭 시도
+                final originalLocalPath = meta['originalLocalPath']?.toString();
+                final v2 =
+                    (originalLocalPath != null && originalLocalPath.isNotEmpty)
+                        ? uploadedUrls[originalLocalPath]
+                        : null;
+                if (v2 != null && v2.isNotEmpty) {
+                  nextUrl = v2;
+                } else {
+                  // 3) 아무 값이나(첫 networkUrl) 사용
+                  for (final v in uploadedUrls.values) {
+                    if (v.isNotEmpty &&
+                        (v.startsWith('http://') || v.startsWith('https://'))) {
+                      nextUrl = v;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+            if (node.url != nextUrl && nextUrl.isNotEmpty) {
+              changed = true;
+            }
+
+            if (!changed) {
+              continue;
+            }
+
+            // ✅ ClipNode는 url/localPath 등 본문 필드가 있고, uploadedUrls만 메타에 쌓는다.
+            final updated = ClipNode(
+              id: node.id,
+              label: node.label,
+              colorHex: node.colorHex,
+              url: nextUrl,
+              localPath: node.localPath,
+              thumbnailPath: node.thumbnailPath,
+              metadata: {...meta, 'uploadedUrls': uploadedUrls},
+            );
+            document.replaceNodeById(nodeId, updated);
+            continue;
+          }
+        } catch (err) {
+          // 무시 (업로드 결과 적용 실패는 치명적이지 않음)
+        }
+      }
+
+      // 그룹 노드 pending 적용
+      final groupEntries = _pendingUploadedUrlsByGroupId.entries.toList();
+      for (final e in groupEntries) {
+        final groupId = e.key;
+        final urlMap = e.value;
+        if (urlMap.isEmpty) {
+          _pendingUploadedUrlsByGroupId.remove(groupId);
+          continue;
+        }
+        final node = document.getNodeById(groupId);
+        if (node == null) continue;
+
+        try {
+          if (node is ImageRowNode) {
+            final meta = node.metadata;
+            final uploadedUrls = Map<String, String>.from(
+              (meta['uploadedUrls'] as Map<String, dynamic>?)
+                      ?.cast<String, String>() ??
+                  {},
+            );
+            bool changed = false;
+            for (final entry in urlMap.entries) {
+              final k = entry.key;
+              final v = entry.value;
+              if (k.isEmpty || v.isEmpty) continue;
+              if (uploadedUrls[k] != v) {
+                uploadedUrls[k] = v;
+                changed = true;
+              }
+            }
+            if (!changed) continue;
+            final updated = node.copyWith(
+              metadata: {...meta, 'uploadedUrls': uploadedUrls},
+            );
+            document.replaceNodeById(groupId, updated);
+          } else if (node is PageViewImageNode) {
+            final meta = node.metadata;
+            final uploadedUrls = Map<String, String>.from(
+              (meta['uploadedUrls'] as Map<String, dynamic>?)
+                      ?.cast<String, String>() ??
+                  {},
+            );
+            bool changed = false;
+            for (final entry in urlMap.entries) {
+              final k = entry.key;
+              final v = entry.value;
+              if (k.isEmpty || v.isEmpty) continue;
+              if (uploadedUrls[k] != v) {
+                uploadedUrls[k] = v;
+                changed = true;
+              }
+            }
+            if (!changed) continue;
+            final updated = node.copyWith(
+              metadata: {...meta, 'uploadedUrls': uploadedUrls},
+            );
+            document.replaceNodeById(groupId, updated);
+          }
+        } catch (err) {
+          // 무시 (업로드 결과 적용 실패는 치명적이지 않음)
+        }
+      }
+
+      // 화면 업데이트
+      if (!_isDisposed) {
+        notifyListeners();
+      }
+    } finally {
+      _isExecutingHistory = prevExecuting;
+    }
+  }
+
   Timer? _historyTimer;
   bool _initialStateSaved = false; // 🎯 초기 상태 저장 완료 플래그 (중복 방지)
   bool _isDisposed =
@@ -118,6 +584,8 @@ class EditorService extends ChangeNotifier {
   // - before-state는 스택에 push하지 않고, baseline이 없을 때만 baseline(현재 상태)을 보장한다.
   // - 실제 삭제가 발생했을 때(NodeRemovedEvent) after-state를 **동기적으로** 1회만 push한다.
   bool _pendingDeleteHistory = false;
+  // ✅ 범위 삭제(배치 삭제) 중에 제거된 노드들을 모아, 커맨드 끝에서 한 번에 취소+purge한다.
+  final Set<String> _batchDeletedNodeIds = <String>{};
 
   // 제목은 썸네일 편집 화면에서 입력하므로 제목 노드 캐싱 로직 제거됨
 
@@ -158,6 +626,9 @@ class EditorService extends ChangeNotifier {
     _suppressHistoryTrackingDepth--;
   }
 
+  // (정책 변경으로 purgeNodeFromHistory 제거: 삭제는 업로드 취소와 무관하게 일반 undo/redo로 처리한다.)
+  // (정책 변경으로 runWithoutHistoryTracking 제거: 업로드 중 삭제도 일반 히스토리에 남기므로 불필요)
+
   void _finalizeBatchDeleteHistory() {
     // saveHistoryBeforeDelete()가 세팅한 플래그가 남아있으면 다음 삭제에서 오동작할 수 있으므로 정리
     _isDeletingNode = false;
@@ -173,6 +644,18 @@ class EditorService extends ChangeNotifier {
     // 따라서 배치 삭제 커맨드가 끝나는 시점에 after-state를 **동기적으로** 1회 저장한다.
     if (_isExecutingHistory) return;
     _historyTimer?.cancel();
+
+    // ✅ UX 정책 일관성:
+    // "업로드/압축 중이던 항목"이 배치 삭제로 제거되었다면 즉시 취소하고,
+    // 히스토리(undo/redo)에서도 완전히 제거한다. (redo로 다시 나타나지 않게)
+    if (_batchDeletedNodeIds.isNotEmpty) {
+      _txlog(
+        'finalizeBatchDeleteHistory: batchDeleted=${_batchDeletedNodeIds.length} ids=$_batchDeletedNodeIds',
+      );
+      _cancelAndPurgeUploadingRefs(_batchDeletedNodeIds);
+      _batchDeletedNodeIds.clear();
+    }
+
     final snapshot = _copyAllNodes();
     _addToHistoryStack(snapshot, '배치 삭제 후 상태 저장');
   }
@@ -209,14 +692,16 @@ class EditorService extends ChangeNotifier {
     final selection = ed.composer.selection;
     if (selection == null || selection.isCollapsed) return null;
 
-    // ✅ 범위 선택 삭제는 특수노드 포함 여부와 무관하게 "통일된" 커맨드 경로로 처리한다.
-    // - iOS IME/컨트롤 레이어가 삭제된 nodeId를 가리키는 순간 크래시가 날 수 있어,
-    //   삭제 전에 selection을 안전한 위치로 먼저 collapse/clear 하는 것이 중요하다.
-    // - 특수노드가 포함된 경우에는 추가 삭제/복원 충돌 방지까지 함께 처리한다.
+    // ✅ 특수 노드가 포함된 범위 선택 삭제만 커스텀 커맨드로 가로챈다.
+    //
+    // IME(한글) 조합 중에는 조합 문자열 갱신을 위해 DeleteSelectionRequest가 자주 발생한다.
+    // 이를 특수노드 커맨드로 가로채면 saveHistoryBeforeDelete/flush/배치삭제 after-state 저장이
+    // 과도하게 실행되어 조합 중간 상태가 히스토리에 쌓이고 undo가 깨질 수 있다.
     final coveredSpecialNodeIds = _getSpecialNodeIdsCoveredBySelection(
       ed.document,
       selection,
     );
+    if (coveredSpecialNodeIds.isEmpty) return null;
 
     _logSelectionDeletionDebug(
       '[EditorService] 🧹 Intercept DeleteSelectionRequest: affinity=${request.affinity}, selection=$selection, coveredSpecialNodeIds=$coveredSpecialNodeIds',
@@ -234,6 +719,7 @@ class EditorService extends ChangeNotifier {
       finalizeBatchDeleteHistory: _finalizeBatchDeleteHistory,
       ensureParagraphAlignmentForNodeId: _ensureParagraphAlignmentForNodeId,
       markSpecialNodeExplicitlyDeleted:
+          // ✅ 레지스트리 복원 방지 목적 (툴바 삭제가 아님)
           (id) => removeSpecialNodeFromRegistry(id, explicitlyDeleted: true),
       isSpecialNode: _isSpecialNode,
       currentParagraphAlign: _currentParagraphAlign,
@@ -247,8 +733,8 @@ class EditorService extends ChangeNotifier {
   ) {
     if (request is! DeleteContentRequest) return null;
 
-    // ✅ DeleteContentRequest는 "범위 삭제"로 들어오며, 특수노드 포함 여부와 무관하게
-    // 통일된 커맨드 경로로 처리한다. (일반 텍스트만 선택 삭제할 때 커서 튐/불안정 방지)
+    // ✅ 특수 노드가 포함된 범위 삭제만 커스텀 커맨드로 가로챈다.
+    // (IME 조합/일반 텍스트 범위 삭제까지 가로채면 히스토리 오염 가능)
     //
     // ✅ 중요: 드래그 방향(아래→위 vs 위→아래)에 따라 `composer.selection`의 base/extent가 달라진다.
     // `documentRange.start/end`는 정규화될 수 있어 방향 정보가 사라질 수 있으므로,
@@ -274,6 +760,7 @@ class EditorService extends ChangeNotifier {
       ed.document,
       selectionForDeletion,
     );
+    if (coveredSpecialNodeIds.isEmpty) return null;
 
     _logSelectionDeletionDebug(
       '[EditorService] 🧹 Intercept DeleteContentRequest: range=$range, selection=$selectionForDeletion, coveredSpecialNodeIds=$coveredSpecialNodeIds',
@@ -291,6 +778,7 @@ class EditorService extends ChangeNotifier {
       finalizeBatchDeleteHistory: _finalizeBatchDeleteHistory,
       ensureParagraphAlignmentForNodeId: _ensureParagraphAlignmentForNodeId,
       markSpecialNodeExplicitlyDeleted:
+          // ✅ 레지스트리 복원 방지 목적 (툴바 삭제가 아님)
           (id) => removeSpecialNodeFromRegistry(id, explicitlyDeleted: true),
       isSpecialNode: _isSpecialNode,
       currentParagraphAlign: _currentParagraphAlign,
@@ -577,7 +1065,6 @@ class EditorService extends ChangeNotifier {
     if (_isDisposed) return;
     _addToHistoryStack(snapshot, '초기 상태 저장');
     _initialStateSaved = true; // 🎯 저장 완료 표시
-    debugPrint('[EditorService] 📸 초기 상태 저장 (nodes: ${snapshot.nodes.length})');
   }
 
   // 🎯 빈 문단인지 확인 (중복 코드 제거)
@@ -653,11 +1140,9 @@ class EditorService extends ChangeNotifier {
     } else {
       // 디바운싱 (텍스트 입력/삭제)
       _historyTimer?.cancel();
-      debugPrint('[EditorService] ⏱️ 디바운싱 타이머 시작 (1초 후 저장 예정)');
       _historyTimer = Timer(Duration(seconds: 1), () {
         // 🎯 타이머 실행 시점에 다시 체크 (이미 실행 중이면 스킵)
         if (_isExecutingHistory) {
-          debugPrint('[EditorService] ⚠️ 디바운싱 저장 스킵 (히스토리 실행 중)');
           return;
         }
 
@@ -666,7 +1151,6 @@ class EditorService extends ChangeNotifier {
         // 중복 방지
         if (_undoStack.isNotEmpty &&
             _areSnapshotsEqual(_undoStack.last, snapshot)) {
-          debugPrint('[EditorService] ⚠️ 디바운싱 저장 스킵 (중복 스냅샷)');
           _hlog('debounce: skip push (equal snapshot)');
           _hasPendingHistoryChanges = false;
           return;
@@ -716,6 +1200,8 @@ class EditorService extends ChangeNotifier {
       // ✅ 동일 상태라면 "대기 중인 변경"도 해소된 것으로 본다.
       // (그렇지 않으면 flush가 반복되거나, 불필요한 저장 시도가 계속될 수 있음)
       _hasPendingHistoryChanges = false;
+      // ✅ "redo가 현재 상태와 동일한데 남아있는" 껍데기 케이스 정리
+      _pruneNoopRedoTop();
       _hlog(
         'addToHistoryStack("$logLabel"): SKIP (equal)  undo=${_undoStack.length}, redo=${_redoStack.length}, version=${snapshot.version}',
       );
@@ -723,6 +1209,10 @@ class EditorService extends ChangeNotifier {
     }
     _undoStack.add(snapshot);
     _redoStack.clear();
+
+    // ✅ 업로드 결과 캐시(pending)가 불필요하게 커지지 않도록,
+    // 현재 문서/undo/redo로 도달 가능한 노드만 유지한다.
+    _prunePendingUploadCaches();
 
     // ✅ 현재 상태가 히스토리에 반영됨
     _hasPendingHistoryChanges = false;
@@ -732,9 +1222,6 @@ class EditorService extends ChangeNotifier {
       _undoStack.removeAt(0);
     }
 
-    debugPrint(
-      '[EditorService] 📸 $logLabel (total: ${_undoStack.length}, nodes: ${snapshot.nodes.length})',
-    );
     _hlog(
       'addToHistoryStack("$logLabel"): OK  undo=${_undoStack.length}, redo=cleared, version=${snapshot.version}',
     );
@@ -742,6 +1229,15 @@ class EditorService extends ChangeNotifier {
     // 🎯 Undo/Redo 버튼 상태 업데이트
     if (!_isDisposed) {
       notifyListeners();
+    }
+  }
+
+  /// ✅ redo 스택 top이 현재 상태(undo last)와 동일하면 제거하여 "redo 껍데기"를 방지한다.
+  void _pruneNoopRedoTop() {
+    if (_undoStack.isEmpty || _redoStack.isEmpty) return;
+    while (_redoStack.isNotEmpty &&
+        _areSnapshotsEqual(_redoStack.last, _undoStack.last)) {
+      _redoStack.removeLast();
     }
   }
 
@@ -767,7 +1263,6 @@ class EditorService extends ChangeNotifier {
   void _trackChangeFromLog(DocumentChange change) {
     // 🎯 히스토리 실행 중이면 저장하지 않음 (무한 루프 방지)
     if (_isExecutingHistory) {
-      debugPrint('[EditorService] ⚠️ 히스토리 실행 중 - 변경 추적 스킵: $change');
       _hlog('trackChange: SKIP (isExecutingHistory=true) change=$change');
       return;
     }
@@ -791,11 +1286,11 @@ class EditorService extends ChangeNotifier {
     try {
       // 🎯 히스토리가 비어있으면 현재 상태를 초기 상태로 저장 (임시저장 불러온 직후에도 동작)
       if (_undoStack.isEmpty) {
-        debugPrint('[EditorService] 🎯 히스토리 비어있음 - 현재 상태를 초기 상태로 저장');
         _hlog(
           'trackChange: undoStack empty -> saveCurrentState(immediate=true) as baseline',
         );
         _saveCurrentState(immediate: true);
+        _initialStateSaved = true;
         // 🎯 초기 상태 저장 후에도 변경 이벤트는 계속 처리해야 함 (return 하지 않음)
       }
 
@@ -805,7 +1300,6 @@ class EditorService extends ChangeNotifier {
         final bool firstAfterLoad = _firstChangeAfterLoad;
         if (firstAfterLoad) {
           // 🎯 임시저장 불러온 직후 첫 변경사항은 즉시 저장 (히스토리 누락 방지)
-          debugPrint('[EditorService] 🎯 임시저장 불러온 직후 첫 변경 - 즉시 저장');
           _saveCurrentState(immediate: true);
           _firstChangeAfterLoad = false; // 🎯 플래그 해제 (다음부터는 디바운싱)
         } else {
@@ -820,6 +1314,21 @@ class EditorService extends ChangeNotifier {
 
       // 🎯 NodeRemovedEvent는 _deleteNode에서 이미 삭제 전 상태를 저장했으므로 중복 저장 방지
       if (change is NodeRemovedEvent) {
+        _txlog(
+          'NodeRemovedEvent: nodeId=${change.nodeId} suppressHistory=$_isSuppressingHistoryTracking pendingDelete=$_pendingDeleteHistory isDeleting=$_isDeletingNode',
+        );
+        // ✅ 정책 일관성: 사용자가 "삭제"로 업로드/압축 중인 항목을 제거했다면,
+        // 즉시 취소하고(가능하면), 히스토리에서도 완전 제거하여 redo로 다시 나타나지 않게 한다.
+        // - 범위 삭제(배치 삭제) 중에는 여러 NodeRemovedEvent가 연속으로 오므로,
+        //   커맨드 종료 시점(_finalizeBatchDeleteHistory)에서 한 번에 처리한다.
+        if (_isSuppressingHistoryTracking) {
+          _txlog('NodeRemovedEvent: batched add ${change.nodeId}');
+          _batchDeletedNodeIds.add(change.nodeId);
+        } else {
+          _txlog('NodeRemovedEvent: immediate cancel/purge ${change.nodeId}');
+          _cancelAndPurgeUploadingRefs(<String>{change.nodeId});
+        }
+
         // ✅ 안정형: 삭제 후 상태(after-state)는 동기적으로 1회만 저장한다.
         // - _pendingDeleteHistory=true 인 경우: 삭제 버튼/특수노드 범위 삭제 등 "유저 삭제"의 after-state 저장
         // - 그 외: 다른 경로의 삭제도 즉시 저장(동기)
@@ -843,7 +1352,7 @@ class EditorService extends ChangeNotifier {
         return;
       }
     } catch (e) {
-      debugPrint('[EditorService] 변경 추적 실패: $e');
+      debugPrint('[EditorService] ⚠️ 변경 추적 실패: $e');
       _hlog('trackChange: ERROR $e');
     }
   }
@@ -1143,6 +1652,7 @@ class EditorService extends ChangeNotifier {
   }
 
   // 🎯 Undo 가능 여부
+  // ✅ 최소 1개는 항상 유지 (초기 상태), 그 이상이면 undo 가능
   bool get canUndo => _undoStack.length > 1;
 
   // 🎯 Redo 가능 여부
@@ -1191,6 +1701,12 @@ class EditorService extends ChangeNotifier {
       canExecute: canUndo,
       errorMessage: 'Undo 불가 (첫 상태)',
       operation: () {
+        // ✅ 안전장치: undo 스택이 1개 이하면 복원 불가
+        if (_undoStack.length <= 1) {
+          debugPrint('[EditorService] ⚠️ Undo 불가: 스택이 비어있음');
+          return;
+        }
+
         // 🎯 현재 상태를 redo 스택에 저장
         // ✅ UX: Undo 시에는 "복원된(previous) 상태"의 앵커가 아니라,
         // 방금 되돌린 작업(current)의 앵커로 이동해야 사용자가 기대하는 위치(수정한 곳)를 유지한다.
@@ -1198,8 +1714,36 @@ class EditorService extends ChangeNotifier {
         _redoStack.add(undoneSnapshot);
 
         // 🎯 이전 상태로 복원
+        // ✅ 안전장치: removeLast 후에도 최소 1개는 남아있어야 함
+        if (_undoStack.isEmpty) {
+          debugPrint('[EditorService] ⚠️ Undo 실패: 복원할 스냅샷이 없음');
+          // 스택 복구
+          _undoStack.add(_redoStack.removeLast());
+          return;
+        }
+
         final previousSnapshot = _undoStack.last;
+
+        // ✅ 트랜잭션:
+        // undo로 "사라지는" 노드 중 업로드/압축 진행 중인 것들은 즉시 취소하고,
+        // redo/undo 스택에서도 해당 노드가 다시는 등장하지 않도록 완전 제거한다.
+        final removedByUndo =
+            <String>{}
+              ..addAll(undoneSnapshot.order)
+              ..removeAll(previousSnapshot.order);
+        // ✅ 스티커(드로잉 포함)도 동일 정책 적용: undo로 사라진 stickerId는 취소+히스토리 제거
+        final prevStickerIds =
+            previousSnapshot.stickers.map((s) => s.id).toSet();
+        final undoneStickerIds =
+            undoneSnapshot.stickers.map((s) => s.id).toSet();
+        removedByUndo.addAll(undoneStickerIds.difference(prevStickerIds));
+        _cancelAndPurgeUploadingRefs(removedByUndo);
+
         _restoreFromSnapshot(previousSnapshot);
+        // ✅ Undo로 노드가 돌아올 수 있으므로 pending 업로드 결과 반영
+        _applyPendingUploadResultsIfPossible();
+        _prunePendingUploadCaches();
+        _pruneNoopRedoTop();
         _scheduleScrollToSnapshotAnchor(
           undoneSnapshot,
           useJumpTo: true, // ✅ 요청: 이 케이스는 jumpTo로 즉시 이동
@@ -1223,12 +1767,35 @@ class EditorService extends ChangeNotifier {
       canExecute: canRedo,
       errorMessage: 'Redo 불가 (없음)',
       operation: () {
+        // ✅ redo 적용 전 현재 상태(비교용)
+        final currentSnapshot = _undoStack.isNotEmpty ? _undoStack.last : null;
+
         // 🎯 Redo 스택에서 다음 상태 가져오기
         final nextSnapshot = _redoStack.removeLast();
         _undoStack.add(nextSnapshot);
 
+        // ✅ 트랜잭션:
+        // redo로 "사라지는" 노드 중 업로드/압축 진행 중인 것들은 즉시 취소하고,
+        // redo/undo 스택에서도 해당 노드가 다시는 등장하지 않도록 완전 제거한다.
+        if (currentSnapshot != null) {
+          final removedByRedo =
+              <String>{}
+                ..addAll(currentSnapshot.order)
+                ..removeAll(nextSnapshot.order);
+          // ✅ 스티커(드로잉 포함)도 동일 정책 적용
+          final curStickerIds =
+              currentSnapshot.stickers.map((s) => s.id).toSet();
+          final nextStickerIds = nextSnapshot.stickers.map((s) => s.id).toSet();
+          removedByRedo.addAll(curStickerIds.difference(nextStickerIds));
+          _cancelAndPurgeUploadingRefs(removedByRedo);
+        }
+
         // 🎯 다음 상태로 복원
         _restoreFromSnapshot(nextSnapshot);
+        // ✅ Redo로 노드가 돌아올 수 있으므로 pending 업로드 결과 반영
+        _applyPendingUploadResultsIfPossible();
+        _prunePendingUploadCaches();
+        _pruneNoopRedoTop();
         _scheduleScrollToSnapshotAnchor(
           nextSnapshot,
           useJumpTo: true, // ✅ Undo/Redo는 동일한 UX로 즉시 이동
@@ -1425,6 +1992,22 @@ class EditorService extends ChangeNotifier {
           );
         }
       }
+    }
+
+    // ✅ 안전장치: 스냅샷이 비어있으면(또는 purge로 비어졌으면) 문서가 0노드가 될 수 있다.
+    // SuperEditor는 0노드 문서를 전제로 하지 않는 부분이 많아서, 반드시 최소 1개 문단을 유지한다.
+    if (document.nodeCount == 0) {
+      // ✅ 빈 문단도 현재 정렬값을 메타에 명시해서,
+      // "0노드 보정 문단"을 탭해 커서를 둘 때 기본(left) 렌더링으로 어긋나는 현상을 방지한다.
+      final align = _currentParagraphAlign;
+      document.insertNodeAt(
+        0,
+        ParagraphNode(
+          id: Editor.createNodeId(),
+          text: AttributedText(),
+          metadata: <String, dynamic>{'textAlign': align},
+        ),
+      );
     }
 
     // ✅ 복원된 문서의 첫 문단 정렬 메타를 기준으로 "현재 정렬"을 재동기화한다.
@@ -1679,6 +2262,10 @@ class EditorService extends ChangeNotifier {
 
       debugPrint('[EditorService] NodeRemovedEvent: nodeId=$removedNodeId');
 
+      // ✅ 정책 변경: 노드 삭제 시 업로드/압축을 강제로 취소하지 않는다.
+      // - 삭제된 노드는 refId 기반 가드(예: "업로드 중 미디어") 검사에서 자동으로 제외된다.
+      // - 네트워크/리소스 최적화보다, 히스토리/복원/흐름 단순화를 우선한다.
+
       // 🎯 마지막에 한 번만 notifyListeners 호출하기 위한 플래그
       bool shouldNotify = false;
 
@@ -1689,6 +2276,7 @@ class EditorService extends ChangeNotifier {
           removedNodeId.startsWith('clip_') ||
           removedNodeId.startsWith('link_') ||
           removedNodeId.startsWith('img_') ||
+          removedNodeId.startsWith('image_') ||
           removedNodeId.startsWith('group_'); // 🎯 PageViewImageNode 추가
 
       if (!isRemovedNodeSpecial) {
@@ -2006,9 +2594,7 @@ class EditorService extends ChangeNotifier {
       final extentExists = document.getNodeById(sel.extent.nodeId) != null;
       if (!baseExists || !extentExists) {
         _isSanitizingInvalidSelection = true;
-        debugPrint(
-          '[EditorService] ⚠️ Invalid selection detected → force clear (baseExists=$baseExists, extentExists=$extentExists, base=${sel.base.nodeId}, extent=${sel.extent.nodeId})',
-        );
+
         try {
           editor.composer.clearSelection();
         } catch (_) {}
@@ -2385,21 +2971,91 @@ class EditorService extends ChangeNotifier {
     return false;
   }
 
-  /// 🎯 업로드되지 않은 이미지가 있는지 확인 (UploadService의 task 기반 실제 업로드 상태만 확인)
-  /// 🚀 플레이스홀더 개념 제거 - UploadService의 활성 업로드만 체크하여 가볍고 정확하게 판단
+  /// 🎯 업로드되지 않은 "이미지"가 있는지 확인 (UploadService의 task 기반 실제 업로드 상태만 확인)
+  /// ✅ 이름 그대로 "이미지 업로드"만 체크한다. (비디오/압축은 별도: hasUnuploadedMedia)
   bool hasUnuploadedImages() {
     if (_context == null) return false;
 
     try {
       final uploadService = _context!.read<UploadService>();
-      // 🚀 에디터 관련 활성 업로드(pending, uploading)가 있는지만 확인
-      return uploadService.hasActiveUploads();
+      // ✅ 정확한 판정:
+      // 전역 UploadService(_tasks)에는 댓글/프로필/썸네일/배치 업로드 등 "에디터 본문과 무관한" 태스크도 존재할 수 있다.
+      // 그래서 문서에 존재하는 노드 id(refId) 기준으로만 업로드 중 여부를 확인한다.
+      // ✅ 업로드/압축 판정은 "업로드가 발생할 수 있는 특수 노드"만 대상으로 한다.
+      // Paragraph 등 일반 텍스트 노드 id까지 포함하면, 이론적으로 refId 오염(우연한 id 충돌)로 false positive가 날 수 있다.
+      // ✅ 이미지 관련 노드(refId)만 대상으로 한다.
+      final refIds = <String>{};
+      for (int i = 0; i < document.length; i++) {
+        final node = document.getNodeAt(i);
+        if (node == null) continue;
+        if (node is AppImageNode ||
+            node is ImageNode ||
+            node is ImageRowNode ||
+            node is PageViewImageNode) {
+          refIds.add(node.id);
+        }
+      }
+      if (refIds.isEmpty) return false;
+      // 이미지 업로드는 "업로드 task"만 보면 충분 (비디오처럼 압축 토큰이 없음)
+      if (uploadService.hasActiveUploadForAnyRef(refIds)) return true;
+
+      return false;
     } catch (e) {
       // UploadService 접근 실패 시 false 반환 (업로드 없음으로 간주)
       debugPrint(
         '[EditorService] hasUnuploadedImages: UploadService 접근 실패: $e',
       );
       return false;
+    }
+  }
+
+  /// 🎯 업로드/압축 중인 "미디어"가 있는지 확인 (이미지 + 비디오 + 드로잉)
+  /// - 발행/다음 단계 이동 같은 "완성본" 플로우에서 사용
+  /// - 비디오는 압축(FFmpeg)도 busy로 취급한다.
+  bool hasUnuploadedMedia() {
+    if (_context == null) return false;
+    try {
+      final uploadService = _context!.read<UploadService>();
+      final refIds = <String>{};
+      for (int i = 0; i < document.length; i++) {
+        final node = document.getNodeAt(i);
+        if (node == null) continue;
+        if (node is AppImageNode ||
+            node is ImageNode ||
+            node is ImageRowNode ||
+            node is PageViewImageNode ||
+            node is ClipNode) {
+          refIds.add(node.id);
+        }
+      }
+      if (refIds.isEmpty) return false;
+      return uploadService.isBusyAnyRef(refIds);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 디버그용: 현재 문서(refId)에 해당하는 활성 업로드/압축 덤프
+  String debugDumpBusyMediaForCurrentDocument({Set<UploadKind>? kinds}) {
+    if (_context == null) return '';
+    try {
+      final uploadService = _context!.read<UploadService>();
+      final refIds = <String>{};
+      for (int i = 0; i < document.length; i++) {
+        final node = document.getNodeAt(i);
+        if (node == null) continue;
+        if (node is AppImageNode ||
+            node is ImageNode ||
+            node is ImageRowNode ||
+            node is PageViewImageNode ||
+            node is ClipNode) {
+          refIds.add(node.id);
+        }
+      }
+      if (refIds.isEmpty) return '';
+      return uploadService.debugDumpActiveTasksForRefs(refIds, kinds: kinds);
+    } catch (_) {
+      return '';
     }
   }
 
@@ -2730,7 +3386,6 @@ class EditorService extends ChangeNotifier {
       draggingMeta =
           (draggingNode as dynamic).metadata as Map<String, dynamic>?;
       draggingMediaId = draggingMeta?['mediaId']?.toString();
-      debugPrint('[EditorService] 📦 드래그 이미지 메타데이터: mediaId=$draggingMediaId');
       if (draggingMeta != null && draggingMeta.containsKey('imageDimensions')) {
         debugPrint(
           '[EditorService] 📏 드래그 이미지 imageDimensions: ${draggingMeta['imageDimensions']}',
@@ -2742,7 +3397,6 @@ class EditorService extends ChangeNotifier {
     try {
       targetMeta = (targetNode as dynamic).metadata as Map<String, dynamic>?;
       targetMediaId = targetMeta?['mediaId']?.toString();
-      debugPrint('[EditorService] 📦 타겟 이미지 메타데이터: mediaId=$targetMediaId');
       if (targetMeta != null && targetMeta.containsKey('imageDimensions')) {
         debugPrint(
           '[EditorService] 📏 타겟 이미지 imageDimensions: ${targetMeta['imageDimensions']}',
@@ -2768,9 +3422,6 @@ class EditorService extends ChangeNotifier {
       if (draggingMediaId != null) mediaIds.add(draggingMediaId);
     }
 
-    debugPrint('[EditorService] 📋 ImageRow 생성 - imageUrls: $imageUrls');
-    debugPrint('[EditorService] 📋 ImageRow 생성 - mediaIds: $mediaIds');
-
     // 🎯 imageCommentInfo 맵 생성 (PostExporter가 기대하는 형식)
     final imageCommentInfo = <String, Map<String, dynamic>>{};
     for (int i = 0; i < imageUrls.length; i++) {
@@ -2784,12 +3435,8 @@ class EditorService extends ChangeNotifier {
       }
     }
 
-    debugPrint('[EditorService] 🔍 생성된 imageCommentInfo: $imageCommentInfo');
-
     // 🎯 기존 이미지들의 메타데이터 병합 (공통 함수 사용)
     final mergedMetadata = _mergeImageMetadata([draggingMeta, targetMeta]);
-    final mergedImageDimensions =
-        mergedMetadata['imageDimensions'] as Map<String, dynamic>? ?? {};
 
     // 메타데이터 구성
     final metadata = <String, dynamic>{};
@@ -2799,20 +3446,12 @@ class EditorService extends ChangeNotifier {
     // 병합된 메타데이터 추가 (imageDimensions, uploadedUrls)
     metadata.addAll(mergedMetadata);
 
-    debugPrint(
-      '[EditorService] 📦 최종 메타데이터: imageCommentInfo=${imageCommentInfo.isNotEmpty}, imageDimensions=${mergedImageDimensions.isNotEmpty}',
-    );
-
     // ImageRowNode 생성 (이미 3개 제한이 적용됨)
     final imageRowNode = ImageRowNode(
       id: 'imageRow_${DateTime.now().millisecondsSinceEpoch}',
       imageUrls: imageUrls,
       spacing: 8.0,
       metadata: metadata.isNotEmpty ? metadata : null,
-    );
-
-    debugPrint(
-      '[EditorService] 🆕 생성된 ImageRowNode: id=${imageRowNode.id}, imageUrls=${imageRowNode.imageUrls.length}개, metadata keys=${imageRowNode.metadata.keys.toList()}',
     );
 
     // 🎯 이미지 병합 작업 중에는 히스토리 추적 일시 중단
@@ -2838,18 +3477,11 @@ class EditorService extends ChangeNotifier {
     } finally {
       _isExecutingHistory = false;
       _saveCurrentState(immediate: true);
-      debugPrint(
-        '[EditorService] ✅ 이미지 병합 완료: insertIndex=$insertIndex, newNodeId=${imageRowNode.id}',
-      );
       notifyListeners(); // 🎯 최종: 한 번만 호출
     }
   }
 
   void _addImageToRow(String imageId, String rowId, bool isFromLeft) {
-    debugPrint(
-      '[EditorService] ➕ Row에 이미지 추가 시작: imageId=$imageId, rowId=$rowId, isFromLeft=$isFromLeft',
-    );
-
     final imageNode = document.getNodeById(imageId);
     final rowNode = document.getNodeById(rowId);
 
@@ -2865,10 +3497,6 @@ class EditorService extends ChangeNotifier {
       );
       return;
     }
-
-    debugPrint(
-      '[EditorService] 📋 기존 Row 이미지 개수: ${rowNode.imageUrls.length}, 이미지 URL: ${rowNode.imageUrls}',
-    );
 
     // ✅ Row에 추가 가능한 URL (네트워크 + 로컬)
     bool _isMergeableImageUrl(String u) {
@@ -2912,8 +3540,6 @@ class EditorService extends ChangeNotifier {
 
     // 🎯 메타데이터 병합 (공통 함수 사용)
     final mergedMetadata = _mergeImageMetadata([rowMeta, imageMeta]);
-    final existingImageDimensions =
-        mergedMetadata['imageDimensions'] as Map<String, dynamic>? ?? {};
 
     // 새로운 이미지 URL 리스트 생성
     final newImageUrls = List<String>.from(rowNode.imageUrls);
@@ -2953,13 +3579,6 @@ class EditorService extends ChangeNotifier {
       // 병합된 메타데이터 추가 (imageDimensions, uploadedUrls)
       metadata.addAll(mergedMetadata);
 
-      debugPrint(
-        '[EditorService] 📦 업데이트된 메타데이터: imageCommentInfo=${newImageCommentInfo.isNotEmpty}, imageDimensions=${existingImageDimensions.isNotEmpty}, uploadedUrls=${mergedMetadata['uploadedUrls'] != null}',
-      );
-      debugPrint(
-        '[EditorService] 📋 새로운 이미지 URL 리스트: $newImageUrls (${newImageUrls.length}개)',
-      );
-
       // ImageRowNode 업데이트 (이미 3개 제한이 적용됨)
       final updatedRowNode = rowNode.copyWith(
         imageUrls: newImageUrls,
@@ -2967,17 +3586,12 @@ class EditorService extends ChangeNotifier {
       );
       document.replaceNodeById(rowId, updatedRowNode);
 
-      debugPrint(
-        '[EditorService] ✅ Row 업데이트 완료: rowId=$rowId, imageUrls=${updatedRowNode.imageUrls.length}개, metadata keys=${updatedRowNode.metadata.keys.toList()}',
-      );
-
       // 기존 이미지 삭제
       document.deleteNode(imageId);
       // 🎯 notifyListeners는 finally 이후에 한 번만
     } finally {
       _isExecutingHistory = false;
       _saveCurrentState(immediate: true);
-      debugPrint('[EditorService] ✅ ImageRow에 이미지 추가 완료: rowId=$rowId');
       notifyListeners(); // 🎯 최종: 한 번만 호출
     }
   }
@@ -2988,10 +3602,6 @@ class EditorService extends ChangeNotifier {
     String targetPageViewId, {
     required int insertIndex,
   }) {
-    debugPrint(
-      '[EditorService] 🔀 PageView 병합 시작: dragging=$draggingImageId, target=$targetPageViewId, insertIndex=$insertIndex',
-    );
-
     final draggingNode = document.getNodeById(draggingImageId);
     final targetNode = document.getNodeById(targetPageViewId);
 
@@ -3075,9 +3685,6 @@ class EditorService extends ChangeNotifier {
       if (targetMediaId != null) mediaIds.add(targetMediaId);
       if (draggingMediaId != null) mediaIds.add(draggingMediaId);
     }
-
-    debugPrint('[EditorService] 📋 PageView 생성 - imageUrls: $imageUrls');
-    debugPrint('[EditorService] 📋 PageView 생성 - mediaIds: $mediaIds');
 
     // 🎯 imageCommentInfo 맵 생성
     final imageCommentInfo = <String, Map<String, dynamic>>{};
@@ -3491,7 +4098,25 @@ class EditorService extends ChangeNotifier {
           }
         }
       }
-      if (nodeFound is! ClipNode) return;
+      if (nodeFound is! ClipNode) {
+        // ✅ 노드가 없으면(삭제/undo/redo/교체 타이밍) 업로드 결과를 pending으로 저장한다.
+        // 노드가 다시 등장하면 _applyPendingUploadResultsIfPossible()에서 metadata(uploadedUrls)에 반영된다.
+        // 🎯 중요: 나중에 undo/redo로 복원된 ClipNode의 localPath/originalLocalPath가
+        // processedLocalPath/fallbackLocalPath 중 어떤 값을 가지는지 케이스가 섞일 수 있다.
+        // 따라서 가능한 키를 모두 저장해 매핑 유실을 방지한다.
+        final keys = <String>{
+          if (processedLocalPath != null && processedLocalPath.isNotEmpty)
+            processedLocalPath,
+          if (fallbackLocalPath != null && fallbackLocalPath.isNotEmpty)
+            fallbackLocalPath,
+          // 일관성: 네트워크 URL도 키로 저장 (이미지와 동일한 패턴)
+          if (url.isNotEmpty) url,
+        };
+        for (final k in keys) {
+          _stashPendingUploadUrl(nodeId: nodeId, localPath: k, url: url);
+        }
+        return;
+      }
 
       final existingMetadata = Map<String, dynamic>.from(nodeFound.metadata);
       final originalLocalPath = nodeFound.localPath;
@@ -3538,25 +4163,38 @@ class EditorService extends ChangeNotifier {
         metadata: updatedMetadata,
       );
 
-      editor.execute([
-        ReplaceNodeRequest(existingNodeId: nodeId, newNode: newNode),
-      ]);
+      // ✅ ReplaceNodeRequest는 내부적으로 remove+insert로 처리되며
+      // NodeRemovedEvent/NodeInsertedEvent가 연속 발생 -> 레지스트리 복구 오판 및 불필요한 로그/리빌드 유발.
+      // 단순 속성 변경은 replaceNodeById로 NodeChangeEvent 흐름을 타게 한다.
+      document.replaceNodeById(nodeFound.id, newNode);
+
+      // ✅ undo/redo로 업로드 이전 스냅샷으로 돌아갈 수 있으므로 업로드 결과를 캐시에 남긴다.
+      final keys = <String>{
+        if (originalLocalPath.isNotEmpty) originalLocalPath,
+        if (finalLocalPath.isNotEmpty) finalLocalPath,
+        if (url.isNotEmpty) url,
+      };
+      for (final k in keys) {
+        _stashPendingUploadUrl(nodeId: nodeId, localPath: k, url: url);
+      }
     } catch (e) {
       debugPrint('replaceVideoUrlByPath error: $e');
     } finally {
       _isExecutingHistory = false;
-      _saveCurrentState(immediate: true);
     }
   }
 
   /// 🎯 비디오 썸네일 업데이트
   /// 🎯 media_upload_handler 호환: 썸네일 경로 업데이트
   void updateVideoThumbnail(String nodeId, String thumbnailPath) {
-    final node = document.getNodeById(nodeId);
-    if (node is ClipNode) {
+    _isExecutingHistory = true;
+    try {
+      final node = document.getNodeById(nodeId);
+      if (node is! ClipNode) return;
+
       final existingMetadata = Map<String, dynamic>.from(node.metadata);
       existingMetadata['thumbnailPath'] = thumbnailPath;
-      // 🎯 padding이 없으면 기본값 'center' 설정 (싱글 이미지와 동일)
+      // padding이 없으면 기본값 'center' 설정 (싱글 이미지와 동일)
       if (!existingMetadata.containsKey('padding')) {
         existingMetadata['padding'] = 'center';
       }
@@ -3572,8 +4210,9 @@ class EditorService extends ChangeNotifier {
       );
       document.replaceNodeById(nodeId, updated);
       notifyListeners();
-      // 🎯 비디오 썸네일 업데이트를 히스토리에 저장
-      _saveCurrentState(immediate: true);
+      // ✅ 썸네일/메타 업데이트는 업로드 파이프라인 내부 단계이므로 undo step을 만들지 않는다.
+    } finally {
+      _isExecutingHistory = false;
     }
   }
 
@@ -3606,14 +4245,13 @@ class EditorService extends ChangeNotifier {
         metadata: existingMetadata,
       );
 
-      editor.execute([
-        ReplaceNodeRequest(existingNodeId: nodeId, newNode: updated),
-      ]);
+      // ✅ localPath 교체도 "노드 교체"가 아니라 "노드 변경"이므로
+      // remove+insert 이벤트를 만들지 않게 replaceNodeById를 사용한다.
+      document.replaceNodeById(nodeId, updated);
     } catch (e) {
       debugPrint('[EditorService] updateVideoLocalPath error: $e');
     } finally {
       _isExecutingHistory = false;
-      _saveCurrentState(immediate: true);
     }
   }
 
@@ -3904,8 +4542,6 @@ class EditorService extends ChangeNotifier {
 
     // 분리할 이미지 URL
     final imageUrl = rowNode.imageUrls[imageIndex];
-    debugPrint('[EditorService] 📋 분리할 이미지 URL: $imageUrl');
-    debugPrint('[EditorService] 📋 기존 Row 이미지: ${rowNode.imageUrls}');
 
     // 🎯 분리할 이미지의 메타데이터 추출 (공통 함수 사용)
     final rowMeta = rowNode.metadata;
@@ -4066,8 +4702,6 @@ class EditorService extends ChangeNotifier {
 
     // 분리할 이미지 URL
     final imageUrl = pageViewNode.imageUrls[imageIndex];
-    debugPrint('[EditorService] 📋 분리할 이미지 URL: $imageUrl');
-    debugPrint('[EditorService] 📋 기존 PageView 이미지: ${pageViewNode.imageUrls}');
 
     // 🎯 분리할 이미지의 메타데이터 추출 (공통 함수 사용)
     final pageViewMeta = pageViewNode.metadata;
@@ -4173,8 +4807,6 @@ class EditorService extends ChangeNotifier {
   /// 🎯 media_upload_handler 호환: String 반환 (nodeId)
   String addImageNode(String thumbnailImageUrl) {
     try {
-      debugPrint('이미지 추가: $thumbnailImageUrl');
-
       final id = 'image_${DateTime.now().millisecondsSinceEpoch}';
       final imageNode = AppImageNode(
         id: id,
@@ -4184,7 +4816,7 @@ class EditorService extends ChangeNotifier {
       _insertComponentNodeAtNextLine(imageNode);
       return id;
     } catch (e) {
-      debugPrint('이미지 추가 중 오류: $e');
+      debugPrint('[EditorService] ⚠️ 이미지 추가 실패: $e');
       rethrow;
     }
   }
@@ -4221,24 +4853,33 @@ class EditorService extends ChangeNotifier {
     _isExecutingHistory = true;
     try {
       final node = document.getNodeById(nodeId);
-      if (node is ImageNode) {
-        final meta = node.metadata;
-        final uploadedUrls = Map<String, String>.from(
-          (meta['uploadedUrls'] as Map<String, dynamic>?)
-                  ?.cast<String, String>() ??
-              {},
-        );
-        uploadedUrls[localPath] = url;
-
-        final updated = AppImageNode(
-          id: nodeId,
-          imageUrl: node.imageUrl, // 로컬 경로 유지 (변경 없음)
-          altText: node.altText,
-          metadata: {...meta, 'uploadedUrls': uploadedUrls},
-        );
-        document.replaceNodeById(nodeId, updated);
-        notifyListeners();
+      // ✅ 노드가 없으면(삭제/undo/redo 타이밍) 업로드 결과를 pending으로 저장한다.
+      // 노드가 다시 등장하면 undo/redo 훅에서 metadata(uploadedUrls)에 반영된다.
+      if (node == null || node is! ImageNode) {
+        _stashPendingUploadUrl(nodeId: nodeId, localPath: localPath, url: url);
+        return;
       }
+
+      final meta = node.metadata;
+      final uploadedUrls = Map<String, String>.from(
+        (meta['uploadedUrls'] as Map<String, dynamic>?)
+                ?.cast<String, String>() ??
+            {},
+      );
+      uploadedUrls[localPath] = url;
+
+      final updated = AppImageNode(
+        id: nodeId,
+        imageUrl: node.imageUrl, // 로컬 경로 유지 (변경 없음)
+        altText: node.altText,
+        metadata: {...meta, 'uploadedUrls': uploadedUrls},
+      );
+      document.replaceNodeById(nodeId, updated);
+      notifyListeners();
+
+      // ✅ undo/redo로 업로드 이전 스냅샷으로 돌아갈 수 있으므로 업로드 결과를 캐시에 남긴다.
+      _stashPendingUploadUrl(nodeId: nodeId, localPath: localPath, url: url);
+      _stashPendingUploadUrl(nodeId: nodeId, localPath: url, url: url);
     } finally {
       _isExecutingHistory = false;
     }
@@ -4267,6 +4908,12 @@ class EditorService extends ChangeNotifier {
     _isExecutingHistory = true;
     try {
       final node = editor.document.getNodeById(groupNodeId);
+      // ✅ 노드가 없으면(삭제/undo/redo 타이밍) 업로드 결과를 pending으로 저장한다.
+      // 노드가 다시 등장하면 undo/redo 훅에서 metadata(uploadedUrls)에 반영된다.
+      if (node == null) {
+        _stashPendingGroupUploadUrls(groupNodeId: groupNodeId, urlMap: urlMap);
+        return;
+      }
 
       if (node is ImageRowNode) {
         // 🎯 metadata에 업로드된 URL들을 저장 (imageUrls는 로컬 경로 유지)
@@ -4315,6 +4962,9 @@ class EditorService extends ChangeNotifier {
         );
         editor.document.replaceNodeById(groupNodeId, updated);
       }
+
+      // ✅ undo/redo로 업로드 이전 스냅샷으로 돌아갈 수 있으므로 업로드 결과를 캐시에 남긴다.
+      _stashPendingGroupUploadUrls(groupNodeId: groupNodeId, urlMap: urlMap);
     } finally {
       _isExecutingHistory = false;
     }
@@ -4333,10 +4983,19 @@ class EditorService extends ChangeNotifier {
   /// 만약 삽입 지점이 문서의 마지막(끝)이면, 그 아래에 빈 문단을 추가하고
   /// 커서를 그 빈 문단 앞으로 이동한다.
   void _insertComponentNodeAtNextLine(DocumentNode componentNode) {
-    debugPrint('DEBUG: _insertComponentNodeAtNextLine: $componentNode');
     final doc = editor.document;
     final safeIndex = _getCaretNodeIndexSafe();
     int insertIndex = safeIndex;
+
+    // ✅ 초기 baseline 보장:
+    // 컴포넌트 삽입은 내부적으로 changeLog를 억제(isExecutingHistory)하고 수동으로 스냅샷을 저장한다.
+    // 따라서 첫 액션이 "미디어/특수노드 삽입"인 경우 undo가 동작하도록
+    // 삽입 전 상태(baseline)를 1회만 히스토리에 넣어준다.
+    if (_undoStack.isEmpty) {
+      final baseline = _copyAllNodes();
+      _addToHistoryStack(baseline, 'baseline(beforeInsertComponent)');
+      _initialStateSaved = true;
+    }
 
     // ✅ "첫 번째 노드=제목" 가정 제거:
     // 현재 커서가 있는 문단에 텍스트가 있으면 다음 줄에 삽입한다.
@@ -4346,7 +5005,6 @@ class EditorService extends ChangeNotifier {
         final hasText = currentNode.text.text.trim().isNotEmpty;
         if (hasText) {
           insertIndex = insertIndex + 1;
-          debugPrint('🎯 현재 문단에 텍스트가 있음, 다음 줄(index $insertIndex)에 삽입');
         }
       }
     }

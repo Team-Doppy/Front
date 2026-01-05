@@ -1187,8 +1187,8 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                     child: IgnorePointer(
                                       child: Center(
                                         child: const SizedBox(
-                                          width: 24,
-                                          height: 24,
+                                          width: 20,
+                                          height: 20,
                                           child: CircularProgressIndicator(
                                             strokeWidth: 4,
                                             color: Colors.white,

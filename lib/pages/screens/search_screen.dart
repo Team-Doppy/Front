@@ -447,8 +447,10 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                 likeCount: item.likes ?? 0,
                 commentCount: item.comments ?? 0,
                 isLiked: false,
-                createdAt: item.createdAt ?? DateTime.now().toIso8601String(),
-                updatedAt: item.createdAt ?? DateTime.now().toIso8601String(),
+                createdAt:
+                    item.createdAt ?? DateTime.now().toUtc().toIso8601String(),
+                updatedAt:
+                    item.createdAt ?? DateTime.now().toUtc().toIso8601String(),
               );
             }
           }).toList();
@@ -782,8 +784,10 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                 likeCount: item.likes ?? 0,
                 commentCount: item.comments ?? 0,
                 isLiked: false,
-                createdAt: item.createdAt ?? DateTime.now().toIso8601String(),
-                updatedAt: item.createdAt ?? DateTime.now().toIso8601String(),
+                createdAt:
+                    item.createdAt ?? DateTime.now().toUtc().toIso8601String(),
+                updatedAt:
+                    item.createdAt ?? DateTime.now().toUtc().toIso8601String(),
               );
             }
           }).toList();
@@ -839,8 +843,10 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                 likeCount: item.likes ?? 0,
                 commentCount: item.comments ?? 0,
                 isLiked: false,
-                createdAt: item.createdAt ?? DateTime.now().toIso8601String(),
-                updatedAt: item.createdAt ?? DateTime.now().toIso8601String(),
+                createdAt:
+                    item.createdAt ?? DateTime.now().toUtc().toIso8601String(),
+                updatedAt:
+                    item.createdAt ?? DateTime.now().toUtc().toIso8601String(),
               );
             }
           }).toList();

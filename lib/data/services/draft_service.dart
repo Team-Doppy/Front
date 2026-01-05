@@ -12,7 +12,6 @@ import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
-import 'package:doppy/utils/time_utils.dart';
 import 'package:super_editor/super_editor.dart';
 // NOTE: 편집 화면은 CachedNetworkImage로 디스크/메모리 캐시를 처리하므로
 // 드래프트 로드 시점의 precacheImage(NetworkImage)는 제거됨 (메모리 eviction/깜빡임 유발).
@@ -57,12 +56,30 @@ class DraftData {
       if (videoThumbnailPath != null) 'videoThumbnailPath': videoThumbnailPath,
       'visibility': visibility,
       'selectedGroupIds': selectedGroupIds,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      // ✅ UTC로 저장 (UTC가 아니면 변환)
+      'createdAt':
+          (createdAt.isUtc ? createdAt : createdAt.toUtc()).toIso8601String(),
+      'updatedAt':
+          (updatedAt.isUtc ? updatedAt : updatedAt.toUtc()).toIso8601String(),
     };
   }
 
   factory DraftData.fromJson(Map<String, dynamic> json) {
+    // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+    DateTime _parseUtcDateTime(dynamic value) {
+      if (value == null) return DateTime.now().toUtc();
+      try {
+        final str = value.toString();
+        if (str.isEmpty) return DateTime.now().toUtc();
+        final dateTime = DateTime.parse(str);
+        // UTC가 아니면 UTC로 변환
+        return dateTime.isUtc ? dateTime : dateTime.toUtc();
+      } catch (e) {
+        debugPrint('[DraftData] UTC 시간 파싱 실패: $value, 에러: $e');
+        return DateTime.now().toUtc();
+      }
+    }
+
     return DraftData(
       id: json['id'] ?? '',
       title: json['title'] ?? '',
@@ -73,12 +90,8 @@ class DraftData {
       videoThumbnailPath: json['videoThumbnailPath'] as String?,
       visibility: json['visibility'] ?? 'public',
       selectedGroupIds: List<int>.from(json['selectedGroupIds'] ?? []),
-      createdAt: TimeUtils.toLocalTime(
-        json['createdAt'] ?? DateTime.now().toIso8601String(),
-      ),
-      updatedAt: TimeUtils.toLocalTime(
-        json['updatedAt'] ?? DateTime.now().toIso8601String(),
-      ),
+      createdAt: _parseUtcDateTime(json['createdAt']),
+      updatedAt: _parseUtcDateTime(json['updatedAt']),
     );
   }
 }
@@ -125,7 +138,7 @@ class DraftService {
             privateOnly: privateOnly,
             publicOnly: publicOnly,
             selectedGroupIds: selectedGroupIds,
-            createdAt: DateTime.now(),
+            createdAt: DateTime.now().toUtc(),
             skipValidation: true, // 임시저장은 제목 검증 생략
           );
 
@@ -138,7 +151,7 @@ class DraftService {
       // 🎯 UUID 기반 임시저장: existingDraftId가 없으면 새 UUID 생성
       // (제목이 바뀌어도 같은 UUID로 덮어쓰기)
       final draftId = existingDraftId ?? _generateUuidDraftId();
-      final now = DateTime.now();
+      final now = DateTime.now().toUtc(); // ✅ UTC 기준으로 저장
 
       final draftData = DraftData(
         id: draftId,
@@ -217,12 +230,13 @@ class DraftService {
             privateOnly: privateOnly,
             publicOnly: publicOnly,
             selectedGroupIds: selectedGroupIds,
-            createdAt: DateTime.now(),
+            createdAt: DateTime.now().toUtc(),
             skipValidation: true,
           );
 
-      final now = DateTime.now();
-      final effectiveTitle = title.trim().isEmpty ? '제목 없음' : title.trim();
+      final now = DateTime.now().toUtc(); // ✅ UTC 기준으로 저장
+      // 🎯 autoDraft는 제목이 비어있으면 ''로 유지 (제목이 있으면 그대로 사용)
+      final effectiveTitle = title.trim();
 
       final draftData = DraftData(
         id: draftId,
@@ -241,8 +255,15 @@ class DraftService {
       await prefs.setString(_autoDraftKey, json.encode(draftData.toJson()));
       return draftId;
     } catch (e, stackTrace) {
+      // 🎯 자동저장은 복구 목적이므로, 업로드 중인 미디어가 있어도 조용히 스킵 (throw하지 않음)
+      // 업로드 완료 후 다음 자동저장에서 성공할 수 있도록 에러를 무시한다.
+      if (e is StateError && e.message.contains('업로드')) {
+        debugPrint('[DraftService] ⏭️ 자동저장 스킵 (업로드 중): ${e.message}');
+        return draftId; // 기존 draftId 반환 (실패해도 기존 데이터 유지)
+      }
       debugPrint('[DraftService] ❌ 자동저장 실패: $e');
       debugPrint('[DraftService] 스택 트레이스: $stackTrace');
+      // 업로드 관련이 아닌 다른 에러는 여전히 throw (실제 버그 감지용)
       throw Exception('자동저장에 실패했습니다: $e');
     }
   }
@@ -652,6 +673,7 @@ class DraftService {
   Future<bool> deleteDraft(String draftId) async {
     try {
       final prefs = await SharedPreferences.getInstance();
+
       final drafts = await getAllDrafts();
 
       // 해당 임시저장 제거
@@ -706,9 +728,9 @@ class DraftService {
   Future<DateTime> _getDraftCreatedAt(String draftId) async {
     try {
       final draft = await getDraft(draftId);
-      return draft?.createdAt ?? DateTime.now();
+      return draft?.createdAt ?? DateTime.now().toUtc();
     } catch (e) {
-      return DateTime.now();
+      return DateTime.now().toUtc();
     }
   }
 

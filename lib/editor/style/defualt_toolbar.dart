@@ -323,6 +323,9 @@ class DefaultToolbar extends StatefulWidget {
   final bool isEditMode;
   final ValueNotifier<bool>? videoUploadIndicatorNotifier; // 영상 업로드 인디케이터 상태
   final ValueNotifier<bool>? keyboardVisibleNotifier; // 🎯 키보드 상태 (외부에서 주입)
+  final String? uploadRefId; // ✅ 드로잉 업로드 등 세션 단위 refId
+  // ✅ 미디어 추가 시 빈 상태 오버레이를 숨기기 위한 콜백
+  final VoidCallback? onMediaAdded;
 
   const DefaultToolbar({
     super.key,
@@ -336,6 +339,8 @@ class DefaultToolbar extends StatefulWidget {
     this.isEditMode = false,
     this.videoUploadIndicatorNotifier,
     this.keyboardVisibleNotifier, // 🎯 키보드 상태 주입
+    this.uploadRefId,
+    this.onMediaAdded,
   });
 
   @override
@@ -682,6 +687,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
                 context: context,
                 editorService: widget.editorService,
                 onUploadComplete: _forceCloseToolbar,
+                onMediaAdded: widget.onMediaAdded,
               );
 
               // 🎯 바로 이미지 피커로 이동 (바텀시트 없이)
@@ -1689,6 +1695,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
             (_, __, ___) => StickerOverlay(
               initialKind: kind,
               scrollController: widget.scrollController,
+              uploadRefId: widget.uploadRefId,
               onSubmit: ({
                 required String text,
                 String? emoji,

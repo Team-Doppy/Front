@@ -41,6 +41,11 @@ class MediaPickerScreen extends StatefulWidget {
 
   @override
   State<MediaPickerScreen> createState() => _MediaPickerScreenState();
+
+  // 🎯 외부에서 호출 가능한 새로고침 메서드
+  static Future<void> refreshCurrentInstance() async {
+    await _MediaPickerScreenState.refreshCurrentInstanceIfNeeded();
+  }
 }
 
 /// MediaPickerScreen에서 반환되는 결과
@@ -70,6 +75,8 @@ class MediaPickerResult {
 enum MediaType { video, image }
 
 class _MediaPickerScreenState extends State<MediaPickerScreen> {
+  // 🎯 현재 열려있는 MediaPickerScreen 인스턴스 추적 (외부 새로고침용)
+  static _MediaPickerScreenState? _currentInstance;
   List<AssetEntity> _media = [];
   bool _isLoading = true;
   bool _hasPermission = false;
@@ -153,6 +160,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   @override
   void initState() {
     super.initState();
+    // 🎯 현재 인스턴스 등록
+    _currentInstance = this;
+
     _mediaType = widget.initialMediaType;
 
     // 미디어 타입에 따라 최대 선택 개수 설정
@@ -188,6 +198,11 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
   @override
   void dispose() {
+    // 🎯 현재 인스턴스 해제
+    if (_currentInstance == this) {
+      _currentInstance = null;
+    }
+
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
 
@@ -329,6 +344,71 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
           _isLoading = false;
         });
       }
+    }
+  }
+
+  // 🎯 외부에서 호출 가능한 새로고침 메서드 (static)
+  static Future<void> refreshCurrentInstanceIfNeeded() async {
+    final instance = _currentInstance;
+    if (instance != null && instance.mounted) {
+      await instance._refreshFirstPage();
+    }
+  }
+
+  // 🎯 첫 페이지 새로고침 (새로 추가된 미디어 확인)
+  Future<void> _refreshFirstPage() async {
+    if (!mounted || !_hasPermission || _isLoading || _isLoadingMore) {
+      return;
+    }
+
+    try {
+      // 🎯 앨범 캐시를 무효화하여 최신 상태를 가져옴
+      _cachedAllAlbum = null;
+      _cachedAllAlbumType = null;
+
+      final allAlbum = await _getAllAlbum(_mediaType);
+      if (allAlbum == null) return;
+
+      // 첫 페이지(최신 미디어)만 다시 로드
+      final newPageAssets = await allAlbum.getAssetListPaged(
+        page: 0,
+        size: _pageSize,
+      );
+
+      if (!mounted) return;
+
+      // 🎯 기존 목록과 새 목록 비교하여 실제로 변경되었는지 확인
+      bool hasChanges = false;
+      if (_media.length != newPageAssets.length) {
+        hasChanges = true;
+      } else {
+        // 길이가 같으면 각 항목의 ID를 비교
+        for (int i = 0; i < _media.length && i < newPageAssets.length; i++) {
+          if (_media[i].id != newPageAssets[i].id) {
+            hasChanges = true;
+            break;
+          }
+        }
+      }
+
+      if (hasChanges) {
+        debugPrint(
+          '[MediaPicker] 새 미디어 감지: 기존 ${_media.length}개 → 새로운 ${newPageAssets.length}개',
+        );
+
+        // 기존 선택 상태 유지하면서 첫 페이지만 교체
+        setState(() {
+          // 기존 미디어 목록을 새 목록으로 교체
+          _media = newPageAssets;
+          _hasMoreMedia = newPageAssets.length >= _pageSize;
+          // 페이지는 0으로 유지 (첫 페이지만 새로고침)
+          _currentPage = 0;
+        });
+      } else {
+        debugPrint('[MediaPicker] 새 미디어 없음 - 첫 페이지 새로고침 스킵');
+      }
+    } catch (e) {
+      debugPrint('[MediaPicker] 첫 페이지 새로고침 오류: $e');
     }
   }
 
@@ -742,8 +822,15 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                         context: context,
                         barrierDismissible: false,
                         builder:
-                            (_) => const Center(
-                              child: CircularProgressIndicator(),
+                            (dialogContext) => Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 4,
+                                  color: Colors.white,
+                                ),
+                              ),
                             ),
                       );
                     }
@@ -927,24 +1014,14 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
   Future<void> _handleGroupImage(List<AssetEntity> selectedAssets) async {
     try {
-      // 선택된 이미지들을 File로 변환
-      final List<File> imageFiles = [];
+      if (selectedAssets.isEmpty || !mounted) return;
 
-      for (final asset in selectedAssets) {
-        final file = await asset.originFile;
-        if (file != null) {
-          imageFiles.add(file);
-        }
-      }
+      debugPrint('그룹이미지: ${selectedAssets.length}개 이미지');
 
-      if (imageFiles.isEmpty || !mounted) return;
-
-      debugPrint('그룹이미지: ${imageFiles.length}개 이미지 변환 완료');
-
-      // 🎯 레이아웃 선택 화면을 모달 바텀시트로 표시 (공통 메서드 사용)
+      // 🎯 레이아웃 선택 화면을 모달 바텀시트로 표시 (AssetEntity만 사용)
       final layout = await GroupImageLayoutSelector.showLayoutSelector(
         context: context,
-        previewImages: imageFiles,
+        previewAssets: selectedAssets,
       );
 
       if (layout == null || !mounted) {
@@ -956,8 +1033,19 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       _isSubmitting = true;
 
       debugPrint(
-        '[MediaPicker] ✅ 그룹이미지 선택 완료: ${imageFiles.length}개, 레이아웃: $layout',
+        '[MediaPicker] ✅ 그룹이미지 선택 완료: ${selectedAssets.length}개, 레이아웃: $layout',
       );
+
+      // ✅ 선택된 이미지들을 File로 변환 (결과 반환용)
+      final List<File> imageFiles = [];
+      for (final asset in selectedAssets) {
+        final file = await asset.originFile;
+        if (file != null) {
+          imageFiles.add(file);
+        }
+      }
+
+      if (imageFiles.isEmpty || !mounted) return;
 
       // ✅ 노드 삽입 전에 이미지 크기를 미리 측정해서
       // Row/PageView가 첫 프레임부터 정확한 높이로 그려지게 한다.
@@ -968,7 +1056,17 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
           showDialog<void>(
             context: context,
             barrierDismissible: false,
-            builder: (_) => const Center(child: CircularProgressIndicator()),
+            builder:
+                (dialogContext) => Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 4,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
           );
         }
         try {

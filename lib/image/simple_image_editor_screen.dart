@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
@@ -96,7 +95,6 @@ class _ImageEditState {
   double sharpness = 0.0; // 0 ~ 100
   double temperature = 0.0; // -100 ~ 100 (차갑게 ~ 따뜻하게)
   double blur = 0.0; // 0 ~ 100
-  double vignette = 0.0; // 0 ~ 100
 
   // 필터 관련 상태
   FilterModel? selectedFilter;
@@ -150,7 +148,6 @@ class _EditSnapshot {
     required this.sharpness,
     required this.temperature,
     required this.blur,
-    required this.vignette,
     required this.selectedFilter,
     required this.filterIntensity,
   });
@@ -175,7 +172,6 @@ class _EditSnapshot {
   final double sharpness;
   final double temperature;
   final double blur;
-  final double vignette;
 
   final FilterModel? selectedFilter;
   final double filterIntensity;
@@ -199,7 +195,6 @@ class _EditSnapshot {
       sharpness: s.sharpness,
       temperature: s.temperature,
       blur: s.blur,
-      vignette: s.vignette,
       selectedFilter: s.selectedFilter,
       filterIntensity: s.filterIntensity,
     );
@@ -227,7 +222,6 @@ class _EditSnapshot {
     s.sharpness = sharpness;
     s.temperature = temperature;
     s.blur = blur;
-    s.vignette = vignette;
 
     s.selectedFilter = selectedFilter;
     s.filterIntensity = filterIntensity;
@@ -250,7 +244,6 @@ class _EditSnapshot {
         sharpness == other.sharpness &&
         temperature == other.temperature &&
         blur == other.blur &&
-        vignette == other.vignette &&
         selectedFilter == other.selectedFilter &&
         filterIntensity == other.filterIntensity;
   }
@@ -871,46 +864,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     return _imageEditStates.putIfAbsent(_currentIndex, () => _ImageEditState());
   }
 
-  void _resetCurrentAdjustmentValue() {
-    final type = _adjustmentEditorKey.currentState?.selectedType;
-    if (type == null) return;
-    final state = _getCurrentEditState();
-
-    setState(() {
-      switch (type) {
-        case AdjustmentType.brightness:
-          state.brightness = 0.0;
-          break;
-        case AdjustmentType.contrast:
-          state.contrast = 0.0;
-          break;
-        case AdjustmentType.saturation:
-          state.saturation = 0.0;
-          break;
-        case AdjustmentType.luminance:
-          state.luminance = 0.0;
-          break;
-        case AdjustmentType.exposure:
-          state.exposure = 0.0;
-          break;
-        case AdjustmentType.sharpness:
-          state.sharpness = 0.0;
-          break;
-        case AdjustmentType.temperature:
-          state.temperature = 0.0;
-          break;
-        case AdjustmentType.blur:
-          state.blur = 0.0;
-          break;
-        case AdjustmentType.vignette:
-          state.vignette = 0.0;
-          break;
-      }
-      // ✅ 리셋 후 히스토리에 저장 (언두 가능하도록)
-      _saveToHistorySnapshot(_currentIndex);
-    });
-  }
-
   void _resetFilterToOriginal() {
     final state = _getCurrentEditState();
     setState(() {
@@ -1033,26 +986,14 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
         // ✅ 신규/갤러리: 레이아웃 선택을 먼저 띄우고(즉시 반응), 그동안 백그라운드로 굽기 진행
         // preview는 "현재 bytes"로 충분 (레이아웃 선택용)
-        final tempDir = await Directory.systemTemp.createTemp('image_preview_');
-        final previewFiles = <File>[];
-        for (int i = 0; i < _images.length; i++) {
-          final f = File('${tempDir.path}/preview_$i.jpg');
-          await f.writeAsBytes(_images[i]);
-          previewFiles.add(f);
-        }
-
         // 굽기 작업 시작 (선택 UI가 열린 동안 진행)
         final bakeFuture = _bakeAllFinalBytes();
 
-        final layout = await GroupImageLayoutSelector.showLayoutSelector(
-          context: context,
-          previewImages: previewFiles,
-        );
-
-        // preview temp 정리 (실패해도 무시)
-        try {
-          await tempDir.delete(recursive: true);
-        } catch (_) {}
+        final layout =
+            await GroupImageLayoutSelector.showLayoutSelectorForBytes(
+              context: context,
+              previewBytes: _images,
+            );
 
         if (!mounted) return;
         if (layout == null) return;
@@ -1698,29 +1639,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                               color: fgColor.withOpacity(0.7),
                                             ),
                                           ),
-                                          // 요구사항: "하위로 들어갔을 때(슬라이더 모드)"만 리셋 노출
-                                          if (_isAdjustmentSliderMode) ...[
-                                            const SizedBox(width: 8),
-                                            GestureDetector(
-                                              onTap:
-                                                  _resetCurrentAdjustmentValue,
-                                              behavior:
-                                                  HitTestBehavior.translucent,
-                                              child: Padding(
-                                                padding: const EdgeInsets.all(
-                                                  6,
-                                                ),
-                                                child: Icon(
-                                                  Icons.refresh,
-                                                  size: 24,
-                                                  // 요구사항: opacity 0.7
-                                                  color: fgColor.withOpacity(
-                                                    0.7,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
                                         ],
                                       ),
                                     ),
@@ -2016,13 +1934,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     );
 
     // ✅ 조정 모드일 때는 key를 고정하여 위젯 재생성 방지 (이미지 크기 고정)
-    // ✅ blur/vignette도 항상 적용하여 위젯 트리 구조를 일정하게 유지 (깜빡임 방지)
+    // ✅ blur도 항상 적용하여 위젯 트리 구조를 일정하게 유지 (깜빡임 방지)
     final blurSigma = (state.blur / 100.0) * 20.0;
-    final vignetteIntensity = state.vignette / 100.0;
 
     Widget imageWidget = basePaint;
 
-    // ColorFilter 적용 (blur/vignette 제외)
+    // ColorFilter 적용 (blur 제외)
     if (_getColorFilter(state) != null) {
       imageWidget = ColorFiltered(
         key:
@@ -2039,12 +1956,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     // Blur 적용 (항상 적용하되, blur가 0이면 sigma도 0으로 설정)
     imageWidget = ImageFiltered(
       imageFilter: ui.ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-      child: imageWidget,
-    );
-
-    // Vignette 적용 (항상 적용하되, vignette가 0이면 intensity도 0으로 설정)
-    imageWidget = CustomPaint(
-      painter: _VignettePainter(intensity: vignetteIntensity),
       child: imageWidget,
     );
 
@@ -2938,8 +2849,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           ..exposure = state.exposure
           ..sharpness = state.sharpness
           ..temperature = state.temperature
-          ..blur = state.blur
-          ..vignette = state.vignette;
+          ..blur = state.blur;
 
     return AdjustmentEditorBottomSheet(
       key: _adjustmentEditorKey,
@@ -2954,7 +2864,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           state.sharpness = newState.sharpness;
           state.temperature = newState.temperature;
           state.blur = newState.blur;
-          state.vignette = newState.vignette;
         });
         // ✅ 슬라이더 드래그 중에는 히스토리에 저장하지 않음 (드래그 종료 시 저장)
       },
@@ -2968,42 +2877,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         _saveToHistorySnapshot(_currentIndex);
       },
     );
-  }
-}
-
-/// Vignette 효과 페인터
-class _VignettePainter extends CustomPainter {
-  final double intensity; // 0.0 ~ 1.0
-
-  _VignettePainter({required this.intensity});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (intensity <= 0.0) return;
-
-    final maxRadius = math.max(size.width, size.height) * 0.8;
-
-    // 그라데이션으로 비네팅 효과 생성
-    final gradient = RadialGradient(
-      center: Alignment.center,
-      radius: maxRadius,
-      colors: [Colors.transparent, Colors.black.withOpacity(intensity * 0.6)],
-      stops: const [0.3, 1.0],
-    );
-
-    final paint =
-        Paint()
-          ..shader = gradient.createShader(
-            Rect.fromLTWH(0, 0, size.width, size.height),
-          )
-          ..blendMode = BlendMode.multiply;
-
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
-  }
-
-  @override
-  bool shouldRepaint(_VignettePainter oldDelegate) {
-    return oldDelegate.intensity != intensity;
   }
 }
 

@@ -311,10 +311,11 @@ class _CommentImageFullscreenDialogState
     try {
       return TimeUtils.formatRelativeTimeFromUtc(context, dateStr);
     } catch (e) {
-      // 포맷팅 실패 시 ISO 날짜를 간단히 표시
+      // 포맷팅 실패 시 ISO 날짜를 간단히 표시 (UTC 기준)
       try {
-        final date = TimeUtils.toLocalTime(dateStr);
-        return '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
+        final dateTime = DateTime.parse(dateStr);
+        final dateUtc = dateTime.isUtc ? dateTime : dateTime.toUtc();
+        return '${dateUtc.year}.${dateUtc.month.toString().padLeft(2, '0')}.${dateUtc.day.toString().padLeft(2, '0')}';
       } catch (_) {
         return dateStr;
       }

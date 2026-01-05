@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:doppy/data/models/mention_user.dart';
-import 'package:doppy/utils/time_utils.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -133,6 +132,18 @@ class MentionService extends ChangeNotifier {
 }
 
 class _MentionHistoryEntry {
+  // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+  static DateTime _parseUtcDateTime(String value) {
+    try {
+      final dateTime = DateTime.parse(value);
+      // UTC가 아니면 UTC로 변환
+      return dateTime.isUtc ? dateTime : dateTime.toUtc();
+    } catch (e) {
+      debugPrint('[MentionHistoryEntry] UTC 시간 파싱 실패: $value, 에러: $e');
+      return DateTime.now().toUtc();
+    }
+  }
+
   final String username;
   final String? alias;
   final String? profileImageUrl;
@@ -150,7 +161,9 @@ class _MentionHistoryEntry {
       'username': username,
       'alias': alias,
       'profileImageUrl': profileImageUrl,
-      'timestamp': timestamp.toIso8601String(),
+      // ✅ UTC로 저장 (UTC가 아니면 변환)
+      'timestamp':
+          (timestamp.isUtc ? timestamp : timestamp.toUtc()).toIso8601String(),
     };
   }
 
@@ -159,10 +172,11 @@ class _MentionHistoryEntry {
       username: (json['username'] ?? '').toString(),
       alias: json['alias']?.toString(),
       profileImageUrl: json['profileImageUrl']?.toString(),
-      timestamp: TimeUtils.toLocalTime(
-        (json['timestamp'] ?? DateTime.now().toIso8601String()).toString(),
+      // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+      timestamp: _parseUtcDateTime(
+        (json['timestamp'] ?? DateTime.now().toUtc().toIso8601String())
+            .toString(),
       ),
     );
   }
 }
-

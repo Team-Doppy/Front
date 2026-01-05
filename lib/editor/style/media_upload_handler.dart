@@ -18,11 +18,14 @@ class MediaUploadHandler {
   final BuildContext context;
   final EditorService editorService;
   final VoidCallback? onUploadComplete;
+  // ✅ 미디어 추가 시 빈 상태 오버레이를 숨기기 위한 콜백
+  final VoidCallback? onMediaAdded;
 
   MediaUploadHandler({
     required this.context,
     required this.editorService,
     this.onUploadComplete,
+    this.onMediaAdded,
   });
 
   /// 이미지 업로드 처리
@@ -46,10 +49,14 @@ class MediaUploadHandler {
                 // 영상으로 전환된 경우
                 if (result.selectedMediaType == MediaType.video) {
                   await _handleVideoFromImagePicker(result, upload);
+                  // ✅ 미디어 추가 시 빈 상태 오버레이 숨기기
+                  onMediaAdded?.call();
                   return;
                 }
                 // 이미지 업로드
                 await _handleImageFiles(result, upload);
+                // ✅ 미디어 추가 시 빈 상태 오버레이 숨기기
+                onMediaAdded?.call();
               },
             ),
         transitionDuration: const Duration(milliseconds: 200),
@@ -83,6 +90,8 @@ class MediaUploadHandler {
                 // 이미지로 전환된 경우
                 if (result.selectedMediaType == MediaType.image) {
                   await _handleImageFromVideoPicker(result, upload);
+                  // ✅ 미디어 추가 시 빈 상태 오버레이 숨기기
+                  onMediaAdded?.call();
                   return;
                 }
                 // 영상 업로드 (trim/edit spec 전달)
@@ -93,6 +102,8 @@ class MediaUploadHandler {
                   trimSpec: result.trimSpec,
                   editSpec: result.editSpec,
                 );
+                // ✅ 미디어 추가 시 빈 상태 오버레이 숨기기
+                onMediaAdded?.call();
               },
             ),
         transitionDuration: const Duration(milliseconds: 200),

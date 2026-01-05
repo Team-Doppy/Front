@@ -35,6 +35,7 @@ import 'package:doppy/theme/app_theme.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/overlay/draft_list_overlay.dart';
@@ -115,8 +116,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   );
 
   // 🎯 빈 상태 감지 (키보드가 내려가고 문서가 비어있을 때)
+  // ✅ derived state로 관리: build()에서 매번 계산하여 동기화
   final ValueNotifier<bool> _isEmptyNotifier = ValueNotifier<bool>(false);
-  Timer? _emptyStateCheckTimer;
+
+  // 🎯 초기 진입 시 키보드가 올라오기 전까지 오버레이 숨김
+  bool _isInitialEntry = true;
+
+  // ✅ 업로드/압축 “세션(refId)” (드로잉 업로드 등 노드 id가 없는 작업을 refId 기반으로 가드하기 위함)
+  late final String _editorUploadSessionId;
 
   // 공개범위 설정 (편집 모드용)
   String _editVisibility = 'public';
@@ -227,7 +234,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         editorService: editorService,
         stickerService: stickerService,
         draftId: currentDraftId!,
-        title: title.trim().isEmpty ? context.tr('no_title') : title.trim(),
+        title: title.trim(), // 🎯 빈 문자열이면 ''로 저장, 제목이 있으면 유지
         summary: summary,
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
@@ -346,6 +353,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       document: document,
       useExternalTitleField: true,
     );
+    // ✅ 한 번만 고정 (screen lifecycle 동안 동일)
+    _editorUploadSessionId = 'editor_${editorService.hashCode}';
     editorService.setDocumentLayoutKey(_documentLayoutKey);
     editorService.setScrollController(scrollController);
     textStylingService = TextStylingService(editor: editor, composer: composer);
@@ -460,13 +469,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           );
           if (!mounted) return; // 키보드 올라오기 전 뒤로가기 체크
           _editorFocusNode.requestFocus();
-        } else {
-          // 🎯 포커스를 줄 노드가 없으면 초기 빈 상태 체크
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (mounted) {
-              _checkEmptyStateAfterKeyboardDismiss();
-            }
-          });
         }
 
         try {
@@ -524,11 +526,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           }
         }
 
-        // 🎯 문서 구조 변경 시 빈 상태 체크 (키보드가 내려가 있을 때만)
-        final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
-        if (!keyboardVisible && !_editorFocusNode.hasFocus) {
-          _checkEmptyStateAfterKeyboardDismiss();
-        }
+        // (빈 상태는 build()에서 derived state로 동기화하므로 별도 체크 불필요)
       });
     }
   }
@@ -547,39 +545,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 🎯 SuperEditor가 build에서 직접 생성되므로 언두/리두 후 자동 rebuild됨
     // 명시적 레이아웃 무효화 불필요
     setState(() {});
-  }
-
-  /// 🎯 키보드를 명시적으로 내린 후 빈 상태 체크
-  /// ✅ 최적화: 모든 조건을 한 번에 체크하여 ValueListenableBuilder에서 중복 체크 불필요
-  void _checkEmptyStateAfterKeyboardDismiss() {
-    if (!mounted) return;
-
-    // 🎯 Debounce: 키보드 애니메이션 완료 대기
-    _emptyStateCheckTimer?.cancel();
-    _emptyStateCheckTimer = Timer(const Duration(milliseconds: 400), () {
-      if (!mounted) return;
-
-      // ✅ 최적화: 빠른 실패를 위해 가벼운 체크를 먼저 수행
-      // 1. 키보드가 완전히 내려갔는지 확인 (가장 빠른 체크)
-      final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
-      if (keyboardHeight > 0) {
-        _isEmptyNotifier.value = false;
-        return;
-      }
-
-      // 2. 커서가 없는지 확인 (빠른 체크)
-      if (composer.selection != null) {
-        _isEmptyNotifier.value = false;
-        return;
-      }
-
-      // 3. 문서가 비어있는지 확인 (상대적으로 무거운 체크)
-      final isEmpty = _isDocumentEmpty();
-      debugPrint(
-        '[PostwriteScreen] 빈 상태 체크: isEmpty=$isEmpty, keyboardHeight=$keyboardHeight, hasSelection=${composer.selection != null}',
-      );
-      _isEmptyNotifier.value = isEmpty;
-    });
   }
 
   /// 🎯 문서가 비어있는지 확인
@@ -624,10 +589,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         kind == StickerChangeKind.transform) {
       editorService.saveHistoryNow();
 
-      // 🎯 스티커 추가 시 빈 상태 UI 숨기기
-      if (kind == StickerChangeKind.add && stickerService.stickers.isNotEmpty) {
-        _isEmptyNotifier.value = false;
-      }
+      // (빈 상태는 build()에서 derived state로 동기화하므로 별도 토글 불필요)
     }
   }
 
@@ -667,7 +629,34 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       nodeComponentService.clearTempVideoFile('default');
     } catch (_) {}
 
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+    debugPrint(
+      '[PostwriteScreen][EXIT] _cleanupAndExit: isEditingMode=${widget.isEditingMode} shouldRefreshMyFeed=$_shouldRefreshMyFeed categoryChanged=$_categoryChanged serverAppliedTitle=$_serverAppliedTitle serverAppliedSummary=$_serverAppliedSummary serverAppliedThumbnail=$_serverAppliedThumbnailUrl',
+    );
+
+    // ✅ 편집 모드에서 "메타데이터만 변경"된 경우에도 PostReader에 즉시 반영할 수 있도록 pop 결과를 제공
+    if (widget.isEditingMode &&
+        (_shouldRefreshMyFeed || _categoryChanged) &&
+        widget.postId != null) {
+      final base = Map<String, dynamic>.from(widget.exportedDataForEdit ?? {});
+      if (_serverAppliedTitle != null) base['title'] = _serverAppliedTitle;
+      if (_serverAppliedSummary != null)
+        base['summary'] = _serverAppliedSummary;
+      if (_serverAppliedThumbnailUrl != null) {
+        base['thumbnailImageUrl'] = _serverAppliedThumbnailUrl;
+      }
+      debugPrint(
+        '[PostwriteScreen][EXIT] pop(metadataOnly): postId=${widget.postId} title=${base['title']} summary=${base['summary']} thumbnail=${base['thumbnailImageUrl']}',
+      );
+      Navigator.of(context).pop(<String, dynamic>{
+        'didEdit': true,
+        'postId': widget.postId,
+        'exported': base,
+      });
+      return;
+    }
+
+    Navigator.of(context).pop();
   }
 
   Future<void> _exitEditor({
@@ -843,12 +832,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 변경사항이 없으면 스킵
     if (!editorService.shouldPromptSaveOnExit(context)) return;
 
-    // 🎯 업로드되지 않은 이미지가 있으면 스킵
-    if (editorService.hasUnuploadedImages()) {
-      debugPrint('[PostwriteScreen] ⏭️ 업로드 미완료 이미지 존재 - 자동 저장 스킵');
-      return;
-    }
-
     // ✅ 업로드 중이어도 autoDraft 저장은 허용한다 (복구 목적).
     // (saveAutoDraft는 allowPartialUpload=true)
 
@@ -858,10 +841,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     try {
       // ✅ 정책: 제목은 "임시저장/Step1 입력"이 아니면 본문에서 추출하지 않는다.
-      // 자동저장은 복구 목적이므로, 빈 제목이면 no_title로 저장한다.
+      // 자동저장은 복구 목적이므로, 빈 제목이면 ''로 저장한다 (제목이 있으면 유지).
       final metadata = _extractDraftMetadata();
-      String title = metadata['title']!;
-      if (title.isEmpty) title = context.tr('no_title');
+      final title = metadata['title']!;
       final summary = metadata['summary']!;
       final thumbnailUrl = metadata['thumbnailUrl']!;
 
@@ -900,7 +882,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       debugPrint('[PostwriteScreen] ✅ 자동 저장 완료: $title');
     } catch (e) {
-      debugPrint('[PostwriteScreen] ⚠️ 자동 저장 실패: $e');
+      // 🎯 자동저장은 복구 목적이므로, 업로드 중인 미디어가 있어도 조용히 스킵 (throw하지 않음)
+      // 업로드 완료 후 다음 자동저장에서 성공할 수 있도록 에러를 무시한다.
+      if (e is StateError && e.message.contains('업로드')) {
+        debugPrint('[PostwriteScreen] ⏭️ 자동 저장 스킵 (업로드 중): ${e.message}');
+      } else {
+        debugPrint('[PostwriteScreen] ⚠️ 자동 저장 실패: $e');
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -917,7 +905,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     _editorFocusNode.dispose();
     // 🎯 에디터 종료 시 진행 중인 비디오 압축 취소
     final uploadService = UploadService();
-    uploadService.cancelEditorCompressions('editor_${editorService.hashCode}');
+    uploadService.cancelEditorCompressions(_editorUploadSessionId);
 
     // 영상 업로드 인디케이터 정리
     _videoUploadIndicatorNotifier.dispose();
@@ -948,7 +936,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     } catch (_) {}
     _keyboardVisibleNotifier.dispose();
     _isEmptyNotifier.dispose();
-    _emptyStateCheckTimer?.cancel();
 
     // 🎯 카테고리 변경 시 피드 프로바이더 캐시 초기화 + 새로고침
     if (_categoryChanged) {
@@ -1056,8 +1043,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               summary: autoDraft.summary,
               thumbnailUrl: autoDraft.thumbnailUrl,
             );
-            // 🎯 임시저장 불러온 후 빈 상태 UI 숨기기
-            _isEmptyNotifier.value = false;
+            // (빈 상태는 build()에서 derived state로 동기화하므로 별도 토글 불필요)
           }
         } else if (choice == ResumeWritingChoice.newDraft) {
           await draftService.clearAutoDraft();
@@ -1091,6 +1077,25 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     final isKeyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final appBarHeight = MediaQuery.paddingOf(context).top + kToolbarHeight;
 
+    // ✅ 빈 상태 오버레이는 "파생 상태(derived state)"로 동기화한다.
+    // - 문서가 비었는지(텍스트/특수노드/스티커 기준)
+    // - 키보드가 내려갔는지
+    // - 커서(selection)가 없는지
+    //
+    // undo/redo, draft load, 미디어 추가 등 모든 경로에서 notifier 갱신 누락으로
+    // 오버레이가 남아있는 문제를 원천적으로 줄인다.
+    //
+    // 🎯 초기 진입 시 키보드가 올라오기 전까지는 오버레이를 숨김
+    final shouldShowEmptyOverlay =
+        _isInitialEntry
+            ? false
+            : (!isKeyboardVisible &&
+                composer.selection == null &&
+                _isDocumentEmpty());
+    if (_isEmptyNotifier.value != shouldShowEmptyOverlay) {
+      _isEmptyNotifier.value = shouldShowEmptyOverlay;
+    }
+
     // 🎯 keyboardVisibleNotifier 값 갱신 (매 build마다 생성하지 않고 값만 변경)
     if (_keyboardVisibleNotifier.value != isKeyboardVisible) {
       _keyboardVisibleNotifier.value = isKeyboardVisible;
@@ -1098,12 +1103,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // cached node rect를 반드시 무효화해서 hit-test/빈공간탭 판정이 정확해지게 한다.
       dragService.invalidateNodeRectCache();
 
-      // 🎯 키보드가 올라오면 빈 상태 아님
-      if (isKeyboardVisible) {
-        _isEmptyNotifier.value = false;
-      } else {
-        // 🎯 키보드가 내려가면 빈 상태 체크
-        _checkEmptyStateAfterKeyboardDismiss();
+      // 🎯 키보드가 올라오면 초기 진입 플래그 해제
+      if (isKeyboardVisible && _isInitialEntry) {
+        _isInitialEntry = false;
       }
     }
 
@@ -1121,9 +1123,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             editorService: editorService,
             stickerService: stickerService,
           );
+          final bool hasMetadataChanges =
+              _shouldRefreshMyFeed || _categoryChanged;
+
+          debugPrint(
+            '[PostwriteScreen][WILL_POP] editMode: hasContentChanges=$hasChanges hasMetadataChanges=$hasMetadataChanges shouldRefreshMyFeed=$_shouldRefreshMyFeed categoryChanged=$_categoryChanged',
+          );
 
           // 변경사항이 없으면 바로 나가기
           if (!hasChanges) {
+            // ✅ 본문은 그대로인데 썸네일/제목/요약/카테고리/공개범위만 바뀐 케이스
             _cleanupAndExit();
             return false;
           }
@@ -1574,8 +1583,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               scrollController: scrollController,
               onDismissKeyboard: () {
                 _editorFocusNode.unfocus();
-                // 🎯 키보드를 명시적으로 내릴 때 빈 상태 체크
-                _checkEmptyStateAfterKeyboardDismiss();
+                // (빈 상태는 build()에서 derived state로 동기화하므로 별도 체크 불필요)
               },
               onShowDraftList: _showDraftList,
               videoUploadIndicatorNotifier: _videoUploadIndicatorNotifier,
@@ -1592,6 +1600,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               },
               onDeleteNode: _deleteNode,
               onChangeMediaAlignment: _changeMediaAlignment,
+              // (빈 상태는 build()에서 derived state로 동기화하므로 별도 토글 불필요)
+              onMediaAdded: null,
             ),
           ),
         ],
@@ -1717,14 +1727,24 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return; // 지원하지 않는 노드 타입
     }
 
-    // editor.execute를 사용하여 노드 교체
-    debugPrint(
-      '[PostWriteScreen] 노드 교체 실행: newNode.metadata=${newNode.metadata}',
-    );
-    editor.execute([
-      ReplaceNodeRequest(existingNodeId: selectedId, newNode: newNode),
-    ]);
-    debugPrint('[PostWriteScreen] 노드 교체 완료');
+    // 🎯 미디어 노드(Image/Clip)는 ReplaceNodeRequest 대신 replaceNodeById 사용 (remove+insert 이벤트 방지)
+    // LinkNode는 텍스트 기반이라 ReplaceNodeRequest 유지
+    if (node is ImageNode || node is ClipNode) {
+      debugPrint(
+        '[PostWriteScreen] 노드 교체 실행 (replaceNodeById): newNode.metadata=${newNode.metadata}',
+      );
+      editor.document.replaceNodeById(selectedId, newNode);
+      debugPrint('[PostWriteScreen] 노드 교체 완료');
+    } else {
+      // LinkNode 등 기타 노드는 기존 방식 유지
+      debugPrint(
+        '[PostWriteScreen] 노드 교체 실행 (ReplaceNodeRequest): newNode.metadata=${newNode.metadata}',
+      );
+      editor.execute([
+        ReplaceNodeRequest(existingNodeId: selectedId, newNode: newNode),
+      ]);
+      debugPrint('[PostWriteScreen] 노드 교체 완료');
+    }
 
     // 🎯 padding 변경을 히스토리에 저장
     final editorService = Provider.of<EditorService>(context, listen: false);
@@ -1755,8 +1775,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return; // 이미 삭제됨
     }
 
-    // 🎯 삭제 전 현재 상태를 히스토리에 동기적으로 저장
-    // 🎯 NodeRemovedEvent가 비동기로 처리되기 전에 삭제 전 상태를 확실히 저장
+    assert(() {
+      debugPrint(
+        '[TrashDbg] deleteNode tapped: selectedId=$selectedId type=${node.runtimeType} docCount=${document.nodeCount}',
+      );
+      return true;
+    }());
+
+    // ✅ 정책: 사용자가 삭제(휴지통/범위삭제 등)로 업로드/압축 중 항목을 제거하면
+    // 업로드/압축은 즉시 취소되고, undo/redo 히스토리에서도 완전 제거된다.
+    // 여기서는 "삭제 전/후 히스토리 저장"과 "복원 방지 레지스트리 처리"만 보장한다.
     editorService.saveHistoryBeforeDelete();
 
     // 🎯 원자적 삭제: 레지스트리에서 먼저 제거하여 복원 방지
@@ -1790,30 +1818,58 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           },
         );
 
-        editor.execute([
-          ReplaceNodeRequest(existingNodeId: selectedId, newNode: trailing),
-          ChangeSelectionRequest(
-            DocumentSelection.collapsed(
-              position: DocumentPosition(
-                nodeId: paragraphId,
-                nodePosition: const TextNodePosition(offset: 0),
+        exec() {
+          editor.execute([
+            ReplaceNodeRequest(existingNodeId: selectedId, newNode: trailing),
+            ChangeSelectionRequest(
+              DocumentSelection.collapsed(
+                position: DocumentPosition(
+                  nodeId: paragraphId,
+                  nodePosition: const TextNodePosition(offset: 0),
+                ),
               ),
+              SelectionChangeType.deleteContent,
+              SelectionReason.userInteraction,
             ),
-            SelectionChangeType.deleteContent,
-            SelectionReason.userInteraction,
-          ),
-        ]);
+          ]);
+        }
+
+        exec();
+        assert(() {
+          debugPrint(
+            '[TrashDbg] last-node delete done via ReplaceNodeRequest: oldId=$selectedId newParagraphId=$paragraphId',
+          );
+          return true;
+        }());
       } else {
         // 🎯 일반 케이스: 노드 삭제 (삭제 전 다시 한 번 존재 확인)
         if (document.getNodeById(selectedId) != null) {
           document.deleteNode(selectedId);
         }
+        assert(() {
+          debugPrint('[TrashDbg] normal delete done: deletedId=$selectedId');
+          return true;
+        }());
       }
 
-      // ✅ 안정성: 일부 환경/타이밍에서 DocumentChangeLog 리스너가 즉시 히스토리 커밋을 못 하는 케이스가 있어
-      // 툴바 삭제 버튼은 여기서 명시적으로 after-state를 저장하여 undo 활성화를 보장한다.
+      // ✅ 휴지통 삭제는 DocumentChangeLog(NodeRemovedEvent)가 항상 EditorService까지 도달한다고 가정할 수 없어,
+      // 여기서 직접 "업로드/압축 취소 + 히스토리 purge" 트랜잭션을 실행한다.
+      // 단, 일부 환경에서는 NodeRemovedEvent 경로에서도 동일 트랜잭션이 실행될 수 있어
+      // 중복 실행을 막기 위해 "현재 업로드/압축 중"일 때만 호출한다.
+      if (UploadService().isBusyRef(selectedId)) {
+        editorService.cancelAndPurgeIfUploading(<String>{selectedId});
+      }
+
+      // ✅ 안정성: 툴바 삭제 버튼은 여기서 명시적으로 after-state를 저장하여 undo 활성화를 보장한다.
       // (EditorService 쪽에서 동일 스냅샷이면 자동으로 중복 스킵됨)
       editorService.saveHistoryNow();
+      assert(() {
+        final exists = document.getNodeById(selectedId) != null;
+        debugPrint(
+          '[TrashDbg] after saveHistoryNow: deletedId=$selectedId stillExists=$exists',
+        );
+        return true;
+      }());
 
       setState(() {});
     } catch (e) {
@@ -1954,17 +2010,25 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         }
       }
 
-      // 🎯 업로드되지 않은 이미지가 있으면 차단
-      if (editorService.hasUnuploadedImages()) {
+      // 🎯 업로드/압축 중인 미디어가 있으면 차단
+      if (editorService.hasUnuploadedMedia()) {
         if (mounted) {
+          // 🎯 상세한 디버그 정보 출력 (kDebugMode에서만 실행)
+          if (kDebugMode) {
+            final activeTasks = editorService
+                .debugDumpBusyMediaForCurrentDocument(
+                  kinds: {
+                    UploadKind.editorImage,
+                    UploadKind.video,
+                    UploadKind.drawing,
+                  },
+                );
+            debugPrint(
+              '[PostwriteScreen] ⚠️ 업로드/압축 진행 중 - 임시저장 차단\n$activeTasks',
+            );
+          }
           ErrorHandler.showError(context, context.tr('please_wait_for_upload'));
         }
-        return false;
-      }
-
-      // 🎯 PNG 드로잉 업로드 중이면 차단
-      final uploadService = UploadService();
-      if (uploadService.hasActiveUploads(kinds: {UploadKind.editorImage})) {
         return false;
       }
 
@@ -2048,8 +2112,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 이미 저장 중이면 무시
     if (_isSaving) return;
 
-    // 업로드 중 플레이스홀더가 있으면 차단 (작성 시와 동일 정책)
-    if (editorService.hasUnuploadedImages()) {
+    // 업로드/압축 중인 미디어가 있으면 차단
+    if (editorService.hasUnuploadedMedia()) {
+      // 🎯 상세한 디버그 정보 출력 (kDebugMode에서만 실행)
+      if (kDebugMode) {
+        final activeTasks = editorService.debugDumpBusyMediaForCurrentDocument(
+          kinds: {UploadKind.editorImage, UploadKind.video, UploadKind.drawing},
+        );
+        debugPrint('[PostwriteScreen] ⚠️ 업로드/압축 진행 중 - 수정 완료 차단\n$activeTasks');
+      }
       await DialogUtils.showInfoDialog(
         context,
         title: context.tr('wait_for_media_upload'),
@@ -2069,6 +2140,15 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
 
     if (!hasChanges) {
+      final bool hasMetadataChanges = _shouldRefreshMyFeed || _categoryChanged;
+      debugPrint(
+        '[PostwriteScreen][SAVE_EDIT] noContentChanges: hasMetadataChanges=$hasMetadataChanges shouldRefreshMyFeed=$_shouldRefreshMyFeed categoryChanged=$_categoryChanged',
+      );
+      // ✅ 메타데이터만 변경된 경우: result를 담아서 나가기
+      if (hasMetadataChanges) {
+        _cleanupAndExit();
+        return;
+      }
       // 변경사항이 없으면 조용히 나가기
       Navigator.of(context).pop();
       return;
@@ -2133,11 +2213,31 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
         // 🎯 서버 업데이트 완료 후 pop (서버에서 최신 데이터 받아오도록)
         debugPrint('[PostwriteScreen] ✅ 수정 완료 - 로컬 exported 기반으로 즉시 반영');
+        // ✅ PostExporter.exportToMap에는 title이 비어있을 수 있다(제목은 썸네일 오버레이에서 관리).
+        // PostReader에서 merge 시 빈 title이 기존 title을 덮어쓰는 문제를 막기 위해,
+        // pop payload에 "서버 적용된(title/summary/thumbnail)" 값을 강제로 포함한다.
+        final exportedForPop = <String, dynamic>{
+          ...Map<String, dynamic>.from(widget.exportedDataForEdit ?? const {}),
+          ...Map<String, dynamic>.from(exported),
+        };
+        if ((_serverAppliedTitle ?? '').trim().isNotEmpty) {
+          exportedForPop['title'] = _serverAppliedTitle!.trim();
+        }
+        if ((_serverAppliedSummary ?? '').trim().isNotEmpty) {
+          exportedForPop['summary'] = _serverAppliedSummary!.trim();
+        }
+        if ((_serverAppliedThumbnailUrl ?? '').trim().isNotEmpty) {
+          exportedForPop['thumbnailImageUrl'] =
+              _serverAppliedThumbnailUrl!.trim();
+        }
+        debugPrint(
+          '[PostwriteScreen][POP] exportedForPop.title=${exportedForPop['title']} (serverAppliedTitle=$_serverAppliedTitle) exported.title=${exported['title']}',
+        );
         Navigator.of(context).pop(<String, dynamic>{
           'didEdit': true,
           'postId': widget.postId,
           // ✅ 서버 재조회 없이, 방금 export한 로컬 데이터로 PostReader를 갱신한다.
-          'exported': exported,
+          'exported': exportedForPop,
           'content': content,
         });
       }
@@ -2384,8 +2484,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     _editorFocusNode.unfocus();
                     FocusManager.instance.primaryFocus?.unfocus();
 
-                    // 🎯 임시저장 불러온 후 빈 상태 UI 숨기기
-                    _isEmptyNotifier.value = false;
+                    // (빈 상태는 build()에서 derived state로 동기화하므로 별도 토글 불필요)
 
                     // 🎯 SuperEditor가 build에서 직접 생성되므로 setState로 자동 rebuild됨
                     // 레이아웃 캐시 무효화는 불필요 (자동 재계산됨)
@@ -2431,6 +2530,8 @@ class _BottomBar extends StatelessWidget {
   final void Function(DocumentNode node, String selectedId) onDeleteNode;
   final Future<void> Function(DocumentNode node, String selectedId)
   onChangeMediaAlignment;
+  // ✅ 미디어 추가 시 빈 상태 오버레이를 숨기기 위한 콜백
+  final VoidCallback? onMediaAdded;
 
   const _BottomBar({
     required this.keyboardHeight,
@@ -2446,6 +2547,7 @@ class _BottomBar extends StatelessWidget {
     required this.onEditImage,
     required this.onDeleteNode,
     required this.onChangeMediaAlignment,
+    this.onMediaAdded,
   });
 
   @override
@@ -2547,6 +2649,9 @@ class _BottomBar extends StatelessWidget {
                         onShowDraftList: onShowDraftList,
                         videoUploadIndicatorNotifier:
                             videoUploadIndicatorNotifier,
+                        uploadRefId:
+                            'editor_${editorService.hashCode}', // ✅ 드로잉 업로드 refId
+                        onMediaAdded: onMediaAdded, // ✅ 미디어 추가 시 빈 상태 오버레이 숨기기
                       );
                     }
 

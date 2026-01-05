@@ -41,6 +41,7 @@ import 'utils/route_observer.dart';
 import 'utils/deep_link_ingress.dart';
 import 'utils/deep_link_store.dart';
 import 'data/services/deep_link_service.dart';
+import 'package:doppy/image/media_picker_screen.dart';
 
 // Global NavigatorKey for accessing context from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -637,6 +638,8 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     // 포그라운드로 전환 시 FCM 토큰 검사 및 필요시 재발급
     if (state == AppLifecycleState.resumed) {
       _checkAndSyncFcmTokenOnForeground();
+      // 🎯 MediaPickerScreen이 열려있으면 첫 페이지 새로고침
+      MediaPickerScreen.refreshCurrentInstance();
     }
   }
 
@@ -711,15 +714,25 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         context,
         listen: false,
       );
-      // 캐시 무효화 후 새로고침
-      myProfileFeedProvider.invalidateCache();
+      // ✅ 피드가 이미 메모리에 있으면(캐시/인메모리) 강제 새로고침 금지
+      // - 백그라운드 복귀 때마다 invalidateCache + force load를 하면
+      //   화면이 비었다가(shimmer) 다시 채워지는 현상이 무조건 발생함.
+      final hasFeedData =
+          myProfileFeedProvider.categories.isNotEmpty ||
+          myProfileFeedProvider.posts.isNotEmpty;
+      if (hasFeedData) {
+        debugPrint('[RootShell] ⏭️ 포그라운드 복귀 - 내 프로필 피드가 있어 새로고침 스킵');
+        return;
+      }
+
+      // 데이터가 없을 때만 초기 로드
       myProfileFeedProvider
           .loadInitial(force: true)
           .then((_) {
-            debugPrint('[RootShell] ✅ 포그라운드 복귀 - 내 프로필 피드 새로고침 완료');
+            debugPrint('[RootShell] ✅ 포그라운드 복귀 - 내 프로필 피드 로드 완료');
           })
           .catchError((e) {
-            debugPrint('[RootShell] 포그라운드 복귀 - 내 프로필 피드 새로고침 실패 (무시): $e');
+            debugPrint('[RootShell] 포그라운드 복귀 - 내 프로필 피드 로드 실패 (무시): $e');
           });
     } catch (e) {
       debugPrint('[RootShell] 포그라운드 복귀 - 내 프로필 피드 새로고침 오류 (무시): $e');

@@ -84,8 +84,8 @@ class _PostListState extends State<PostList> {
       author: '',
       authorProfileImageUrl: 'test',
       thumbnailImageUrl: 'assets/images/onboarding1.png',
-      createdAt: DateTime.now().toIso8601String(),
-      updatedAt: DateTime.now().toIso8601String(),
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
       summary: '친구 초대하고 그룹 만들기', // 🎯 summary에 텍스트 넣기
       accessLevel: AccessLevel.public,
       viewCount: 0,
@@ -100,8 +100,8 @@ class _PostListState extends State<PostList> {
       author: 'test',
       authorProfileImageUrl: 'test',
       thumbnailImageUrl: 'assets/images/onboarding2.png',
-      createdAt: DateTime.now().toIso8601String(),
-      updatedAt: DateTime.now().toIso8601String(),
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
       summary: '지금 바로 작성하기', // 🎯 summary에 텍스트 넣기
       accessLevel: AccessLevel.public,
       viewCount: 0,

@@ -17,7 +17,19 @@ import 'package:video_player/video_player.dart';
 
 enum UploadState { pending, uploading, success, failed, cancelled }
 
-enum UploadKind { editorImage, thumbnail, profile, video, group }
+// UploadKind:
+// - editorImage: 에디터 본문 이미지/드로잉 등 "글 작성" 컨텍스트에서 사용하는 업로드
+// - chatImage: 댓글/채팅 등 에디터와 무관한 컨텍스트의 이미지 업로드 (에디터의 업로드 가드에 걸리지 않도록 분리)
+// - drawing: 드로잉 오버레이에서 생성된 PNG 업로드 (에디터 본문 이미지 업로드와 분리)
+enum UploadKind {
+  editorImage,
+  chatImage,
+  drawing,
+  thumbnail,
+  profile,
+  video,
+  group,
+}
 
 class UploadTask extends ChangeNotifier {
   final String id;
@@ -37,6 +49,7 @@ class UploadTask extends ChangeNotifier {
   String? imageId;
   Object? error;
   int attempt = 0;
+  DateTime? finalizedAt; // ✅ success/failed/cancelled 시점 (태스크 정리용)
 
   UploadTask({
     required this.id,
@@ -54,6 +67,14 @@ class UploadTask extends ChangeNotifier {
 
   void _setState(UploadState s) {
     state = s;
+    // ✅ 최종 상태면 시각 기록, 진행 중 상태로 돌아가면 초기화
+    if (s == UploadState.success ||
+        s == UploadState.failed ||
+        s == UploadState.cancelled) {
+      finalizedAt ??= DateTime.now();
+    } else {
+      finalizedAt = null;
+    }
     notifyListeners();
   }
 }
@@ -75,17 +96,61 @@ class UploadService with ChangeNotifier {
   /// refId별 압축 토큰 추적 (개별 플레이스홀더 삭제 시 취소용)
   final Map<String, CancellationToken> _refIdCompressionTokens = {};
 
+  /// ✅ 삭제/undo 등 "유저가 의도적으로 제거해서 취소된" refId를 짧게 기억한다.
+  /// - 업로드/압축 취소로 인해 실패 다이얼로그가 뜨는 UX를 방지한다.
+  /// - best-effort: 일정 시간 지나면 자동 정리
+  final Map<String, DateTime> _recentlyCancelledRefIds = {};
+  static const Duration _recentCancelTtl = Duration(seconds: 10);
+
+  void _markRefCancelled(String refId) {
+    if (refId.isEmpty) return;
+    final now = DateTime.now();
+    _recentlyCancelledRefIds[refId] = now;
+    // 간단 정리 (O(n), n이 매우 작음)
+    _recentlyCancelledRefIds.removeWhere(
+      (_, at) => now.difference(at) > _recentCancelTtl,
+    );
+  }
+
+  bool _wasRecentlyCancelledRef(String refId) {
+    final at = _recentlyCancelledRefIds[refId];
+    if (at == null) return false;
+    return DateTime.now().difference(at) <= _recentCancelTtl;
+  }
+
   final AuthService _authService = AuthService();
   final Dio _dio = BaseApiService().dio;
 
   List<UploadTask> get tasks => List.unmodifiable(_tasks);
 
+  /// ✅ 완료된(성공/실패/취소) 태스크 정리
+  /// - UploadService는 singleton이라 _tasks가 계속 쌓이면, 오래된 태스크가 다른 화면의 가드/판정에 영향을 주기 쉬움
+  /// - 즉시 제거하면 UI/콜백이 완료 상태를 관찰할 시간이 부족할 수 있어, 일정 시간 이후 정리한다.
+  /// - 🎯 성공한 태스크는 더 빠르게 정리 (30초)하여 false positive 방지
+  void _pruneFinalizedTasks({Duration maxAge = const Duration(minutes: 2)}) {
+    final now = DateTime.now();
+    _tasks.removeWhere((t) {
+      final at = t.finalizedAt;
+      if (at == null) return false;
+
+      // 🎯 성공한 태스크는 30초 후 정리 (더 빠른 정리로 false positive 방지)
+      // 실패/취소된 태스크는 2분 후 정리 (에러 확인 시간 확보)
+      final age = now.difference(at);
+      if (t.state == UploadState.success) {
+        return age > const Duration(seconds: 30);
+      }
+      return age > maxAge;
+    });
+  }
+
   /// 업로드 진행 중(pending|uploading) 작업이 있는지 여부
-  /// kinds를 지정하지 않으면 에디터 관련(kind: editorImage, video, thumbnail)을 기본으로 검사
-  bool hasActiveUploads({Set<UploadKind>? kinds}) {
-    final Set<UploadKind> targetKinds =
-        kinds ??
-        {UploadKind.editorImage, UploadKind.video, UploadKind.thumbnail};
+  /// ✅ 규칙: 전역 체크는 반드시 kinds를 좁혀서 명시해야 한다 (false positive 방지)
+  bool hasActiveUploads({required Set<UploadKind> kinds}) {
+    assert(
+      kinds.isNotEmpty,
+      '[UploadService] hasActiveUploads: kinds must not be empty',
+    );
+    final Set<UploadKind> targetKinds = kinds;
     return _tasks.any(
       (t) =>
           targetKinds.contains(t.kind) &&
@@ -107,6 +172,86 @@ class UploadService with ChangeNotifier {
   bool hasActiveCompressionForRef(String refId) {
     final token = _refIdCompressionTokens[refId];
     return token != null && !token.isCancelled;
+  }
+
+  /// ✅ 공용 헬퍼: 여러 refId 중 "업로드 진행 중(pending/uploading)"이 하나라도 있는지
+  bool hasActiveUploadForAnyRef(Iterable<String> refIds) {
+    final set = refIds is Set<String> ? refIds : refIds.toSet();
+    if (set.isEmpty) return false;
+    return _tasks.any(
+      (t) =>
+          t.refId != null &&
+          set.contains(t.refId) &&
+          (t.state == UploadState.pending || t.state == UploadState.uploading),
+    );
+  }
+
+  /// ✅ 공용 헬퍼: 여러 refId 중 "압축 진행 중"이 하나라도 있는지
+  bool hasActiveCompressionForAnyRef(Iterable<String> refIds) {
+    final set = refIds is Set<String> ? refIds : refIds.toSet();
+    if (set.isEmpty) return false;
+    for (final id in set) {
+      if (hasActiveCompressionForRef(id)) return true;
+    }
+    return false;
+  }
+
+  /// ✅ 공용 헬퍼: busy(refId) = 업로드 중 또는 압축 중
+  bool isBusyRef(String refId) {
+    return hasActiveUploadForRef(refId) || hasActiveCompressionForRef(refId);
+  }
+
+  /// ✅ 공용 헬퍼: 여러 refId 중 busy가 하나라도 있는지
+  bool isBusyAnyRef(Iterable<String> refIds) {
+    return hasActiveUploadForAnyRef(refIds) ||
+        hasActiveCompressionForAnyRef(refIds);
+  }
+
+  /// ✅ 공용 헬퍼(디버그): 활성(pending/uploading) 태스크 덤프
+  String debugDumpActiveTasks({Set<UploadKind>? kinds}) {
+    final buf = StringBuffer();
+    final active = _tasks.where(
+      (t) =>
+          (t.state == UploadState.pending ||
+              t.state == UploadState.uploading) &&
+          (kinds == null || kinds.contains(t.kind)),
+    );
+    for (final t in active) {
+      buf.writeln(
+        'id=${t.id} kind=${t.kind} state=${t.state} refId=${t.refId} file=${t.fileName}',
+      );
+    }
+    return buf.toString().trimRight();
+  }
+
+  /// ✅ 공용 헬퍼(디버그): 특정 refId 집합에 속한 활성(pending/uploading) 태스크 덤프
+  String debugDumpActiveTasksForRefs(
+    Iterable<String> refIds, {
+    Set<UploadKind>? kinds,
+  }) {
+    final set = refIds is Set<String> ? refIds : refIds.toSet();
+    if (set.isEmpty) return '';
+    final buf = StringBuffer();
+    final active = _tasks.where(
+      (t) =>
+          t.refId != null &&
+          set.contains(t.refId) &&
+          (t.state == UploadState.pending ||
+              t.state == UploadState.uploading) &&
+          (kinds == null || kinds.contains(t.kind)),
+    );
+    for (final t in active) {
+      buf.writeln(
+        'id=${t.id} kind=${t.kind} state=${t.state} refId=${t.refId} file=${t.fileName}',
+      );
+    }
+    // 압축 토큰도 함께 표시(원인 파악용)
+    for (final id in set) {
+      if (hasActiveCompressionForRef(id)) {
+        buf.writeln('compression refId=$id');
+      }
+    }
+    return buf.toString().trimRight();
   }
 
   @override
@@ -176,10 +321,33 @@ class UploadService with ChangeNotifier {
       }
     }
     task._setState(UploadState.cancelled);
+    _pruneFinalizedTasks();
+    notifyListeners();
   }
 
   /// refId(예: 노드ID)로 모든 태스크 취소
   void cancelByRef(String refId) {
+    _markRefCancelled(refId);
+
+    assert(() {
+      final q = _queue.where((t) => t.refId == refId).length;
+      final all = _tasks.where((t) => t.refId == refId).length;
+      final uploading =
+          _tasks
+              .where(
+                (t) =>
+                    t.refId == refId &&
+                    (t.state == UploadState.pending ||
+                        t.state == UploadState.uploading),
+              )
+              .length;
+      final hasComp = _refIdCompressionTokens[refId] != null;
+      debugPrint(
+        '[CancelDbg] cancelByRef: refId=$refId queue=$q tasks=$all active=$uploading hasCompressionToken=$hasComp',
+      );
+      return true;
+    }());
+
     // 🎯 1. 압축 취소 (가장 먼저 - 리소스 낭비 방지)
     final compressionToken = _refIdCompressionTokens[refId];
     if (compressionToken != null) {
@@ -207,6 +375,7 @@ class UploadService with ChangeNotifier {
         task._setState(UploadState.cancelled);
       }
     }
+    _pruneFinalizedTasks();
     notifyListeners();
   }
 
@@ -288,30 +457,64 @@ class UploadService with ChangeNotifier {
 
       debugPrint('[Upload] start id=${task.id} attempt=${task.attempt}');
 
+      // ✅ 업로드가 영원히 uploading에 머무는 것을 막기 위한 하드 타임아웃
+      // (특히 R2/http PUT 경로는 타임아웃/취소가 약해 구조적으로 hang 가능성이 있음)
+      // ✅ 요청 반영: 과도한 대기(=uploading 영구 잔존)를 막기 위해 타임아웃을 짧게 유지
+      // - 이미지: 1분
+      // - 비디오: 5분 (1분짜리 영상 기준으로 충분)
+      final Duration hardTimeout =
+          task.kind == UploadKind.video
+              ? const Duration(minutes: 5)
+              : const Duration(minutes: 1);
+
       // 🎯 프로필 이미지는 서버를 거치는 기존 방식 사용
       Map<String, dynamic> result;
       if (task.kind == UploadKind.profile) {
         // 프로필 이미지는 서버를 거치는 방식만 사용
         debugPrint('[Upload] 프로필 이미지 업로드: 서버를 거치는 기존 방식 사용');
-        result = await _uploadProfileImage(task);
+        result = await _uploadProfileImage(task).timeout(hardTimeout);
       } else {
         // 다른 종류는 R2 직접 업로드 사용
         try {
-          result = await _uploadViaR2(task);
+          result = await _uploadViaR2(task).timeout(hardTimeout);
         } catch (e) {
           // R2 업로드 실패 시 기존 방식으로 폴백
           debugPrint('[Upload] R2 업로드 실패, 기존 방식으로 폴백: $e');
           result =
               task.kind == UploadKind.video
-                  ? await _uploadVideo(task)
-                  : await _uploadSingle(task); // group도 _uploadSingle 사용
+                  ? await _uploadVideo(task).timeout(hardTimeout)
+                  : await _uploadSingle(
+                    task,
+                  ).timeout(hardTimeout); // group도 _uploadSingle 사용
         }
+      }
+
+      // ✅ 취소가 요청된 상태면 결과를 반영하지 않는다.
+      // (특히 R2/http PUT 경로는 취소가 즉시 중단되지 않을 수 있어, 성공 응답이 와도 무시해야 한다)
+      final refId = task.refId ?? '';
+      final cancelledByRef =
+          refId.isNotEmpty && _wasRecentlyCancelledRef(refId);
+      if (cancelledByRef || task.cancelToken.isCancelled) {
+        debugPrint(
+          '[Upload] ignore success due to cancellation: id=${task.id} refId=$refId kind=${task.kind}',
+        );
+        task._setState(UploadState.cancelled);
+        return;
       }
 
       task.url = result['accessUrl'] as String?;
       task._setProgress(1);
       task._setState(UploadState.success);
+      debugPrint(
+        '[Upload] ✅ 업로드 완료: id=${task.id} refId=${task.refId} kind=${task.kind} url=${task.url}',
+      );
     } catch (e) {
+      if (e is TimeoutException) {
+        debugPrint('[Upload] ❌ timeout id=${task.id} kind=${task.kind}');
+        task.error = e;
+        task._setState(UploadState.failed);
+        return;
+      }
       // 사용자가 취소한 경우: 재시도/실패로 처리하지 않고 즉시 취소로 마무리
       if (e is DioException && e.type == DioExceptionType.cancel) {
         debugPrint('[Upload] cancelled by user/ref id=${task.id}');
@@ -332,6 +535,7 @@ class UploadService with ChangeNotifier {
     } finally {
       _inflight--;
       if (!_disposed) {
+        _pruneFinalizedTasks();
         notifyListeners();
         _pump();
       }
@@ -358,7 +562,8 @@ class UploadService with ChangeNotifier {
 
       // 🎯 댓글 이미지인 경우 chat/username 경로 사용
       String? pathPrefix;
-      if (task.kind == UploadKind.editorImage &&
+      if ((task.kind == UploadKind.editorImage ||
+              task.kind == UploadKind.chatImage) &&
           task.fileName.startsWith('chat/')) {
         // 파일명에서 경로 추출 (chat/username/timestamp_filename.jpg)
         final pathParts = task.fileName.split('/');
@@ -779,6 +984,7 @@ class UploadService with ChangeNotifier {
   Future<List<UploadTask>> uploadFilesViaServerBatches(
     List<File> files, {
     required UploadKind kind,
+    required String refId,
     int batchSize = 10,
     Duration interBatchDelay = const Duration(milliseconds: 500),
   }) async {
@@ -791,10 +997,12 @@ class UploadService with ChangeNotifier {
                 kind: kind,
                 fileName: f.path.split('/').last,
                 file: f,
+                refId: refId,
               ),
             )
             .toList();
     _tasks.addAll(all);
+    _pruneFinalizedTasks();
     notifyListeners();
 
     for (int i = 0; i < all.length; i += batchSize) {
@@ -846,7 +1054,10 @@ class UploadService with ChangeNotifier {
       if (end < all.length) {
         await Future.delayed(interBatchDelay);
       }
-      if (!_disposed) notifyListeners();
+      if (!_disposed) {
+        _pruneFinalizedTasks();
+        notifyListeners();
+      }
     }
     return all;
   }
@@ -1059,8 +1270,16 @@ class UploadService with ChangeNotifier {
           );
           await onUploadComplete(nodeId, task.url!);
           completed++;
-        } else if (task.state == UploadState.failed ||
-            task.state == UploadState.cancelled) {
+        } else if (task.state == UploadState.cancelled) {
+          // ✅ 취소(삭제/undo/사용자 취소 등)는 실패 다이얼로그 대상이 아니다.
+          debugPrint('[UploadService] 🚫 이미지 업로드 취소: nodeId=$nodeId');
+          // 🎯 그룹 이미지인 경우 전체 삭제를 한 번만 호출
+          if (createdNodes.contains(nodeId)) {
+            onDeleteNode(nodeId);
+            createdNodes.remove(nodeId); // 중복 삭제 방지
+          }
+          completed++;
+        } else if (task.state == UploadState.failed) {
           debugPrint('[UploadService] ❌ 이미지 업로드 실패: nodeId=$nodeId');
           // 🎯 그룹 이미지인 경우 전체 삭제를 한 번만 호출
           if (createdNodes.contains(nodeId)) {
@@ -1352,9 +1571,10 @@ class UploadService with ChangeNotifier {
 
         // 🎯 취소된 경우가 아니면 노드 삭제 및 에러 다이얼로그 표시
         final wasCancelled =
-            editorId != null &&
-            _editorCompressionTokens[editorId] != null &&
-            _editorCompressionTokens[editorId]!.isCancelled;
+            _wasRecentlyCancelledRef(nodeId) ||
+            (editorId != null &&
+                _editorCompressionTokens[editorId] != null &&
+                _editorCompressionTokens[editorId]!.isCancelled);
 
         if (!wasCancelled) {
           onDeleteNode(nodeId);
@@ -1399,6 +1619,8 @@ class UploadService with ChangeNotifier {
       Future<void> handleOnce() async {
         if (videoHandled) return;
 
+        final cancelledByRef = _wasRecentlyCancelledRef(nodeId);
+
         // 🎯 취소된 경우 리스너 제거하고 종료
         if (task.state == UploadState.cancelled) {
           videoHandled = true;
@@ -1411,7 +1633,8 @@ class UploadService with ChangeNotifier {
         if (task.state == UploadState.failed) {
           videoHandled = true;
           onDeleteNode(nodeId);
-          if (isMounted() && context != null) {
+          // ✅ 삭제/undo로 인한 취소면 실패 다이얼로그는 숨긴다.
+          if (!cancelledByRef && isMounted() && context != null) {
             await _showVideoUploadFailedDialog(context, task.error);
           }
           try {
@@ -1444,7 +1667,8 @@ class UploadService with ChangeNotifier {
       debugPrint('[UploadService] ❌ 비디오 압축/업로드 오류: $e');
       // 🎯 에러 발생 시 즉시 노드 삭제 및 에러 다이얼로그 표시
       onDeleteNode(nodeId);
-      if (isMounted() && context != null) {
+      // ✅ 삭제/undo로 인한 취소면 실패 다이얼로그는 숨긴다.
+      if (!_wasRecentlyCancelledRef(nodeId) && isMounted() && context != null) {
         await _showVideoUploadFailedDialog(context, e);
       }
     }
@@ -1534,12 +1758,20 @@ class UploadService with ChangeNotifier {
     final effectiveToken = refToken ?? editorToken;
 
     try {
+      // ✅ FFmpeg/파일 I/O가 특정 환경에서 영구 대기(hang)할 수 있어 하드 타임아웃으로 보호
       return await VideoUploadUtils.compressVideo(
         videoPath,
         cancellationToken: effectiveToken,
         trimSpec: trimSpec,
         editSpec: editSpec,
-      );
+        // ✅ 요청 반영: 압축도 무한 대기를 방지 (1분짜리 영상 기준으로 5분 충분)
+      ).timeout(const Duration(minutes: 5));
+    } on TimeoutException catch (e) {
+      debugPrint('[UploadService] ❌ 비디오 압축 타임아웃: $e (refId=$refId)');
+      try {
+        effectiveToken?.cancel();
+      } catch (_) {}
+      return null;
     } finally {
       // 완료 후 토큰 제거
       if (refId != null) {

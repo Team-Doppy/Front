@@ -605,7 +605,11 @@ extension NodeComponentServiceExtension on NodeComponentService {
     List<UploadTask> tasks = [];
     try {
       tasks = await upload
-          .uploadFilesViaServerBatches(tempFiles, kind: UploadKind.editorImage)
+          .uploadFilesViaServerBatches(
+            tempFiles,
+            kind: UploadKind.editorImage,
+            refId: imageId, // ✅ 노드 삭제/가드 판정을 위해 refId 연결
+          )
           .timeout(
             const Duration(seconds: 45),
             onTimeout: () {
@@ -699,6 +703,7 @@ extension NodeComponentServiceExtension on NodeComponentService {
                 : GroupImageLayout.individual));
 
     // ✅ 기존 노드 편집에서는 구조 유지(기본)
+    // 🎯 미디어 노드는 ReplaceNodeRequest 대신 replaceNodeById 사용 (remove+insert 이벤트 방지)
     if (node is ImageNode) {
       final newNode = AppImageNode(
         id: imageId,
@@ -706,9 +711,7 @@ extension NodeComponentServiceExtension on NodeComponentService {
         altText: altText,
         metadata: Map<String, dynamic>.from(meta),
       );
-      editorService.editor.execute([
-        ReplaceNodeRequest(existingNodeId: imageId, newNode: newNode),
-      ]);
+      editorService.document.replaceNodeById(imageId, newNode);
       editorService.saveHistoryNow();
       if (editorContext.mounted) Navigator.of(editorContext).pop();
       return;
@@ -721,9 +724,7 @@ extension NodeComponentServiceExtension on NodeComponentService {
         spacing: rowSpacing,
         metadata: Map<String, dynamic>.from(meta),
       );
-      editorService.editor.execute([
-        ReplaceNodeRequest(existingNodeId: imageId, newNode: newNode),
-      ]);
+      editorService.document.replaceNodeById(imageId, newNode);
       editorService.saveHistoryNow();
       if (editorContext.mounted) Navigator.of(editorContext).pop();
       return;
@@ -735,9 +736,7 @@ extension NodeComponentServiceExtension on NodeComponentService {
         imageUrls: urls,
         metadata: Map<String, dynamic>.from(meta),
       );
-      editorService.editor.execute([
-        ReplaceNodeRequest(existingNodeId: imageId, newNode: newNode),
-      ]);
+      editorService.document.replaceNodeById(imageId, newNode);
       editorService.saveHistoryNow();
       if (editorContext.mounted) Navigator.of(editorContext).pop();
       return;

@@ -7,8 +7,8 @@ import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/profile_action_bottom_sheet.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/base_api_service.dart';
-import 'package:doppy/utils/time_utils.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 
@@ -145,6 +145,18 @@ class ViewersBottomSheet extends StatefulWidget {
 }
 
 class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
+  // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+  DateTime _parseUtcDateTime(String value) {
+    try {
+      final dateTime = DateTime.parse(value);
+      // UTC가 아니면 UTC로 변환
+      return dateTime.isUtc ? dateTime : dateTime.toUtc();
+    } catch (e) {
+      debugPrint('[ViewersBottomSheet] UTC 시간 파싱 실패: $value, 에러: $e');
+      return DateTime.now().toUtc();
+    }
+  }
+
   // 🎯 조회자 관련 상태
   List<Map<String, dynamic>> _viewers = [];
   bool _isLoadingViewers = true;
@@ -216,8 +228,9 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
           bViewedAt != null &&
           bViewedAt.isNotEmpty) {
         try {
-          final aTime = TimeUtils.toLocalTime(aViewedAt);
-          final bTime = TimeUtils.toLocalTime(bViewedAt);
+          // ✅ UTC 기준으로 비교 (타임존 문제 없음)
+          final aTime = _parseUtcDateTime(aViewedAt);
+          final bTime = _parseUtcDateTime(bViewedAt);
           // 최근 시간이 앞에 오도록 (내림차순)
           return bTime.compareTo(aTime);
         } catch (e) {
@@ -708,9 +721,10 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
   String _formatRelativeTime(String? viewedAt) {
     if (viewedAt == null || viewedAt.isEmpty) return '';
     try {
-      final viewedTime = TimeUtils.toLocalTime(viewedAt);
-      final now = DateTime.now();
-      final difference = now.difference(viewedTime);
+      // ✅ UTC 기준으로 시간 차이 계산 (타임존 문제 없음)
+      final viewedTime = _parseUtcDateTime(viewedAt);
+      final nowUtc = DateTime.now().toUtc();
+      final difference = nowUtc.difference(viewedTime);
 
       if (difference.inDays > 0) {
         return '${difference.inDays}일 전';

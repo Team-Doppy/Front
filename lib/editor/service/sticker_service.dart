@@ -538,6 +538,115 @@ class StickerService extends ChangeNotifier {
     }
   }
 
+  /// Exported 데이터(서버/임시저장)로부터 스티커를 "조용히" 복원한다.
+  /// - 편집 모드 진입 시 호출되며, 이 과정은 히스토리에 기록되면 안 된다.
+  /// - 따라서 undo/redo 복원과 동일하게 restore 플래그를 켜고, notify를 1회만 발생시킨다.
+  void restoreFromExportedData(List<dynamic> stickersData) {
+    _isRestoringFromHistory = true;
+    try {
+      cancelDragIfNeeded();
+
+      // ✅ 아무 것도 없고 현재도 비어있으면 노티하지 않음 (히스토리/리빌드 오염 방지)
+      if (stickersData.isEmpty && _stickers.isEmpty) {
+        _lastChangeKind = StickerChangeKind.none;
+        _lastChangedStickerId = null;
+        return;
+      }
+
+      _stickers.clear();
+      _initialStickers.clear();
+      _selectedId = null;
+
+      for (final raw in stickersData) {
+        if (raw is Map<String, dynamic>) {
+          _addStickerFromDataSilent(raw);
+        } else if (raw is Map) {
+          _addStickerFromDataSilent(raw.cast<String, dynamic>());
+        }
+      }
+
+      _lastChangeKind = StickerChangeKind.restore;
+      _lastChangedStickerId = null;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[StickerService] Error restoring from exported data: $e');
+    } finally {
+      _isRestoringFromHistory = false;
+    }
+  }
+
+  /// `addStickerFromData`와 동일한 파싱 로직이지만 notify를 발생시키지 않는다.
+  void _addStickerFromDataSilent(Map<String, dynamic> stickerData) {
+    try {
+      final id = stickerData['id']?.toString() ?? '';
+      if (id.isEmpty) return;
+
+      final typeString = stickerData['type']?.toString() ?? '';
+      final type = _parseStickerType(typeString);
+
+      // ✅ Exported 데이터(서버/임시저장)에서는 positionFallback/anchor를 사용한다.
+      // 레거시/내부 포맷만 'position{dx,dy}'를 갖는다.
+      // 편집 모드 진입 시 위치가 크게 틀어지는 문제를 방지하기 위해
+      // addStickerFromData와 동일하게 positionFallback을 우선 사용한다.
+      Offset position = const Offset(100, 100);
+      final fallbackData =
+          (stickerData['positionFallback'] as Map?)?.cast<String, dynamic>();
+      if (fallbackData != null) {
+        final x = (fallbackData['xPx'] as num?)?.toDouble() ?? 100.0;
+        final y = (fallbackData['yPx'] as num?)?.toDouble() ?? 100.0;
+        position = Offset(x, y);
+      } else {
+        final pos = (stickerData['position'] as Map?)?.cast<String, dynamic>();
+        if (pos != null) {
+          position = Offset(
+            (pos['dx'] as num?)?.toDouble() ?? 100.0,
+            (pos['dy'] as num?)?.toDouble() ?? 100.0,
+          );
+        }
+      }
+
+      final scale = (stickerData['scale'] as num?)?.toDouble() ?? 1.0;
+      final rotation = (stickerData['rotation'] as num?)?.toDouble() ?? 0.0;
+      final opacity = (stickerData['opacity'] as num?)?.toDouble() ?? 1.0;
+      final zIndex = (stickerData['zIndex'] as num?)?.toInt() ?? 0;
+
+      // 🎯 PNG 드로잉만 지원
+      dynamic content;
+      if (type == StickerType.image) {
+        final contentData = stickerData['content'];
+        if (contentData is Map) {
+          if (contentData['url'] != null) {
+            content = contentData;
+          } else if (contentData['bytes'] != null) {
+            final base64String = contentData['bytes'].toString();
+            content = base64Decode(base64String);
+          } else {
+            return;
+          }
+        } else {
+          return;
+        }
+      } else {
+        return;
+      }
+
+      final sticker = Sticker(
+        id: id,
+        type: type,
+        content: content,
+        position: position,
+        scale: scale,
+        rotation: rotation,
+        opacity: opacity,
+        zIndex: zIndex,
+      );
+
+      _stickers.add(sticker);
+    } catch (e) {
+      debugPrint('[StickerService] Error adding sticker from data(silent): $e');
+    }
+  }
+
   StickerType _parseStickerType(String typeString) {
     // 🎯 PNG 드로잉만 지원
     return StickerType.image;

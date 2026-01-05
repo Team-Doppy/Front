@@ -1,12 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:super_editor/super_editor.dart';
-import 'package:flutter/rendering.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
 
 /// 스티커 오버레이 (리더/에디터 공용)
-class PostReaderStickers extends StatelessWidget {
+class PostReaderStickers extends StatefulWidget {
   const PostReaderStickers({
     super.key,
     required this.stickers,
@@ -23,100 +21,100 @@ class PostReaderStickers extends StatelessWidget {
   final double topInset;
 
   @override
+  State<PostReaderStickers> createState() => _PostReaderStickersState();
+}
+
+class _PostReaderStickersState extends State<PostReaderStickers> {
+  // ✅ 스크롤 중 리빌드가 매우 자주 발생하므로, 비용 큰 작업은 캐시한다.
+  // - stickers 정렬: 스티커 데이터가 바뀔 때만 재계산
+  // - base64Decode: 스티커 id 기준으로 1회만 수행
+  List<Map<String, dynamic>> _sorted = const [];
+  final Map<String, Uint8List> _decodedBytesByKey = <String, Uint8List>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _rebuildSorted();
+  }
+
+  @override
+  void didUpdateWidget(covariant PostReaderStickers oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.stickers, widget.stickers)) {
+      _rebuildSorted();
+      // 스티커가 교체되면 캐시도 오래된 데이터가 남을 수 있으므로 정리한다.
+      // id 기반 키는 안정적이지만, 안전하게 크기를 제한한다.
+      if (_decodedBytesByKey.length > 200) {
+        _decodedBytesByKey.clear();
+      }
+    }
+  }
+
+  void _rebuildSorted() {
+    final list = <Map<String, dynamic>>[];
+    for (final s in widget.stickers) {
+      if (s is Map<String, dynamic>) {
+        list.add(s);
+      } else if (s is Map) {
+        list.add(s.cast<String, dynamic>());
+      }
+    }
+    list.sort((a, b) {
+      final za = (a['zIndex'] as num?)?.toInt() ?? 0;
+      final zb = (b['zIndex'] as num?)?.toInt() ?? 0;
+      return za.compareTo(zb);
+    });
+    _sorted = list;
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: scrollController,
+      animation: widget.scrollController,
       builder: (context, _) {
         return LayoutBuilder(
           builder: (context, constraints) {
             final children = <Widget>[];
             final double scrollY =
-                scrollController.hasClients ? scrollController.offset : 0.0;
+                widget.scrollController.hasClients
+                    ? widget.scrollController.offset
+                    : 0.0;
 
-            // zIndex 기준으로 정렬하여 안정적인 레이어링 보장
-            final sorted = List.from(stickers);
-            sorted.sort((a, b) {
-              final ma = (a as Map).cast<String, dynamic>();
-              final mb = (b as Map).cast<String, dynamic>();
-              final za = (ma['zIndex'] as num?)?.toInt() ?? 0;
-              final zb = (mb['zIndex'] as num?)?.toInt() ?? 0;
-              return za.compareTo(zb);
-            });
+            // ✅ URL 이미지 decodeWidth는 스티커마다 동일하므로 루프 밖에서 1회만 계산
+            final screenWidth = constraints.maxWidth;
+            final decodeWidth = EditorImageProvider.readingDecodeWidth(
+              context,
+              screenWidth,
+            );
 
-            for (final s in sorted) {
-              final m = (s as Map).cast<String, dynamic>();
+            for (final m in _sorted) {
               final type = (m['type'] ?? '').toString();
               // zIndex는 정렬에만 사용되었으며 여기선 미사용
               final rot = (m['rotation'] as num?)?.toDouble() ?? 0.0;
               double baseScale = (m['scale'] as num?)?.toDouble() ?? 1.0;
-              final anchor = (m['anchor'] as Map?)?.cast<String, dynamic>();
-              late final Offset absPos;
-              late final bool needsScrollCompensation;
-              double anchorScale = 1.0; // 앵커 기준 스케일 보정 (refW 대비 현재 width)
+              // ✅ PostwriteScreen 방식: positionFallback만 사용 (anchor 해석 제거로 성능 향상)
+              // - anchor 해석(_getNodeRect, _resolveAnchor)은 매 프레임마다 localToGlobal/globalToLocal을 호출하여
+              //   프레임 드랍과 "출렁거림"을 유발할 수 있음
+              // - positionFallback은 이미 문서 좌표로 저장되어 있어서 단순 스케일만 적용하면 됨
+              final pf =
+                  (m['positionFallback'] as Map?)?.cast<String, dynamic>() ??
+                  {};
+              final docWidth = (pf['docWidth'] as num?)?.toDouble();
+              final currentWidth = constraints.maxWidth;
+              final scale =
+                  (docWidth != null && docWidth > 0)
+                      ? (currentWidth / docWidth)
+                      : 1.0;
+              final Offset absPos = Offset(
+                ((pf['xPx'] as num?)?.toDouble() ?? 0.0) * scale,
+                ((pf['yPx'] as num?)?.toDouble() ?? 0.0) * scale,
+              );
 
-              Rect? nodeRectForAnchor;
-
-              bool anchorHasRefW = false;
-              bool anchorHasLocal = false;
-              if (anchor != null) {
-                final resolved = _resolveAnchor(anchor);
-                if (resolved != null) {
-                  absPos = resolved;
-                } else {
-                  // 앵커 좌표를 얻지 못하면 안전 폴백
-                  final pf =
-                      (m['positionFallback'] as Map?)
-                          ?.cast<String, dynamic>() ??
-                      {};
-                  final docWidth = (pf['docWidth'] as num?)?.toDouble();
-                  final currentWidth = constraints.maxWidth;
-                  final scale =
-                      (docWidth != null && docWidth > 0)
-                          ? (currentWidth / docWidth)
-                          : 1.0;
-                  absPos = Offset(
-                    ((pf['xPx'] as num?)?.toDouble() ?? 0.0) * scale,
-                    ((pf['yPx'] as num?)?.toDouble() ?? 0.0) * scale,
-                  );
-                  needsScrollCompensation = true;
-                  // refW 기반 보정은 불가
-                }
-                // refW/refH가 있으면 현재 노드 크기 대비 스케일 보정
-                final nodeId = (anchor['nodeId'] ?? '').toString();
-                nodeRectForAnchor = _getNodeRect(nodeId);
-                final refW = (anchor['refW'] as num?)?.toDouble();
-                if (nodeRectForAnchor != null && refW != null && refW > 0) {
-                  anchorScale = nodeRectForAnchor.width / refW;
-                  anchorHasRefW = true;
-                }
-                // localX/localY를 사용한 앵커인지 체크 → 이 경우에는 중심 보정 금지
-                if (anchor.containsKey('localX') ||
-                    anchor.containsKey('localY')) {
-                  anchorHasLocal = true;
-                }
-                if (resolved != null) {
-                  needsScrollCompensation = false;
-                }
-              } else {
-                final pf =
-                    (m['positionFallback'] as Map?)?.cast<String, dynamic>() ??
-                    {};
-                // 문서 기준 폭이 제공되면 현재 폭 대비 보정
-                final docWidth = (pf['docWidth'] as num?)?.toDouble();
-                final currentWidth = constraints.maxWidth;
-                final scale =
-                    (docWidth != null && docWidth > 0)
-                        ? (currentWidth / docWidth)
-                        : 1.0;
-                absPos = Offset(
-                  ((pf['xPx'] as num?)?.toDouble() ?? 0.0) * scale,
-                  ((pf['yPx'] as num?)?.toDouble() ?? 0.0) * scale,
-                );
-                needsScrollCompensation = true;
-              }
+              // ✅ anchor 기반 스케일 보정은 제거 (성능 우선)
+              // - 필요시 나중에 캐시를 추가하여 복원 가능
+              double anchorScale = 1.0;
 
               Widget body;
-              Size? bodySize;
 
               // 🎯 PNG 드로잉만 지원 (type == 'image'만 처리)
               if (type == 'image') {
@@ -125,8 +123,21 @@ class PostReaderStickers extends StatelessWidget {
                 final dynamic raw = content['bytes'];
                 if (raw != null) {
                   try {
-                    final bytes =
-                        raw is String ? base64Decode(raw) : raw as Uint8List;
+                    final String id = (m['id'] ?? '').toString();
+                    // ✅ base64 문자열은 스크롤 중 매 프레임 디코딩하면 매우 무겁다 → 캐시
+                    Uint8List bytes;
+                    if (raw is String) {
+                      final key =
+                          id.isNotEmpty
+                              ? 'id:$id'
+                              : 'b64:${raw.length}_${raw.hashCode}';
+                      bytes = _decodedBytesByKey.putIfAbsent(
+                        key,
+                        () => base64Decode(raw),
+                      );
+                    } else {
+                      bytes = raw as Uint8List;
+                    }
 
                     // 🎯 PNG 드로잉 (고화질 원본)
                     body = RepaintBoundary(
@@ -151,12 +162,6 @@ class PostReaderStickers extends StatelessWidget {
 
                   // 🎯 PNG 드로잉 (URL + 크기 정보)
                   // ✅ 프리로드와 동일한 EditorImageProvider 사용으로 캐시 히트 보장
-                  final screenWidth = constraints.maxWidth;
-                  final decodeWidth = EditorImageProvider.readingDecodeWidth(
-                    context,
-                    screenWidth,
-                  );
-
                   final imageProviderResult = EditorImageProvider.build(
                     url: url,
                     isEditing: false, // 읽기 모드
@@ -164,7 +169,6 @@ class PostReaderStickers extends StatelessWidget {
                   );
 
                   if (width != null && height != null) {
-                    bodySize = Size(width, height); // 크기 정보 사용
                     body = RepaintBoundary(
                       child: SizedBox(
                         width: width,
@@ -212,20 +216,17 @@ class PostReaderStickers extends StatelessWidget {
                 continue;
               }
 
-              final double topPos =
-                  needsScrollCompensation ? (absPos.dy - scrollY) : absPos.dy;
+              final double topPos = absPos.dy - scrollY;
 
               // 최종 스케일: 저장된 스케일 * 앵커 스케일 보정
               final double finalScale = baseScale * anchorScale;
 
-              // 드로잉 등은 앵커 지점이 중앙이 되도록 보정 (local 앵커가 아닐 때만)
+              // ✅ 문서 좌표계에서 Stack 좌표계로 변환: topInset 추가
+              // - absPos.dy는 문서 좌표계, scrollY를 빼면 문서 내 상대 위치
+              // - topInset(헤더 높이)을 더해서 Stack 내 절대 위치로 변환
               double left = absPos.dx;
-              double top = topPos + topInset;
-              // 구버전(anchor에 refW가 없는) 데이터는 좌상단 기준으로 저장됨 → 중심 보정 금지
-              if (bodySize != null && anchorHasRefW && !anchorHasLocal) {
-                left = absPos.dx - (bodySize.width * finalScale) / 2;
-                top = topPos - (bodySize.height * finalScale) / 2 + topInset;
-              }
+              double top = topPos + widget.topInset;
+              // ✅ PostwriteScreen 방식: 중심 보정 없음 (좌상단 기준)
 
               children.add(
                 Positioned(
@@ -247,59 +248,6 @@ class PostReaderStickers extends StatelessWidget {
         );
       },
     );
-  }
-
-  Rect? _getNodeRect(String nodeId) {
-    final layout = layoutKey.currentState as DocumentLayout?;
-    if (layout == null) return null;
-    try {
-      final rect = layout.getRectForSelection(
-        DocumentPosition(
-          nodeId: nodeId,
-          nodePosition: const UpstreamDownstreamNodePosition.upstream(),
-        ),
-        DocumentPosition(
-          nodeId: nodeId,
-          nodePosition: const UpstreamDownstreamNodePosition.downstream(),
-        ),
-      );
-      return rect;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Offset? _resolveAnchor(Map<String, dynamic> anchor) {
-    final nodeId = (anchor['nodeId'] ?? '').toString();
-    final hasLocal =
-        anchor.containsKey('localX') || anchor.containsKey('localY');
-    final double? localX = (anchor['localX'] as num?)?.toDouble();
-    final double? localY = (anchor['localY'] as num?)?.toDouble();
-    final double relX = (anchor['relX'] as num?)?.toDouble() ?? 0.5;
-    final double relY = (anchor['relY'] as num?)?.toDouble() ?? 0.0;
-
-    final stackBox = stackKey.currentContext?.findRenderObject() as RenderBox?;
-    if (stackBox == null) return null;
-    try {
-      final rect = _getNodeRect(nodeId);
-      if (rect == null) return null;
-      // _getNodeRect는 전역 좌표. Stack 로컬로 변환
-      final topLeftInStack = stackBox.globalToLocal(rect.topLeft);
-      // 로컬(px)+스케일(refW) 기반을 우선 사용
-      if (hasLocal && localX != null && localY != null) {
-        final double refW = (anchor['refW'] as num?)?.toDouble() ?? rect.width;
-        final double scale = refW > 0 ? (rect.width / refW) : 1.0;
-        final double x = topLeftInStack.dx + (localX * scale);
-        final double y = topLeftInStack.dy + (localY * scale);
-        return Offset(x, y);
-      }
-      // 호환: 비율(relX/relY) 기반 해석
-      final double xr = topLeftInStack.dx + relX * rect.width;
-      final double yr = topLeftInStack.dy + relY * rect.height;
-      return Offset(xr, yr);
-    } catch (_) {
-      return null;
-    }
   }
 }
 

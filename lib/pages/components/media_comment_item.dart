@@ -1,7 +1,7 @@
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/utils/format_utils.dart';
-import 'package:doppy/utils/time_utils.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:doppy/data/services/media_comment_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 
@@ -35,6 +35,18 @@ class MediaCommentItem extends StatefulWidget {
 class _MediaCommentItemState extends State<MediaCommentItem> {
   double _dragOffset = 0.0;
 
+  // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+  DateTime _parseUtcDateTime(String value) {
+    try {
+      final dateTime = DateTime.parse(value);
+      // UTC가 아니면 UTC로 변환
+      return dateTime.isUtc ? dateTime : dateTime.toUtc();
+    } catch (e) {
+      debugPrint('[MediaCommentItem] UTC 시간 파싱 실패: $value, 에러: $e');
+      return DateTime.now().toUtc();
+    }
+  }
+
   void _handleHorizontalDragUpdate(DragUpdateDetails details) {
     // 내 댓글만 왼쪽으로 스와이프 가능
     if (!widget.isMe) return;
@@ -62,10 +74,10 @@ class _MediaCommentItemState extends State<MediaCommentItem> {
 
   String _formatTime(BuildContext context, String isoString) {
     try {
-      // UTC 시간을 로컬 시간으로 변환
-      final dateTime = TimeUtils.toLocalTime(isoString);
-      final now = DateTime.now();
-      final diff = now.difference(dateTime);
+      // ✅ UTC 기준으로 시간 차이 계산 (타임존 문제 없음)
+      final dateTime = _parseUtcDateTime(isoString);
+      final nowUtc = DateTime.now().toUtc();
+      final diff = nowUtc.difference(dateTime);
       final loc = AppLocalizations.of(context);
 
       if (diff.inSeconds < 60) {

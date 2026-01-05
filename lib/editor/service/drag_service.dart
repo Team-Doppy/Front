@@ -9,8 +9,10 @@ import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/editor/utils/config.dart';
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 
 enum DragType { none, reorder, imageRowMerge, imagePageViewMerge }
@@ -101,6 +103,25 @@ class DragService extends ChangeNotifier {
   final EditorService editorService;
   NodeComponentService? _imageService;
   ScrollController? scrollController;
+  UploadService? _uploadService;
+
+  void _bindUploadService(BuildContext context) {
+    try {
+      _uploadService = context.read<UploadService>();
+    } catch (_) {
+      // ignore: UploadService가 없는 컨텍스트(테스트/특수 화면)에서도 드래그 로직이 죽지 않도록
+    }
+  }
+
+  bool _isBusyRef(String refId) {
+    final upload = _uploadService;
+    if (upload == null) return false;
+    return upload.isBusyRef(refId);
+  }
+
+  /// ✅ 드롭라인/UI 레이어에서 업로드/압축 상태를 판단할 수 있도록 노출
+  /// - 업로드/압축 중인 노드에는 드래그&드롭이 차단되며, 드롭라인도 뜨면 안 된다.
+  bool isBusyRef(String refId) => _isBusyRef(refId);
 
   NodeComponentService? get imageService => _imageService;
 
@@ -342,6 +363,14 @@ class DragService extends ChangeNotifier {
   }
 
   void startDrag(String nodeId, BuildContext context, Offset globalPosition) {
+    _bindUploadService(context);
+
+    // ✅ 업로드/압축 중인 노드는 구조 변경(리오더/병합/분리) 금지 + 드래그 오버레이도 띄우지 않는다.
+    if (_isBusyRef(nodeId)) {
+      debugPrint('[DragService] ⚠️ 업로드/압축 중인 노드는 드래그할 수 없습니다: $nodeId');
+      return;
+    }
+
     // 🎯 업로드 중인 그룹 이미지는 드래그 불가
     final node = editorService.document.getNodeById(nodeId);
     if (node is ImageRowNode || node is PageViewImageNode) {
@@ -476,6 +505,7 @@ class DragService extends ChangeNotifier {
   }
 
   void updateDrag(Offset globalPosition, BuildContext context) {
+    _bindUploadService(context);
     Map<String, dynamic>? dropInfo;
     dragPosition = globalPosition;
     lastMovedPosition = globalPosition;
@@ -1263,6 +1293,11 @@ class DragService extends ChangeNotifier {
     // 🎯 싱글 이미지 병합 드롭라인 안정화: 감지 폭을 넓혀서 더 넓은 영역에서 병합 모드 진입
     const double horizontalMergeEdgePx = 50.0; // 좌/우 가장자리 감지 폭 (30 -> 50으로 확대)
 
+    // ✅ 업로드/압축 중인 타겟 노드에는 병합/분리/리오더 타겟으로의 구조 변경을 허용하지 않는다.
+    // - 최소 요구: "병합(drop)"은 절대 들어가지 않게 한다.
+    // - reorder는 허용(다른 노드 삽입/이동은 가능)하되, merge 후보로는 무시한다.
+    final bool isTargetBusy = targetNodeId != null && _isBusyRef(targetNodeId!);
+
     // 🎯 PageView 병합 모드 체크 (이미지 -> PageView 또는 PageView -> PageView)
     // - 기존: PageView 위에만 올라가면 항상 병합 모드 → 위/아래 드롭라인 감지가 매우 어려움
     // - 개선: "의도(좌/우로 충분히 치우침) + 세로 안전영역(위/아래 가장자리 제외)"에서만 병합 모드 진입
@@ -1314,6 +1349,7 @@ class DragService extends ChangeNotifier {
       dragMode =
           (!isSplittingPageView &&
                   allowMergeCandidate &&
+                  !isTargetBusy &&
                   shouldEnablePageViewMerge)
               ? DragType.imagePageViewMerge
               : DragType.reorder;
@@ -1364,7 +1400,8 @@ class DragService extends ChangeNotifier {
         // 중앙으로 이동해도 reorder로 안 돌아가 드롭라인이 안 보이는 체감이 생길 수 있음)
         if (nearHorizontalEdge &&
             (targetNodeType == NodeType.image ||
-                targetNodeType == NodeType.imageRow)) {
+                targetNodeType == NodeType.imageRow) &&
+            !isTargetBusy) {
           dragMode = DragType.imageRowMerge;
           debugPrint('[DragService] ✅ 병합 모드 진입: DragType.imageRowMerge');
         } else {
@@ -1551,33 +1588,49 @@ class DragService extends ChangeNotifier {
 
     // ✅ dropTarget 업데이트 (드롭라인/머지라인 렌더링의 단일 입력 신호)
     if (dragMode == DragType.imageRowMerge) {
-      final isFromLeft = isDraggingFromLeft;
-      dropTarget = DropTarget.mergeIntoRow(
-        rowId: node.id,
-        isFromLeft: isFromLeft,
-        targetNodeId: node.id,
-      );
-      intent = DragIntent.mergeIntoRow;
-      dropIndex = null;
-      debugPrint(
-        '[DragService] ✅ dropTarget 설정: mergeIntoRow, rowId=${node.id}, isFromLeft=$isFromLeft',
-      );
-      return {'dropIndex': null};
+      // ✅ 업로드/압축 중인 타겟 노드로는 병합 금지 (drop 후보 자체를 무시)
+      if (targetNodeId != null && _isBusyRef(targetNodeId!)) {
+        debugPrint(
+          '[DragService] ⚠️ 업로드/압축 중인 타겟에는 병합할 수 없습니다: target=$targetNodeId',
+        );
+        dragMode = DragType.reorder;
+      } else {
+        final isFromLeft = isDraggingFromLeft;
+        dropTarget = DropTarget.mergeIntoRow(
+          rowId: node.id,
+          isFromLeft: isFromLeft,
+          targetNodeId: node.id,
+        );
+        intent = DragIntent.mergeIntoRow;
+        dropIndex = null;
+        debugPrint(
+          '[DragService] ✅ dropTarget 설정: mergeIntoRow, rowId=${node.id}, isFromLeft=$isFromLeft',
+        );
+        return {'dropIndex': null};
+      }
     }
 
     if (dragMode == DragType.imagePageViewMerge) {
-      final insertIdx = _targetPageViewInsertIndex ?? 0;
-      dropTarget = DropTarget.mergeIntoPageView(
-        pageViewId: node.id,
-        insertIndex: insertIdx,
-        targetNodeId: node.id,
-      );
-      intent = DragIntent.mergeIntoPageView;
-      dropIndex = null;
-      debugPrint(
-        '[DragService] ✅ dropTarget 설정: mergeIntoPageView, pageViewId=${node.id}, insertIndex=$insertIdx',
-      );
-      return {'dropIndex': null};
+      // ✅ 업로드/압축 중인 타겟 노드로는 병합 금지 (drop 후보 자체를 무시)
+      if (targetNodeId != null && _isBusyRef(targetNodeId!)) {
+        debugPrint(
+          '[DragService] ⚠️ 업로드/압축 중인 타겟에는 병합할 수 없습니다: target=$targetNodeId',
+        );
+        dragMode = DragType.reorder;
+      } else {
+        final insertIdx = _targetPageViewInsertIndex ?? 0;
+        dropTarget = DropTarget.mergeIntoPageView(
+          pageViewId: node.id,
+          insertIndex: insertIdx,
+          targetNodeId: node.id,
+        );
+        intent = DragIntent.mergeIntoPageView;
+        dropIndex = null;
+        debugPrint(
+          '[DragService] ✅ dropTarget 설정: mergeIntoPageView, pageViewId=${node.id}, insertIndex=$insertIdx',
+        );
+        return {'dropIndex': null};
+      }
     }
 
     // 🎯 빈 문단 자동 삭제를 고려한 드롭 인덱스 조정

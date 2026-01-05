@@ -1123,9 +1123,9 @@ class _PostExportScreenState extends State<PostExportScreen>
     if (!mounted || !context.mounted) return false;
     try {
       final upload = context.read<UploadService>();
-      return upload.hasActiveUploads(
-        kinds: {UploadKind.editorImage, UploadKind.video, UploadKind.thumbnail},
-      );
+      // ✅ publish 화면에서는 "이 세션의 썸네일 업로드"만 가드한다.
+      // 전역 UploadService(_tasks)에는 다른 화면(댓글/에디터 등)의 업로드도 섞일 수 있어 false positive가 난다.
+      return upload.hasActiveUploadForRef('thumb_$_nsKey');
     } catch (e) {
       debugPrint('[PostExport] 업로드 상태 체크 오류: $e');
       return false;

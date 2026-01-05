@@ -70,7 +70,7 @@ class PostPublishService {
       friendsOnly: friendsOnly,
       selectedGroupIds: selectedGroupIds,
       categoryId: categoryId,
-      createdAt: DateTime.now(),
+      createdAt: DateTime.now().toUtc(),
     );
   }
 

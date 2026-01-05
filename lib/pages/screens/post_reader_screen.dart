@@ -39,6 +39,7 @@ import 'package:doppy/pages/components/liked_users_bottom_sheet.dart';
 import 'package:doppy/pages/components/viewers_bottom_sheet.dart';
 import 'package:doppy/pages/components/post_action_bottom_sheet.dart';
 import 'package:doppy/pages/components/mention_bottom_sheet.dart';
+import 'package:doppy/pages/components/post_reader_mention_bottom_sheet.dart';
 import 'package:doppy/pages/components/post_reader_error_screen.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:flutter/cupertino.dart';
@@ -748,11 +749,20 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               ? CupertinoPageRoute(
                 builder:
                     (_) => CommentBottomSheet(
-                      title: widget.exported['title'] ?? '',
+                      title:
+                          (_currentExportedData?['title'] ??
+                                  widget.exported['title'] ??
+                                  '')
+                              .toString(),
                       commentService: _commentService,
                       postThumbnailUrl:
-                          widget.exported['thumbnailImageUrl']?.toString(),
-                      postSummary: widget.exported['summary']?.toString(),
+                          (_currentExportedData?['thumbnailImageUrl'] ??
+                                  widget.exported['thumbnailImageUrl'])
+                              ?.toString(),
+                      postSummary:
+                          (_currentExportedData?['summary'] ??
+                                  widget.exported['summary'])
+                              ?.toString(),
                       scrollToCommentId: widget.scrollToCommentId,
                       postAuthorUsername:
                           widget.exported['author']
@@ -762,11 +772,20 @@ class _PostReaderScreenState extends State<PostReaderScreen>
               : MaterialPageRoute(
                 builder:
                     (_) => CommentBottomSheet(
-                      title: widget.exported['title'] ?? '',
+                      title:
+                          (_currentExportedData?['title'] ??
+                                  widget.exported['title'] ??
+                                  '')
+                              .toString(),
                       commentService: _commentService,
                       postThumbnailUrl:
-                          widget.exported['thumbnailImageUrl']?.toString(),
-                      postSummary: widget.exported['summary']?.toString(),
+                          (_currentExportedData?['thumbnailImageUrl'] ??
+                                  widget.exported['thumbnailImageUrl'])
+                              ?.toString(),
+                      postSummary:
+                          (_currentExportedData?['summary'] ??
+                                  widget.exported['summary'])
+                              ?.toString(),
                       scrollToCommentId: widget.scrollToCommentId,
                       postAuthorUsername:
                           widget.exported['author']
@@ -1218,6 +1237,15 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     try {
       NodeComponentService().clearSpoilers(notify: false);
     } catch (_) {}
+
+    // ⚠️ ImageCache 사이즈 복원: 읽기 화면 이탈 시 원래 값으로 복원
+    // - 다른 화면에서 메모리 압박 방지
+    try {
+      PostReaderService.restoreImageCacheSize();
+    } catch (e) {
+      debugPrint('[PostReaderScreen] ImageCache 사이즈 복원 실패: $e');
+    }
+
     super.dispose();
   }
 
@@ -1401,7 +1429,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                   );
                 }
 
-                final merged = Map<String, dynamic>.from(widget.exported);
+                // ✅ 편집 후 _currentExportedData(메타데이터)가 갱신된 상태에서
+                // FutureBuilder가 widget.exported(초기값)로 다시 덮어써서 title 등이 되돌아가는 문제 방지.
+                // 항상 "현재 메모리 상태"를 우선 베이스로 삼는다.
+                final merged = Map<String, dynamic>.from(
+                  _currentExportedData ?? widget.exported,
+                );
                 merged['content'] = contentData;
 
                 // ✅ 상위 3개는 이미 await preloadTopMedia로 끝난 상태.
@@ -1542,6 +1575,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                         },
                                         child: PostReaderHeader(
                                           exportedRoot: widget.exported,
+
                                           currentExportedData:
                                               _currentExportedData,
                                           postAuthor: postAuthor,
@@ -1659,87 +1693,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                                 _openUserProfile(names.first);
                                                 return;
                                               }
-                                              showModalBottomSheet(
-                                                context: context,
-                                                backgroundColor:
-                                                    Colors.transparent,
-                                                builder: (_) {
-                                                  return Container(
-                                                    decoration: BoxDecoration(
-                                                      color:
-                                                          Theme.of(
-                                                            context,
-                                                          ).colorScheme.surface,
-                                                      borderRadius:
-                                                          const BorderRadius.vertical(
-                                                            top:
-                                                                Radius.circular(
-                                                                  16,
-                                                                ),
-                                                          ),
-                                                    ),
-                                                    child: SafeArea(
-                                                      top: false,
-                                                      child: Column(
-                                                        mainAxisSize:
-                                                            MainAxisSize.min,
-                                                        children: [
-                                                          const SizedBox(
-                                                            height: 8,
-                                                          ),
-                                                          Container(
-                                                            width: 40,
-                                                            height: 4,
-                                                            decoration: BoxDecoration(
-                                                              color: Theme.of(
-                                                                    context,
-                                                                  )
-                                                                  .colorScheme
-                                                                  .onSurface
-                                                                  .withOpacity(
-                                                                    0.2,
-                                                                  ),
-                                                              borderRadius:
-                                                                  BorderRadius.circular(
-                                                                    2,
-                                                                  ),
-                                                            ),
-                                                          ),
-                                                          const SizedBox(
-                                                            height: 8,
-                                                          ),
-                                                          ...names.map(
-                                                            (u) => ListTile(
-                                                              title: Text(
-                                                                '@$u',
-                                                                style: TextStyle(
-                                                                  color:
-                                                                      Theme.of(
-                                                                        context,
-                                                                      ).colorScheme.onSurface,
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .w600,
-                                                                ),
-                                                              ),
-                                                              onTap: () {
-                                                                Navigator.of(
-                                                                  context,
-                                                                ).pop();
-                                                                _openUserProfile(
-                                                                  u,
-                                                                );
-                                                              },
-                                                            ),
-                                                          ),
-                                                          const SizedBox(
-                                                            height: 8,
-                                                          ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  );
-                                                },
+                                              PostReaderMentionBottomSheet.show(
+                                                context,
+                                                names: names,
+                                                onUsernameTap: _openUserProfile,
                                               );
                                             },
                                           ),
@@ -1752,7 +1709,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                     },
                                   ),
                                   SliverToBoxAdapter(
-                                    child: SizedBox(height: 100),
+                                    child: SizedBox(height: 30),
                                   ),
 
                                   // 댓글 미리보기 (추출된 위젯)
@@ -1848,8 +1805,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
                                 if (!mounted) return;
 
+                                final resultKeys =
+                                    result is Map ? result.keys.toList() : null;
+                                debugPrint(
+                                  '[PostReaderScreen][EDIT_RESULT] resultType=${result.runtimeType} keys=$resultKeys',
+                                );
+
+                                if (result is! Map) return;
                                 final bool didEdit =
-                                    result is Map &&
                                     (result['didEdit'] == true);
 
                                 // 저장/적용이 실제로 일어난 경우에만 최신 문서로 갱신
@@ -1858,12 +1821,23 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                 try {
                                   // ✅ Postwrite에서 로컬 export/content를 pop으로 넘긴 경우
                                   // 추가 서버 호출 없이 pop 결과로 즉시 반영한다.
+                                  Map<String, dynamic>? poppedExported;
+                                  try {
+                                    final raw = result['exported'];
+                                    if (raw is Map) {
+                                      poppedExported =
+                                          raw.cast<String, dynamic>();
+                                    }
+                                  } catch (_) {
+                                    poppedExported = null;
+                                  }
+
                                   Map<String, dynamic>? poppedContent;
                                   try {
                                     final raw = result['content'];
-                                    if (raw != null) {
+                                    if (raw is Map) {
                                       poppedContent =
-                                          (raw as Map).cast<String, dynamic>();
+                                          raw.cast<String, dynamic>();
                                     }
                                   } catch (_) {
                                     poppedContent = null;
@@ -1872,11 +1846,26 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                   late final MutableDocument refreshedDoc;
                                   late final Map<String, dynamic> merged;
 
-                                  if (poppedContent != null) {
+                                  debugPrint(
+                                    '[PostReaderScreen][EDIT_RESULT] didEdit=$didEdit poppedExported=${poppedExported != null} poppedContent=${poppedContent != null}',
+                                  );
+                                  if (poppedExported != null) {
+                                    debugPrint(
+                                      '[PostReaderScreen][EDIT_RESULT] exported.title=${poppedExported['title']} exported.summary=${poppedExported['summary']} exported.thumbnail=${poppedExported['thumbnailImageUrl']} exported.accessLevel=${poppedExported['accessLevel']}',
+                                    );
+                                  }
+
+                                  if (poppedContent != null ||
+                                      poppedExported != null) {
                                     merged = Map<String, dynamic>.from(
                                       dataToEdit,
                                     );
-                                    merged['content'] = poppedContent;
+                                    if (poppedExported != null) {
+                                      merged.addAll(poppedExported);
+                                    }
+                                    if (poppedContent != null) {
+                                      merged['content'] = poppedContent;
+                                    }
 
                                     refreshedDoc = _postReaderService
                                         .rebuildDocumentForRead(merged);
@@ -1900,6 +1889,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                       (merged['content'] as Map?)
                                           ?.cast<String, dynamic>() ??
                                       <String, dynamic>{};
+
+                                  debugPrint(
+                                    '[PostReaderScreen][EDIT_APPLY] beforeTitle=${(_currentExportedData?['title'] ?? widget.exported['title'])} afterTitle=${merged['title']}',
+                                  );
 
                                   setState(() {
                                     _currentExportedData = merged;
@@ -1955,7 +1948,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               },
                               onDelete: _deletePost,
                               onShowComments: _showCommentBottomSheet,
-                              title: widget.exported['title'] ?? '',
+                              title:
+                                  (_currentExportedData?['title'] ??
+                                          widget.exported['title'] ??
+                                          '')
+                                      .toString(),
                               likeCount: _likeService.getPostLikeCount(
                                 widget.exported['id']?.toString() ?? '',
                               ),
@@ -1994,9 +1991,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                             widget.exported['id']?.toString() ??
                                             '';
                                         final postTitle =
-                                            widget.exported['title']
-                                                ?.toString() ??
-                                            '';
+                                            (_currentExportedData?['title'] ??
+                                                    widget.exported['title'] ??
+                                                    '')
+                                                .toString();
                                         final authorUsername = postAuthor;
                                         final authorProfileImageUrl =
                                             widget
@@ -2065,7 +2063,9 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                 onClose: _closeImageViewer,
                                 postTitle: () {
                                   final title =
-                                      widget.exported['title'] as String?;
+                                      (_currentExportedData?['title'] ??
+                                              widget.exported['title'])
+                                          ?.toString();
                                   debugPrint('[PostReader] postTitle: $title');
                                   return title;
                                 }(),

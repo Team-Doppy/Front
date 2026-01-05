@@ -1,7 +1,20 @@
-import 'package:doppy/utils/time_utils.dart';
+import 'package:flutter/foundation.dart';
 
 // Comment 모델 (채팅 기능 확장)
 class Comment {
+  // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+  static DateTime _parseUtcDateTime(String? value) {
+    if (value == null || value.isEmpty) return DateTime.now().toUtc();
+    try {
+      final dateTime = DateTime.parse(value);
+      // UTC가 아니면 UTC로 변환
+      return dateTime.isUtc ? dateTime : dateTime.toUtc();
+    } catch (e) {
+      debugPrint('[Comment] UTC 시간 파싱 실패: $value, 에러: $e');
+      return DateTime.now().toUtc();
+    }
+  }
+
   final int id;
   final String content;
   final String author;
@@ -56,8 +69,9 @@ class Comment {
               ?.map((reply) => Comment.fromJson(reply as Map<String, dynamic>))
               .toList() ??
           [],
-      createdAt: TimeUtils.toLocalTime(json['createdAt'] as String),
-      updatedAt: TimeUtils.toLocalTime(json['updatedAt'] as String),
+      // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+      createdAt: _parseUtcDateTime(json['createdAt'] as String?),
+      updatedAt: _parseUtcDateTime(json['updatedAt'] as String?),
       mentionedUsernames:
           json['mentionedUsernames'] != null
               ? (json['mentionedUsernames'] as List<dynamic>)

@@ -80,6 +80,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   // 🎯 업로드 태스크 추적 (썸네일 변경 시 취소용)
   UploadTask? _currentImageUploadTask;
 
+  // ✅ 썸네일 첫 프레임 지연(디스크 캐시 → 디코딩/업로드) 체감 완화용 precache 트래킹
+  String? _lastPrecacheSignature;
+
   // 🎯 포커스/키보드에 따른 UI 전환을 더 부드럽게 만들기 위한 내부 상태
   bool _hasTextFocus = false;
 
@@ -154,6 +157,11 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     widget.excerptFocusNode.addListener(_onTextFocusChanged);
 
     _attachPosterListener(widget.videoController);
+
+    // ✅ 첫 진입에서 썸네일이 "흰 카드 → 늦게 등장"하는 체감 완화: 다음 프레임에 미리 디코딩
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _precacheThumbnailIfNeeded();
+    });
   }
 
   @override
@@ -178,7 +186,47 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     // ✅ 이미지 URL이 변경되면 미리 캐시
     if (oldWidget.exportedThumbnailImageUrl !=
             widget.exportedThumbnailImageUrl &&
-        widget.exportedThumbnailImageUrl.isNotEmpty) {}
+        widget.exportedThumbnailImageUrl.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _precacheThumbnailIfNeeded();
+      });
+    }
+  }
+
+  Future<void> _precacheThumbnailIfNeeded() async {
+    if (!_isMounted()) return;
+
+    // 로컬 파일/비디오는 여기서 precache하지 않음 (이미 file/video path로 즉시 렌더링됨)
+    if (widget.localThumbnailFile != null || widget.localVideoFile != null) {
+      return;
+    }
+
+    final url = widget.exportedThumbnailImageUrl;
+    if (url.isEmpty) return;
+    if (_isVideoUrl(url)) return;
+
+    // 썸네일 렌더링과 동일한 provider/Resize 정책을 사용해야 캐시 히트가 보장됨
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final decodeWidth = EditorImageProvider.editingDecodeWidth(
+      context,
+      screenWidth,
+    );
+    final signature = '${EditorImageProvider.normalizeUrl(url)}@$decodeWidth';
+    if (_lastPrecacheSignature == signature) return;
+    _lastPrecacheSignature = signature;
+
+    final built = EditorImageProvider.build(
+      url: url,
+      isEditing: true,
+      decodeWidth: decodeWidth,
+    );
+
+    try {
+      await precacheImage(built.effectiveProvider, context);
+    } catch (e) {
+      // precache 실패는 UI를 막지 않도록 무시
+      debugPrint('[Step1ThumbnailEdit] ⚠️ precache 실패: url=$url, e=$e');
+    }
   }
 
   @override
@@ -864,7 +912,8 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                 fontWeight: FontWeight.bold,
                 letterSpacing: -0.2,
               ),
-              maxLines: 1,
+              maxLines: 2,
+              minLines: 1,
               scrollPhysics: const NeverScrollableScrollPhysics(),
               decoration: InputDecoration(
                 hintText: AppLocalizations.of(
@@ -1054,9 +1103,11 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
 
     try {
       final upload = context.read<UploadService>();
-      final tasks = await upload.uploadFilesViaServerBatches([
-        file,
-      ], kind: UploadKind.editorImage);
+      final tasks = await upload.uploadFilesViaServerBatches(
+        [file],
+        kind: UploadKind.editorImage,
+        refId: _nsKey,
+      );
       if (tasks.isNotEmpty) {
         final t = tasks.first;
         // 🎯 이미지 업로드 태스크 추적
@@ -1426,9 +1477,11 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       );
       await tempFile.writeAsBytes(result);
 
-      final tasks = await upload.uploadFilesViaServerBatches([
-        tempFile,
-      ], kind: UploadKind.editorImage);
+      final tasks = await upload.uploadFilesViaServerBatches(
+        [tempFile],
+        kind: UploadKind.editorImage,
+        refId: _nsKey,
+      );
 
       try {
         await tempFile.delete();
@@ -1490,18 +1543,25 @@ class _EmptyImagePlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).colorScheme.brightness == Brightness.dark;
+    final bgColor =
+        isDark
+            ? Theme.of(context).colorScheme.surfaceContainerHighest
+            : const Color(0xFF1A1A1A);
+    final fgColor =
+        isDark
+            ? Theme.of(context).colorScheme.onSurface.withOpacity(0.65)
+            : Colors.white.withOpacity(0.72);
+
     return Container(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      color: bgColor,
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               AppLocalizations.of(context).t('tap_to_select_thumbnail'),
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                fontSize: 15,
-              ),
+              style: TextStyle(color: fgColor, fontSize: 15),
             ),
           ],
         ),

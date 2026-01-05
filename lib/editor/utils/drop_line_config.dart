@@ -51,6 +51,20 @@ class DropLineConfig {
       return (top: false, bottom: false, left: false, right: false);
     }
 
+    // ✅ 업로드/압축(busy) 중에는 Drag&Drop 자체가 차단되므로 드롭라인도 절대 표시하지 않는다.
+    // - draggingNodeId(드래그 주체) 또는 targetNodeId(현재 호버 타겟) 또는 이 nodeId 자체가 busy면 전체 off
+    final draggingId = dragService.draggingNodeId;
+    if (draggingId != null && dragService.isBusyRef(draggingId)) {
+      return (top: false, bottom: false, left: false, right: false);
+    }
+    final targetId = dragService.targetNodeId;
+    if (targetId != null && dragService.isBusyRef(targetId)) {
+      return (top: false, bottom: false, left: false, right: false);
+    }
+    if (dragService.isBusyRef(nodeId)) {
+      return (top: false, bottom: false, left: false, right: false);
+    }
+
     final dt = dragService.dropTarget;
     switch (dt.kind) {
       case DropTargetKind.none:

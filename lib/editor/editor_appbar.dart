@@ -8,10 +8,12 @@ import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/clip_component.dart' show muteAllVideos;
 import 'package:doppy/data/services/video_cache_service.dart';
+import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:convert';
 import 'package:doppy/data/services/blog_service.dart';
@@ -261,113 +263,85 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                   ),
                   Spacer(),
 
-                  // 영상 업로드 중일 때는 인디케이터 표시, 아니면 기존 버튼들 표시
-                  ValueListenableBuilder<bool>(
-                    valueListenable:
-                        widget.videoUploadIndicatorNotifier ??
-                        ValueNotifier<bool>(false),
-                    builder: (context, showIndicator, child) {
-                      if (showIndicator) {
-                        // 영상 업로드 중 인디케이터
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Theme.of(context).colorScheme.primary,
+                  // 기존 버튼들
+                  AnimatedBuilder(
+                    animation: widget.editorService,
+                    builder: (context, _) {
+                      // 수정 완료 버튼 색상 (항상 활성화)
+                      final saveButtonColor =
+                          Theme.of(context).colorScheme.primary;
+
+                      return Row(
+                        children: [
+                          // 썸네일 수정 버튼
+                          if (widget.onEditThumbnail != null)
+                            GestureDetector(
+                              onTap: widget.onEditThumbnail,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(),
+                                child: Icon(
+                                  Icons.more_horiz_rounded,
+                                  size: 20,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.6),
+                                ),
+                              ),
+                            ),
+                          // 수정 완료 버튼 / 로딩 표시
+                          GestureDetector(
+                            onTap: widget.isSaving ? null : widget.onSave,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(),
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child:
+                                    widget.isSaving
+                                        ? Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 2,
+                                          ),
+                                          child: SizedBox(
+                                            width: 26,
+                                            height: 26,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 3,
+                                              valueColor:
+                                                  AlwaysStoppedAnimation<Color>(
+                                                    Theme.of(
+                                                      context,
+                                                    ).colorScheme.primary,
+                                                  ),
+                                            ),
+                                          ),
+                                        )
+                                        : Row(
+                                          children: [
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              context.tr('modify_complete'),
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                                color: saveButtonColor,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                          ],
+                                        ),
                               ),
                             ),
                           ),
-                        );
-                      }
-
-                      // 기존 버튼들
-                      return AnimatedBuilder(
-                        animation: widget.editorService,
-                        builder: (context, _) {
-                          // 수정 완료 버튼 색상 (항상 활성화)
-                          final saveButtonColor =
-                              Theme.of(context).colorScheme.primary;
-
-                          return Row(
-                            children: [
-                              // 썸네일 수정 버튼
-                              if (widget.onEditThumbnail != null)
-                                GestureDetector(
-                                  onTap: widget.onEditThumbnail,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 8,
-                                    ),
-                                    decoration: BoxDecoration(),
-                                    child: Icon(
-                                      Icons.more_horiz_rounded,
-                                      size: 20,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.6),
-                                    ),
-                                  ),
-                                ),
-                              // 수정 완료 버튼 / 로딩 표시
-                              GestureDetector(
-                                onTap: widget.isSaving ? null : widget.onSave,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(),
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child:
-                                        widget.isSaving
-                                            ? Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 12,
-                                                    vertical: 2,
-                                                  ),
-                                              child: SizedBox(
-                                                width: 26,
-                                                height: 26,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 3,
-                                                  valueColor:
-                                                      AlwaysStoppedAnimation<
-                                                        Color
-                                                      >(
-                                                        Theme.of(
-                                                          context,
-                                                        ).colorScheme.primary,
-                                                      ),
-                                                ),
-                                              ),
-                                            )
-                                            : Row(
-                                              children: [
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  context.tr('modify_complete'),
-                                                  style: TextStyle(
-                                                    fontSize: 16,
-                                                    fontWeight: FontWeight.w600,
-                                                    color: saveButtonColor,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 12),
-                                              ],
-                                            ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        },
+                        ],
                       );
                     },
                   ),
@@ -411,8 +385,25 @@ class EditorAppBar extends StatelessWidget {
   });
 
   Future<void> _onNextButtonTapped(BuildContext context) async {
-    // 업로드 가드: 업로드 중인 미디어가 있으면 진행 차단
-    if (editorService.hasUnuploadedImages()) {
+    // 업로드 가드: 업로드 중인 미디어가 있으면 진행 차단 (압축 중인 비디오도 포함)
+    if (editorService.hasUnuploadedMedia()) {
+      // 🎯 상세한 디버그 정보 출력 (kDebugMode에서만 실행)
+      if (kDebugMode) {
+        try {
+          final activeTasks = editorService
+              .debugDumpBusyMediaForCurrentDocument(
+                kinds: {
+                  UploadKind.editorImage,
+                  UploadKind.video,
+                  UploadKind.drawing,
+                },
+              );
+          debugPrint('[EditorAppBar] ⚠️ 업로드/압축 진행 중 - 발행 차단\n$activeTasks');
+        } catch (e) {
+          debugPrint('[EditorAppBar] 업로드 상태 확인 실패: $e');
+        }
+      }
+
       await DialogUtils.showInfoDialog(
         context,
         title: context.tr('wait_for_media_upload'),

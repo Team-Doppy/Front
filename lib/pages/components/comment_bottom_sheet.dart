@@ -5,7 +5,7 @@ import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/pages/components/comment_item.dart';
+import 'package:doppy/pages/components/swipe_reply_comment_item.dart';
 import 'package:doppy/pages/components/comment_mention_overlay.dart';
 import 'package:doppy/pages/components/comment_image_full_viewer.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -28,6 +28,7 @@ class CommentBottomSheet extends StatefulWidget {
     this.postSummary,
     this.scrollToCommentId, // 🎯 특정 댓글로 스크롤할 댓글 ID
     this.postAuthorUsername, // 🎯 블로그 작성자 username (비밀 메시지용)
+    this.isPrivate = false, // 🎯 나만보기 포스트 여부
   });
   final String title;
   final CommentService commentService;
@@ -35,6 +36,7 @@ class CommentBottomSheet extends StatefulWidget {
   final String? postSummary; // 🎯 댓글 0개일 때 보여줄 포스트 요약(한 줄)
   final String? scrollToCommentId; // 🎯 특정 댓글로 스크롤할 댓글 ID
   final String? postAuthorUsername; // 🎯 블로그 작성자 username (비밀 메시지용)
+  final bool isPrivate; // 🎯 나만보기 포스트 여부
 
   @override
   State<CommentBottomSheet> createState() => _CommentBottomSheetState();
@@ -509,7 +511,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       // 🎯 댓글 이미지 업로드를 위한 태스크 생성
       final task = uploadService.enqueueFile(
         imageFile,
-        kind: UploadKind.editorImage, // 🎯 나중에 chatImage로 변경 가능
+        kind: UploadKind.chatImage, // ✅ 에디터 업로드 가드와 분리
         overrideName:
             'chat/${username}/${DateTime.now().millisecondsSinceEpoch}_${imageFile.path.split('/').last}',
       );
@@ -918,13 +920,38 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
           scrolledUnderElevation: 0,
           backgroundColor: Colors.transparent,
           elevation: 0,
-          title: Text(
-            widget.title,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onBackground,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-            ),
+          title: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  widget.title,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onBackground,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (widget.isPrivate) ...[
+                const SizedBox(width: 12),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2.0),
+                  child: SvgPicture.asset(
+                    'assets/icons/lock.svg',
+                    width: 16,
+                    height: 16,
+                    colorFilter: ColorFilter.mode(
+                      Theme.of(
+                        context,
+                      ).colorScheme.onBackground.withOpacity(0.7),
+                      BlendMode.srcIn,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
         body: Stack(
@@ -934,237 +961,223 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
               children: [
                 // 🎯 리스트 영역 (Expanded로 남은 공간 차지)
                 Expanded(
-                  child: GestureDetector(
-                    behavior:
-                        HitTestBehavior
-                            .translucent, // 🎯 하위 위젯이 탭 이벤트를 받을 수 있도록
-                    onTap: () => _focusNode.unfocus(),
-                    child: ChangeNotifierProvider.value(
-                      value: _commentService,
-                      child: Selector<CommentService, List<Comment>>(
-                        selector: (context, service) => service.sortedComments,
-                        shouldRebuild:
-                            (prev, next) =>
-                                prev.length != next.length ||
-                                prev.any(
-                                  (c) => !next.any((n) => n.id == c.id),
-                                ) ||
-                                next.any((c) => !prev.any((p) => p.id == c.id)),
-                        builder: (context, comments, _) {
-                          // 🎯 로딩 상태는 별도 Selector로 분리하여 불필요한 리빌드 방지
-                          return Selector<CommentService, bool>(
-                            selector: (context, service) => service.isLoading,
-                            builder: (context, isLoading, _) {
-                              final showLoadingSpinner =
-                                  isLoading && comments.isEmpty;
+                  child: ChangeNotifierProvider.value(
+                    value: _commentService,
+                    child: Selector<CommentService, List<Comment>>(
+                      selector: (context, service) => service.sortedComments,
+                      // ✅ sortedComments는 길이가 유지되면 캐시를 재사용할 수 있으므로
+                      // 리스트 인스턴스가 바뀌었을 때만 리빌드(리액션 반영 포함).
+                      shouldRebuild: (prev, next) => !identical(prev, next),
+                      builder: (context, comments, _) {
+                        // 🎯 로딩 상태는 별도 Selector로 분리하여 불필요한 리빌드 방지
+                        return Selector<CommentService, bool>(
+                          selector: (context, service) => service.isLoading,
+                          builder: (context, isLoading, _) {
+                            final showLoadingSpinner =
+                                isLoading && comments.isEmpty;
 
-                              if (showLoadingSpinner) {
-                                return Center(
-                                  child: CircularProgressIndicator(
-                                    color:
-                                        Theme.of(
-                                          context,
-                                        ).colorScheme.onBackground,
-                                    strokeWidth: 2,
+                            if (showLoadingSpinner) {
+                              return Center(
+                                child: CircularProgressIndicator(
+                                  color:
+                                      Theme.of(
+                                        context,
+                                      ).colorScheme.onBackground,
+                                  strokeWidth: 2,
+                                ),
+                              );
+                            }
+
+                            if (comments.isEmpty) {
+                              return _buildEmptyState(context);
+                            }
+
+                            return Stack(
+                              children: [
+                                ScrollablePositionedList.builder(
+                                  key: const PageStorageKey('comment_list'),
+                                  itemScrollController: _itemScrollController,
+                                  itemPositionsListener: _itemPositionsListener,
+                                  reverse: true, // ✅ 레퍼런스 방식
+                                  // ✅ ScrollablePositionedList는 itemExtent/shrinkWrap을 지원하지 않음
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 8,
                                   ),
-                                );
-                              }
+                                  itemCount: comments.length,
+                                  itemBuilder: (context, index) {
+                                    // ✅ reverse:true:
+                                    // builder index 0이 최신(맨 아래)이 되도록 sortedComments(과거->최신)를 역매핑
+                                    final chronoIndex =
+                                        (comments.length - 1) - index;
+                                    final comment = comments[chronoIndex];
 
-                              if (comments.isEmpty) {
-                                return _buildEmptyState(context);
-                              }
+                                    // GlobalKey 생성 (높이 측정용, 지연 생성으로 최적화)
+                                    final commentKey = _commentKeys.putIfAbsent(
+                                      comment.id,
+                                      () => GlobalKey(),
+                                    );
 
-                              return Stack(
-                                children: [
-                                  ScrollablePositionedList.builder(
-                                    key: const PageStorageKey('comment_list'),
-                                    itemScrollController: _itemScrollController,
-                                    itemPositionsListener:
-                                        _itemPositionsListener,
-                                    reverse: true, // ✅ 레퍼런스 방식
-                                    // ✅ ScrollablePositionedList는 itemExtent/shrinkWrap을 지원하지 않음
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 8,
-                                    ),
-                                    itemCount: comments.length,
-                                    itemBuilder: (context, index) {
-                                      // ✅ reverse:true:
-                                      // builder index 0이 최신(맨 아래)이 되도록 sortedComments(과거->최신)를 역매핑
-                                      final chronoIndex =
-                                          (comments.length - 1) - index;
-                                      final comment = comments[chronoIndex];
+                                    // 🎯 성능 최적화: currentUser는 build에서 이미 읽음
+                                    final isMe =
+                                        currentUser != null &&
+                                        comment.author == currentUser.username;
 
-                                      // GlobalKey 생성 (높이 측정용, 지연 생성으로 최적화)
-                                      final commentKey = _commentKeys
-                                          .putIfAbsent(
-                                            comment.id,
-                                            () => GlobalKey(),
-                                          );
+                                    // 🎯 성능 최적화: 이전/다음 댓글 비교 최적화
+                                    final bool showProfile;
+                                    final bool showAuthorInfo;
 
-                                      // 🎯 성능 최적화: currentUser는 build에서 이미 읽음
-                                      final isMe =
-                                          currentUser != null &&
-                                          comment.author ==
-                                              currentUser.username;
+                                    // sortedComments는 과거->최신(chronological)
+                                    // - showProfile: 더 과거(chronoIndex-1)와 비교
+                                    // - showAuthorInfo: 더 최신(chronoIndex+1)과 비교
+                                    if (chronoIndex > 0) {
+                                      final prevAuthor =
+                                          comments[chronoIndex - 1].author;
+                                      showProfile =
+                                          prevAuthor != comment.author;
+                                    } else {
+                                      showProfile = true;
+                                    }
 
-                                      // 🎯 성능 최적화: 이전/다음 댓글 비교 최적화
-                                      final bool showProfile;
-                                      final bool showAuthorInfo;
+                                    if (chronoIndex < comments.length - 1) {
+                                      final nextAuthor =
+                                          comments[chronoIndex + 1].author;
+                                      showAuthorInfo =
+                                          nextAuthor != comment.author;
+                                    } else {
+                                      showAuthorInfo = true;
+                                    }
 
-                                      // sortedComments는 과거->최신(chronological)
-                                      // - showProfile: 더 과거(chronoIndex-1)와 비교
-                                      // - showAuthorInfo: 더 최신(chronoIndex+1)과 비교
-                                      if (chronoIndex > 0) {
-                                        final prevAuthor =
-                                            comments[chronoIndex - 1].author;
-                                        showProfile =
-                                            prevAuthor != comment.author;
-                                      } else {
-                                        showProfile = true;
+                                    final targetComment = _findTargetComment(
+                                      comment.parentId,
+                                    );
+
+                                    final isThisBouncing =
+                                        _bouncingCommentId == comment.id;
+
+                                    // 🎯 댓글 간 간격 계산: 다른 작성자면 간격 줄임, 같은 작성자면 유지
+                                    double? customBottomPadding;
+                                    if (chronoIndex > 0) {
+                                      final prevComment =
+                                          comments[chronoIndex - 1];
+                                      if (prevComment.author !=
+                                          comment.author) {
+                                        // 다른 작성자면 간격을 최소화 (0으로 설정)
+                                        customBottomPadding = 0.0;
                                       }
+                                      // 같은 작성자면 null (CommentItem 내부 로직 사용)
+                                    }
 
-                                      if (chronoIndex < comments.length - 1) {
-                                        final nextAuthor =
-                                            comments[chronoIndex + 1].author;
-                                        showAuthorInfo =
-                                            nextAuthor != comment.author;
-                                      } else {
-                                        showAuthorInfo = true;
-                                      }
-
-                                      final targetComment = _findTargetComment(
-                                        comment.parentId,
-                                      );
-
-                                      final isThisBouncing =
-                                          _bouncingCommentId == comment.id;
-
-                                      // 🎯 댓글 간 간격 계산: 다른 작성자면 간격 줄임, 같은 작성자면 유지
-                                      double? customBottomPadding;
-                                      if (chronoIndex > 0) {
-                                        final prevComment =
-                                            comments[chronoIndex - 1];
-                                        if (prevComment.author !=
-                                            comment.author) {
-                                          // 다른 작성자면 간격을 최소화 (0으로 설정)
-                                          customBottomPadding = 0.0;
-                                        }
-                                        // 같은 작성자면 null (CommentItem 내부 로직 사용)
-                                      }
-
-                                      return AnimatedBuilder(
-                                        animation: _bounceAnimation,
-                                        builder: (context, child) {
-                                          return Transform.translate(
-                                            offset:
-                                                isThisBouncing
-                                                    ? Offset(
-                                                      0,
-                                                      -30 *
-                                                          (_bounceAnimation
-                                                                  .value -
-                                                              1.0),
-                                                    )
-                                                    : Offset.zero,
-                                            child: child,
+                                    return AnimatedBuilder(
+                                      animation: _bounceAnimation,
+                                      builder: (context, child) {
+                                        return Transform.translate(
+                                          offset:
+                                              isThisBouncing
+                                                  ? Offset(
+                                                    0,
+                                                    -30 *
+                                                        (_bounceAnimation
+                                                                .value -
+                                                            1.0),
+                                                  )
+                                                  : Offset.zero,
+                                          child: child,
+                                        );
+                                      },
+                                      child: SwipeReplyCommentItem(
+                                        key: ValueKey(comment.id),
+                                        comment: comment,
+                                        commentService: _commentService,
+                                        currentUser: currentUser,
+                                        isMe: isMe,
+                                        showProfile: showProfile,
+                                        showAuthorInfo: showAuthorInfo,
+                                        customBottomPadding:
+                                            customBottomPadding,
+                                        onReactionToggle: (commentId, emoji) {
+                                          _commentService.toggleReaction(
+                                            commentId,
+                                            emoji,
                                           );
                                         },
-                                        child: CommentItem(
-                                          key: ValueKey(comment.id),
-                                          comment: comment,
-                                          commentService: _commentService,
-                                          currentUser: currentUser,
-                                          isMe: isMe,
-                                          showProfile: showProfile,
-                                          showAuthorInfo: showAuthorInfo,
-                                          customBottomPadding:
-                                              customBottomPadding,
-                                          onReactionToggle: (commentId, emoji) {
-                                            _commentService.toggleReaction(
-                                              commentId,
-                                              emoji,
-                                            );
-                                          },
-                                          onLongPress:
-                                              (offset, comment) =>
-                                                  _onLongPress(offset, comment),
-                                          onTapTargetComment:
-                                              _scrollToTargetComment,
-                                          targetComment: targetComment,
-                                          globalKey: commentKey,
-                                          bounceAnimationValue: 1.0,
-                                          isAnimating: false,
-                                          dragOffset: 0.0,
-                                          onSwipeReply: () {
-                                            // 🎯 setState와 requestFocus를 분리하여 블로킹 방지
-                                            setState(() {
-                                              _replyTarget = comment;
-                                            });
-                                            // 🎯 키보드 포커스는 다음 프레임에 처리
-                                            WidgetsBinding.instance
-                                                .addPostFrameCallback((_) {
-                                                  if (mounted) {
-                                                    _focusNode.requestFocus();
-                                                  }
-                                                });
-                                          },
-                                          onProfileTap: (username) {
-                                            // 🎯 프로필 화면으로 이동
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder:
-                                                    (
-                                                      context,
-                                                    ) => UserProfileScreen(
-                                                      otherUser: User(
-                                                        username: username,
-                                                        profileImageUrl:
-                                                            comment
-                                                                .authorProfileImageUrl,
-                                                      ),
+                                        onLongPress:
+                                            (offset, comment) =>
+                                                _onLongPress(offset, comment),
+                                        onTapTargetComment:
+                                            _scrollToTargetComment,
+                                        targetComment: targetComment,
+                                        globalKey: commentKey,
+                                        bounceAnimationValue: 1.0,
+                                        isAnimating: false,
+                                        onSwipeReply: () {
+                                          // 🎯 setState와 requestFocus를 분리하여 블로킹 방지
+                                          setState(() {
+                                            _replyTarget = comment;
+                                          });
+                                          // 🎯 키보드 포커스는 다음 프레임에 처리
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                                if (mounted) {
+                                                  _focusNode.requestFocus();
+                                                }
+                                              });
+                                        },
+                                        onProfileTap: (username) {
+                                          // 🎯 프로필 화면으로 이동
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder:
+                                                  (
+                                                    context,
+                                                  ) => UserProfileScreen(
+                                                    otherUser: User(
+                                                      username: username,
+                                                      profileImageUrl:
+                                                          comment
+                                                              .authorProfileImageUrl,
                                                     ),
-                                              ),
-                                            );
-                                          },
-                                          postAuthorUsername:
-                                              widget
-                                                  .postAuthorUsername, // 🎯 포스트 작성자 전달
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                  // 🎯 로드 모어 스피너 (하단에 표시, reverse:false)
-                                  if (_isLoadingMore)
-                                    Positioned(
-                                      top: 8, // ✅ reverse:true: 과거 로드는 "위쪽"
-                                      left: 0,
-                                      right: 0,
-                                      child: Center(
-                                        child: AnimatedBuilder(
-                                          animation: _loadMoreSpinnerRotation,
-                                          builder: (context, child) {
-                                            return SizedBox(
-                                              width: 32,
-                                              height: 32,
-                                              child: CustomSpinner(
-                                                progress: 1.0,
-                                                isAnimating: true,
-                                                rotation:
-                                                    _loadMoreSpinnerRotation
-                                                        .value,
-                                              ),
-                                            );
-                                          },
-                                        ),
+                                                  ),
+                                            ),
+                                          );
+                                        },
+                                        postAuthorUsername:
+                                            widget
+                                                .postAuthorUsername, // 🎯 포스트 작성자 전달
+                                      ),
+                                    );
+                                  },
+                                ),
+                                // 🎯 로드 모어 스피너 (하단에 표시, reverse:false)
+                                if (_isLoadingMore)
+                                  Positioned(
+                                    top: 8, // ✅ reverse:true: 과거 로드는 "위쪽"
+                                    left: 0,
+                                    right: 0,
+                                    child: Center(
+                                      child: AnimatedBuilder(
+                                        animation: _loadMoreSpinnerRotation,
+                                        builder: (context, child) {
+                                          return SizedBox(
+                                            width: 32,
+                                            height: 32,
+                                            child: CustomSpinner(
+                                              progress: 1.0,
+                                              isAnimating: true,
+                                              rotation:
+                                                  _loadMoreSpinnerRotation
+                                                      .value,
+                                            ),
+                                          );
+                                        },
                                       ),
                                     ),
-                                ],
-                              );
-                            },
-                          );
-                        },
-                      ),
+                                  ),
+                              ],
+                            );
+                          },
+                        );
+                      },
                     ),
                   ),
                 ),

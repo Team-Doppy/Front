@@ -1,9 +1,7 @@
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
-import 'package:doppy/utils/format_utils.dart';
 
 class PostReaderHeader extends StatelessWidget {
   const PostReaderHeader({
@@ -42,11 +40,6 @@ class PostReaderHeader extends StatelessWidget {
   final VoidCallback onLikeTap;
   final VoidCallback onCommentTap;
   final bool isLiked; // ← 추가
-
-  Map<String, dynamic>? get _contentRoot {
-    final root = currentExportedData ?? exportedRoot;
-    return (root['content'] as Map<String, dynamic>?);
-  }
 
   // HEX 문자열(#RRGGBB 또는 AARRGGBB)을 Flutter Color로 변환
   Color _parseHexColor(String input) {
@@ -382,125 +375,120 @@ class PostReaderAppBar extends StatelessWidget {
       right: 0,
       child: IgnorePointer(
         ignoring: !showAppBar,
-        child: ClipRect(
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          height: barHeight,
+          color: Theme.of(context).colorScheme.background.withOpacity(1),
+          child: SafeArea(
+            bottom: false,
             child: Container(
-              height: barHeight,
-              color: Theme.of(context).colorScheme.background.withOpacity(1),
-              child: SafeArea(
-                bottom: false,
-                child: Container(
-                  height: kToolbarHeight,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        onPressed: onBack,
-                        icon: Icon(
-                          Icons.arrow_back_ios_new_rounded,
+              height: kToolbarHeight,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  IconButton(
+                    onPressed: onBack,
+                    icon: Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.75),
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  //  타이틀 표시 (헤더가 보이지 않을 때만, 즉 300px 이상일 때만)
+                  if (showAppBar)
+                    Expanded(
+                      child: AnimatedOpacity(
+                        opacity: scrollOffset > 200.0 ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOut,
+                        child: Text(
+                          title.isNotEmpty ? title : '포스트',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                  else
+                    const Spacer(),
+                  if (isMyPost) ...[
+                    // 🎯 뷰 카운트 (나만보기 포스트 제외)
+                    if (!isPrivate &&
+                        viewCount != null &&
+                        onViewCountTap != null)
+                      GestureDetector(
+                        onTap: onViewCountTap,
+                        child: Padding(
+                          padding: const EdgeInsets.only(
+                            right: 8.0,
+                            top: 3.0,
+                            left: 8.0,
+                          ),
+                          child: Icon(
+                            Icons.people_outline,
+                            size: 30,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(width: 4),
+                    // 수정
+                    GestureDetector(
+                      onTap: onEdit,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: SvgPicture.asset(
+                          'assets/icons/pen.svg',
+                          width: 26,
+                          height: 26,
                           color: Theme.of(
                             context,
-                          ).colorScheme.onSurface.withOpacity(0.75),
+                          ).colorScheme.onSurface.withOpacity(0.7),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+
+                    // 삭제
+                    GestureDetector(
+                      onTap: onDelete,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: SvgPicture.asset(
+                          'assets/icons/delete.svg',
+                          width: 26,
+                          height: 26,
+                          color: Colors.red.withOpacity(0.7),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ] else if (onMoreTap != null) ...[
+                    // 🎯 다른 사람 포스트일 때 more_vert 아이콘
+                    GestureDetector(
+                      onTap: onMoreTap,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Icon(
+                          Icons.more_vert,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.7),
                           size: 24,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      //  타이틀 표시 (헤더가 보이지 않을 때만, 즉 300px 이상일 때만)
-                      if (showAppBar)
-                        Expanded(
-                          child: AnimatedOpacity(
-                            opacity: scrollOffset > 200.0 ? 1.0 : 0.0,
-                            duration: const Duration(milliseconds: 200),
-                            curve: Curves.easeInOut,
-                            child: Text(
-                              title.isNotEmpty ? title : '포스트',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.onSurface,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                      else
-                        const Spacer(),
-                      if (isMyPost) ...[
-                        // 🎯 뷰 카운트 (나만보기 포스트 제외)
-                        if (!isPrivate &&
-                            viewCount != null &&
-                            onViewCountTap != null)
-                          GestureDetector(
-                            onTap: onViewCountTap,
-                            child: Padding(
-                              padding: const EdgeInsets.only(
-                                right: 8.0,
-                                top: 3.0,
-                                left: 8.0,
-                              ),
-                              child: Icon(
-                                Icons.people_outline,
-                                size: 30,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.7),
-                              ),
-                            ),
-                          ),
-                        const SizedBox(width: 4),
-                        // 수정
-                        GestureDetector(
-                          onTap: onEdit,
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: SvgPicture.asset(
-                              'assets/icons/pen.svg',
-                              width: 26,
-                              height: 26,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-
-                        // 삭제
-                        GestureDetector(
-                          onTap: onDelete,
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: SvgPicture.asset(
-                              'assets/icons/delete.svg',
-                              width: 26,
-                              height: 26,
-                              color: Colors.red.withOpacity(0.7),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ] else if (onMoreTap != null) ...[
-                        // 🎯 다른 사람 포스트일 때 more_vert 아이콘
-                        GestureDetector(
-                          onTap: onMoreTap,
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Icon(
-                              Icons.more_vert,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(0.7),
-                              size: 24,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                    ],
-                  ),
-                ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ],
               ),
             ),
           ),

@@ -765,52 +765,77 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                       ),
                     ),
                   ),
-                  if (!isUploading && _shouldShowTopDropLine())
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 2),
-                        child: AnimatedDropLine(
-                          child: Container(height: 5, color: AppColors.primary),
-                        ),
-                      ),
-                    ),
-                  if (!isUploading && _shouldShowLeftVerticalLine())
-                    Positioned(
-                      top: marginTop,
-                      bottom: marginBottom,
-                      left: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.only(right: 2),
-                        child: AnimatedDropLine(
-                          child: Container(width: 5, color: AppColors.primary),
-                        ),
-                      ),
-                    ),
-                  if (!isUploading && _shouldShowRightVerticalLine())
-                    Positioned(
-                      top: marginTop,
-                      bottom: marginBottom,
-                      right: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 2),
-                        child: AnimatedDropLine(
-                          child: Container(width: 5, color: AppColors.primary),
-                        ),
-                      ),
-                    ),
-                  if (!isUploading && _shouldShowBottomDropLine())
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: AnimatedDropLine(
-                          child: Container(height: 5, color: AppColors.primary),
-                        ),
+                  // ✅ 드롭라인: dragService 변경 시 자동 rebuild (싱글 이미지와 동일한 방식)
+                  if (widget.dragService != null && !isUploading)
+                    Positioned.fill(
+                      child: ListenableBuilder(
+                        listenable: widget.dragService!,
+                        builder: (context, _) {
+                          return Stack(
+                            children: [
+                              if (_shouldShowTopDropLine())
+                                Positioned(
+                                  top: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        height: 5,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_shouldShowLeftVerticalLine())
+                                Positioned(
+                                  top: marginTop,
+                                  bottom: marginBottom,
+                                  left: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(right: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        width: 5,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_shouldShowRightVerticalLine())
+                                Positioned(
+                                  top: marginTop,
+                                  bottom: marginBottom,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(left: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        width: 5,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_shouldShowBottomDropLine())
+                                Positioned(
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        height: 5,
+                                        color: AppColors.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
                       ),
                     ),
                 ],
@@ -1046,29 +1071,68 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     return false;
   }
 
+  /// 압축 중인지 확인 (편집 모드에서만)
+  bool _isCompressing(BuildContext context) {
+    if (!widget.isEditing) return false;
+    try {
+      return context.select<UploadService, bool>(
+        (service) => service.hasActiveCompressionForRef(widget.nodeId),
+      );
+    } catch (e) {
+      debugPrint('[ClipComponent] UploadService 확인 실패: $e');
+      return false;
+    }
+  }
+
+  /// 로컬 경로가 처리된(FFmpeg) 경로인지 확인
+  bool _isProcessedLocalPath() {
+    if (!widget.isEditing || widget.dragService == null) return false;
+    if (widget.url.isNotEmpty ||
+        widget.thumbnailPath.isEmpty ||
+        widget.localPath.isEmpty) {
+      return false;
+    }
+
+    try {
+      final editorService = widget.dragService!.editorService;
+      final node = editorService.document.getNodeById(widget.nodeId);
+      if (node is ClipNode) {
+        final original = node.metadata['originalLocalPath']?.toString() ?? '';
+        // processed로 교체되면 originalLocalPath가 생기고, 현재 localPath와 달라진다.
+        return original.isNotEmpty && original != widget.localPath;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// 썸네일을 로컬 비디오 대신 표시해야 하는지 확인
+  /// (원본 깜빡임 방지: 업로드 전에는 썸네일만 표시)
+  bool _shouldShowThumbnailInsteadOfLocal() {
+    if (!widget.isEditing) return false;
+    if (widget.url.isNotEmpty) return false; // 네트워크 URL이 있으면 재생
+    if (widget.thumbnailPath.isEmpty || widget.localPath.isEmpty) return false;
+    // 처리된 로컬 경로가 아니면 썸네일만 표시
+    return !_isProcessedLocalPath();
+  }
+
+  /// 네트워크 URL이 있는지 확인
+  bool _hasNetworkUrl() => widget.url.isNotEmpty;
+
+  /// 썸네일이 있는지 확인
+  bool _hasThumbnail() => widget.thumbnailPath.isNotEmpty;
+
+  /// 메타데이터에서 aspect ratio를 가져와서 반환 (없으면 기본값)
+  double _getAspectRatio() {
+    _loadMetadataAspectRatio();
+    return _metadataAspectRatio ?? (16 / 9);
+  }
+
   Widget _buildVideoContent(BuildContext context) {
     // 🎯 싱글 이미지와 동일: 부모 constraints를 따름 (스타일시트가 패딩을 자동으로 적용)
 
-    // 🎯 업로드 중 상태 확인 (편집 모드에서만, Selector로 최적화)
-    bool isUploading = false;
-    bool isCompressing = false;
-    if (widget.isEditing) {
-      try {
-        isUploading = context.select<UploadService, bool>(
-          (service) => service.hasActiveUploadForRef(widget.nodeId),
-        );
-        isCompressing = context.select<UploadService, bool>(
-          (service) => service.hasActiveCompressionForRef(widget.nodeId),
-        );
-      } catch (e) {
-        debugPrint('[ClipComponent] UploadService 확인 실패: $e');
-      }
-    }
-
     // ✅ 압축 중에는 원본 영상 컨트롤러를 만들지 않고 썸네일+로딩만 노출 (검정 화면 방지)
-    if (isCompressing) {
-      _loadMetadataAspectRatio();
-      final double aspect = _metadataAspectRatio ?? (16 / 9);
+    if (_isCompressing(context)) {
+      final aspect = _getAspectRatio();
       return AspectRatio(
         aspectRatio: aspect,
         child: Stack(
@@ -1097,49 +1161,54 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       );
     }
 
-    // 🎯 로컬 파일 경로가 있으면 바로 비디오 플레이어 표시 (썸네일 X)
-    if (widget.localPath.isNotEmpty) {
-      // 로컬 비디오를 바로 재생
-      return RepaintBoundary(
-        child: _VisibilityAwareVideoPlayer(
-          key: ValueKey('local_video_${widget.localPath}_${widget.nodeId}'),
-          nodeId: widget.nodeId,
-          url: '', // 로컬이므로 url은 빈 문자열
-          localPath: widget.localPath,
+    // ✅ (옵션 A) 편집 모드에서: url이 비어있고 thumbnailPath가 있으면,
+    //    "처리 완료 전"에는 로컬 비디오를 띄우지 않는다 (원본 깜빡임 방지)
+    if (_shouldShowThumbnailInsteadOfLocal()) {
+      final aspect = _getAspectRatio();
+      return AspectRatio(
+        aspectRatio: aspect,
+        child: _VideoPlayerWidget.buildThumbnailFallback(
+          context: context,
           thumbnailPath: widget.thumbnailPath,
-          isEditing: widget.isEditing,
           isDarkMode: widget.isDarkMode,
-          horizontalPadding: 0.0, // 🎯 더 이상 사용 안 함
-          isUploading: isUploading, // 업로드 중 표시
-          isProcessing: false,
-          dragService: widget.dragService, // 🎯 dragService 전달
         ),
       );
     }
 
-    // 네트워크 URL이 있으면 비디오 플레이어
-    if (widget.url.isNotEmpty) {
-      // 🎯 썸네일은 _VideoPlayerWidget 내부에서 처리하므로 여기서는 비디오 플레이어만 반환
+    // ✅ 네트워크 URL이 있으면 항상 네트워크를 우선 재생 (undo/redo 안정성 + 단일 소스)
+    if (_hasNetworkUrl()) {
       return RepaintBoundary(
         child: _VisibilityAwareVideoPlayer(
           key: ValueKey('video_${widget.url}_${widget.nodeId}'),
-          nodeId: widget.nodeId, // 🎯 nodeId 전달 (metadata 접근용)
+          nodeId: widget.nodeId,
           url: widget.url,
+          localPath: '', // ✅ url 우선 정책: 로컬 소스는 무시
           thumbnailPath: widget.thumbnailPath,
           isEditing: widget.isEditing,
           isDarkMode: widget.isDarkMode,
-          horizontalPadding: 0.0, // 🎯 더 이상 사용 안 함
+          horizontalPadding: 0.0,
           isUploading: false,
           isProcessing: false,
-          dragService: widget.dragService, // 🎯 dragService 전달
+          dragService: widget.dragService,
+        ),
+      );
+    }
+
+    // ✅ url이 비어있는 동안에는 로컬 비디오를 띄우지 않고 썸네일을 유지한다
+    if (_hasThumbnail()) {
+      final aspect = _getAspectRatio();
+      return AspectRatio(
+        aspectRatio: aspect,
+        child: _VideoPlayerWidget.buildThumbnailFallback(
+          context: context,
+          thumbnailPath: widget.thumbnailPath,
+          isDarkMode: widget.isDarkMode,
         ),
       );
     }
 
     // 🎯 url도 localPath도 없으면 shimmer 표시 (텍스트 깜빡임 방지)
-    _loadMetadataAspectRatio();
-    final double aspect = _metadataAspectRatio ?? (16 / 9);
-    // 🎯 싱글 이미지와 동일: AspectRatio만 사용 (부모 constraints를 따름)
+    final aspect = _getAspectRatio();
     return AspectRatio(
       aspectRatio: aspect,
       child: ShimmerBox(
@@ -1264,15 +1333,27 @@ class _VisibilityAwareVideoPlayerState
     final size = renderBox.size;
     final position = renderBox.localToGlobal(Offset.zero);
 
-    // 🎯 MediaQuery 호출 전 mounted 재확인
-    if (!mounted || _isDisposed) return;
-
-    // ✅ MediaQuery.of는 viewInsets 변화(키보드)에도 rebuild를 트리거할 수 있음.
-    // sizeOf는 "size" aspect만 구독하므로, 키보드(viewInsets) 변화로 인한 불필요한 rebuild를 줄인다.
-    final screenHeight = MediaQuery.sizeOf(this.context).height;
-
-    final viewportTop = 0.0;
-    final viewportBottom = screenHeight;
+    // ✅ "화면 전체" 대신, 가능한 경우 현재 위젯이 속한 Scrollable의 실제 viewport를 기준으로 계산한다.
+    // (에디터는 상/하단 바 등으로 스크롤 뷰포트가 화면 전체와 다를 수 있음)
+    double viewportTop = 0.0;
+    double viewportBottom;
+    try {
+      final scrollableState = Scrollable.of(context);
+      final viewportObj = scrollableState.context.findRenderObject();
+      final viewportBox = viewportObj is RenderBox ? viewportObj : null;
+      if (viewportBox != null && viewportBox.attached) {
+        final vpPos = viewportBox.localToGlobal(Offset.zero);
+        viewportTop = vpPos.dy;
+        viewportBottom = vpPos.dy + viewportBox.size.height;
+      } else {
+        // fallback: 화면 기준
+        final screenHeight = MediaQuery.sizeOf(this.context).height;
+        viewportBottom = screenHeight;
+      }
+    } catch (_) {
+      final screenHeight = MediaQuery.sizeOf(this.context).height;
+      viewportBottom = screenHeight;
+    }
 
     // 화면에 보이는 비율 계산
     final visibleTop = math.max(position.dy, viewportTop);
@@ -2255,6 +2336,76 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     }
   }
 
+  /// 컨트롤러 또는 메타데이터에서 aspect ratio 계산
+  double _getAspectRatio(BuildContext context) {
+    // 컨트롤러에서 직접 가져오기
+    final controllerSize = _controller?.value.size;
+    if (controllerSize != null && controllerSize.height > 0) {
+      return controllerSize.width / controllerSize.height;
+    }
+
+    // 메타데이터에서 가져오기 (편집 모드에서만)
+    if (widget.isEditing) {
+      try {
+        // ignore: invalid_use_of_visible_for_testing_member
+        final seState = context.findAncestorStateOfType<SuperEditorState>();
+        // ignore: invalid_use_of_visible_for_testing_member
+        final doc = seState?.editContext.editor.document;
+        final node = doc?.getNodeById(widget.nodeId);
+        if (node is ClipNode) {
+          final aspectRatioValue = node.metadata['aspectRatio'];
+          if (aspectRatioValue != null) {
+            final metadataAspectRatio =
+                (aspectRatioValue is num)
+                    ? aspectRatioValue.toDouble()
+                    : double.tryParse(aspectRatioValue.toString());
+            if (metadataAspectRatio != null) {
+              return metadataAspectRatio;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 기본값
+    return 16 / 9;
+  }
+
+  /// 자동재생을 기대하는 상태인데 아직 재생이 시작되지 않았는지 확인
+  /// (편집 모드에서 "ready지만 아직 첫 프레임/재생 시작 전" 구간에서 스피너 유지)
+  bool _shouldBlockUntilPlayStart() {
+    if (!widget.isEditing) return false;
+    if (!widget.shouldAutoPlay) return false;
+    if (_hasPlayedOnce || _isPausedByUser) return false;
+    final isPlayingNow = _controller?.value.isPlaying ?? _isPlaying;
+    return !isPlayingNow;
+  }
+
+  /// 로딩 스피너를 표시해야 하는지 확인
+  bool _shouldShowSpinner() {
+    // 읽기 모드: 업로드/처리 중일 때만
+    if (!widget.isEditing) {
+      return widget.isUploading || widget.isProcessing;
+    }
+
+    // 편집 모드: 여러 조건 체크
+    if (widget.isUploading || widget.isProcessing) return true;
+
+    final isBuffering = _controller?.value.isBuffering ?? false;
+    final isPlayingNow = _controller?.value.isPlaying ?? _isPlaying;
+
+    // 컨트롤러가 준비되지 않았고 재생 중이 아니면 스피너 표시
+    if (!_isReadyToPlay && !isPlayingNow) return true;
+
+    // 버퍼링 중이고 재생 중이 아니면 스피너 표시
+    if (isBuffering && !isPlayingNow) return true;
+
+    // 자동재생 대기 중이면 스피너 표시
+    if (_shouldBlockUntilPlayStart()) return true;
+
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_hasError) {
@@ -2286,45 +2437,8 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       );
     }
 
-    // 🎯 aspectRatio: 컨트롤러가 있으면 그 값, 없으면 metadata 또는 기본값
-    double? metadataAspectRatio;
-    if (widget.isEditing) {
-      try {
-        // ignore: invalid_use_of_visible_for_testing_member
-        final seState = context.findAncestorStateOfType<SuperEditorState>();
-        // ignore: invalid_use_of_visible_for_testing_member
-        final doc = seState?.editContext.editor.document;
-        final node = doc?.getNodeById(widget.nodeId);
-        if (node is ClipNode) {
-          final aspectRatioValue = node.metadata['aspectRatio'];
-          if (aspectRatioValue != null) {
-            metadataAspectRatio =
-                (aspectRatioValue is num)
-                    ? aspectRatioValue.toDouble()
-                    : double.tryParse(aspectRatioValue.toString());
-          }
-        }
-      } catch (_) {}
-    }
-    final controllerSize = _controller?.value.size;
-    final aspectRatio =
-        (controllerSize != null && controllerSize.height > 0)
-            ? (controllerSize.width / controllerSize.height)
-            : (metadataAspectRatio ?? (16 / 9));
-
-    // 로딩 상태: 업로드/압축/초기화/버퍼링 모두 포함
-    final isBuffering = _controller?.value.isBuffering ?? false;
-    final isPlayingNow = _controller?.value.isPlaying ?? _isPlaying;
-    // 🎯 읽기 모드(글 보기/임시저장 불러오기)에서는 업로드/처리 중이 아니면 로딩 스피너 표시 안 함
-    final shouldShowSpinner =
-        widget.isEditing
-            ? (widget.isUploading ||
-                widget.isProcessing ||
-                // ✅ 이미 재생이 시작된 경우(첫 프레임 렌더 가능)에는 로딩 오버레이를 숨긴다.
-                // iOS/AVPlayer는 isBuffering이 길게 true로 유지될 수 있어 UX가 나빠진다.
-                (!_isReadyToPlay && !isPlayingNow) ||
-                (isBuffering && !isPlayingNow))
-            : (widget.isUploading || widget.isProcessing);
+    final aspectRatio = _getAspectRatio(context);
+    final shouldShowSpinner = _shouldShowSpinner();
 
     // ✅ 항상 Stack 구조 유지:
     // Stack[

@@ -3,7 +3,7 @@ import 'dart:ui';
 
 import 'user_model.dart'; // User 모델 사용
 import 'group_member_model.dart';
-import 'package:doppy/utils/time_utils.dart';
+import 'package:flutter/foundation.dart';
 
 /// 그룹 컬러 파레트
 class GroupColorPalette {
@@ -24,6 +24,20 @@ class GroupColorPalette {
 }
 
 class Group {
+  // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+  static DateTime _parseUtcDateTime(String? value) {
+    if (value == null || value.isEmpty)
+      return DateTime.fromMillisecondsSinceEpoch(0).toUtc();
+    try {
+      final dateTime = DateTime.parse(value);
+      // UTC가 아니면 UTC로 변환
+      return dateTime.isUtc ? dateTime : dateTime.toUtc();
+    } catch (e) {
+      debugPrint('[Group] UTC 시간 파싱 실패: $value, 에러: $e');
+      return DateTime.fromMillisecondsSinceEpoch(0).toUtc();
+    }
+  }
+
   final int id;
   final String name;
   final String description;
@@ -78,9 +92,7 @@ class Group {
         username: (json['ownerId'] ?? json['owner_id'] ?? '').toString(),
         alias: (json['ownerId'] ?? json['owner_id'] ?? '').toString(),
       ),
-      createdAt:
-          TimeUtils.toLocalTimeOrNull((json['createdAt'] ?? '').toString()) ??
-          DateTime.fromMillisecondsSinceEpoch(0),
+      createdAt: _parseUtcDateTime((json['createdAt'] ?? '').toString()),
       members: parsedMembers,
       profileImageUrl: profileImageUrl,
       memberCount: (json['memberCount'] as num?)?.toInt(),

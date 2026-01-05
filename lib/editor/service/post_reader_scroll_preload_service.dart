@@ -26,14 +26,15 @@ class PostReaderScrollPreloadService {
   bool _isPreloading = false; // 현재 프리로드 중인지 여부 (중복 방지)
   int _preloadOp = 0; // dispose 시 프리로드 중단 토큰
   DateTime? _lastPreloadTriggerTime; // 🎯 마지막 프리로드 트리거 시간 (throttling용)
-  static const int _preloadBatchSize = 3; // 🎯 한 번에 프리로드할 미디어 노드 개수 (몰림 완화)
-  static const int _maxImagesPerPreloadBatch = 4; // 🎯 UI 끊김 방지용 이미지 상한 (몰림 완화)
+  static const int _preloadBatchSize = 3; // 🎯 적정값: 미디어 노드 3개씩 (과도한 병렬 방지)
+  static const int _maxImagesPerPreloadBatch =
+      4; // 🎯 적정값: 이미지 4개씩 (CPU/메모리 병목 방지)
   static const Duration _initialAsyncPreloadDelay = Duration(
-    milliseconds: 250,
-  ); // 🎯 첫 프레임 이후에도 약간 양보 (로딩 애니메이션 안정화)
+    milliseconds: 0,
+  ); // 🚀 속도 최우선: 100ms → 0ms로 제거
   static const Duration _preloadThrottleDuration = Duration(
-    milliseconds: 500,
-  ); // 🎯 프리로드 트리거 최소 간격
+    milliseconds: 300,
+  ); // 🚀 속도 향상: 500ms → 300ms로 감소
   bool _initialAsyncPreloadUnblocked = false;
   bool _initialAsyncPreloadScheduled = false;
   _PendingPreloadRequest? _pendingInitialRequest;
@@ -212,41 +213,66 @@ class PostReaderScrollPreloadService {
           );
         }
 
-        // 비디오 프리로드 (순차 실행)
+        // 🚀 비디오 프리로드 (제한된 병렬 실행)
+        // ⚠️ 비디오 프리로드 병렬 제한: 네트워크/decoder/플랫폼 플레이어 큐 병목 방지
         if (clipsToPreload.isNotEmpty) {
           futures.add(
             Future(() async {
-              for (final url in clipsToPreload) {
+              const int videoParallelLimit = 2; // 비디오는 2개씩만 병렬 처리
+
+              for (
+                int i = 0;
+                i < clipsToPreload.length;
+                i += videoParallelLimit
+              ) {
                 // 🎯 중단 체크: dispose 후에는 프리로드 중단
                 if (!mounted() || op != _preloadOp) {
-                  debugPrint('🛑 [프리로드 중단] 비디오 프리로드 중단: dispose됨');
                   return;
                 }
 
-                try {
-                  await PostReaderService.preloadVideoForReader(url);
-                } catch (e) {
-                  debugPrint('[ScrollPreload] 비디오 프리로드 실패: $url - $e');
-                  // 개별 실패는 무시하고 계속 진행
-                }
+                final batch =
+                    clipsToPreload.skip(i).take(videoParallelLimit).toList();
+
+                // 🚀 배치 내에서는 병렬, 배치 간에는 순차
+                await Future.wait(
+                  batch.map((url) async {
+                    // 🎯 중단 체크: dispose 후에는 프리로드 중단
+                    if (!mounted() || op != _preloadOp) {
+                      return;
+                    }
+
+                    try {
+                      await PostReaderService.preloadVideoForReader(url);
+                    } catch (e) {
+                      debugPrint('[ScrollPreload] 비디오 프리로드 실패: $url - $e');
+                      // 개별 실패는 무시하고 계속 진행
+                    }
+                  }),
+                  eagerError: false,
+                );
               }
             }),
           );
         }
 
-        // 🎯 병렬 실행 (이미지와 비디오 동시에) - 중단 가능하게
-        // Future.wait는 중단 불가능하므로, 각 Future를 개별적으로 체크하면서 실행
-        for (final future in futures) {
-          // 🎯 dispose 체크: 각 Future 전에 중단 확인
+        // 🚀 속도 최우선: 실제 병렬 실행 (이미지와 비디오 동시에)
+        // dispose 체크는 각 Future 내부에서 수행하므로 안전성 유지
+        if (futures.isNotEmpty) {
+          // 🎯 dispose 체크: 병렬 실행 시작 전 확인
           if (!mounted() || op != _preloadOp) {
-            debugPrint('🛑 [프리로드 중단] dispose됨 - 진행 중인 작업 취소');
+            debugPrint('🛑 [프리로드 중단] dispose됨 - 병렬 실행 시작 전 취소');
             _isPreloading = false;
             return;
           }
+
           try {
-            await future;
+            // 🚀 실제 병렬 실행: 이미지와 비디오를 동시에 처리
+            await Future.wait(
+              futures,
+              eagerError: false, // 하나 실패해도 계속 진행
+            );
           } catch (e) {
-            debugPrint('[ScrollPreload] 프리로드 Future 실패: $e');
+            debugPrint('[ScrollPreload] 병렬 프리로드 중 오류: $e');
             // 개별 실패는 무시하고 계속 진행
           }
         }

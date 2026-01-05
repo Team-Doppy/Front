@@ -24,6 +24,8 @@ import 'package:video_player/video_player.dart';
 /// 읽기 전용 포스트 복구 서비스
 /// PostReaderScreen에서 사용하는 MutableDocument 복원 로직
 class PostReaderService {
+  // 🎯 ImageCache 사이즈 복원용: 원래 사이즈 저장
+  static int? _originalImageCacheSizeBytes;
   bool _isDebug() {
     var v = false;
     assert(() {
@@ -884,11 +886,41 @@ class PostReaderService {
   /// 실패해도 계속 진행 (에러는 로그만 남김)
   /// 첫 N개 미디어 노드(이미지+영상 합쳐서)에 있는 모든 미디어를 프리로드
   /// 위쪽에 있는 스티커 이미지도 함께 프리로드
+  ///
+  /// 🎯 ImageCache 최적화: 읽기 화면 진입 시점에 캐시 사이즈 조정
   Future<void> preloadTopMedia(
     BuildContext context,
     Map<String, dynamic> content, {
     int mediaNodeCount = 3,
   }) async {
+    // 🎯 ImageCache 상한 관리: 읽기 화면 진입 시점에 캐시 사이즈 조정
+    final cache = imageCache;
+    final originalMaxSize = cache.maximumSizeBytes;
+    final originalSize = cache.currentSizeBytes;
+
+    // ⚠️ 원래 사이즈 저장 (dispose 시 복원용)
+    if (_originalImageCacheSizeBytes == null) {
+      _originalImageCacheSizeBytes = originalMaxSize;
+    }
+
+    // 🚀 읽기 화면에서는 캐시를 약간 키워서 eviction 방지
+    // - 기본값: 100MB, 읽기 화면: 150MB (대형 이미지 + 폰트 고려)
+    const int readingCacheSizeBytes = 150 * 1024 * 1024; // 150MB
+
+    if (originalMaxSize < readingCacheSizeBytes) {
+      cache.maximumSizeBytes = readingCacheSizeBytes;
+      debugPrint(
+        '[PostReaderService] 🎯 ImageCache 사이즈 조정: ${(originalMaxSize / 1024 / 1024).toStringAsFixed(1)}MB → ${(readingCacheSizeBytes / 1024 / 1024).toStringAsFixed(1)}MB',
+      );
+    }
+
+    // 🎯 eviction 모니터링 (디버그용)
+    if (kDebugMode) {
+      debugPrint(
+        '[PostReaderService] 📊 ImageCache 초기 상태: ${(cache.currentSizeBytes / 1024 / 1024).toStringAsFixed(1)}MB / ${(cache.maximumSizeBytes / 1024 / 1024).toStringAsFixed(1)}MB',
+      );
+    }
+
     // 첫 N개 미디어 노드(이미지+영상 합쳐서)에서 모든 미디어 URL 추출
     final mediaUrls = extractFirstMediaUrls(
       content,
@@ -917,68 +949,105 @@ class PostReaderService {
     debugPrint('═══════════════════════════════════════════════════════════');
     debugPrint('');
 
-    // 🎯 이미지와 비디오, 스티커를 순차 실행으로 프리로드 (Future.wait 제거 - dispose 안전성)
+    // 🚀 속도 최우선: 이미지와 스티커 통합 병렬 처리 + 배치 크기 증가
     final decodeWidth = EditorImageProvider.readingDecodeWidth(
       context,
       MediaQuery.sizeOf(context).width,
     );
 
-    // 🎯 Future.wait는 중단 불가능하므로, 순차 실행으로 변경 (dispose 안전성)
-    // 이미지와 스티커는 순차 실행, 비디오는 병렬 실행 (이미 순차 내부 처리)
+    // 🎯 적정 병렬 배치 크기: 중간~대형 이미지(피드용) 기준 2~3개
+    // - 8개는 CPU/메모리 병목으로 오히려 느려짐
+    // - decodeWidth가 최대 1920px이므로 중간~대형 이미지에 해당
+    const int parallelBatchSize = 3; // 최적 균형점
 
-    // 이미지 프리로드 (순차 실행)
-    if (imageUrls.isNotEmpty) {
-      for (final url in imageUrls) {
-        // 🎯 context dispose 체크
+    // 🎯 우선순위 기반 프리로드: 화면에 보일 확률 높은 순서
+    // 1순위: 이미지 (메인 콘텐츠)
+    // 2순위: 스티커 (보조 요소)
+    // ⚠️ 중복 제거: 같은 URL이 image + sticker에 동시에 들어올 수 있음
+    final prioritizedUrls =
+        <String>[
+          ...imageUrls,
+          ...stickerImageUrls,
+        ].toSet().toList(); // Set으로 dedup 후 List화
+
+    if (prioritizedUrls.isNotEmpty) {
+      // 🚀 체감 첫 렌더 최적화: 첫 1~2개만 await, 나머지는 fire-and-forget
+      // - 화면 진입을 막지 않으면서도 첫 화면 이미지는 확실히 로드
+      const int criticalCount = 2; // 반드시 보이는 첫 1~2개
+
+      // 🎯 1순위: 첫 1~2개는 await (화면 진입 전 필수)
+      final criticalUrls = prioritizedUrls.take(criticalCount).toList();
+      if (criticalUrls.isNotEmpty) {
         if (!context.mounted) {
           debugPrint('[PostReaderService] ⚠️ context dispose됨 - 이미지 프리로드 중단');
           return;
         }
-        try {
-          final built = EditorImageProvider.build(
-            url: url,
-            isEditing: false, // 읽기 모드
-            // ✅ 읽기 모드도 decodeWidth를 줘서 원본(대용량) 디코딩/캐시 점유를 줄이고,
-            // 홈 화면 썸네일/배경 캐시가 밀려나는 현상을 완화한다.
-            decodeWidth: decodeWidth,
-          );
-          // 🎯 effectiveProvider를 프리로드 (렌더링 시 사용하는 것과 정확히 동일)
-          await precacheImage(built.effectiveProvider, context);
-          debugPrint('[PostReaderService] ✅ 이미지 프리로드 완료: $url');
-        } catch (e) {
-          if (e.toString().contains('dispose') ||
-              e.toString().contains('mounted')) {
-            debugPrint('[PostReaderService] ⚠️ context dispose로 인한 중단: $url');
-            return;
-          }
-          debugPrint('[PostReaderService] ❌ 이미지 프리로드 실패: $url - $e');
-        }
-      }
-    }
 
-    // 스티커 이미지 프리로드 (순차 실행)
-    if (stickerImageUrls.isNotEmpty) {
-      for (final url in stickerImageUrls) {
-        // 🎯 context dispose 체크
-        if (!context.mounted) {
-          debugPrint('[PostReaderService] ⚠️ context dispose됨 - 스티커 프리로드 중단');
-          return;
-        }
-        try {
-          final built = EditorImageProvider.build(
-            url: url,
-            isEditing: false, // 읽기 모드
-            decodeWidth: decodeWidth,
-          );
-          await precacheImage(built.effectiveProvider, context);
-          debugPrint('[PostReaderService] ✅ 스티커 이미지 프리로드 완료: $url');
-        } catch (e) {
-          if (e.toString().contains('dispose') ||
-              e.toString().contains('mounted')) {
-            debugPrint('[PostReaderService] ⚠️ context dispose로 인한 중단: $url');
-            return;
-          }
-          debugPrint('[PostReaderService] ❌ 스티커 이미지 프리로드 실패: $url - $e');
+        await Future.wait(
+          criticalUrls.map((url) async {
+            try {
+              final built = EditorImageProvider.build(
+                url: url,
+                isEditing: false,
+                decodeWidth: decodeWidth,
+              );
+              await precacheImage(built.effectiveProvider, context);
+              final isSticker = stickerImageUrls.contains(url);
+              debugPrint(
+                '[PostReaderService] ✅ [필수] ${isSticker ? "스티커" : "이미지"} 프리로드 완료: $url',
+              );
+            } catch (e) {
+              if (e.toString().contains('dispose') ||
+                  e.toString().contains('mounted')) {
+                debugPrint(
+                  '[PostReaderService] ⚠️ context dispose로 인한 중단: $url',
+                );
+                return;
+              }
+              debugPrint('[PostReaderService] ❌ 이미지 프리로드 실패: $url - $e');
+            }
+          }),
+          eagerError: false,
+        );
+      }
+
+      // 🚀 2순위: 나머지는 fire-and-forget (화면 진입을 막지 않음)
+      final remainingUrls = prioritizedUrls.skip(criticalCount).toList();
+      if (remainingUrls.isNotEmpty) {
+        // 배치 단위로 fire-and-forget
+        for (int i = 0; i < remainingUrls.length; i += parallelBatchSize) {
+          if (!context.mounted) return;
+
+          final batch = remainingUrls.skip(i).take(parallelBatchSize).toList();
+
+          // 🚀 Future.microtask로 백그라운드 처리 (await 없음)
+          Future.microtask(() async {
+            if (!context.mounted) return;
+
+            await Future.wait(
+              batch.map((url) async {
+                try {
+                  final built = EditorImageProvider.build(
+                    url: url,
+                    isEditing: false,
+                    decodeWidth: decodeWidth,
+                  );
+                  await precacheImage(built.effectiveProvider, context);
+                  final isSticker = stickerImageUrls.contains(url);
+                  debugPrint(
+                    '[PostReaderService] ✅ [백그라운드] ${isSticker ? "스티커" : "이미지"} 프리로드 완료: $url',
+                  );
+                } catch (e) {
+                  if (e.toString().contains('dispose') ||
+                      e.toString().contains('mounted')) {
+                    return;
+                  }
+                  debugPrint('[PostReaderService] ❌ 이미지 프리로드 실패: $url - $e');
+                }
+              }),
+              eagerError: false,
+            );
+          });
         }
       }
     }
@@ -991,29 +1060,51 @@ class PostReaderService {
       debugPrint(
         '[PostReaderService] 🎬 비디오 ${clipUrls.length}개는 비동기 프리로드로 처리 (동기 프리로드에서 제외)',
       );
-      // 비동기로 백그라운드 프리로드 시작 (논블로킹)
+      // 🚀 비동기로 백그라운드 프리로드 시작 (제한된 병렬 처리)
+      // ⚠️ 비디오 프리로드 병렬 제한: 네트워크/decoder/플랫폼 플레이어 큐 병목 방지
       Future.microtask(() async {
-        for (final url in clipUrls) {
-          try {
-            await preloadVideoForReader(url);
-            debugPrint('[PostReaderService] ✅ 비디오 비동기 프리로드 완료: $url');
-          } catch (e) {
-            debugPrint('[PostReaderService] ⚠️ 비디오 비동기 프리로드 실패: $url - $e');
-            // 에러는 무시하고 계속 진행
-          }
+        const int videoParallelLimit = 2; // 비디오는 2개씩만 병렬 처리
+
+        for (int i = 0; i < clipUrls.length; i += videoParallelLimit) {
+          final batch = clipUrls.skip(i).take(videoParallelLimit).toList();
+
+          // 🚀 배치 내에서는 병렬, 배치 간에는 순차
+          await Future.wait(
+            batch.map((url) async {
+              try {
+                await preloadVideoForReader(url);
+                debugPrint('[PostReaderService] ✅ 비디오 비동기 프리로드 완료: $url');
+              } catch (e) {
+                debugPrint('[PostReaderService] ⚠️ 비디오 비동기 프리로드 실패: $url - $e');
+                // 에러는 무시하고 계속 진행
+              }
+            }),
+            eagerError: false,
+          );
         }
       });
     }
 
-    // 🎯 캐시 적용을 위해 한 프레임 대기
-    final completer = Completer<void>();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      completer.complete();
-    });
-    await completer.future;
+    // 🚀 속도 최우선: 프레임 대기 제거 (캐시는 자동으로 적용됨)
 
     // 🎯 폰트 프리로드 (동기적으로 실행)
     await _preloadFonts(context, content);
+
+    // 🎯 ImageCache eviction 체크 (디버그용)
+    if (kDebugMode) {
+      final finalSize = cache.currentSizeBytes;
+      // ⚠️ 정확한 eviction 판단은 아님 - 단순 size 비교는 false positive 가능
+      // 로직 분기용으로 쓰면 안 되고, 디버그 참고용으로만 사용
+      final sizeDecreased = originalSize > finalSize;
+      if (sizeDecreased) {
+        debugPrint(
+          '[PostReaderService] ⚠️ [참고용] ImageCache 크기 감소 감지: ${(originalSize / 1024 / 1024).toStringAsFixed(1)}MB → ${(finalSize / 1024 / 1024).toStringAsFixed(1)}MB (eviction 가능성)',
+        );
+      }
+      debugPrint(
+        '[PostReaderService] 📊 ImageCache 최종 상태: ${(finalSize / 1024 / 1024).toStringAsFixed(1)}MB / ${(cache.maximumSizeBytes / 1024 / 1024).toStringAsFixed(1)}MB',
+      );
+    }
 
     // 🎯 눈에 잘 띄는 동기 프리로드 완료 로그
     debugPrint('');
@@ -1120,51 +1211,60 @@ class PostReaderService {
     );
 
     try {
-      // ✅ Future.wait는 취소가 불가능해서, pop 시 캐시를 계속 밀어내는 원인이 될 수 있다.
-      // 따라서 순차 실행 + shouldContinue() 체크로 중단 가능하게 한다.
-      for (final url in imagesToPreload) {
-        if (shouldContinue != null && !shouldContinue()) return;
+      // 🎯 적정 병렬 배치 크기: 스크롤 프리로드는 더 보수적으로
+      // - 스크롤 중에는 UI 안정성이 더 중요
+      // - 배치 내에서는 병렬, 배치 간에는 shouldContinue() 체크로 중단 가능하게 유지
+      const int parallelBatchSize = 2; // 스크롤 프리로드는 2개씩 (안정성 우선)
 
-        // 🎯 context dispose 체크: precacheImage 호출 전에 확인
+      for (int i = 0; i < imagesToPreload.length; i += parallelBatchSize) {
+        // 🎯 dispose 체크: 배치 시작 전 확인
+        if (shouldContinue != null && !shouldContinue()) return;
         if (!context.mounted) {
           debugPrint('[PostReaderService] ⚠️ context dispose됨 - 이미지 프리로드 중단');
           return;
         }
 
-        try {
-          final built = EditorImageProvider.build(
-            url: url,
-            isEditing: false, // 읽기 모드
-            decodeWidth: decodeWidth,
-          );
+        final batch = imagesToPreload.skip(i).take(parallelBatchSize).toList();
 
-          // 🎯 context dispose 체크: precacheImage 호출 직전에 다시 확인
-          if (!context.mounted) {
-            debugPrint('[PostReaderService] ⚠️ context dispose됨 - 이미지 프리로드 중단');
-            return;
-          }
+        // 🚀 배치 내에서는 병렬 실행 (속도 향상)
+        await Future.wait(
+          batch.map((url) async {
+            // 🎯 각 이미지 처리 전 dispose 체크
+            if (shouldContinue != null && !shouldContinue()) return;
+            if (!context.mounted) return;
 
-          await precacheImage(
-            built.effectiveProvider,
-            context,
-            onError: (e, stack) {
-              debugPrint('[PostReaderService] ❌ 이미지 프리캐싱 실패: $url - $e');
-            },
-          );
-          _d('[PostReaderService] ✅ 이미지 프리캐싱 완료: $url');
+            try {
+              final built = EditorImageProvider.build(
+                url: url,
+                isEditing: false,
+                decodeWidth: decodeWidth,
+              );
 
-          // 🎯 UI 끊김(스피너 점프) 완화: 매 이미지 프리캐시 후 프레임을 양보
-          // - 디코딩/업로드가 몰리면 렌더 프레임이 크게 드랍될 수 있어, 작업을 확실히 분산한다.
-          await Future<void>.delayed(const Duration(milliseconds: 16));
-        } catch (e) {
-          // 🎯 context dispose 에러는 무시 (정상적인 상황)
-          if (e.toString().contains('dispose') ||
-              e.toString().contains('mounted')) {
-            debugPrint('[PostReaderService] ⚠️ context dispose로 인한 중단: $url');
-            return;
-          }
-          debugPrint('[PostReaderService] ❌ 이미지 프리캐싱 중 오류: $url - $e');
-        }
+              if (!context.mounted) return;
+
+              await precacheImage(
+                built.effectiveProvider,
+                context,
+                onError: (e, stack) {
+                  debugPrint('[PostReaderService] ❌ 이미지 프리캐싱 실패: $url - $e');
+                },
+              );
+              _d('[PostReaderService] ✅ 이미지 프리캐싱 완료: $url');
+            } catch (e) {
+              if (e.toString().contains('dispose') ||
+                  e.toString().contains('mounted')) {
+                debugPrint(
+                  '[PostReaderService] ⚠️ context dispose로 인한 중단: $url',
+                );
+                return;
+              }
+              debugPrint('[PostReaderService] ❌ 이미지 프리캐싱 중 오류: $url - $e');
+            }
+          }),
+          eagerError: false, // 하나 실패해도 계속 진행
+        );
+
+        // 🚀 속도 최우선: 배치 간 딜레이 제거 (16ms 절약)
       }
       _d('[PostReaderService] ✅ 이미지 프리캐싱 완료: ${imagesToPreload.length}개');
     } catch (e) {
@@ -1473,21 +1573,14 @@ class PostReaderService {
     required StickerService stickerService,
   }) {
     try {
-      // 스티커 복원
-      stickerService.removeAll();
-
       // content 안에 stickers가 있는지 확인
       final content = (exported['content'] as Map<String, dynamic>?) ?? {};
       final stickers =
           (content['stickers'] as List?) ??
           (exported['stickers'] as List?) ??
           [];
-
-      for (final stickerData in stickers) {
-        if (stickerData is Map<String, dynamic>) {
-          stickerService.addStickerFromData(stickerData);
-        }
-      }
+      // ✅ 편집 모드 진입/문서 복원 시에는 히스토리 스택을 오염시키지 않도록 "silent restore" 사용
+      stickerService.restoreFromExportedData(stickers);
     } catch (e) {
       debugPrint('[PostReaderService] Error restoring stickers: $e');
     }
@@ -1573,6 +1666,22 @@ class PostReaderService {
         postReaderService.rebuildDocumentForRead(currentExportedData),
         currentExportedData,
       );
+    }
+  }
+
+  /// ⚠️ ImageCache 사이즈 복원: 읽기 화면 이탈 시 원래 값으로 복원
+  /// PostReaderScreen의 dispose에서 호출
+  static void restoreImageCacheSize() {
+    if (_originalImageCacheSizeBytes != null) {
+      final cache = imageCache;
+      if (cache.maximumSizeBytes != _originalImageCacheSizeBytes) {
+        final currentSize = cache.maximumSizeBytes;
+        cache.maximumSizeBytes = _originalImageCacheSizeBytes!;
+        debugPrint(
+          '[PostReaderService] 🔄 ImageCache 사이즈 복원: ${(currentSize / 1024 / 1024).toStringAsFixed(1)}MB → ${(_originalImageCacheSizeBytes! / 1024 / 1024).toStringAsFixed(1)}MB',
+        );
+      }
+      _originalImageCacheSizeBytes = null; // 복원 후 초기화
     }
   }
 }

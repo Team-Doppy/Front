@@ -103,7 +103,6 @@ class _VideoEditState {
   double sharpness = 0.0; // 0 ~ 100
   double temperature = 0.0; // -100 ~ 100 (차갑게 ~ 따뜻하게)
   double blur = 0.0; // 0 ~ 100
-  double vignette = 0.0; // 0 ~ 100
 
   // 필터 관련 상태
   FilterModel? selectedFilter;
@@ -164,7 +163,6 @@ class _EditSnapshot {
     required this.sharpness,
     required this.temperature,
     required this.blur,
-    required this.vignette,
     required this.selectedFilter,
     required this.filterIntensity,
     required this.playbackSpeed,
@@ -190,7 +188,6 @@ class _EditSnapshot {
   final double sharpness;
   final double temperature;
   final double blur;
-  final double vignette;
 
   final FilterModel? selectedFilter;
   final double filterIntensity;
@@ -215,7 +212,6 @@ class _EditSnapshot {
       sharpness: s.sharpness,
       temperature: s.temperature,
       blur: s.blur,
-      vignette: s.vignette,
       selectedFilter: s.selectedFilter,
       filterIntensity: s.filterIntensity,
       playbackSpeed: s.playbackSpeed,
@@ -244,7 +240,6 @@ class _EditSnapshot {
     s.sharpness = sharpness;
     s.temperature = temperature;
     s.blur = blur;
-    s.vignette = vignette;
 
     s.selectedFilter = selectedFilter;
     s.filterIntensity = filterIntensity;
@@ -268,7 +263,6 @@ class _EditSnapshot {
         sharpness == other.sharpness &&
         temperature == other.temperature &&
         blur == other.blur &&
-        vignette == other.vignette &&
         selectedFilter == other.selectedFilter &&
         filterIntensity == other.filterIntensity &&
         playbackSpeed == other.playbackSpeed;
@@ -1535,9 +1529,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         case AdjustmentType.blur:
           state.blur = 0.0;
           break;
-        case AdjustmentType.vignette:
-          state.vignette = 0.0;
-          break;
       }
       _saveToHistorySnapshot(_currentIndex);
     });
@@ -1723,7 +1714,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
       sharpness: s.sharpness,
       temperature: s.temperature,
       blur: s.blur,
-      vignette: s.vignette,
       filterName: s.selectedFilter?.name,
       filterIntensity: s.filterIntensity,
     );
@@ -2557,10 +2547,9 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
 
     final baseVideo = _buildVideoCore(controller, state);
 
-    // ColorFilter, Blur, Vignette 적용
+    // ColorFilter, Blur 적용
     Widget videoWidget = baseVideo;
     final blurSigma = (state.blur / 100.0) * 20.0;
-    final vignetteIntensity = state.vignette / 100.0;
 
     if (_getColorFilter(state) != null) {
       videoWidget = ColorFiltered(
@@ -2571,11 +2560,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
 
     videoWidget = ImageFiltered(
       imageFilter: ui.ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-      child: videoWidget,
-    );
-
-    videoWidget = CustomPaint(
-      painter: _VignettePainter(intensity: vignetteIntensity),
       child: videoWidget,
     );
 
@@ -2660,13 +2644,12 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
             : null;
 
     // ✅ 조정 모드일 때는 key를 고정하여 위젯 재생성 방지 (비디오 크기 고정)
-    // ✅ blur/vignette도 항상 적용하여 위젯 트리 구조를 일정하게 유지 (깜빡임 방지)
+    // ✅ blur도 항상 적용하여 위젯 트리 구조를 일정하게 유지 (깜빡임 방지)
     final blurSigma = (state.blur / 100.0) * 20.0;
-    final vignetteIntensity = state.vignette / 100.0;
 
     Widget videoWidget = baseVideo;
 
-    // ColorFilter 적용 (blur/vignette 제외)
+    // ColorFilter 적용 (blur 제외)
     if (_getColorFilter(state) != null) {
       videoWidget = ColorFiltered(
         key:
@@ -2685,12 +2668,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
     // Blur 적용 (항상 적용하되, blur가 0이면 sigma도 0으로 설정)
     videoWidget = ImageFiltered(
       imageFilter: ui.ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-      child: videoWidget,
-    );
-
-    // Vignette 적용 (항상 적용하되, vignette가 0이면 intensity도 0으로 설정)
-    videoWidget = CustomPaint(
-      painter: _VignettePainter(intensity: vignetteIntensity),
       child: videoWidget,
     );
 
@@ -4262,8 +4239,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
           ..exposure = state.exposure
           ..sharpness = state.sharpness
           ..temperature = state.temperature
-          ..blur = state.blur
-          ..vignette = state.vignette;
+          ..blur = state.blur;
 
     return AdjustmentEditorBottomSheet(
       key: _adjustmentEditorKey,
@@ -4278,7 +4254,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
           state.sharpness = newState.sharpness;
           state.temperature = newState.temperature;
           state.blur = newState.blur;
-          state.vignette = newState.vignette;
         });
         // ✅ 슬라이더 드래그 중에는 히스토리에 저장하지 않음 (드래그 종료 시 저장)
       },
@@ -4292,42 +4267,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         _saveToHistorySnapshot(_currentIndex);
       },
     );
-  }
-}
-
-/// Vignette 효과 페인터
-class _VignettePainter extends CustomPainter {
-  final double intensity; // 0.0 ~ 1.0
-
-  _VignettePainter({required this.intensity});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (intensity <= 0.0) return;
-
-    final maxRadius = math.max(size.width, size.height) * 0.8;
-
-    // 그라데이션으로 비네팅 효과 생성
-    final gradient = RadialGradient(
-      center: Alignment.center,
-      radius: maxRadius,
-      colors: [Colors.transparent, Colors.black.withOpacity(intensity * 0.6)],
-      stops: const [0.3, 1.0],
-    );
-
-    final paint =
-        Paint()
-          ..shader = gradient.createShader(
-            Rect.fromLTWH(0, 0, size.width, size.height),
-          )
-          ..blendMode = BlendMode.multiply;
-
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
-  }
-
-  @override
-  bool shouldRepaint(_VignettePainter oldDelegate) {
-    return oldDelegate.intensity != intensity;
   }
 }
 

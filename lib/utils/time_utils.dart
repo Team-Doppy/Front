@@ -4,9 +4,11 @@ import 'package:doppy/l10n/app_localizations.dart';
 /// 시간 관련 유틸리티 함수
 /// UTC 시간을 로컬 시간으로 변환하는 기능 제공
 class TimeUtils {
-  /// UTC 시간 문자열(ISO 8601)을 로컬 DateTime으로 변환
+  /// UTC 또는 로컬 시간 문자열(ISO 8601)을 로컬 DateTime으로 변환
   ///
-  /// [utcString] 예: "2024-01-01T12:00:00Z" 또는 "2024-01-01T12:00:00.000Z"
+  /// [utcString] 예:
+  /// - UTC: "2024-01-01T12:00:00Z" 또는 "2024-01-01T12:00:00.000Z"
+  /// - 로컬: "2024-01-01T12:00:00+09:00" (타임존 정보 포함)
   ///
   /// 반환: 로컬 시간대의 DateTime
   static DateTime toLocalTime(String utcString) {
@@ -14,7 +16,7 @@ class TimeUtils {
       // ISO 8601 형식 파싱
       final dateTime = DateTime.parse(utcString);
 
-      // 이미 로컬 시간이면 그대로 반환
+      // UTC 시간이면 로컬로 변환
       if (dateTime.isUtc) {
         return dateTime.toLocal();
       }
@@ -24,8 +26,10 @@ class TimeUtils {
       );
 
       if (hasTimeZoneInfo) {
-        // ISO 문자열이 Z 또는 +hh:mm 오프셋을 포함하면 DateTime.parse가 이미 현지화 처리
-        return dateTime.toLocal();
+        // ✅ 타임존 정보가 포함된 경우 (예: +09:00)
+        // DateTime.parse는 이미 타임존 정보를 반영하여 파싱하므로
+        // 추가 변환 없이 그대로 반환 (이미 로컬 시간대 기준)
+        return dateTime;
       }
 
       // 타임존 정보가 없지만 서버는 UTC로 보낸다고 가정 → UTC로 간주 후 변환
@@ -145,11 +149,15 @@ class TimeUtils {
   }
 
   /// 상대 시간 포맷팅 (로케일 적용)
-  /// [dateTime]은 로컬 시간이어야 합니다.
+  /// ✅ UTC 기준으로 계산 (타임존 문제 없음)
+  /// [dateTime]은 UTC DateTime이어야 합니다.
   static String formatRelativeTime(BuildContext context, DateTime dateTime) {
     final loc = AppLocalizations.of(context);
-    final now = DateTime.now();
-    final difference = now.difference(dateTime);
+    // ✅ 현재 시간을 UTC로 변환하여 비교
+    final nowUtc = DateTime.now().toUtc();
+    // ✅ dateTime이 UTC가 아니면 UTC로 변환
+    final dateTimeUtc = dateTime.isUtc ? dateTime : dateTime.toUtc();
+    final difference = nowUtc.difference(dateTimeUtc);
 
     // ✅ 음수 Duration 처리 (미래 시간인 경우)
     if (difference.isNegative) {

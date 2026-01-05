@@ -2430,6 +2430,8 @@ class CommentService extends ChangeNotifier {
       // 🎯 이미 실패 상태가 아니면 변경 (즉시 UI 업데이트)
       if (!comment.isFailed) {
         _comments[index] = comment.copyWith(isPending: false, isFailed: true);
+        // ✅ 길이가 유지되어도 UI가 최신 Comment 객체를 보도록 정렬 캐시 무효화
+        _sortedCacheLength = -1;
         // 🎯 즉시 UI 업데이트 (재시도 버튼 표시)
         notifyListeners();
         debugPrint('[CommentService] 댓글을 실패 상태로 표시 및 UI 업데이트: $commentId');
@@ -2545,6 +2547,8 @@ class CommentService extends ChangeNotifier {
             emotionCounts: newEmotionCounts,
             emotionUsers: newEmotionUsers,
           );
+          // ✅ 길이가 유지되어도 UI가 최신 Comment 객체를 보도록 정렬 캐시 무효화
+          _sortedCacheLength = -1;
           notifyListeners();
         }
         return; // 🎯 임시 댓글이면 서버 요청 없이 종료
@@ -2653,6 +2657,8 @@ class CommentService extends ChangeNotifier {
           emotionCounts: newEmotionCounts,
           emotionUsers: newEmotionUsers,
         );
+        // ✅ 길이가 유지되어도 UI가 최신 Comment 객체를 보도록 정렬 캐시 무효화
+        _sortedCacheLength = -1;
 
         // 🎯 즉시 UI 업데이트 (낙관적 업데이트)
         notifyListeners();

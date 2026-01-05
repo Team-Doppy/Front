@@ -20,6 +20,7 @@ class StickerOverlay extends StatefulWidget {
     this.initialImage,
     this.initialDrawingStrokes,
     this.scrollController,
+    this.uploadRefId,
   });
 
   final void Function({
@@ -35,6 +36,8 @@ class StickerOverlay extends StatefulWidget {
   final Uint8List? initialImage;
   final List<Map<String, dynamic>>? initialDrawingStrokes;
   final ScrollController? scrollController;
+  // ✅ 드로잉 업로드 등 "노드 id가 없는 업로드"를 editor 세션 refId로 묶기 위한 값
+  final String? uploadRefId;
 
   @override
   State<StickerOverlay> createState() => _StickerOverlayState();
@@ -66,6 +69,7 @@ class _StickerOverlayState extends State<StickerOverlay> {
       return DrawingOverlay(
         initialStrokes: widget.initialDrawingStrokes,
         scrollController: widget.scrollController,
+        uploadRefId: widget.uploadRefId,
         onSubmitDrawing: (strokes, position, {int? groupIndex}) {
           // 🎯 PNG 또는 벡터 데이터 전달
           widget.onSubmit(

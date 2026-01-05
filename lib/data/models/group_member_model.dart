@@ -1,7 +1,20 @@
 // lib/data/models/group_member_model.dart
-import 'package:doppy/utils/time_utils.dart';
+import 'package:flutter/foundation.dart';
 
 class GroupMember {
+  // ✅ UTC 문자열을 UTC DateTime으로 파싱 (로컬 변환 없이)
+  static DateTime _parseUtcDateTime(String? value) {
+    if (value == null || value.isEmpty) return DateTime.now().toUtc();
+    try {
+      final dateTime = DateTime.parse(value);
+      // UTC가 아니면 UTC로 변환
+      return dateTime.isUtc ? dateTime : dateTime.toUtc();
+    } catch (e) {
+      debugPrint('[GroupMember] UTC 시간 파싱 실패: $value, 에러: $e');
+      return DateTime.now().toUtc();
+    }
+  }
+
   final int id;
   final int groupId;
   final String userId; // API 응답의 userId 필드
@@ -41,8 +54,8 @@ class GroupMember {
           (json['profileImageUrl'] ?? json['profile_image_url']) as String?,
       joinedAt:
           (createdAt is String && createdAt.isNotEmpty)
-              ? TimeUtils.toLocalTimeOrNull(createdAt) ?? DateTime.now()
-              : DateTime.now(),
+              ? _parseUtcDateTime(createdAt)
+              : DateTime.now().toUtc(),
     );
   }
 }

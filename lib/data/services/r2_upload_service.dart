@@ -138,16 +138,31 @@ class R2UploadService {
     }
   }
 
+  // ✅ 업로드 hang 방지 타임아웃
+  static const Duration _r2PutTimeoutDefault = Duration(minutes: 1);
+  // 영상 업로드 타임아웃 (1분짜리 영상 기준으로 5분 충분)
+  static const Duration _r2PutTimeoutVideo = Duration(minutes: 5);
+
+  Duration _pickPutTimeout(String mimeType) {
+    if (mimeType.startsWith('video/')) return _r2PutTimeoutVideo;
+    return _r2PutTimeoutDefault;
+  }
+
   /// R2 직접 업로드 (단일 파일) - AWS Signature V4 사용
   Future<UploadResult> uploadFileToR2(
     File file,
     UploadKeyResponse uploadKey,
     Function(String fileName, double progress)? onProgress,
+    bool Function()? isCancelled,
   ) async {
     try {
+      if (isCancelled != null && isCancelled()) {
+        throw Exception('cancelled');
+      }
       final config = await getR2Config();
       final fileSize = await file.length();
       final mimeType = _getMimeType(file.path);
+      final putTimeout = _pickPutTimeout(mimeType);
 
       debugPrint(
         '[R2UploadService] R2 업로드 시작: ${uploadKey.fileName} (${fileSize} bytes)',
@@ -204,17 +219,53 @@ class R2UploadService {
       // R2에 직접 업로드
       debugPrint('[R2UploadService] PUT 요청 전송: $uploadUrl');
       debugPrint('[R2UploadService] Headers: ${headers.toString()}');
+      if (isCancelled != null && isCancelled()) {
+        throw Exception('cancelled');
+      }
 
-      final streamedResponse = await request.send();
+      // ✅ 취소 지원을 위해 명시적 client 사용 (취소 시 close로 중단 시도)
+      final client = http.Client();
+      http.StreamedResponse streamedResponse;
+      try {
+        streamedResponse = await client
+            .send(request)
+            .timeout(
+              putTimeout,
+              onTimeout: () {
+                client.close();
+                throw TimeoutException('R2 PUT timeout', putTimeout);
+              },
+            );
+      } finally {
+        // client는 응답 스트림 소비 후 닫는 게 이상적이지만,
+        // 취소 시에는 close로 즉시 중단을 시도하기 위해 여기서 닫지 않는다.
+      }
 
       // 스트림 응답을 읽어서 진행률 업데이트
       final responseBytes = <int>[];
-      await for (final chunk in streamedResponse.stream) {
-        responseBytes.addAll(chunk);
-        // 업로드는 이미 전송 완료되었으므로 90%로 설정
-        if (onProgress != null) {
-          onProgress(uploadKey.fileName, 0.9);
+      try {
+        await for (final chunk in streamedResponse.stream.timeout(
+          putTimeout,
+          onTimeout: (sink) {
+            client.close();
+            sink.addError(
+              TimeoutException('R2 response stream timeout', putTimeout),
+            );
+            sink.close();
+          },
+        )) {
+          if (isCancelled != null && isCancelled()) {
+            client.close(); // ✅ 가능한 한 빨리 연결 중단 시도
+            throw Exception('cancelled');
+          }
+          responseBytes.addAll(chunk);
+          // 업로드는 이미 전송 완료되었으므로 90%로 설정
+          if (onProgress != null) {
+            onProgress(uploadKey.fileName, 0.9);
+          }
         }
+      } finally {
+        client.close();
       }
 
       final response = http.Response.bytes(
@@ -258,6 +309,7 @@ class R2UploadService {
     List<File> files,
     List<UploadKeyResponse> uploadKeys,
     Function(String fileName, double progress)? onProgress,
+    bool Function()? isCancelled,
   ) async {
     if (files.length != uploadKeys.length) {
       throw Exception('파일 개수와 업로드 키 개수가 일치하지 않습니다');
@@ -269,7 +321,7 @@ class R2UploadService {
         final index = entry.key;
         final file = entry.value;
         final uploadKey = uploadKeys[index];
-        return uploadFileToR2(file, uploadKey, onProgress);
+        return uploadFileToR2(file, uploadKey, onProgress, isCancelled);
       }),
       eagerError: false, // 일부 실패해도 나머지 결과 반환
     );
@@ -629,6 +681,7 @@ class R2UploadService {
     Function(String message, double progress)? onProgress,
     int maxRetries = 3,
     String? pathPrefix, // 🎯 경로 prefix (예: 'chat/username')
+    bool Function()? isCancelled,
   }) async {
     try {
       if (files.isEmpty) {
@@ -643,6 +696,9 @@ class R2UploadService {
       // 1. 업로드 키 생성 (10%)
       if (onProgress != null) {
         onProgress('업로드 키 생성 중...', 0.1);
+      }
+      if (isCancelled != null && isCancelled()) {
+        throw Exception('cancelled');
       }
 
       List<UploadKeyResponse> uploadKeys;
@@ -677,7 +733,7 @@ class R2UploadService {
             final totalProgress = 0.3 + (fileProgress * 0.5);
             onProgress('$fileName 업로드 중...', totalProgress);
           }
-        });
+        }, isCancelled);
 
         // 🎯 업로드 완료 즉시 메타데이터 전송 시작 (병렬로 실행, 기다리지 않음)
         _registerMetadataWithRetry(

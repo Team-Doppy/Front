@@ -8,6 +8,7 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 /// 프로필 사진 전체 화면
 class ProfileImageViewScreen extends StatefulWidget {
@@ -360,23 +361,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                 ),
               ),
 
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 16.0),
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: Text(
-                    AppLocalizations.of(context).translate('profile_image'),
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurface,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-
             // 하단 버튼들
             SafeArea(
               child: Align(
@@ -393,8 +377,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                               ? (_isAdjustMode
                                   ? const SizedBox.shrink()
                                   : Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceEvenly,
+                                    mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
                                       _buildCircleButton(
                                         context: context,
@@ -417,6 +400,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                           }
                                         },
                                       ),
+                                      const SizedBox(width: 12),
                                       _buildCircleButton(
                                         context: context,
                                         icon: Icons.tune,
@@ -425,6 +409,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                         ).translate('adjust'),
                                         onTap: _enterAdjustMode,
                                       ),
+                                      const SizedBox(width: 12),
                                       _buildCircleButton(
                                         context: context,
                                         icon: Icons.close,
@@ -463,8 +448,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                               : _isDefaultImageMode
                               ? // 기본이미지 모드: 확인, 취소 버튼 표시
                               Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   _buildCircleButton(
                                     context: context,
@@ -477,6 +461,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                       Navigator.pop(context);
                                     },
                                   ),
+                                  const SizedBox(width: 24),
                                   _buildCircleButton(
                                     context: context,
                                     icon: Icons.close,
@@ -492,8 +477,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                 ],
                               )
                               : Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   // 공유하기 버튼
                                   _buildCircleButton(
@@ -505,10 +489,11 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                     onTap: widget.onShareProfile,
                                   ),
 
+                                  const SizedBox(width: 24),
+
                                   // 갤러리선택 버튼
-                                  _buildCircleButton(
+                                  _buildGalleryButton(
                                     context: context,
-                                    icon: Icons.photo_library,
                                     label: AppLocalizations.of(
                                       context,
                                     ).translate('select_from_gallery'),
@@ -516,6 +501,8 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                       _showMediaPicker();
                                     },
                                   ),
+
+                                  const SizedBox(width: 24),
 
                                   // 기본이미지 버튼
                                   _buildCircleButton(
@@ -605,6 +592,51 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
               shape: BoxShape.circle,
             ),
             child: Icon(icon, color: theme.colorScheme.surface, size: 28),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(
+              color: theme.colorScheme.onSurface,
+              fontSize: 13,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGalleryButton({
+    required BuildContext context,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.onSurface,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: SvgPicture.asset(
+                'assets/icons/editor_gallery.svg',
+                width: 28,
+                height: 28,
+                colorFilter: ColorFilter.mode(
+                  theme.colorScheme.surface,
+                  BlendMode.srcIn,
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 8),
           Text(
