@@ -1017,8 +1017,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
   final Map<int, Future<Uint8List?>> _thumbnailFutures = {};
 
   // ✅ “확 바뀌는 것” 방지용: 이전 프레임 비디오 보관 + 크로스페이드
-  final Map<int, int> _applyAnimVersion = {};
-  static const Duration _applySettleDuration = Duration(milliseconds: 140);
+  // (영상) 현재 크롭 진입 settle(1.02→1.0)을 비활성화했기 때문에 version 키는 사용하지 않는다.
 
   // 비디오별 편집 상태 관리
   final Map<int, _VideoEditState> _videoEditStates = {};
@@ -3024,7 +3023,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                     Builder(
                       builder: (context) {
                         final controller = _videoControllers[index];
-                        final v = _applyAnimVersion[index] ?? 0;
+                        // final v = _applyAnimVersion[index] ?? 0; // settle 비활성화로 미사용
                         final isDark =
                             Theme.of(context).brightness == Brightness.dark;
                         final fgColor =
@@ -3066,23 +3065,13 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                           child: IgnorePointer(
                             // 비디오 레이어는 터치 이벤트를 차단 (GestureDetector가 처리)
                             child: RepaintBoundary(
-                              child: TweenAnimationBuilder<double>(
-                                key: ValueKey('apply_settle_$index\_$v'),
-                                tween: Tween(begin: 1.02, end: 1.0),
-                                duration: _applySettleDuration,
-                                curve: Curves.easeOutCubic,
-                                builder: (context, s, _) {
-                                  return Transform.scale(
-                                    scale: s,
-                                    alignment: Alignment.center,
-                                    child: _buildRotatedVideoForCrop(
-                                      controller,
-                                      state,
-                                      cropRectScreen,
-                                      imageRectForCrop,
-                                    ),
-                                  );
-                                },
+                              // ✅ 이미지 에디터와 동일: 크롭 진입 순간의 settle(1.02→1.0)이
+                              // "1회 팍 튐"으로 보일 수 있어 크롭 모드에서는 비활성화한다.
+                              child: _buildRotatedVideoForCrop(
+                                controller,
+                                state,
+                                cropRectScreen,
+                                imageRectForCrop,
                               ),
                             ),
                           ),

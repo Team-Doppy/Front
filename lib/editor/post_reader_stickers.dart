@@ -114,8 +114,8 @@ class _PostReaderStickersState extends State<PostReaderStickers> {
                     : 0.0;
 
             // ✅ topInset 결정:
-            // 1) 호출자가 topInset을 명시하면 그 값을 사용 (고정)
-            // 2) 아니면 문서 시작 마커를 기준으로 자동 측정
+            double baseTopInset = 0.0;
+
             double autoInset = _cachedAutoTopInset ?? 0.0;
             if (widget.topInset == null && autoInset == 0.0) {
               autoInset = _measureAutoTopInset();
@@ -130,7 +130,7 @@ class _PostReaderStickersState extends State<PostReaderStickers> {
                 });
               }
             }
-            final baseTopInset = widget.topInset ?? autoInset;
+            baseTopInset = widget.topInset ?? autoInset;
 
             // ✅ URL 이미지 decodeWidth는 스티커마다 동일하므로 루프 밖에서 1회만 계산
             final screenWidth = constraints.maxWidth;
@@ -273,9 +273,13 @@ class _PostReaderStickersState extends State<PostReaderStickers> {
               // 최종 스케일: 저장된 스케일 * 앵커 스케일 보정
               final double finalScale = baseScale * anchorScale;
 
+              // ✅ WriterStickerCanvas와 동일한 기본 수식:
+              // top = pos.dy - scrollY (리더 오버레이에서는 touchPadding이 없으므로 제외)
               double left = absPos.dx + widget.positionCorrection.dx;
-              double top =
-                  topPos + baseTopInset + widget.positionCorrection.dy - 26;
+              double top;
+
+              top = topPos + baseTopInset + widget.positionCorrection.dy;
+
               // ✅ PostwriteScreen 방식: 중심 보정 없음 (좌상단 기준)
 
               children.add(

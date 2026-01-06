@@ -26,6 +26,8 @@ import 'adjustment_editor.dart';
 import 'filter_editor.dart';
 import 'utils/filter_presets.dart';
 import 'package:doppy/utils/image_size_utils.dart';
+import 'package:doppy/overlay_engine/widgets/overlay_stage.dart';
+import 'package:doppy/overlay_engine/controller/overlay_controller.dart';
 
 /// 간단한 커스텀 이미지 편집 화면
 /// 바텀시트 기반 UI, Undo/Redo, 실시간 미리보기 제공
@@ -68,7 +70,7 @@ class SimpleImageEditorScreen extends StatefulWidget {
       _SimpleImageEditorScreenState();
 }
 
-enum _EditMode { none, crop, adjust, filter }
+enum _EditMode { none, crop, adjust, filter, sticker }
 
 // 이미지별 편집 상태
 class _ImageEditState {
@@ -440,6 +442,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         return 280;
       case _EditMode.adjust:
         return 320; // 크롭과 동일한 높이
+      case _EditMode.sticker:
+        return 320; // 스티커 선택 패널 높이
       case _EditMode.none:
         return 250;
     }
@@ -451,6 +455,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
             ? _buildCropBottomSheet()
             : _editMode == _EditMode.filter
             ? _buildFilterBottomSheet()
+            : _editMode == _EditMode.sticker
+            ? _buildStickerBottomSheet()
             : _buildAdjustmentBottomSheet();
 
     // ✅ editor 영역은 항상 스크롤 가능해야 overflow가 나지 않고 히트테스트도 안정적이다.
@@ -498,6 +504,9 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   final Map<int, _EditSnapshot> _panelSessionSnapshots = {};
   // ✅ 조정/필터 세션 시작 시점의 히스토리 길이: 취소 시 세션 중 쌓인 스냅샷을 롤백하기 위함
   final Map<int, int> _panelSessionHistoryLengths = {};
+
+  // ✅ 오버레이 컨트롤러 (이미지별)
+  final Map<int, OverlayController> _overlayControllers = {};
 
   _EditSnapshot _snapshotOf(int index) {
     final state = _imageEditStates.putIfAbsent(index, () => _ImageEditState());
@@ -681,6 +690,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     required int index,
     required Uint8List bytesForFallbackLoad,
     required _ImageEditState state,
+    bool disableSettleAnimation = false,
   }) {
     final curr = _uiImageCache[index];
     final v = _applyAnimVersion[index] ?? 0;
@@ -761,28 +771,45 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         builder: (context, opacity, _) {
           return Opacity(
             opacity: opacity,
-            child: TweenAnimationBuilder<double>(
-              key: ValueKey('apply_settle_$index\_$v'),
-              tween: Tween(begin: 1.02, end: 1.0),
-              duration: _applySettleDuration,
-              curve: Curves.easeOutCubic,
-              builder: (context, s, __) {
-                return Transform.scale(
-                  scale: s,
-                  alignment: Alignment.center,
-                  child: CustomPaint(
-                    painter: ImagePainter(
-                      curr,
-                      state.imageOffset,
-                      state.imageScale,
+            child:
+                disableSettleAnimation
+                    ? CustomPaint(
+                      painter: ImagePainter(
+                        curr,
+                        state.imageOffset,
+                        state.imageScale,
+                      ),
+                      size: Size.infinite,
+                    )
+                    : TweenAnimationBuilder<double>(
+                      key: ValueKey('apply_settle_$index\_$v'),
+                      tween: Tween(begin: 1.02, end: 1.0),
+                      duration: _applySettleDuration,
+                      curve: Curves.easeOutCubic,
+                      builder: (context, s, __) {
+                        return Transform.scale(
+                          scale: s,
+                          alignment: Alignment.center,
+                          child: CustomPaint(
+                            painter: ImagePainter(
+                              curr,
+                              state.imageOffset,
+                              state.imageScale,
+                            ),
+                            size: Size.infinite,
+                          ),
+                        );
+                      },
                     ),
-                    size: Size.infinite,
-                  ),
-                );
-              },
-            ),
           );
         },
+      );
+    }
+
+    if (disableSettleAnimation) {
+      return CustomPaint(
+        painter: ImagePainter(curr, state.imageOffset, state.imageScale),
+        size: Size.infinite,
       );
     }
 
@@ -1723,6 +1750,19 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                       ),
                                     ),
                                   )
+                                else if (_editMode == _EditMode.sticker)
+                                  Expanded(
+                                    child: Center(
+                                      child: Text(
+                                        '스티커',
+                                        style: TextStyle(
+                                          fontSize: 17,
+                                          fontWeight: FontWeight.w600,
+                                          color: fgColor.withOpacity(0.7),
+                                        ),
+                                      ),
+                                    ),
+                                  )
                                 else
                                   const Spacer(),
                                 TextButton(
@@ -1904,6 +1944,18 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                       isActive: _editMode == _EditMode.filter,
                       textColor: fgColor,
                     ),
+                    Container(
+                      width: 1,
+                      height: 40,
+                      color: fgColor.withOpacity(0.2),
+                    ),
+                    _GlassToolButton(
+                      icon: Icons.emoji_emotions,
+                      label: '스티커',
+                      onTap: _toggleSticker,
+                      isActive: _editMode == _EditMode.sticker,
+                      textColor: fgColor,
+                    ),
                   ],
                 ),
               ),
@@ -1931,6 +1983,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       index: index,
       bytesForFallbackLoad: currentImageBytes,
       state: state,
+      // ✅ 크롭 진입 순간에는 1.02→1.0 settle이 "팍" 튐으로 보일 수 있어 비활성화
+      disableSettleAnimation: _editMode == _EditMode.crop,
     );
 
     // ✅ 조정 모드일 때는 key를 고정하여 위젯 재생성 방지 (이미지 크기 고정)
@@ -2138,7 +2192,9 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
               onTap:
                   _isBottomSheetOpen
                       ? null
-                      : _toggleUI, // ✅ 바텀시트 열려있을 때는 UI 토글 비활성화
+                      : _editMode == _EditMode.sticker
+                      ? null
+                      : _toggleUI, // ✅ 오버레이 활성화 시 탭은 오버레이가 우선 처리
               // ✅ 핀치/팬 통합: crop 모드에서는 ScaleGesture로 처리
               onScaleStart:
                   _editMode == _EditMode.crop
@@ -2211,6 +2267,25 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                               ),
                     ),
                   ),
+                  // 2️⃣ 오버레이 레이어 (스티커 모드에서 항상 표시: 손대자마자 제스처 인식)
+                  if (_editMode == _EditMode.sticker &&
+                      currentImageRect != null &&
+                      imageSize != null)
+                    Positioned.fill(
+                      child: OverlayStage(
+                        // ✅ 바텀시트가 완전히 올라온 "안정된 레이아웃" 기준으로만 제스처를 받는다.
+                        // (올라오는 중엔 displayImageRect가 계속 변해서 드래그/핀치가 튀기 쉬움)
+                        enabled:
+                            !_isBottomSheetOpen ||
+                            _isBottomSheetAnimationComplete,
+                        imageSize: imageSize,
+                        displayImageRect: currentImageRect,
+                        controller: _overlayControllers.putIfAbsent(
+                          index,
+                          () => OverlayController(),
+                        ),
+                      ),
+                    ),
                   // 3️⃣ 크롭 핸들들 (이미 screen 좌표 사용 중)
                   // ✅ 드래그 중이면 고정된 cropRectScreen 전달
                   if (_editMode == _EditMode.crop &&
@@ -2322,52 +2397,43 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
               ),
             );
 
-            // ✅ 크롭 모드: 순수 좌표계 사용 (패딩 없음)
-            if (_editMode == _EditMode.crop) {
-              return Stack(
-                children: [
-                  // ✅ 이미지와 핸들 (패딩 없이 직접 배치)
-                  preview,
-                  // 2️⃣ 크롭 오버레이 레이어 (순수 좌표계)
-                  // ✅ 크롭박스 페이드아웃: 바텀시트 애니메이션과 함께 페이드아웃
-                  if (!_isClosingAfterCropApply &&
-                      cropRectScreen != null &&
-                      imageRectForCrop != null)
-                    Builder(
-                      builder: (context) {
-                        final Rect screenRect = cropRectScreen!;
-                        final Rect imageRect = imageRectForCrop;
-                        return AnimatedBuilder(
-                          animation: _bottomSheetAnimation,
-                          builder: (context, _) {
-                            // ✅ 바텀시트가 열릴수록(1.0) 오버레이가 보이고, 닫힐수록(0.0) 사라짐
-                            final overlayOpacity = _bottomSheetAnimation.value;
+            // ✅ 중요: 모드에 따라 "반환 위젯 타입"이 바뀌면(예: preview ↔ Stack)
+            // Flutter가 하위 트리를 통째로 재마운트하면서 1프레임 튐(애니메이션 리셋)이 생길 수 있다.
+            // 따라서 항상 Stack을 반환하고, 크롭 오버레이만 조건부로 얹는다.
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                // ✅ 이미지와 핸들 (패딩 없이 직접 배치)
+                preview,
+                // 2️⃣ 크롭 오버레이 레이어 (순수 좌표계)
+                // ✅ 크롭 모드이고 바텀시트가 열려있을 때만 즉시 표시 (페이드아웃 없음)
+                if (_editMode == _EditMode.crop &&
+                    _isBottomSheetOpen &&
+                    cropRectScreen != null &&
+                    imageRectForCrop != null)
+                  Builder(
+                    builder: (context) {
+                      final Rect screenRect = cropRectScreen!;
+                      final Rect imageRect = imageRectForCrop;
 
-                            return IgnorePointer(
-                              // 크롭 오버레이는 터치 이벤트를 차단 (이미지 드래그를 위해)
-                              child: Opacity(
-                                opacity: overlayOpacity,
-                                child: CustomPaint(
-                                  painter: CropOverlayPainter(
-                                    cropRectScreen: screenRect,
-                                    imageRect: imageRect,
-                                    overlayColor: bgColor.withOpacity(0.8),
-                                    // 요구사항: 크롭박스 색상은 primary
-                                    borderColor: primaryColor,
-                                  ),
-                                  // ✅ container 좌표계 기준 (순수 좌표)
-                                  size: containerSize,
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                ],
-              );
-            }
-            return preview;
+                      return IgnorePointer(
+                        // 크롭 오버레이는 터치 이벤트를 차단 (이미지 드래그를 위해)
+                        child: CustomPaint(
+                          painter: CropOverlayPainter(
+                            cropRectScreen: screenRect,
+                            imageRect: imageRect,
+                            overlayColor: bgColor.withOpacity(0.8),
+                            // 요구사항: 크롭박스 색상은 primary
+                            borderColor: primaryColor,
+                          ),
+                          // ✅ container 좌표계 기준 (순수 좌표)
+                          size: containerSize,
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            );
           },
         );
       },
@@ -2486,6 +2552,38 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       _editMode = _EditMode.filter;
       _isBottomSheetOpen = true;
       _bottomSheetController.forward();
+    });
+  }
+
+  void _toggleSticker() {
+    if (_isPageScrolling) return;
+    _snapPageViewToNearestPageIfNeeded();
+    // ✅ 이미 열려있으면: "토글로 닫기"도 취소와 동일하게 처리(적용 안 했으므로)
+    if (_editMode == _EditMode.sticker && _isBottomSheetOpen) {
+      _closeBottomSheet(cancel: true);
+      return;
+    }
+
+    setState(() {
+      // ✅ 스티커 모드: 오버레이 엔진 활성화
+      _editMode = _EditMode.sticker;
+      _isBottomSheetOpen = true;
+      _bottomSheetController.forward();
+
+      // ✅ 스티커 모드 진입 시 자동으로 사각형 오버레이 추가
+      final uiImage = _uiImageCache[_currentIndex];
+      if (uiImage != null) {
+        final imageSize = Size(
+          uiImage.width.toDouble(),
+          uiImage.height.toDouble(),
+        );
+        final controller = _overlayControllers.putIfAbsent(
+          _currentIndex,
+          () => OverlayController(),
+        );
+        // 더미 사각형 자동 생성
+        controller.ensureDemoItems(imageSize);
+      }
     });
   }
 
@@ -2833,6 +2931,24 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           state.filterIntensity = intensity;
         });
       },
+    );
+  }
+
+  Widget _buildStickerBottomSheet() {
+    // ✅ 스티커 선택 패널 (나중에 구현)
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Text(
+          '스티커 선택 패널',
+          style: TextStyle(
+            color:
+                Theme.of(context).brightness == Brightness.dark
+                    ? AppColors.darkTextPrimary
+                    : AppColors.lightTextPrimary,
+          ),
+        ),
+      ),
     );
   }
 
