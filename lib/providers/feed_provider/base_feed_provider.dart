@@ -6,7 +6,7 @@ import '../../data/models/system_category_keys.dart';
 import '../../utils/network_utils.dart';
 
 // 카테고리 필터 타입
-enum BaseFilter { all, private, friends, groups, public }
+enum BaseFilter { all, private, friends, public }
 
 /// 피드 Provider의 공통 기능을 담은 추상 부모 클래스
 abstract class BaseFeedProvider extends ChangeNotifier {
@@ -370,19 +370,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
           if (item.containsKey('globalIndex')) {
             full['globalIndex'] = item['globalIndex'];
           }
-          // 🎯 sharedGroupIds가 스키마에만 있고 posts에는 없는 경우를 대비해 명시적으로 보존
-          // (일반적으로 posts에 있지만, 혹시 모를 경우를 대비)
-          if (item.containsKey('sharedGroupIds') &&
-              !full.containsKey('sharedGroupIds')) {
-            full['sharedGroupIds'] = item['sharedGroupIds'];
-          }
-          // 🎯 디버깅: sharedGroupIds 확인
-          if (full.containsKey('sharedGroupIds') &&
-              full['accessLevel'] == 'GROUPS') {
-            debugPrint(
-              '[BaseFeedProvider] 포스트 ID ${pid}: sharedGroupIds = ${full['sharedGroupIds']}',
-            );
-          }
+          // 그룹 기능 제거로 인해 sharedGroupIds 보존 로직 제거
           merged.add(full);
         } else {
           merged.add(item);
@@ -428,8 +416,8 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     final publicCount = publicPostCount;
     final privateCount = privatePostCount;
     final friendsCount = friendsPostCount;
-    final groupsCount = groupsPostCount;
-    return publicCount + privateCount + friendsCount + groupsCount;
+    // 그룹 기능 제거로 인해 groupsCount 제거
+    return publicCount + privateCount + friendsCount;
   }
 
   int get privatePostCount {
@@ -450,14 +438,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     return count;
   }
 
-  int get groupsPostCount {
-    if (_systemCategoryMappings == null) return 0;
-    final postIds =
-        _systemCategoryMappings![SystemCategoryKeys.groups] as List?;
-    final count = postIds?.length ?? 0;
-    debugPrint('[BaseFeedProvider] groupsPostCount: $count');
-    return count;
-  }
+  // 그룹 기능 제거로 인해 groupsPostCount 제거
 
   int get friendsPostCount {
     if (_systemCategoryMappings == null) return 0;
@@ -484,8 +465,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
         return 'private';
       case BaseFilter.friends:
         return 'friends';
-      case BaseFilter.groups:
-        return 'group';
+      // 그룹 기능 제거로 인해 BaseFilter.groups case 제거
       case BaseFilter.public:
         return 'public';
     }
@@ -498,14 +478,13 @@ abstract class BaseFeedProvider extends ChangeNotifier {
         final posts = _postsByCategory[categoryId]!;
         final idx = posts.indexWhere((p) => '${p['id']}' == postId);
         if (idx != -1) {
-          String level = 'PUBLIC';
+          String level = SystemCategoryKeys.public;
           if (newLevel == AccessLevel.private) {
-            level = 'PRIVATE';
+            level = SystemCategoryKeys.private;
           } else if (newLevel == AccessLevel.friends) {
-            level = 'FRIENDS';
-          } else if (newLevel == AccessLevel.groups) {
-            level = 'GROUPS';
+            level = SystemCategoryKeys.friends;
           }
+          // 그룹 기능 제거로 인해 AccessLevel.groups 처리 제거
           posts[idx]['accessLevel'] = level;
           notifyListeners();
           return;
@@ -524,7 +503,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     String? title,
     String? summary,
     String? accessLevel,
-    List<int>? sharedGroupIds,
+    // 그룹 기능 제거로 인해 sharedGroupIds 파라미터 제거
   }) {
     try {
       bool hasUpdate = false;
@@ -556,14 +535,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
             posts[idx]['accessLevel'] = accessLevel;
             hasUpdate = true;
           }
-          if (sharedGroupIds != null) {
-            if (sharedGroupIds.isEmpty) {
-              posts[idx].remove('sharedGroupIds');
-            } else {
-              posts[idx]['sharedGroupIds'] = sharedGroupIds;
-            }
-            hasUpdate = true;
-          }
+          // 그룹 기능 제거로 인해 sharedGroupIds 업데이트 로직 제거
 
           // 🎯 systemCategoryMappings 업데이트: 공개범위가 변경된 경우
           if (accessLevel != null &&

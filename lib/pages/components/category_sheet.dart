@@ -454,16 +454,9 @@ class CategoryDropDown {
     // 시스템 카테고리 포스트 수 계산
     final privatePosts = feedProvider.privatePostCount;
     final friendsPosts = feedProvider.friendsPostCount;
-    final groupPosts = feedProvider.groupsPostCount;
+    // 그룹 기능 제거로 인해 groupPosts 제거
     final publicPosts = feedProvider.publicPostCount;
 
-    debugPrint(
-      '[CategoryDropDown] 시스템 카테고리 포스트 수 - 나만보기: $privatePosts, 그룹공개: $groupPosts, 공개: $publicPosts',
-    );
-    debugPrint('[CategoryDropDown] isOwnProfile: $isOwnProfile');
-    debugPrint(
-      '[CategoryDropDown] shouldShowSystemCategories: ${isOwnProfile && (privatePosts > 0 || groupPosts > 0 || publicPosts > 0)}',
-    );
     if (feedProvider.systemCategoryMappings != null) {
       debugPrint(
         '[CategoryDropDown] systemCategoryMappings 키들: ${feedProvider.systemCategoryMappings!.keys.toList()}',
@@ -500,10 +493,7 @@ class CategoryDropDown {
 
           // 시스템 카테고리 구분선
           if (isOwnProfile &&
-              (privatePosts > 0 ||
-                  friendsPosts > 0 ||
-                  groupPosts > 0 ||
-                  publicPosts > 0)) ...[
+              (privatePosts > 0 || friendsPosts > 0 || publicPosts > 0)) ...[
             // 나만보기
             Builder(
               builder: (_) {
@@ -545,21 +535,7 @@ class CategoryDropDown {
                 },
               ),
 
-            // 그룹공유
-            if (groupPosts > 0)
-              _buildCategoryItem(
-                title: context.tr('group'),
-                count: groupPosts,
-                isSelected:
-                    feedProvider.selectedBase == BaseFilter.groups &&
-                    feedProvider.selectedCategoryId == null,
-                context: context,
-                onTap: () {
-                  feedProvider.selectBase(BaseFilter.groups);
-                  Navigator.of(context).pop();
-                  _onCategoryChanged?.call();
-                },
-              ),
+            // 그룹 기능 제거로 인해 그룹공유 필터 제거
 
             // 전체공개
             if (publicPosts > 0)

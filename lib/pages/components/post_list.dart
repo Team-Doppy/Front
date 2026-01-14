@@ -3,7 +3,6 @@ import 'dart:collection';
 import 'package:doppy/pages/components/post_card.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
-import 'package:doppy/pages/screens/group_selection_screen.dart';
 import 'package:doppy/image/utils/read_image_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/models/post_data.dart';
@@ -762,14 +761,9 @@ class _PostListState extends State<PostList> {
                         );
                         final currentPost = postsToUse[safeIndex];
 
-                        // 🎯 "아직 친구글이 없어요" 플레이스홀더를 클릭하면 그룹 선택 화면으로 이동
+                        // 🎯 "아직 친구글이 없어요" 플레이스홀더는 클릭해도 동작 없음
                         if (currentPost.id == 'onboarding_placeholder') {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder:
-                                  (context) => const GroupSelectionScreen(),
-                            ),
-                          );
+                          // 그룹 기능 제거로 인해 동작 없음
                         } else if (currentPost.id ==
                             'onboarding_placeholder2') {
                           // 🎯 "글을 작성해보세요" 플레이스홀더를 클릭하면 글 작성 화면으로 이동
@@ -854,14 +848,10 @@ class _PostListState extends State<PostList> {
             );
           }
         } else {
-          // 중앙 40% - 포스트 상세보기, 글 작성 화면, 또는 그룹 선택 화면으로 이동
-          // 🎯 "아직 친구글이 없어요" 플레이스홀더를 클릭하면 그룹 선택 화면으로 이동
+          // 중앙 40% - 포스트 상세보기, 글 작성 화면으로 이동
+          // 🎯 "아직 친구글이 없어요" 플레이스홀더는 클릭해도 동작 없음
           if (post.id == 'onboarding_placeholder') {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (context) => const GroupSelectionScreen(),
-              ),
-            );
+            // 그룹 기능 제거로 인해 동작 없음
           } else if (post.id == 'onboarding_placeholder2') {
             // 🎯 "글을 작성해보세요" 플레이스홀더를 클릭하면 글 작성 화면으로 이동
             Navigator.pushNamed(context, '/post-write');
@@ -1022,11 +1012,7 @@ class _PostListState extends State<PostList> {
         } else {
           // 중앙 40% - 포스트 상세보기로 이동
           if (post.id == 'onboarding_placeholder') {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (context) => const GroupSelectionScreen(),
-              ),
-            );
+            // 그룹 기능 제거로 인해 동작 없음
           } else if (post.id == 'onboarding_placeholder2') {
             Navigator.pushNamed(context, '/post-write');
           } else if (_items.isNotEmpty &&

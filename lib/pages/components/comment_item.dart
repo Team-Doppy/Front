@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/comment_service.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 // NOTE: 댓글 이미지는 editor처럼 단순 NetworkImage + cacheWidth로만 처리 (CachedNetworkImage 사용 금지)
@@ -70,7 +71,7 @@ class CommentItem extends StatelessWidget {
   /// 작성자이거나 포스트 작성자인 경우에만 true 반환
   bool _canInteractWithPrivateComment() {
     // 공개 댓글이면 항상 true
-    if (comment.visibility != 'PRIVATE' && !comment.isSecret) {
+    if (comment.visibility != SystemCategoryKeys.private && !comment.isSecret) {
       return true;
     }
 
@@ -233,7 +234,9 @@ class CommentItem extends StatelessWidget {
     // 🎯 비밀댓글에 권한이 없으면 이모지 반응도 숨김
     final hasReactions =
         comment.emotionCounts.isNotEmpty &&
-        (canInteract || !(comment.isSecret || comment.visibility == 'PRIVATE'));
+        (canInteract ||
+            !(comment.isSecret ||
+                comment.visibility == SystemCategoryKeys.private));
 
     return GestureDetector(
       // 🎯 비밀댓글에 권한이 없으면 스와이프 답장 비활성화
@@ -775,7 +778,8 @@ class CommentItem extends StatelessWidget {
                             ),
                             // 🎯 비밀댓글 자물쇠 아이콘
                             if (comment.isSecret ||
-                                comment.visibility == 'PRIVATE') ...[
+                                comment.visibility ==
+                                    SystemCategoryKeys.private) ...[
                               const SizedBox(width: 4),
                               SvgPicture.asset(
                                 'assets/icons/lock.svg',
@@ -857,7 +861,9 @@ class CommentItem extends StatelessWidget {
     final canInteract = _canInteractWithPrivateComment();
 
     // 🎯 비밀댓글에 권한이 없으면 이모지 반응 버튼 숨김
-    if (!canInteract && (comment.isSecret || comment.visibility == 'PRIVATE')) {
+    if (!canInteract &&
+        (comment.isSecret ||
+            comment.visibility == SystemCategoryKeys.private)) {
       return const SizedBox.shrink();
     }
 

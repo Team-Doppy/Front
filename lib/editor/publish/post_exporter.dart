@@ -7,6 +7,7 @@ import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/auth_service.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:flutter/material.dart';
 
 import 'package:doppy/editor/service/editor_service.dart';
@@ -1175,7 +1176,7 @@ class PostExporter {
     bool? privateOnly = false,
     bool? publicOnly = false,
     bool? friendsOnly = false,
-    List<int>? selectedGroupIds = const [],
+    // 그룹 기능 제거로 인해 selectedGroupIds 파라미터 제거
     int? categoryId, // 카테고리 ID (필수)
     bool skipValidation = false, // 임시저장용 검증 생략 플래그
   }) {
@@ -1197,38 +1198,26 @@ class PostExporter {
 
     // 2. 공개 범위에 따른 필수 필드 설정
     String accessLevel;
-    List<int> sharedGroupIds;
 
     // 디버그 로깅: 파라미터 확인
     debugPrint('===== [composeFinalPayload] 파라미터 =====');
     debugPrint('privateOnly: $privateOnly');
     debugPrint('publicOnly: $publicOnly');
-    debugPrint('selectedGroupIds: $selectedGroupIds');
     debugPrint('friendsOnly: $friendsOnly');
 
     if (privateOnly == true) {
-      accessLevel = 'PRIVATE';
-      sharedGroupIds = [];
+      accessLevel = SystemCategoryKeys.private;
       debugPrint('[composeFinalPayload] → PRIVATE 선택됨');
     } else if (publicOnly == true) {
-      accessLevel = 'PUBLIC';
-      sharedGroupIds = [];
+      accessLevel = SystemCategoryKeys.public;
       debugPrint('[composeFinalPayload] → PUBLIC 선택됨');
     } else if (friendsOnly == true) {
-      accessLevel = 'FRIENDS';
-      sharedGroupIds = [];
+      accessLevel = SystemCategoryKeys.friends;
       debugPrint('[composeFinalPayload] → FRIENDS 선택됨');
     } else {
-      accessLevel = 'GROUPS';
-      sharedGroupIds = selectedGroupIds ?? [];
-      debugPrint('[composeFinalPayload] → GROUPS 선택됨 (그룹: $sharedGroupIds)');
-
-      // GROUPS 선택시 최소 1개 이상의 그룹 ID 필요 (발행 시에만 검증)
-      if (!skipValidation && sharedGroupIds.isEmpty) {
-        throw StateError(
-          'GROUPS access level requires at least one group ID in sharedGroupIds',
-        );
-      }
+      // 그룹 기능 제거로 인해 기본값은 PUBLIC
+      accessLevel = SystemCategoryKeys.public;
+      debugPrint('[composeFinalPayload] → 기본값 PUBLIC 선택됨');
     }
 
     // 3. 기존 base를 복사하되, 공개 범위 관련 필드는 제거하고 새로 설정
@@ -1241,13 +1230,7 @@ class PostExporter {
     // 4. 공개 범위 필수 필드 추가
     result['accessLevel'] = accessLevel;
 
-    // 5. 그룹 공유시 필수 필드 (GROUPS인 경우만 추가)
-    if (accessLevel == 'GROUPS' && sharedGroupIds.isNotEmpty) {
-      result['sharedGroupIds'] = sharedGroupIds;
-    } else {
-      // GROUPS가 아니면 sharedGroupIds는 완전히 제거
-      result.remove('sharedGroupIds');
-    }
+    // 그룹 기능 제거로 인해 sharedGroupIds는 제거된 상태 유지
 
     // 6. 카테고리 ID 추가 (필수)
     if (categoryId != null) {
@@ -1358,9 +1341,7 @@ class PostExporter {
     debugPrint('Final API Payload (Server Spec Compliant):');
     debugPrint('Title: $title');
     debugPrint('AccessLevel: $accessLevel');
-    if (accessLevel == 'GROUPS') {
-      debugPrint('SharedGroupIds: $sharedGroupIds');
-    }
+    // 그룹 기능 제거로 인해 GROUPS 디버그 로그 제거
     debugPrint('Thumbnail: ${result['thumbnailImageUrl'] ?? 'none'}');
     debugPrint('UsedImageUrls: ${result['usedImageUrls'] ?? 'none'}');
 

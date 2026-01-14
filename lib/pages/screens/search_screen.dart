@@ -119,14 +119,13 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
           debugPrint('[SearchScreen] 초기 검색어로 포커스 설정: $q');
         }
 
-        // 🎯 앱 시작 시 splash_screen에서 이미 로드했으므로, 여기서는 트렌딩 데이터만 확인
         // initialize는 검색 기록만 로드 (이미 splash에서 로드했을 수 있지만 안전하게 다시 로드)
         await searchService.initialize(forceRefresh: false);
 
-        // 🎯 트렌딩 데이터가 없으면 로드 (splash에서 로드했을 수도 있지만 확인)
-        await searchService.ensureTrendingData();
-
-        debugPrint('[SearchScreen] 초기화 완료 (검색 기록 + 트렌딩 데이터 확인)');
+        // 🎯 추천 포스트는 스플래시에서 이미 로드했으므로 재로드하지 않음
+        debugPrint(
+          '[SearchScreen] 초기화 완료 (검색 기록만 로드, 추천 포스트는 스플래시에서 로드한 것 사용)',
+        );
       });
     });
   }
@@ -136,8 +135,8 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     final searchService = context.read<SearchService>();
 
     if (normalized.isNotEmpty) {
-      // 초기 검색어로 진입 시 트렌딩 데이터 즉시 지우기 (기존 정책 유지)
-      searchService.clearTrendingData();
+      // 초기 검색어로 진입 시 추천 포스트 즉시 지우기 (기존 정책 유지)
+      searchService.clearRecommendedPosts();
 
       _shouldIgnoreControllerChanges = true;
       _searchController.text = normalized;
@@ -161,16 +160,14 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   void didChangeDependencies() {
     super.didChangeDependencies();
 
-    // 🎯 초기 검색어가 있으면 화면 빌드 전에 트렌딩 데이터 즉시 지우기
+    // 🎯 초기 검색어가 있으면 화면 빌드 전에 추천 포스트 즉시 지우기
     final hasInitialQuery =
         widget.initialQuery != null && widget.initialQuery!.isNotEmpty;
 
     if (hasInitialQuery) {
       final searchService = context.read<SearchService>();
-      searchService.clearTrendingData();
-      debugPrint(
-        '[SearchScreen] didChangeDependencies - 초기 검색어로 인해 트렌딩 데이터 지움',
-      );
+      searchService.clearRecommendedPosts();
+      debugPrint('[SearchScreen] didChangeDependencies - 초기 검색어로 인해 추천 포스트 지움');
     }
   }
 
@@ -187,7 +184,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     // 초기 검색어가 변경되었을 때
     if (hasInitialQuery && widget.initialQuery != oldWidget.initialQuery) {
       final searchService = context.read<SearchService>();
-      searchService.clearTrendingData();
+      searchService.clearRecommendedPosts();
 
       // 검색어 설정 및 포커스
       _searchController.text = widget.initialQuery!;
@@ -196,7 +193,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       _searchFocusNode.requestFocus();
 
       debugPrint(
-        '[SearchScreen] didUpdateWidget - 초기 검색어로 인해 트렌딩 데이터 지움 및 검색어 설정: ${widget.initialQuery}',
+        '[SearchScreen] didUpdateWidget - 초기 검색어로 인해 추천 포스트 지움 및 검색어 설정: ${widget.initialQuery}',
       );
     } else if (!hasInitialQuery && hadInitialQuery) {
       // 초기 검색어가 제거되었을 때 (검색어 클리어)
@@ -869,21 +866,18 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
           );
         }
 
-        // 3) 포커스 X: 실시간 검색어 표시 (OTT 스타일 - Sliver 구조)
+        // 3) 포커스 X: 추천 포스트 표시 (OTT 스타일 - Sliver 구조)
         // 🎯 TrendingKeywordsWithPreload는 이제 Sliver를 반환하므로 직접 사용
         final trendingWidget = TrendingKeywordsWithPreload(
-          keywords: searchService.trendingKeywords,
+          keywords: const [], // 키워드 제거
           recommendedPosts: searchService.recommendedPosts,
-          isLoading: searchService.isTrendingLoading,
-          shouldShowShimmer:
-              searchService.shouldShowShimmer, // 🎯 shimmer 표시 여부
+          isLoading: searchService.isRecommendedLoading,
+          shouldShowShimmer: searchService.isRecommendedLoading,
           onTapKeyword: (keyword) {
-            _searchController.text = keyword;
-            context.read<SearchService>().onSearchChanged(keyword);
-            _runSearch();
+            // 키워드 기능 제거
           },
           onPostIndexChanged: (index) {
-            // 🎯 트렌딩 포스트 인덱스 업데이트
+            // 🎯 추천 포스트 인덱스 업데이트
             setState(() {
               _currentTrendingPostIndex = index;
             });
@@ -918,10 +912,8 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
             );
           },
           onRefresh: () async {
-            // 🎯 트렌딩 데이터 새로고침
-            debugPrint('[SearchScreen] 트렌딩 데이터 새로고침 시작');
-            await searchService.fetchTrendingKeywords(forceRefresh: true);
-            debugPrint('[SearchScreen] 트렌딩 데이터 새로고침 완료');
+            // 🎯 추천 포스트는 스플래시에서 로드한 것을 사용하므로 새로고침하지 않음
+            debugPrint('[SearchScreen] 추천 포스트 새로고침 스킵 (스플래시에서 로드한 것 사용)');
           },
         );
 

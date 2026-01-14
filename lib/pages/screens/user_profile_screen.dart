@@ -4,12 +4,11 @@ import 'package:doppy/pages/components/feed.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/share_profile_bottom_sheet.dart';
 import 'package:doppy/pages/components/profile_action_bottom_sheet.dart';
+import 'package:doppy/pages/screens/my_friends_screen.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
-import 'package:doppy/pages/screens/group_selection_screen.dart';
 import 'package:doppy/pages/screens/setting_screen.dart';
 import 'package:doppy/pages/screens/profile_image_view_screen.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
@@ -23,13 +22,11 @@ import 'package:provider/provider.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
-import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/pages/components/profile_edit_sheet.dart';
 import 'package:doppy/pages/components/link_bottom_sheet.dart';
-import 'package:doppy/pages/screens/friend_requests_screen.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:io';
 import 'dart:ui';
@@ -71,7 +68,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   static final CategoryDropDown _categoryDropDown = CategoryDropDown();
   static final Feed _feed = Feed();
   final GlobalKey _categoryButtonKey = GlobalKey();
-  static bool _prefetchedFriendsOnce = false; // 첫 진입 1회만 프리캐싱
   double _pullProgress = 0.0; // 당기는 진행률 (0.0 ~ 1.0)
   Future<void>? _friendStatusFuture; // 친구 상태 초기 확인 Future (빌드 내 로딩 제어)
   VoidCallback? _disconnectHandler; // 코디네이터 해제용
@@ -1046,43 +1042,23 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       child: Row(
         children: [
           Expanded(
-            child: Consumer<FriendProvider>(
-              builder: (context, friendProvider, _) {
-                final hasReceivedRequests =
-                    friendProvider.receivedRequests.isNotEmpty;
-                return Stack(
-                  children: [
-                    _buildGlassyButton(
-                      text: context.tr('my_groups'),
-                      onTap: () => _navigateToManageGroup(),
-                    ),
-                    // 🎯 받은 요청이 있으면 빨간 점 표시
-                    if (hasReceivedRequests)
-                      Positioned(
-                        top: 6,
-                        right: 8,
-                        child: Container(
-                          width: 9,
-                          height: 9,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      ),
-                  ],
+            child: _buildGlassyButton(
+              text: '내 친구',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => MyFriendsScreen()),
                 );
               },
             ),
           ),
-          SizedBox(width: 4),
+          const SizedBox(width: 8),
           Expanded(
             child: _buildGlassyButton(
               text: context.tr('share_profile'),
               onTap: () {
                 final me = context.read<UserProvider>().currentUser;
                 if (me == null) return;
-                // 공유 버튼
                 ShareProfileBottomSheet.show(
                   context,
                   username: me.username,
@@ -1098,58 +1074,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
-  /// 친구 관리 화면으로 이동 (이미지 프리캐싱 포함)
-  Future<void> _navigateToManageGroup() async {
-    final friendProvider = context.read<FriendProvider>();
-
-    // 모든 친구의 프로필 이미지 수집
-    final List<String> imageUrls = [];
-
-    // 수락된 친구들의 이미지
-    for (final friend in friendProvider.acceptedFriends) {
-      if (friend.profileImageUrl != null &&
-          friend.profileImageUrl!.isNotEmpty) {
-        imageUrls.add(friend.profileImageUrl!);
-      }
-    }
-
-    // 받은 요청의 이미지
-    for (final friend in friendProvider.receivedRequests) {
-      if (friend.profileImageUrl != null &&
-          friend.profileImageUrl!.isNotEmpty) {
-        imageUrls.add(friend.profileImageUrl!);
-      }
-    }
-
-    // 보낸 요청의 이미지
-    for (final friend in friendProvider.sentRequests) {
-      if (friend.profileImageUrl != null &&
-          friend.profileImageUrl!.isNotEmpty) {
-        imageUrls.add(friend.profileImageUrl!);
-      }
-    }
-
-    // 화면 전환: 기본 MaterialPageRoute 사용
-    if (mounted) {
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (context) => const GroupSelectionScreen()),
-      );
-    }
-
-    // 이미지 프리캐싱: 백그라운드에서 1회만 수행(체감 지연 제거)
-    if (!_prefetchedFriendsOnce && imageUrls.isNotEmpty && mounted) {
-      _prefetchedFriendsOnce = true;
-      final List<Future<void>> precacheFutures = [];
-      for (final url in imageUrls) {
-        precacheFutures.add(
-          precacheImage(NetworkImage(url), context).catchError((_) {}),
-        );
-      }
-      Future.wait(precacheFutures)
-          .timeout(const Duration(seconds: 2), onTimeout: () => <void>[])
-          .catchError((_) => <void>[]);
-    }
-  }
+  // 그룹 기능 제거로 인해 _navigateToManageGroup() 메서드 제거
 
   /// 조르기 버튼이 표시되어야 하는지 확인 (5분 경과 여부)
   bool _shouldShowNudgeButton() {
@@ -1277,12 +1202,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               // 확인을 누른 경우에만 친구 취소 실행
               if (confirm == true && mounted) {
                 try {
-                  // 🎯 GroupProvider 전달하여 allFriends 그룹 memberCount 업데이트
-                  final groupProvider = context.read<GroupProvider>();
-                  await friendProvider.deleteFriend(
-                    widget.otherUser!.username,
-                    groupProvider: groupProvider,
-                  );
+                  // 그룹 기능 제거로 인해 groupProvider 파라미터 제거
+                  await friendProvider.deleteFriend(widget.otherUser!.username);
                 } catch (e) {
                   if (mounted) {
                     ScaffoldMessenger.of(

@@ -120,13 +120,7 @@ class RetryCancelBottomSheet {
         );
       }
 
-      // 그룹 관련
-      if (errorMessage.contains('group') || errorMessage.contains('GROUPS')) {
-        return _ErrorInfo(
-          message: l10n.t('error_group_required'),
-          canRetry: false,
-        );
-      }
+      // 그룹 기능 제거로 인해 그룹 관련 에러 체크 제거
 
       // 업로드 중인 미디어
       if (errorMessage.contains('업로드 중') ||

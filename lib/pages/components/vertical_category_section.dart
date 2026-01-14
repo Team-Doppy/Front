@@ -15,8 +15,7 @@ import 'package:doppy/pages/components/post_action_sheet.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
-import 'package:doppy/providers/group_provider.dart';
-import 'package:doppy/pages/screens/manage_group_screen.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/pages/components/access_level_sheet.dart';
 
 /// 수직 카드 뷰 카테고리 섹션
@@ -1006,18 +1005,13 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
         // 🎯 공개 범위 변경 감지 - 선택적 업데이트 (전체 새로고침 생략)
         final postId = result['postId']?.toString();
         final accessLevel = result['accessLevel']?.toString();
-        final sharedGroupIds = result['sharedGroupIds'] as List<int>?;
 
         if (postId != null && accessLevel != null) {
           debugPrint(
             '[VerticalCategorySection] 공개 범위 변경 감지 - 선택적 업데이트 시작 (postId: $postId)',
           );
           final provider = context.read<BaseFeedProvider>();
-          provider.updatePostMetadata(
-            postId,
-            accessLevel: accessLevel,
-            sharedGroupIds: sharedGroupIds,
-          );
+          provider.updatePostMetadata(postId, accessLevel: accessLevel);
           debugPrint('[VerticalCategorySection] 피드 선택적 업데이트 완료 (공개 범위 변경)');
         } else {
           // fallback: 정보가 없으면 전체 새로고침
@@ -1081,34 +1075,9 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
       final blogService = BlogService();
       final provider = context.read<BaseFeedProvider>();
 
-      // 🎯 삭제 전에 공개범위 정보 저장
-      final accessLevel = post.accessLevel;
-      final sharedGroupIds = post.sharedGroupIds;
-
       await blogService.deletePost(post.id);
 
-      // 🎯 포스트 삭제 후 관련 그룹의 postCount 및 포스트 캐시 동기화
-      try {
-        final groupProvider = context.read<GroupProvider>();
-
-        // GROUPS 공개범위인 경우
-        if (accessLevel == AccessLevel.groups &&
-            sharedGroupIds != null &&
-            sharedGroupIds.isNotEmpty) {
-          final groupIdToDelta = <int, int>{};
-          for (final groupId in sharedGroupIds) {
-            groupIdToDelta[groupId] = -1;
-          }
-          groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
-          ManageGroupScreen.invalidateMultipleGroupsPostsCache(sharedGroupIds);
-        }
-        // FRIENDS 공개범위인 경우
-        else if (accessLevel == AccessLevel.friends) {
-          ManageGroupScreen.invalidateGroupPostsCache(-1);
-        }
-      } catch (e) {
-        debugPrint('[VerticalCategorySection] 그룹 동기화 실패: $e');
-      }
+      // 그룹 기능 제거로 인해 그룹 동기화 로직 제거
 
       // 🎯 피드에서 포스트 제거 및 새로고침
       provider.clearInMemory();
@@ -1355,13 +1324,11 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     final provider = context.read<BaseFeedProvider>();
 
     // 🎯 공개범위를 문자열로 변환
-    String currentAccessLevel = 'PUBLIC';
+    String currentAccessLevel = SystemCategoryKeys.public;
     if (post.accessLevel == AccessLevel.private) {
-      currentAccessLevel = 'PRIVATE';
+      currentAccessLevel = SystemCategoryKeys.private;
     } else if (post.accessLevel == AccessLevel.friends) {
-      currentAccessLevel = 'FRIENDS';
-    } else if (post.accessLevel == AccessLevel.groups) {
-      currentAccessLevel = 'GROUPS';
+      currentAccessLevel = SystemCategoryKeys.friends;
     }
 
     // 🎯 AccessLevelSheet 표시
@@ -1369,16 +1336,10 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
       context,
       postId: post.id,
       currentAccessLevel: currentAccessLevel,
-      currentSharedGroupIds: post.sharedGroupIds,
-      currentSharedGroupNames: post.sharedGroupNames,
       isBatchMode: false,
-      onChanged: (String accessLevel, List<int>? sharedGroupIds) async {
+      onChanged: (String accessLevel) async {
         // 🎯 공개범위 변경 후 피드 업데이트
-        provider.updatePostMetadata(
-          post.id,
-          accessLevel: accessLevel,
-          sharedGroupIds: sharedGroupIds,
-        );
+        provider.updatePostMetadata(post.id, accessLevel: accessLevel);
       },
     );
   }

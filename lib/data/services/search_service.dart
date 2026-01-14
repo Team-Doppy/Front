@@ -45,16 +45,9 @@ class SearchService extends ChangeNotifier {
   static const String _blogSearchHistoryKey = 'blog_search_history';
   static const int _maxBlogHistorySize = 10;
 
-  // 🎯 실시간 검색어 (서버)
-  List<String> _trendingKeywords = [];
-  bool _isTrendingLoading = false;
-  bool _isRefreshing = false; // 🎯 새로고침 중인지 여부
-
   // 🎯 추천 포스트 (서버)
   List<SearchContentItem> _recommendedPosts = [];
-
-  // 🎯 마지막 fetch 시간 (캐싱용)
-  DateTime? _lastTrendingFetchTime;
+  bool _isRecommendedLoading = false;
 
   // 통합 컨텐츠 데이터 초기화
   late final List<SearchContentItem> _allContentItems = [];
@@ -116,18 +109,9 @@ class SearchService extends ChangeNotifier {
   // 검색 기록 (계정 리스트 형태)
   List<SearchContentItem> get searchHistory => searchHistoryAsAccounts;
 
-  // 🎯 실시간 검색어 getter
-  List<String> get trendingKeywords => _trendingKeywords;
-  bool get isTrendingLoading => _isTrendingLoading;
-  bool get isRefreshing => _isRefreshing; // 🎯 새로고침 중인지 여부
-
-  // 🎯 shimmer를 표시할지 여부 (로딩 중이면 즉시 표시)
-  bool get shouldShowShimmer {
-    return _isTrendingLoading; // 로딩 중이면 즉시 shimmer 표시
-  }
-
   // 🎯 추천 포스트 getter
   List<SearchContentItem> get recommendedPosts => _recommendedPosts;
+  bool get isRecommendedLoading => _isRecommendedLoading;
 
   // 검색 기록을 계정 형태로 변환
   List<SearchContentItem> get searchHistoryAsAccounts {
@@ -337,175 +321,93 @@ class SearchService extends ChangeNotifier {
     });
   }
 
-  /// 🎯 배열에서 실제 검색어만 추출하는 헬퍼
-  List<String> _extractKeywords(List<dynamic> data) {
-    return data
-        .map((e) {
-          if (e is Map) {
-            // 🎯 객체인 경우 keyword 필드 추출
-            return (e['keyword'] ?? e['k'] ?? e['query'] ?? e['text'] ?? '')
-                .toString();
-          } else if (e is String) {
-            // 🎯 문자열인 경우 그대로 사용
-            return e;
-          }
-          return '';
-        })
-        .where((k) => k.isNotEmpty)
-        .toList();
-  }
-
-  /// 🎯 트렌딩 데이터가 없으면 캐시 체크 후 로드 (캐시 우선 사용)
-  Future<void> ensureTrendingData() async {
-    // 🎯 이미 데이터가 있으면 로드하지 않음
-    if (_trendingKeywords.isNotEmpty || _recommendedPosts.isNotEmpty) {
-      debugPrint('[SearchService] 트렌딩 데이터가 이미 있음');
-      return;
-    }
-
-    // 🎯 데이터가 비어있으면 캐시 시간 체크
-    final now = DateTime.now();
-    final hasValidCache =
-        _lastTrendingFetchTime != null &&
-        now.difference(_lastTrendingFetchTime!).inMinutes < 5;
-
-    if (hasValidCache) {
-      // 🎯 캐시가 유효하면 API 호출하되, shimmer 표시 없이 로드
-      debugPrint(
-        '[SearchService] 캐시가 유효하지만 데이터가 비어있어서 다시 로드 (${now.difference(_lastTrendingFetchTime!).inSeconds}초 전 캐시, shimmer 없음)',
-      );
-      // 캐시 시간을 유지하면서 데이터만 다시 로드 (shimmer 없이)
-      await fetchTrendingKeywords(showShimmer: false);
-      return;
-    }
-
-    // 🎯 캐시가 없거나 만료되었으면 새로 로드
-    debugPrint('[SearchService] 캐시가 없거나 만료되어 트렌딩 데이터 새로 로드');
-    await fetchTrendingKeywords();
-  }
-
-  /// 🎯 실시간 검색어 및 추천 포스트 가져오기
-  Future<void> fetchTrendingKeywords({
-    int limit = 5,
+  /// 🎯 추천 포스트 가져오기
+  Future<void> fetchRecommendedPosts({
+    int page = 0,
+    int size = 5,
     bool forceRefresh = false,
-    bool showShimmer = true, // 🎯 shimmer 표시 여부 (기본값 true)
   }) async {
     try {
-      // 🎯 forceRefresh가 true이거나 데이터가 없으면 로딩 표시 (showShimmer가 true일 때만)
-      final hasExistingData =
-          _trendingKeywords.isNotEmpty || _recommendedPosts.isNotEmpty;
-      if (showShimmer && (forceRefresh || !hasExistingData)) {
-        _isTrendingLoading = true;
-        if (forceRefresh) {
-          _isRefreshing = true; // 🎯 새로고침 중 상태 설정
-        }
-        notifyListeners(); // 즉시 shimmer 표시
+      // 🎯 forceRefresh가 true이거나 데이터가 없으면 로딩 표시
+      final hasExistingData = _recommendedPosts.isNotEmpty;
+      if (forceRefresh || !hasExistingData) {
+        _isRecommendedLoading = true;
+        notifyListeners();
       }
 
-      // 🎯 forceRefresh일 때는 캐시 시간 무시
-      if (forceRefresh) {
-        _lastTrendingFetchTime = null;
-      }
-
-      debugPrint('[TrendingKeywords] Fetching with limit: $limit');
+      debugPrint('[RecommendedPosts] Fetching with page: $page, size: $size');
 
       final response = await _dio.get(
-        '/api/search/trending',
-        queryParameters: {'limit': limit},
+        '/api/posts/recommendation',
+        queryParameters: {'page': page, 'size': size},
+        options: Options(receiveTimeout: const Duration(seconds: 30)),
       );
 
-      debugPrint(
-        '[TrendingKeywords] Request headers: ${response.requestOptions.headers}',
-      );
-      debugPrint('[TrendingKeywords] Response status: ${response.statusCode}');
+      debugPrint('[RecommendedPosts] Response status: ${response.statusCode}');
 
       if (response.statusCode == 200) {
-        debugPrint('[TrendingKeywords] raw response: ${response.data}');
+        final responseData = response.data as Map<String, dynamic>;
+        final List<dynamic> posts = responseData['content'] ?? [];
 
-        final Map<String, dynamic> responseData =
-            response.data as Map<String, dynamic>;
+        _recommendedPosts =
+            posts
+                .map((post) {
+                  if (post is Map<String, dynamic>) {
+                    return SearchContentItem.post(
+                      id: post['id']?.toString() ?? '',
+                      title: post['title'] ?? '',
+                      author: post['author'] ?? '',
+                      imageUrl: post['thumbnailImageUrl'] ?? '',
+                      likes: (post['likeCount'] as num?)?.toInt() ?? 0,
+                      comments: (post['commentCount'] as num?)?.toInt() ?? 0,
+                      summary: post['summary'],
+                      content: post['content'],
+                      parsedContent: post['parsedContent'],
+                      profileImageUrl: post['authorProfileImageUrl'],
+                      createdAt: post['createdAt'],
+                    );
+                  }
+                  return null;
+                })
+                .whereType<SearchContentItem>()
+                .toList();
 
-        // 🔍 recommendedPosts 필드 존재 여부 확인
-        if (responseData.containsKey('data')) {
-          final dataCheck = responseData['data'] as Map<String, dynamic>;
-          debugPrint(
-            '[TrendingKeywords] data keys: ${dataCheck.keys.toList()}',
-          );
-          debugPrint(
-            '[TrendingKeywords] recommendedPosts type: ${dataCheck['recommendedPosts']?.runtimeType}',
-          );
-          debugPrint(
-            '[TrendingKeywords] recommendedPosts length: ${dataCheck['recommendedPosts'] is List ? (dataCheck['recommendedPosts'] as List).length : 0}',
-          );
-        }
-
-        // 🎯 data 객체 추출
-        if (responseData.containsKey('data') && responseData['data'] is Map) {
-          final Map<String, dynamic> data =
-              responseData['data'] as Map<String, dynamic>;
-
-          // 🎯 keywords 추출
-          if (data.containsKey('keywords') && data['keywords'] is List) {
-            final List<dynamic> keywords = data['keywords'] as List<dynamic>;
-            _trendingKeywords = _extractKeywords(keywords);
-          } else {
-            _trendingKeywords = [];
+        // 포스트 데이터 저장
+        for (final post in posts) {
+          if (post is Map<String, dynamic>) {
+            final id = post['id']?.toString() ?? '';
+            if (id.isNotEmpty) {
+              _postData[id] = post;
+            }
           }
-
-          // 🎯 recommendedPosts 추출
-          if (data.containsKey('recommendedPosts') &&
-              data['recommendedPosts'] is List) {
-            final List<dynamic> posts =
-                data['recommendedPosts'] as List<dynamic>;
-            _recommendedPosts =
-                posts.map((post) {
-                  return SearchContentItem.post(
-                    id: post['id']?.toString() ?? '',
-                    title: post['title'] ?? '',
-                    author: post['author'] ?? '',
-                    imageUrl: post['thumbnailImageUrl'] ?? '',
-                    likes: post['likeCount'] ?? 0,
-                    comments: post['commentCount'] ?? 0,
-                    summary: post['summary'],
-                    content: post['content'],
-                    parsedContent: post['parsedContent'],
-                    profileImageUrl: post['authorProfileImageUrl'],
-                    createdAt: post['createdAt'],
-                  );
-                }).toList();
-          } else {
-            _recommendedPosts = [];
-          }
-        } else {
-          _trendingKeywords = [];
-          _recommendedPosts = [];
         }
 
         debugPrint(
-          '[TrendingKeywords] loaded: ${_trendingKeywords.length} keywords',
+          '[RecommendedPosts] loaded: ${_recommendedPosts.length} posts',
         );
-        debugPrint(
-          '[TrendingKeywords] loaded: ${_recommendedPosts.length} recommended posts',
-        );
-        debugPrint('[TrendingKeywords] keywords: $_trendingKeywords');
-
-        // 🎯 성공적으로 로드했으면 시간 기록
-        _lastTrendingFetchTime = DateTime.now();
       } else {
-        _trendingKeywords = [];
         _recommendedPosts = [];
-        debugPrint('[TrendingKeywords] failed: ${response.statusCode}');
+        debugPrint('[RecommendedPosts] failed: ${response.statusCode}');
       }
     } catch (e, stackTrace) {
-      debugPrint('[TrendingKeywords] error: $e');
-      debugPrint('[TrendingKeywords] stackTrace: $stackTrace');
-      _trendingKeywords = [];
+      debugPrint('[RecommendedPosts] error: $e');
+      debugPrint('[RecommendedPosts] stackTrace: $stackTrace');
       _recommendedPosts = [];
     } finally {
-      _isTrendingLoading = false;
-      _isRefreshing = false; // 🎯 새로고침 상태 초기화
+      _isRecommendedLoading = false;
       notifyListeners();
     }
+  }
+
+  /// 🎯 추천 포스트 데이터가 없으면 로드
+  Future<void> ensureRecommendedPosts() async {
+    if (_recommendedPosts.isNotEmpty) {
+      debugPrint('[SearchService] 추천 포스트가 이미 있음');
+      return;
+    }
+
+    debugPrint('[SearchService] 추천 포스트 로드');
+    await fetchRecommendedPosts();
   }
 
   /// 추천 게시글 새로고침
@@ -540,11 +442,7 @@ class SearchService extends ChangeNotifier {
       _selectedCategory = '추천';
       _isSearching = false;
 
-      // 🎯 검색어가 비어있고 트렌딩 데이터도 비어있으면 캐시 체크 후 로드
-      if (_trendingKeywords.isEmpty && _recommendedPosts.isEmpty) {
-        debugPrint('[Search] 검색어가 비어있고 트렌딩 데이터가 없어서 캐시 체크 후 로드');
-        ensureTrendingData();
-      }
+      // 🎯 추천 포스트는 스플래시에서 로드한 것을 사용하므로 재로드하지 않음
 
       // 🎯 notifyListeners를 지연시켜 UI 블로킹 방지
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1065,12 +963,11 @@ class SearchService extends ChangeNotifier {
     }
   }
 
-  /// 트렌딩 데이터 지우기
-  void clearTrendingData() {
-    debugPrint('[SearchService] 트렌딩 데이터 지우기');
-    _trendingKeywords = [];
+  /// 추천 포스트 지우기
+  void clearRecommendedPosts() {
+    debugPrint('[SearchService] 추천 포스트 지우기');
     _recommendedPosts = [];
-    _isTrendingLoading = false;
+    _isRecommendedLoading = false;
     notifyListeners();
   }
 
@@ -1085,14 +982,7 @@ class SearchService extends ChangeNotifier {
     _lastAccountQuery = '';
     _lastAccountCount = -1;
 
-    // 🎯 검색어를 지웠을 때 트렌딩 데이터가 비어있으면 캐시 체크 후 로드
-    if (_trendingKeywords.isEmpty && _recommendedPosts.isEmpty) {
-      debugPrint('[Search] clearSearch - 트렌딩 데이터가 없어서 캐시 체크 후 로드');
-      ensureTrendingData().then((_) {
-        notifyListeners();
-      });
-      return; // ensureTrendingData가 완료된 후 notifyListeners 호출
-    }
+    // 🎯 추천 포스트는 스플래시에서 로드한 것을 사용하므로 재로드하지 않음
 
     notifyListeners();
   }
@@ -1110,17 +1000,8 @@ class SearchService extends ChangeNotifier {
     _lastAccountQuery = '';
     _lastAccountCount = -1;
 
-    // 🎯 뒤로가기를 눌렀을 때 항상 트렌딩 데이터가 표시되도록 보장
-    // 트렌딩 데이터가 비어있으면 캐시 체크 후 로드
-    if (_trendingKeywords.isEmpty && _recommendedPosts.isEmpty) {
-      debugPrint('[Search] resetToInitial - 트렌딩 데이터가 없어서 캐시 체크 후 로드');
-      ensureTrendingData().then((_) {
-        notifyListeners();
-      });
-      return; // ensureTrendingData가 완료된 후 notifyListeners 호출
-    }
+    // 🎯 추천 포스트는 스플래시에서 로드한 것을 사용하므로 재로드하지 않음
 
-    // 🎯 트렌딩 데이터가 있어도 항상 보장하도록 (이미 있는 경우에도 화면 갱신)
     notifyListeners();
   }
 

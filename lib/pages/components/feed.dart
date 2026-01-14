@@ -58,8 +58,6 @@ class Feed {
                 authorProfileImageUrl: profileImageFromUser,
                 content: postData.content,
                 accessLevel: postData.accessLevel,
-                sharedGroupIds: postData.sharedGroupIds,
-                sharedGroupNames: postData.sharedGroupNames,
                 createdAt: postData.createdAt,
                 updatedAt: postData.updatedAt,
                 viewCount: postData.viewCount,

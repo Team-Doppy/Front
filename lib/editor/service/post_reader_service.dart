@@ -1643,12 +1643,7 @@ class PostReaderService {
       if (response.containsKey('accessLevel')) {
         merged['accessLevel'] = response['accessLevel'];
       }
-      if (response.containsKey('sharedGroupIds')) {
-        merged['sharedGroupIds'] = response['sharedGroupIds'];
-      }
-      if (response.containsKey('sharedGroupNames')) {
-        merged['sharedGroupNames'] = response['sharedGroupNames'];
-      }
+      // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
 
       // 최신 문서로 재구성
       final postReaderService = PostReaderService();
@@ -1675,11 +1670,7 @@ class PostReaderService {
     if (_originalImageCacheSizeBytes != null) {
       final cache = imageCache;
       if (cache.maximumSizeBytes != _originalImageCacheSizeBytes) {
-        final currentSize = cache.maximumSizeBytes;
         cache.maximumSizeBytes = _originalImageCacheSizeBytes!;
-        debugPrint(
-          '[PostReaderService] 🔄 ImageCache 사이즈 복원: ${(currentSize / 1024 / 1024).toStringAsFixed(1)}MB → ${(_originalImageCacheSizeBytes! / 1024 / 1024).toStringAsFixed(1)}MB',
-        );
       }
       _originalImageCacheSizeBytes = null; // 복원 후 초기화
     }

@@ -22,9 +22,8 @@ import 'package:super_editor/super_editor.dart';
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
   final VoidCallback? onSave;
-  final String currentVisibility; // 'public', 'private', 'partial'
-  final List<int> currentGroupIds;
-  final Function(String visibility, List<int> groupIds)? onVisibilityChanged;
+  final String currentVisibility; // 'public', 'private'
+  // 그룹 기능 제거로 인해 currentGroupIds, onVisibilityChanged 제거
   final Function(String title, String summary)?
   onTitleSummaryChanged; // 제목/요약 변경 콜백
   final VoidCallback? onCategoryChanged; // 카테고리 변경 콜백
@@ -51,8 +50,7 @@ class EditModeAppBar extends StatefulWidget {
     required this.editorService,
     this.onSave,
     required this.currentVisibility,
-    required this.currentGroupIds,
-    this.onVisibilityChanged,
+    // 그룹 기능 제거로 인해 currentGroupIds, onVisibilityChanged 제거
     this.onTitleSummaryChanged,
     this.postId,
     this.isSaving = false,
@@ -84,7 +82,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
   String? _originalSummary; // 원본 요약 (서버에서 처음 로드한 값)
   String? _originalThumbnailUrl; // 원본 썸네일 URL (서버에서 처음 로드한 값)
   String? _originalVisibility; // 원본 공개범위 (서버에서 처음 로드한 값)
-  List<int>? _originalGroupIds; // 원본 그룹 ID 리스트 (서버에서 처음 로드한 값)
+  // 그룹 기능 제거로 인해 _originalGroupIds 제거
   // 🎯 카테고리는 로컬 기반이므로 editor_appbar에서는 관리하지 않음
 
   @override
@@ -133,10 +131,8 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
 
           // 🎯 공개범위 원본 값 저장 (카테고리는 로컬 기반이므로 서버에서 가져오지 않음)
           final accessLevel = metadata['accessLevel'] as String?;
-          final sharedGroupIds = metadata['sharedGroupIds'] as List<int>?;
           _originalVisibility ??= accessLevel;
-          _originalGroupIds ??=
-              sharedGroupIds != null ? List<int>.from(sharedGroupIds) : null;
+          // 그룹 기능 제거로 인해 _originalGroupIds 제거
         });
       }
 

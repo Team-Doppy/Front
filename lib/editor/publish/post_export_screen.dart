@@ -9,15 +9,14 @@ import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/editor/publish/service/post_publish_service.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/access_level_parser.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/editor/publish/component/step1_thumbnail_edit.dart';
 import 'package:doppy/editor/publish/component/step2_audience_selection.dart';
 import 'package:doppy/editor/publish/component/step3_category_selection.dart';
-import 'package:doppy/pages/screens/manage_group_screen.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/image/utils/edit_image_cache_manager.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
@@ -71,7 +70,7 @@ class _PostExportScreenState extends State<PostExportScreen>
   bool _editMode = false;
 
   // Step 2: 공개 범위 선택
-  final Set<int> _selectedAudienceGroupIds = {};
+  // 그룹 기능 제거로 인해 _selectedAudienceGroupIds 제거
   bool _audienceSelectAll = false;
   bool _audiencePrivateOnly = false;
   bool _audienceFriendsOnly = false;
@@ -81,8 +80,7 @@ class _PostExportScreenState extends State<PostExportScreen>
   List<Map<String, dynamic>>? _cachedCategories; // 캐시된 카테고리 목록
   bool _isLoadingCategories = false; // 카테고리 로딩 상태
   bool _showCategoryLoading = false; // 1초 후에만 표시할 카테고리 로딩
-  bool _showGroupLoading = false; // 1초 후에만 표시할 그룹 로딩
-  bool _isGroupLoadingStarted = false; // 그룹 로딩 시작 여부
+  // 그룹 기능 제거로 인해 _showGroupLoading, _isGroupLoadingStarted 제거
 
   bool _isUploading = false;
   bool _isUploadingThumb = false;
@@ -368,32 +366,26 @@ class _PostExportScreenState extends State<PostExportScreen>
       final level =
           AccessLevelParser.parseAccessLevelString(exported['accessLevel']) ??
           '';
-      final sharedGroupIds = AccessLevelParser.parseSharedGroupIds(
-        exported['sharedGroupIds'],
-      );
+      // 그룹 기능 제거로 인해 sharedGroupIds 파싱 제거
 
-      // 우선 순위: PRIVATE > PUBLIC > FRIENDS > GROUPS(shared)
+      // 우선 순위: PRIVATE > PUBLIC > FRIENDS
       bool selectAll = false;
       bool privateOnly = false;
       bool friendsOnly = false;
-      final Set<int> groups = sharedGroupIds?.toSet() ?? <int>{};
 
-      if (level == 'PRIVATE') {
+      if (level == SystemCategoryKeys.private) {
         privateOnly = true;
-      } else if (level == 'PUBLIC') {
+      } else if (level == SystemCategoryKeys.public) {
         selectAll = true;
-      } else if (level == 'FRIENDS') {
+      } else if (level == SystemCategoryKeys.friends) {
         friendsOnly = true;
-      } else if (level == 'GROUPS') {
-        // 그룹 공유: 기존 그룹 선택 반영
       }
+      // 그룹 기능 제거로 인해 GROUPS 처리 제거
 
       _audiencePrivateOnly = privateOnly;
       _audienceSelectAll = selectAll;
       _audienceFriendsOnly = friendsOnly;
-      _selectedAudienceGroupIds
-        ..clear()
-        ..addAll(groups);
+      // 그룹 기능 제거로 인해 _selectedAudienceGroupIds 초기화 제거
     } catch (_) {}
     setState(() {});
   }
@@ -548,10 +540,8 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
 
     // 3. 그룹 공유시 그룹 선택 확인
-    if (!_audienceSelectAll &&
-        !_audiencePrivateOnly &&
-        !_audienceFriendsOnly &&
-        _selectedAudienceGroupIds.isEmpty) {
+    // 그룹 기능 제거로 인해 그룹 검증 제거
+    if (!_audienceSelectAll && !_audiencePrivateOnly && !_audienceFriendsOnly) {
       return false;
     }
 
@@ -586,11 +576,9 @@ class _PostExportScreenState extends State<PostExportScreen>
     if (_exportedThumbnailImageUrl.trim().isEmpty) {
       return context.tr('thumbnail_required');
     }
-    if (!_audienceSelectAll &&
-        !_audiencePrivateOnly &&
-        !_audienceFriendsOnly &&
-        _selectedAudienceGroupIds.isEmpty) {
-      return context.tr('group_required');
+    // 그룹 기능 제거로 인해 그룹 검증 제거
+    if (!_audienceSelectAll && !_audiencePrivateOnly && !_audienceFriendsOnly) {
+      return context.tr('audience_required');
     }
     // 🎯 카테고리 리스트가 비어있으면 에러 메시지
     if (_cachedCategories == null || _cachedCategories!.isEmpty) {
@@ -639,11 +627,11 @@ class _PostExportScreenState extends State<PostExportScreen>
       }
 
       // 4. 그룹 공유시 그룹 선택 검증 (친구공유는 예외)
+      // 그룹 기능 제거로 인해 그룹 검증 제거
       if (!_audienceSelectAll &&
           !_audiencePrivateOnly &&
-          !_audienceFriendsOnly &&
-          _selectedAudienceGroupIds.isEmpty) {
-        ErrorHandler.showError(context, context.tr('group_required'));
+          !_audienceFriendsOnly) {
+        ErrorHandler.showError(context, context.tr('audience_required'));
         return;
       }
 
@@ -668,7 +656,7 @@ class _PostExportScreenState extends State<PostExportScreen>
             privateOnly: _audiencePrivateOnly,
             publicOnly: _audienceSelectAll,
             friendsOnly: _audienceFriendsOnly,
-            selectedGroupIds: _selectedAudienceGroupIds.toList(),
+            // 그룹 기능 제거로 인해 selectedGroupIds 파라미터 제거
             categoryId: _selectedCategoryId,
           );
 
@@ -680,14 +668,14 @@ class _PostExportScreenState extends State<PostExportScreen>
       debugPrint('썸네일: $_exportedThumbnailImageUrl');
       final scopeLabel =
           _audienceSelectAll
-              ? 'PUBLIC'
+              ? SystemCategoryKeys.public
               : (_audiencePrivateOnly
-                  ? 'PRIVATE'
-                  : (_audienceFriendsOnly ? 'FRIENDS' : 'GROUPS'));
+                  ? SystemCategoryKeys.private
+                  : (_audienceFriendsOnly
+                      ? SystemCategoryKeys.friends
+                      : SystemCategoryKeys.public));
       debugPrint('공개 범위: $scopeLabel');
-      if (!_audienceSelectAll && !_audiencePrivateOnly) {
-        debugPrint('선택된 그룹: $_selectedAudienceGroupIds');
-      }
+      // 그룹 기능 제거로 인해 그룹 디버그 로그 제거
       debugPrint('카테고리 ID: $_selectedCategoryId');
       printLarge(json);
 
@@ -840,44 +828,7 @@ class _PostExportScreenState extends State<PostExportScreen>
           });
         }
 
-        // 🎯 포스트 생성 후 관련 그룹의 postCount 및 포스트 캐시 동기화
-        final groupProvider = context.read<GroupProvider>();
-
-        // 🎯 GROUPS 공개범위: 선택된 그룹들의 postCount 업데이트 및 포스트 캐시 무효화
-        if (scopeLabel == 'GROUPS' && _selectedAudienceGroupIds.isNotEmpty) {
-          final groupIdToDelta = <int, int>{};
-          for (final groupId in _selectedAudienceGroupIds) {
-            groupIdToDelta[groupId] = 1; // 포스트 생성으로 +1
-          }
-          groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
-
-          // 🎯 그룹 포스트 캐시 무효화 (동기화)
-          ManageGroupScreen.invalidateMultipleGroupsPostsCache(
-            _selectedAudienceGroupIds.toList(),
-          );
-
-          debugPrint(
-            '[PostExport] 관련 그룹 postCount 및 포스트 캐시 동기화 완료: ${_selectedAudienceGroupIds.length}개 그룹',
-          );
-        }
-        // 🎯 FRIENDS 공개범위: allFriends 그룹의 postCount 업데이트 및 포스트 캐시 무효화
-        // ManageGroupScreen에서는 -1을 allFriends 그룹 ID로 사용하므로 -1도 함께 등록
-        else if (scopeLabel == 'FRIENDS') {
-          final allFriendsGroupId = groupProvider.allFriendsGroupId;
-          final groupIdToDelta = <int, int>{};
-          // 실제 그룹 ID로 업데이트 (postCount 업데이트용)
-          if (allFriendsGroupId != null) {
-            groupIdToDelta[allFriendsGroupId] = 1;
-          }
-          // ManageGroupScreen에서 사용하는 -1도 함께 등록 (스마트 감지기용)
-          groupIdToDelta[-1] = 1;
-          groupProvider.updateMultipleGroupsPostCount(groupIdToDelta);
-
-          // 🎯 allFriends 그룹 포스트 캐시 무효화 (동기화)
-          ManageGroupScreen.invalidateGroupPostsCache(-1);
-
-          debugPrint('[PostExport] allFriends 그룹 postCount 및 포스트 캐시 동기화 완료');
-        }
+        // 그룹 기능 제거로 인해 그룹 관련 동기화 제거
         // PUBLIC/PRIVATE는 그룹 postCount에 영향 없음
       } catch (e) {
         debugPrint('[PostExport] 백그라운드 재로드 실패: $e');
@@ -1190,10 +1141,10 @@ class _PostExportScreenState extends State<PostExportScreen>
         return hasThumbnail && hasTitle && hasExcerpt;
       case 1: // Step 2: 공개 범위
         // 전체공개, 나만보기, 전체 친구 또는 그룹 중 하나는 선택되어야 함
+        // 그룹 기능 제거로 인해 그룹 검증 제거
         return _audienceSelectAll ||
             _audiencePrivateOnly ||
-            _audienceFriendsOnly ||
-            _selectedAudienceGroupIds.isNotEmpty;
+            _audienceFriendsOnly;
       case 2: // Step 3: 카테고리
         // 🎯 카테고리가 실제로 선택되어 있어야 다음 버튼 활성화
         return _selectedCategoryId != null;
@@ -1339,7 +1290,6 @@ class _PostExportScreenState extends State<PostExportScreen>
                       onEditFocusChange: () {},
                     ),
                     Step2AudienceSelection(
-                      selectedAudienceGroupIds: _selectedAudienceGroupIds,
                       audienceSelectAll: _audienceSelectAll,
                       audiencePrivateOnly: _audiencePrivateOnly,
                       audienceFriendsOnly: _audienceFriendsOnly,
@@ -1349,7 +1299,6 @@ class _PostExportScreenState extends State<PostExportScreen>
                           if (value) {
                             _audiencePrivateOnly = false;
                             _audienceFriendsOnly = false;
-                            _selectedAudienceGroupIds.clear();
                           }
                         });
                       },
@@ -1359,7 +1308,6 @@ class _PostExportScreenState extends State<PostExportScreen>
                           if (value) {
                             _audienceSelectAll = false;
                             _audienceFriendsOnly = false;
-                            _selectedAudienceGroupIds.clear();
                           }
                         });
                       },
@@ -1369,28 +1317,10 @@ class _PostExportScreenState extends State<PostExportScreen>
                           if (value) {
                             _audienceSelectAll = false;
                             _audiencePrivateOnly = false;
-                            _selectedAudienceGroupIds.clear();
                           }
                         });
                       },
-                      onSelectedAudienceGroupIdsChanged: (ids) {
-                        setState(() {
-                          _selectedAudienceGroupIds.clear();
-                          _selectedAudienceGroupIds.addAll(ids);
-                        });
-                      },
-                      showGroupLoading: _showGroupLoading,
-                      isGroupLoadingStarted: _isGroupLoadingStarted,
-                      onShowGroupLoadingChanged: (value) {
-                        setState(() {
-                          _showGroupLoading = value;
-                        });
-                      },
-                      onIsGroupLoadingStartedChanged: (value) {
-                        setState(() {
-                          _isGroupLoadingStarted = value;
-                        });
-                      },
+                      // 그룹 기능 제거로 인해 그룹 관련 파라미터 제거
                     ),
                     Step3CategorySelection(
                       selectedCategoryId: _selectedCategoryId,

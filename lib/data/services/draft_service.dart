@@ -26,8 +26,7 @@ class DraftData {
   final String thumbnailUrl;
   final String? videoFilePath; // 영상 원본 파일 경로
   final String? videoThumbnailPath; // 영상 로컬 썸네일 파일 경로
-  final String visibility; // 'public', 'private', 'groups'
-  final List<int> selectedGroupIds;
+  final String visibility; // 'public', 'private'
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -40,7 +39,6 @@ class DraftData {
     this.videoFilePath,
     this.videoThumbnailPath,
     required this.visibility,
-    required this.selectedGroupIds,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -55,8 +53,6 @@ class DraftData {
       if (videoFilePath != null) 'videoFilePath': videoFilePath,
       if (videoThumbnailPath != null) 'videoThumbnailPath': videoThumbnailPath,
       'visibility': visibility,
-      'selectedGroupIds': selectedGroupIds,
-      // ✅ UTC로 저장 (UTC가 아니면 변환)
       'createdAt':
           (createdAt.isUtc ? createdAt : createdAt.toUtc()).toIso8601String(),
       'updatedAt':
@@ -89,7 +85,6 @@ class DraftData {
       videoFilePath: json['videoFilePath'] as String?,
       videoThumbnailPath: json['videoThumbnailPath'] as String?,
       visibility: json['visibility'] ?? 'public',
-      selectedGroupIds: List<int>.from(json['selectedGroupIds'] ?? []),
       createdAt: _parseUtcDateTime(json['createdAt']),
       updatedAt: _parseUtcDateTime(json['updatedAt']),
     );
@@ -113,7 +108,6 @@ class DraftService {
     String? videoFilePath,
     String? videoThumbnailPath,
     required String visibility,
-    required List<int> selectedGroupIds,
     String? existingDraftId,
     dynamic textStylingService, // TextStylingService (순환 참조 방지)
   }) async {
@@ -137,7 +131,7 @@ class DraftService {
             base: Map<String, dynamic>.from(base),
             privateOnly: privateOnly,
             publicOnly: publicOnly,
-            selectedGroupIds: selectedGroupIds,
+
             createdAt: DateTime.now().toUtc(),
             skipValidation: true, // 임시저장은 제목 검증 생략
           );
@@ -162,7 +156,6 @@ class DraftService {
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
         visibility: visibility,
-        selectedGroupIds: selectedGroupIds,
         createdAt:
             existingDraftId != null ? await _getDraftCreatedAt(draftId) : now,
         updatedAt: now,
@@ -205,7 +198,6 @@ class DraftService {
     String? videoFilePath,
     String? videoThumbnailPath,
     required String visibility,
-    required List<int> selectedGroupIds,
     dynamic textStylingService, // TextStylingService (순환 참조 방지)
   }) async {
     try {
@@ -229,7 +221,6 @@ class DraftService {
             base: Map<String, dynamic>.from(base),
             privateOnly: privateOnly,
             publicOnly: publicOnly,
-            selectedGroupIds: selectedGroupIds,
             createdAt: DateTime.now().toUtc(),
             skipValidation: true,
           );
@@ -247,7 +238,6 @@ class DraftService {
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
         visibility: visibility,
-        selectedGroupIds: selectedGroupIds,
         createdAt: now,
         updatedAt: now,
       );

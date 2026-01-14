@@ -8,6 +8,7 @@ import 'package:doppy/data/services/websocket_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/data/services/r2_upload_service.dart';
 import 'package:doppy/utils/mention_parser.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 
 class Comment {
   final String id;
@@ -46,7 +47,7 @@ class Comment {
     this.parentId,
     this.imageUrl,
     this.localImagePath, // 🎯 로컬 이미지 파일 경로
-    this.visibility = 'PUBLIC',
+    this.visibility = SystemCategoryKeys.public,
     this.emotionCounts = const {},
     this.myEmotions = const {},
     this.emotionUsers = const {},
@@ -187,9 +188,10 @@ class Comment {
                 .toList()
             : null;
     // 명세서: visibility 필드로 비밀댓글 확인
-    final visibility = json['visibility']?.toString() ?? 'PUBLIC';
-    final isSecret = visibility == 'PRIVATE';
-    final isRestricted = visibility == 'PRIVATE';
+    final visibility =
+        json['visibility']?.toString() ?? SystemCategoryKeys.public;
+    final isSecret = visibility == SystemCategoryKeys.private;
+    final isRestricted = visibility == SystemCategoryKeys.private;
     final visibleToUsername =
         json['visibleToUsername']?.toString(); // 명세서에는 없지만 UI 호환성 유지
 
@@ -202,7 +204,7 @@ class Comment {
       parentId: json['parentId']?.toString(),
       imageUrl: json['imageUrl']?.toString(),
       localImagePath: null, // 🎯 서버 응답에는 로컬 경로 없음
-      visibility: json['visibility']?.toString() ?? 'PUBLIC',
+      visibility: json['visibility']?.toString() ?? SystemCategoryKeys.public,
       emotionCounts: emotionCountsMap,
       myEmotions: myEmotionsMap,
       emotionUsers: emotionUsers,
@@ -611,7 +613,8 @@ class CommentService extends ChangeNotifier {
         // emotionCounts 등 다른 필드만 업데이트
         // 🎯 비밀댓글인 경우 이모지 반응도 권한 체크 필요
         final isPrivate =
-            localComment.isSecret || localComment.visibility == 'PRIVATE';
+            localComment.isSecret ||
+            localComment.visibility == SystemCategoryKeys.private;
         final currentUsername = await _getCurrentUsername();
         final canViewPrivate =
             localComment.author == currentUsername ||
@@ -678,7 +681,9 @@ class CommentService extends ChangeNotifier {
       // 서버가 전체 emotionCounts를 보내주면 전체 교체
       if (data.containsKey('emotionCounts')) {
         // 🎯 비밀댓글인 경우 이모지 반응도 권한 체크
-        final isPrivate = comment.isSecret || comment.visibility == 'PRIVATE';
+        final isPrivate =
+            comment.isSecret ||
+            comment.visibility == SystemCategoryKeys.private;
         final currentUsername = await _getCurrentUsername();
         final canViewPrivate =
             comment.author == currentUsername ||
@@ -914,8 +919,9 @@ class CommentService extends ChangeNotifier {
               originalContent,
             );
             final visibility =
-                commentJson['visibility']?.toString() ?? 'PUBLIC';
-            final isPrivate = visibility == 'PRIVATE';
+                commentJson['visibility']?.toString() ??
+                SystemCategoryKeys.public;
+            final isPrivate = visibility == SystemCategoryKeys.private;
 
             final currentUsername = await _getCurrentUsername();
             final author =
@@ -1182,8 +1188,9 @@ class CommentService extends ChangeNotifier {
               originalContent,
             );
             final visibility =
-                commentData['visibility']?.toString() ?? 'PUBLIC';
-            final isPrivate = visibility == 'PRIVATE';
+                commentData['visibility']?.toString() ??
+                SystemCategoryKeys.public;
+            final isPrivate = visibility == SystemCategoryKeys.private;
 
             // 🎯 비밀댓글에 권한이 없으면 이모지 반응도 제거 (명세서: 비밀댓글의 경우 emotionCounts, myEmotions, emotionUsers는 빈 값)
             // currentUsername은 루프 밖에서 한 번만 읽음
@@ -1245,7 +1252,9 @@ class CommentService extends ChangeNotifier {
                   commentData['postId']?.toString() ?? _currentPostId ?? '',
               'parentId': commentData['parentId']?.toString(),
               'imageUrl': commentData['imageUrl']?.toString(),
-              'visibility': commentData['visibility']?.toString() ?? 'PUBLIC',
+              'visibility':
+                  commentData['visibility']?.toString() ??
+                  SystemCategoryKeys.public,
               'emotionCounts': emotionCounts,
               'myEmotions': myEmotions,
               'emotionUsers': emotionUsers,
@@ -1467,7 +1476,8 @@ class CommentService extends ChangeNotifier {
             ),
       );
       if (parentComment.id.isNotEmpty &&
-          (parentComment.isSecret || parentComment.visibility == 'PRIVATE')) {
+          (parentComment.isSecret ||
+              parentComment.visibility == SystemCategoryKeys.private)) {
         isSecret = true;
       }
     }
@@ -1486,7 +1496,8 @@ class CommentService extends ChangeNotifier {
       parentId: parentId,
       imageUrl: null, // 🎯 아직 업로드 전이므로 null
       localImagePath: localImagePath, // 🎯 로컬 파일 경로
-      visibility: isSecret ? 'PRIVATE' : 'PUBLIC',
+      visibility:
+          isSecret ? SystemCategoryKeys.private : SystemCategoryKeys.public,
       createdAt: utcNow,
       updatedAt: utcNow,
       isPending: true, // 🎯 업로드 대기 중
@@ -1903,7 +1914,8 @@ class CommentService extends ChangeNotifier {
             ),
       );
       if (parentComment.id.isNotEmpty &&
-          (parentComment.isSecret || parentComment.visibility == 'PRIVATE')) {
+          (parentComment.isSecret ||
+              parentComment.visibility == SystemCategoryKeys.private)) {
         isSecret = true;
         // visibleToUsername은 null로 유지 (서버에서 자동 처리)
       }
@@ -1936,7 +1948,10 @@ class CommentService extends ChangeNotifier {
       parentId: parentId,
       imageUrl: finalImageUrl, // 🎯 단일 이미지 URL
       localImagePath: finalLocalImagePath, // 🎯 단일 로컬 파일 경로
-      visibility: isSecret ? 'PRIVATE' : 'PUBLIC', // 🎯 비밀댓글이면 PRIVATE
+      visibility:
+          isSecret
+              ? SystemCategoryKeys.private
+              : SystemCategoryKeys.public, // 🎯 비밀댓글이면 PRIVATE
       createdAt: utcNow, // 🎯 UTC 시간 사용
       updatedAt: utcNow, // 🎯 UTC 시간 사용
       isPending: true, // 서버 전송 대기 중
@@ -2007,7 +2022,10 @@ class CommentService extends ChangeNotifier {
         'content': finalContent, // 명세서: content 필드 사용
         'postId': postIdInt, // 포스트 ID (정수)
         if (parentIdInt != null) 'parentId': parentIdInt, // 대댓글인 경우
-        'visibility': isSecret ? 'PRIVATE' : 'PUBLIC', // 명세서: visibility 필드 사용
+        'visibility':
+            isSecret
+                ? SystemCategoryKeys.private
+                : SystemCategoryKeys.public, // 명세서: visibility 필드 사용
         if (validImageUrl != null)
           'usedUrls': [validImageUrl], // 🎯 R2 URL만 포함 (단일 이미지)
         // 🎯 언급 기능: 명세서에 따라 mentionedUsernames 배열 포함
@@ -2050,8 +2068,9 @@ class CommentService extends ChangeNotifier {
         responseData['content'] = checkedContent;
 
         // 🎯 비밀댓글인 경우 이모지 반응도 권한 체크
-        final visibility = responseData['visibility']?.toString() ?? 'PUBLIC';
-        final isPrivate = visibility == 'PRIVATE';
+        final visibility =
+            responseData['visibility']?.toString() ?? SystemCategoryKeys.public;
+        final isPrivate = visibility == SystemCategoryKeys.private;
         if (isPrivate) {
           final currentUsername = await _getCurrentUsername();
           final author =
@@ -2326,8 +2345,9 @@ class CommentService extends ChangeNotifier {
         responseData['content'] = checkedContent;
 
         // 🎯 비밀댓글인 경우 이모지 반응도 권한 체크
-        final visibility = responseData['visibility']?.toString() ?? 'PUBLIC';
-        final isPrivate = visibility == 'PRIVATE';
+        final visibility =
+            responseData['visibility']?.toString() ?? SystemCategoryKeys.public;
+        final isPrivate = visibility == SystemCategoryKeys.private;
         if (isPrivate) {
           final author =
               responseData['author']?.toString() ??

@@ -3,7 +3,6 @@ import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
-import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
@@ -259,7 +258,6 @@ class _SplashScreenState extends State<SplashScreen>
         homeDataFuture.then((_) => null),
         _loadSearchHistory(),
         _loadUserData(),
-        _loadGroupSchema(),
       ]);
 
       // 홈 데이터 가져오기
@@ -268,7 +266,7 @@ class _SplashScreenState extends State<SplashScreen>
       // 4. 트렌딩 데이터는 비동기로 백그라운드에서 로드 (스피너 안정화를 위해 약간 지연)
       // ✅ 스피너가 먼저 안정적으로 렌더링된 후 트렌딩 데이터 로드 시작
       Future.delayed(const Duration(milliseconds: 500), () {
-        _loadTrendingData();
+        _loadRecommendedPosts();
       });
 
       // 5. 설정 정보 및 받은 요청은 비동기로 백그라운드에서 로드 (스피너 안정화를 위해 약간 지연)
@@ -328,27 +326,13 @@ class _SplashScreenState extends State<SplashScreen>
     }
   }
 
-  Future<void> _loadGroupSchema() async {
+  Future<void> _loadRecommendedPosts() async {
     try {
-      // GroupProvider를 통해 그룹 스키마 미리 로드 (메타데이터만)
-      final groupProvider = context.read<GroupProvider>();
-      await groupProvider.fetchMyGroups(forceRefresh: false);
-    } catch (e) {
-      // 그룹 스키마 로드 실패는 앱 시작을 막지 않음
-      debugPrint('[SplashScreen] 그룹 스키마 로드 실패: $e');
-    }
-  }
-
-  Future<void> _loadTrendingData() async {
-    try {
-      // SearchService를 통해 트렌딩 데이터 비동기 로드 (shimmer 없이)
+      // SearchService를 통해 추천 포스트 비동기 로드
       final searchService = SearchService();
-      await searchService.fetchTrendingKeywords(
-        limit: 5,
-        showShimmer: false, // 🎯 앱 시작 시에는 shimmer 표시하지 않음
-      );
+      await searchService.fetchRecommendedPosts(page: 0, size: 5);
     } catch (e) {
-      // 트렌딩 데이터 로드 실패는 앱 시작을 막지 않음
+      // 추천 포스트 로드 실패는 앱 시작을 막지 않음
     }
   }
 

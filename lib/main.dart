@@ -20,7 +20,6 @@ import 'package:doppy/pages/components/week_post_list_content.dart';
 import 'package:doppy/pages/screens/onboarding_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
-import 'package:doppy/providers/group_provider.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -317,7 +316,6 @@ Future<void> main() async {
         ChangeNotifierProvider(
           create: (_) => MyProfileFeedProvider(),
         ), // 내 피드용 (싱글톤 인스턴스 사용)
-        ChangeNotifierProvider(create: (_) => GroupProvider()),
         ChangeNotifierProvider(create: (_) => CategoryOverlayProvider()),
         ChangeNotifierProvider(create: (_) => PostDragDropService()),
 

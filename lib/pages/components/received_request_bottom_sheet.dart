@@ -8,7 +8,6 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/friend_provider.dart';
-import '../../providers/group_provider.dart';
 
 /// 🎯 받은 요청 리스트 바텀시트 (앱 진입 시 표시)
 class ReceivedRequestBottomSheet extends StatefulWidget {
@@ -152,14 +151,11 @@ class _ReceivedRequestBottomSheetState
     try {
       if (!mounted) return;
       final friendProvider = context.read<FriendProvider>();
-      final groupProvider = context.read<GroupProvider>();
 
       bool? result;
       if (accept) {
-        result = await friendProvider.acceptFriendRequest(
-          request.username,
-          groupProvider: groupProvider,
-        );
+        // 그룹 기능 제거로 인해 groupProvider 파라미터 제거
+        result = await friendProvider.acceptFriendRequest(request.username);
       } else {
         result = await friendProvider.rejectFriendRequest(request.username);
       }

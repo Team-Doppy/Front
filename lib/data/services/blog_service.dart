@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/utils/access_level_parser.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 
 class BlogService {
   static final BlogService _instance = BlogService._internal();
@@ -148,14 +149,14 @@ class BlogService {
             e.type == DioExceptionType.receiveTimeout) {
           rethrow; // DioException 그대로 전달
         }
-        
+
         // 400 에러인 경우, 서버 응답을 확인하여 빈 상태로 처리
         if (e.response?.statusCode == 400) {
           final responseData = e.response?.data;
           if (responseData is Map<String, dynamic>) {
             final message = responseData['message']?.toString() ?? '';
             // "포스트 데이터 조회 중 오류" 메시지인 경우 빈 응답 반환 (회원가입 직후 포스트 없음)
-            if (message.contains('포스트 데이터 조회 중 오류') || 
+            if (message.contains('포스트 데이터 조회 중 오류') ||
                 message.contains('포스트') && message.contains('오류')) {
               debugPrint('[BlogService] 포스트 없음으로 빈 응답 반환');
               return {
@@ -173,7 +174,7 @@ class BlogService {
           // 기타 400 에러는 그대로 전달
           rethrow;
         }
-        
+
         // HTTP 상태 코드가 있는 경우에만 Exception 변환
         if (e.response?.statusCode == 404) {
           throw Exception('사용자를 찾을 수 없습니다.');
@@ -466,17 +467,15 @@ class BlogService {
   /// 포스트 공개범위 변경
   Future<void> updatePostAccessLevel({
     required int postId,
-    required String accessLevel, // 'PRIVATE', 'PUBLIC', 'GROUPS'
-    List<int>? sharedGroupIds, // GROUPS일 때만 필요
+    required String accessLevel, // SystemCategoryKeys.public, private, friends
+    // 그룹 기능 제거로 인해 sharedGroupIds 파라미터 제거
   }) async {
     debugPrint('[BlogService] 공개범위 변경 요청: $postId -> $accessLevel');
 
     try {
       final data = <String, dynamic>{'accessLevel': accessLevel};
 
-      if (accessLevel == 'GROUPS' && sharedGroupIds != null) {
-        data['sharedGroupIds'] = sharedGroupIds;
-      }
+      // 그룹 기능 제거로 인해 GROUPS 처리 제거
 
       await _dio.patch('/api/posts/$postId/access-level', data: data);
 
@@ -503,14 +502,13 @@ class BlogService {
   /// 여러 포스트의 공개범위를 배치로 변경
   ///
   /// [postIds] - 변경할 포스트 ID 리스트
-  /// [accessLevel] - 변경할 공개범위 ('PUBLIC', 'PRIVATE', 'FRIENDS', 'GROUPS')
-  /// [sharedGroupIds] - GROUPS일 때만 필요한 그룹 ID 리스트
+  /// [accessLevel] - 변경할 공개범위 (SystemCategoryKeys.public, private, friends)
   ///
   /// 응답: 변경된 포스트 목록
   Future<List<Map<String, dynamic>>> batchUpdatePostsAccessLevel({
     required List<int> postIds,
     required String accessLevel,
-    List<int>? sharedGroupIds,
+    // 그룹 기능 제거로 인해 sharedGroupIds 파라미터 제거
   }) async {
     try {
       debugPrint(
@@ -522,10 +520,7 @@ class BlogService {
         'accessLevel': accessLevel,
       };
 
-      // GROUPS일 때만 sharedGroupIds 추가
-      if (accessLevel == 'GROUPS' && sharedGroupIds != null) {
-        data['sharedGroupIds'] = sharedGroupIds;
-      }
+      // 그룹 기능 제거로 인해 GROUPS 처리 제거
 
       final response = await _dio.patch(
         '/api/posts/batch/access-level',
@@ -799,15 +794,13 @@ class BlogService {
     debugPrint('[UploadPost] uploading post');
 
     // 서버 DTO에 맞춰 매핑: title, author, thumbnailImageUrl, content(JsonNode), accessLevel
-    // accessLevel은 PostExporter에서 직접 설정한 값만 사용 (PUBLIC | PRIVATE | FRIENDS | GROUPS)
+    // accessLevel은 PostExporter에서 직접 설정한 값만 사용 (PUBLIC | PRIVATE | FRIENDS)
     // visibility 객체는 사용하지 않음
     // 🎯 공통 파싱 유틸리티 사용
     final accessLevel =
         AccessLevelParser.parseAccessLevelString(postData['accessLevel']) ??
-        'PUBLIC';
-    final sharedGroupIds = AccessLevelParser.parseSharedGroupIds(
-      postData['sharedGroupIds'],
-    );
+        SystemCategoryKeys.public;
+    // 그룹 기능 제거로 인해 sharedGroupIds 파싱 제거
 
     // content(JsonNode) 전송: 문자열이면 decode, 맵/리스트면 그대로 사용
     dynamic contentJson = postData['content'];
@@ -840,18 +833,12 @@ class BlogService {
           (postData['mentionedUsernames'] is List)
               ? List<String>.from(postData['mentionedUsernames'] as List)
               : <String>[],
-      // GROUPS인 경우에만 sharedGroupIds 추가
-      if (accessLevel == 'GROUPS' &&
-          sharedGroupIds != null &&
-          sharedGroupIds.isNotEmpty)
-        'sharedGroupIds': sharedGroupIds,
+      // 그룹 기능 제거로 인해 GROUPS 처리 제거
     };
 
     debugPrint('[UploadPost] ===== 최종 요청 본문 =====');
     debugPrint('[UploadPost] accessLevel: $accessLevel');
-    if (accessLevel == 'GROUPS' && sharedGroupIds != null) {
-      debugPrint('[UploadPost] sharedGroupIds: $sharedGroupIds');
-    }
+    // 그룹 기능 제거로 인해 GROUPS 디버그 로그 제거
     debugPrint('[UploadPost] request body: ${json.encode(requestBody)}');
 
     try {
@@ -878,30 +865,6 @@ class BlogService {
         );
         throw HttpException(
           'post upload failed ${e.response?.statusCode}: ${e.response?.data}',
-        );
-      }
-      rethrow;
-    }
-  }
-
-  /// 단일 포스트 전체 조회 (스키마 + 내용 + 메타데이터, isLiked, likeCount, commentCount 포함)
-  Future<Map<String, dynamic>> getPost(String postId) async {
-    try {
-      final response = await _dio.get(
-        '/api/posts/$postId',
-        options: Options(receiveTimeout: const Duration(seconds: 20)),
-      );
-
-      final decoded = response.data;
-      if (decoded is Map<String, dynamic>) {
-        // 🎯 전체 응답 반환 (title, author, thumbnailImageUrl, content, isLiked, likeCount, commentCount 모두 포함)
-        return decoded;
-      }
-      return <String, dynamic>{};
-    } catch (e) {
-      if (e is DioException) {
-        throw HttpException(
-          'get post failed ${e.response?.statusCode}: ${e.response?.data}',
         );
       }
       rethrow;
@@ -987,10 +950,8 @@ class BlogService {
     // 🎯 공통 파싱 유틸리티 사용
     final accessLevel =
         AccessLevelParser.parseAccessLevelString(postData['accessLevel']) ??
-        'PUBLIC';
-    final sharedGroupIds = AccessLevelParser.parseSharedGroupIds(
-      postData['sharedGroupIds'],
-    );
+        SystemCategoryKeys.public;
+    // 그룹 기능 제거로 인해 sharedGroupIds 파싱 제거
 
     dynamic contentJson = postData['content'];
     if (contentJson is String && contentJson.isNotEmpty) {
@@ -1012,18 +973,12 @@ class BlogService {
       'content': contentJson ?? const <String, dynamic>{'nodes': []},
       'accessLevel': accessLevel,
       'summary': summary,
-      // GROUPS인 경우에만 sharedGroupIds 추가
-      if (accessLevel == 'GROUPS' &&
-          sharedGroupIds != null &&
-          sharedGroupIds.isNotEmpty)
-        'sharedGroupIds': sharedGroupIds,
+      // 그룹 기능 제거로 인해 GROUPS 처리 제거
     };
 
     debugPrint('[UpdatePost] ===== 최종 요청 본문 =====');
     debugPrint('[UpdatePost] accessLevel: $accessLevel');
-    if (accessLevel == 'GROUPS' && sharedGroupIds != null) {
-      debugPrint('[UpdatePost] sharedGroupIds: $sharedGroupIds');
-    }
+    // 그룹 기능 제거로 인해 GROUPS 디버그 로그 제거
 
     debugPrint('[UpdatePost] request body: ${json.encode(requestBody)}');
 
@@ -1104,7 +1059,7 @@ class BlogService {
     }
   }
 
-  /// 내가 작성한 FRIENDS 공개 범위 포스트 조회 (allFriends 그룹용)
+  /// 내가 작성한 FRIENDS 공개 범위 포스트 조회
   ///
   /// [page] - 페이지 번호 (0부터 시작)
   /// [size] - 페이지 크기
@@ -1197,7 +1152,7 @@ class BlogService {
       final response = await _dio.get(
         '/api/posts/home',
         queryParameters: {'page': page, 'size': size},
-        options: Options(receiveTimeout: const Duration(seconds: 10)),
+        options: Options(receiveTimeout: const Duration(seconds: 30)),
       );
 
       final data = response.data as Map<String, dynamic>;
@@ -1403,67 +1358,7 @@ class BlogService {
     }
   }
 
-  /// 그룹별 포스트 조회
-  ///
-  /// [groupId] - 그룹 ID
-  /// [page] - 페이지 번호 (기본값: 0)
-  /// [size] - 페이지 크기 (기본값: 10)
-  /// [includeContent] - content 포함 여부 (기본값: false)
-  ///
-  /// 응답 구조:
-  /// {
-  ///   "group": { ... },
-  ///   "posts": {
-  ///     "content": [...],
-  ///     "totalElements": 50,
-  ///     "totalPages": 5,
-  ///     ...
-  ///   },
-  ///   "friends": [...]
-  /// }
-  Future<Map<String, dynamic>> getGroupPosts({
-    required int groupId,
-    int page = 0,
-    int size = 10,
-    bool includeContent = false,
-  }) async {
-    try {
-      debugPrint(
-        '[BlogService] 그룹별 포스트 조회 시작 - 그룹ID: $groupId, page: $page, size: $size, includeContent: $includeContent',
-      );
-
-      final response = await _dio.get(
-        '/api/posts/group/$groupId',
-        queryParameters: {
-          'page': page,
-          'size': size,
-          'includeContent': includeContent,
-        },
-        options: Options(receiveTimeout: const Duration(seconds: 10)),
-      );
-
-      debugPrint('[BlogService] 그룹별 포스트 조회 응답 상태: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final data = response.data as Map<String, dynamic>;
-        debugPrint(
-          '[BlogService] 그룹별 포스트 조회 성공 - 포스트 수: ${(data['posts']?['content'] as List?)?.length ?? 0}',
-        );
-        return data;
-      } else {
-        throw Exception('그룹별 포스트 조회 실패: ${response.statusCode}');
-      }
-    } catch (e) {
-      debugPrint('[BlogService] 그룹별 포스트 조회 에러: $e');
-      if (e is DioException) {
-        debugPrint(
-          '[BlogService] Dio 에러: ${e.response?.statusCode} - ${e.response?.data}',
-        );
-        throw Exception('그룹별 포스트 조회 실패: ${e.response?.statusCode}');
-      }
-      rethrow;
-    }
-  }
+  // 그룹 기능 제거로 인해 getGroupPosts 메서드 제거
 
   /// 포스트 조회자 정보 조회
   ///

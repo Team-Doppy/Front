@@ -30,7 +30,6 @@ class PostPublishService {
   /// [privateOnly] - 나만보기 여부
   /// [publicOnly] - 전체공개 여부
   /// [friendsOnly] - 친구공유 여부
-  /// [selectedGroupIds] - 선택된 그룹 ID 목록
   /// [categoryId] - 카테고리 ID
   ///
   /// 반환: 최종 발행용 JSON 맵
@@ -42,7 +41,7 @@ class PostPublishService {
     required bool privateOnly,
     required bool publicOnly,
     required bool friendsOnly,
-    required List<int> selectedGroupIds,
+    // 그룹 기능 제거로 인해 selectedGroupIds 파라미터 제거
     required int? categoryId,
   }) async {
     // ✅ 썸네일 URL 검증은 UI 레이어(_publish)에서 이미 수행됨
@@ -68,7 +67,6 @@ class PostPublishService {
       privateOnly: privateOnly,
       publicOnly: publicOnly,
       friendsOnly: friendsOnly,
-      selectedGroupIds: selectedGroupIds,
       categoryId: categoryId,
       createdAt: DateTime.now().toUtc(),
     );

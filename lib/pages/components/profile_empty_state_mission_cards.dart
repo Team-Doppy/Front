@@ -6,7 +6,6 @@ import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/pages/components/profile_edit_sheet.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
-import 'package:doppy/pages/screens/group_selection_screen.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/services/upload_service.dart';
@@ -89,12 +88,6 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
                     icon: Icons.edit,
                     isCompleted: missionState.hasProfileInfo,
                     onTap: () => _openProfileEdit(context),
-                  ),
-                  MissionData(
-                    title: '그룹 만들고\n친구 초대하기',
-                    icon: Icons.person_add,
-                    isCompleted: missionState.hasFriends,
-                    onTap: () => _navigateToGroupSelection(context),
                   ),
                   MissionData(
                     title: '새로운 포스트\n게시하기',
@@ -322,13 +315,6 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
       MaterialPageRoute(
         builder: (context) => const PostwriteScreen(isEditingMode: false),
       ),
-    );
-  }
-
-  /// 그룹 선택 화면으로 이동 (친구 초대)
-  void _navigateToGroupSelection(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (context) => const GroupSelectionScreen()),
     );
   }
 }

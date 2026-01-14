@@ -10,7 +10,6 @@ import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/providers/friend_provider.dart';
-import 'package:doppy/providers/group_provider.dart';
 
 /// 🎯 프로필 액션 바텀시트 (재사용 가능한 컴포넌트)
 class ProfileActionBottomSheet extends StatelessWidget {
@@ -303,25 +302,7 @@ class ProfileActionBottomSheet extends StatelessWidget {
         debugPrint('[ProfileActionBottomSheet] 친구 캐시 클리어 실패: $e');
       }
 
-      // 🎯 그룹 캐시 클리어
-      try {
-        if (parentContext != null && parentContext.mounted) {
-          final groupProvider = GroupProvider();
-          groupProvider.clearAllCache();
-          // 그룹 데이터 재조회
-          final friendProvider = Provider.of<FriendProvider>(
-            parentContext,
-            listen: false,
-          );
-          await groupProvider.fetchMyGroups(
-            forceRefresh: true,
-            friendProvider: friendProvider,
-          );
-          debugPrint('[ProfileActionBottomSheet] 그룹 캐시 클리어 완료');
-        }
-      } catch (e) {
-        debugPrint('[ProfileActionBottomSheet] 그룹 캐시 클리어 실패: $e');
-      }
+      // 그룹 기능 제거로 인해 그룹 캐시 클리어 로직 제거
 
       // 🎯 차단 성공 후 처리
       // 약간의 지연을 두어 Navigator 스택이 안정화되도록 함

@@ -6,7 +6,6 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/friend_provider.dart';
-import '../../providers/group_provider.dart';
 
 // 친구 요청 수락/거절 바텀시트
 class FriendRequestBottomSheet extends StatefulWidget {
@@ -229,15 +228,11 @@ class _FriendRequestBottomSheetState extends State<FriendRequestBottomSheet> {
     try {
       if (!mounted) return;
       final friendProvider = context.read<FriendProvider>();
-      final groupProvider = context.read<GroupProvider>(); // 🎯 그룹 데이터 동기화용
       bool? result;
 
       if (accept) {
-        // 🎯 GroupProvider 전달하여 allFriends 그룹 memberCount 업데이트
-        result = await friendProvider.acceptFriendRequest(
-          widget.username,
-          groupProvider: groupProvider,
-        );
+        // 그룹 기능 제거로 인해 groupProvider 파라미터 제거
+        result = await friendProvider.acceptFriendRequest(widget.username);
       } else {
         // 🎯 거절 기능 구현
         result = await friendProvider.rejectFriendRequest(widget.username);

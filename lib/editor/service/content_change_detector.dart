@@ -24,7 +24,6 @@ class ContentChangeDetector {
   ///
   /// 다음 항목들은 무시됩니다 (별도로 관리):
   /// - 공개범위 (accessLevel, visibility)
-  /// - 그룹 공유 (groupIds, sharedGroupIds)
   static bool hasContentChanged({
     required Map<String, dynamic> originalExported,
     required EditorService editorService,
@@ -39,7 +38,7 @@ class ContentChangeDetector {
         stickerService: stickerService,
       );
 
-      // 2. 문서 구조 비교 (공개범위, groupIds는 무시)
+      // 2. 문서 구조 비교 (공개범위는 무시)
       if (_hasDocumentStructureChanged(originalExported, currentExported)) {
         debugPrint('[ContentChangeDetector] ✓ 문서 구조 변경 감지');
         return true;
@@ -250,9 +249,7 @@ class ContentChangeDetector {
         'position', // 서버에서만 제공 (순서)
         'id', // 노드 ID는 변경 여부와 무관 (순서만 중요)
         'accessLevel', // 공개 범위 - 변경 감지에서 제외
-        'visibility', // 공개 범위 - 변경 감지에서 제외
-        'sharedGroupIds', // 그룹 공유 - 변경 감지에서 제외
-        'groupIds', // 그룹 공유 - 변경 감지에서 제외
+        'visibility', // 공개 범위 - 변경 감지에서 제거
         'thumbnailImageUrl', // 서버에서만 제공 (썸네일 URL) - 별도로 관리
         'summary', // 서버에서만 제공 (요약) - 별도로 관리
         'authorProfileImageUrl', // 서버에서만 제공 (작성자 프로필 이미지 URL) - 별도로 관리

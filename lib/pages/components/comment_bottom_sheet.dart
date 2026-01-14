@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/comment_service.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/pages/components/swipe_reply_comment_item.dart';
 import 'package:doppy/pages/components/comment_mention_overlay.dart';
@@ -372,7 +373,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     String? finalVisibleToUsername = _secretMessageTarget;
     if (replyTargetId != null && _replyTarget != null) {
       final isReplyToPrivate =
-          _replyTarget!.isSecret || _replyTarget!.visibility == 'PRIVATE';
+          _replyTarget!.isSecret ||
+          _replyTarget!.visibility == SystemCategoryKeys.private;
       if (isReplyToPrivate) {
         // 비밀댓글에 답장: 포스트 작성자와 원래 댓글 작성자만 볼 수 있도록
         // visibleToUsername은 null로 설정하고, addComment에서 부모 댓글이 비밀댓글이면 자동으로 PRIVATE로 처리
@@ -449,7 +451,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     String? finalVisibleToUsername = _secretMessageTarget;
     if (replyTargetId != null && _replyTarget != null) {
       final isReplyToPrivate =
-          _replyTarget!.isSecret || _replyTarget!.visibility == 'PRIVATE';
+          _replyTarget!.isSecret ||
+          _replyTarget!.visibility == SystemCategoryKeys.private;
       if (isReplyToPrivate) {
         finalVisibleToUsername = null;
       }
@@ -569,7 +572,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
         currentUser != null && comment.author == currentUser.username;
 
     // 🎯 비밀댓글 권한 체크: 작성자이거나 포스트 작성자만 메뉴 표시
-    final isPrivate = comment.isSecret || comment.visibility == 'PRIVATE';
+    final isPrivate =
+        comment.isSecret || comment.visibility == SystemCategoryKeys.private;
     if (isPrivate) {
       final currentUsername = currentUser?.username;
       final isAuthor = comment.author == currentUsername;

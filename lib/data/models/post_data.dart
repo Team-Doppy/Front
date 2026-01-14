@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:doppy/utils/access_level_parser.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:flutter/material.dart';
 
 enum AccessLevel { public, private, friends, groups }
@@ -16,8 +17,7 @@ class PostData {
   final String createdAt;
   final String updatedAt;
   final AccessLevel accessLevel;
-  final List<int>? sharedGroupIds; // 🎯 그룹 공유 시 그룹 ID 목록
-  final List<String>? sharedGroupNames; // 🎯 서버에서 제공하는 그룹 이름 목록
+
   final int viewCount;
   final int likeCount;
   final int commentCount;
@@ -77,8 +77,7 @@ class PostData {
     required this.authorProfileImageUrl,
     required this.content,
     required this.accessLevel,
-    this.sharedGroupIds, // 🎯 그룹 공유 시 그룹 ID 목록
-    this.sharedGroupNames, // 🎯 서버에서 제공하는 그룹 이름 목록
+    // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 파라미터 제거
     required this.createdAt,
     required this.updatedAt,
     required this.viewCount,
@@ -95,13 +94,12 @@ class PostData {
       data['accessLevel'],
     );
     AccessLevel accessLevel = AccessLevel.public;
-    if (accessLevelStr == 'PRIVATE') {
+    if (accessLevelStr == SystemCategoryKeys.private) {
       accessLevel = AccessLevel.private;
-    } else if (accessLevelStr == 'FRIENDS') {
+    } else if (accessLevelStr == SystemCategoryKeys.friends) {
       accessLevel = AccessLevel.friends;
-    } else if (accessLevelStr == 'GROUPS') {
-      accessLevel = AccessLevel.groups;
     }
+    // 그룹 기능 제거로 인해 GROUPS 처리 제거
 
     final author =
         data['author']?.toString() ??
@@ -136,8 +134,7 @@ class PostData {
       content: content,
       summary: data['summary'] ?? '',
       accessLevel: accessLevel,
-      sharedGroupIds: null,
-      sharedGroupNames: null,
+      // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
       createdAt: data['createdAt'] ?? DateTime.now().toUtc().toIso8601String(),
       updatedAt:
           data['updatedAt'] ??
@@ -166,13 +163,12 @@ class PostData {
       data['accessLevel'],
     );
     AccessLevel accessLevel = AccessLevel.public;
-    if (accessLevelStr == 'PRIVATE') {
+    if (accessLevelStr == SystemCategoryKeys.private) {
       accessLevel = AccessLevel.private;
-    } else if (accessLevelStr == 'FRIENDS') {
+    } else if (accessLevelStr == SystemCategoryKeys.friends) {
       accessLevel = AccessLevel.friends;
-    } else if (accessLevelStr == 'GROUPS') {
-      accessLevel = AccessLevel.groups;
     }
+    // 그룹 기능 제거로 인해 GROUPS 처리 제거
 
     // content가 Map인 경우 JSON 문자열로 변환
     String content = '';
@@ -201,11 +197,7 @@ class PostData {
               : int.tryParse('${data['authorId']}');
     }
 
-    // 🎯 메타데이터 레벨에서는 sharedGroupIds/Names 없음
-    // content 포함 응답은 content.accessLevelInfo에서 파싱해야 함
-    // 여기서는 null로 설정 (메타데이터만 파싱하는 경우)
-    final List<int>? sharedGroupIds = null;
-    final List<String>? sharedGroupNames = null;
+    // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
 
     return PostData(
       id: data['id']?.toString() ?? '',
@@ -220,8 +212,7 @@ class PostData {
       content: content,
       summary: data['summary'] ?? '',
       accessLevel: accessLevel,
-      sharedGroupIds: sharedGroupIds,
-      sharedGroupNames: sharedGroupNames,
+      // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
       createdAt: data['createdAt'] ?? DateTime.now().toUtc().toIso8601String(),
       updatedAt:
           data['updatedAt'] ??
@@ -328,9 +319,8 @@ class PostData {
       'content': content,
       'createdAt': createdAt,
       'updatedAt': updatedAt,
-      'accessLevel': accessLevel.name, // public/private/friends/groups
-      'sharedGroupIds': sharedGroupIds,
-      'sharedGroupNames': sharedGroupNames,
+      'accessLevel': accessLevel.name, // public/private/friends
+      // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
       'viewCount': viewCount,
       'likeCount': likeCount,
       'commentCount': commentCount,
@@ -358,8 +348,7 @@ class PostData {
       authorProfileImageUrl: data['authorProfileImageUrl']?.toString() ?? '',
       content: data['content']?.toString() ?? '',
       accessLevel: accessLevel,
-      sharedGroupIds: (data['sharedGroupIds'] as List?)?.cast<int>(),
-      sharedGroupNames: (data['sharedGroupNames'] as List?)?.cast<String>(),
+      // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
       createdAt:
           data['createdAt']?.toString() ??
           DateTime.now().toUtc().toIso8601String(),
@@ -412,8 +401,7 @@ class PostData {
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': contentData,
         'accessLevel': accessLevel.name.toUpperCase(), // 🎯 accessLevel 추가
-        'sharedGroupIds': sharedGroupIds, // 🎯 sharedGroupIds 추가
-        'sharedGroupNames': sharedGroupNames, // 🎯 sharedGroupNames 추가
+        // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
         'viewCount': viewCount, // 🎯 viewCount 추가
         'likeCount': likeCount,
         'commentCount': commentCount,
@@ -433,8 +421,7 @@ class PostData {
         'authorProfileImageUrl': authorProfileImageUrl,
         'content': {'nodes': []},
         'accessLevel': accessLevel.name.toUpperCase(), // 🎯 accessLevel 추가
-        'sharedGroupIds': sharedGroupIds, // 🎯 sharedGroupIds 추가
-        'sharedGroupNames': sharedGroupNames, // 🎯 sharedGroupNames 추가
+        // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
         'viewCount': viewCount, // 🎯 viewCount 추가
         'likeCount': likeCount,
         'commentCount': commentCount,

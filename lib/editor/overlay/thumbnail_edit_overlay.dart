@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:doppy/pages/components/access_level_sheet.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/pages/components/category_select_sheet.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/editor/utils/post_metadata_change_detector.dart';
@@ -68,14 +69,11 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
 
   // 카테고리 및 공개범위 정보
   int? _currentCategoryId;
-  String _currentAccessLevel = 'PUBLIC';
-  List<int>? _currentSharedGroupIds;
-  List<String>? _currentSharedGroupNames;
+  String _currentAccessLevel = SystemCategoryKeys.public;
 
   // 원본 카테고리 및 공개범위 (변경 감지용)
   int? _originalCategoryId;
-  String _originalAccessLevel = 'PUBLIC';
-  List<int>? _originalSharedGroupIds;
+  String _originalAccessLevel = SystemCategoryKeys.public;
 
   // 애니메이션 컨트롤러 (Step1ThumbnailEdit에서 필요)
   late final AnimationController _animationController = AnimationController(
@@ -155,18 +153,11 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
             // 🎯 카테고리는 로컬에서 가져온 값 사용, 공개범위는 서버에서 가져옴
             _currentCategoryId = localCategoryId;
             _currentAccessLevel =
-                metadata['accessLevel'] as String? ?? 'PUBLIC';
-            _currentSharedGroupIds = metadata['sharedGroupIds'] as List<int>?;
-            _currentSharedGroupNames =
-                metadata['sharedGroupNames'] as List<String>?;
+                metadata['accessLevel'] as String? ?? SystemCategoryKeys.public;
 
             // 원본 카테고리 및 공개범위 저장 (변경 감지용)
             _originalCategoryId = _currentCategoryId;
             _originalAccessLevel = _currentAccessLevel;
-            _originalSharedGroupIds =
-                _currentSharedGroupIds != null
-                    ? List<int>.from(_currentSharedGroupIds!)
-                    : null;
 
             _isLoading = false;
           });
@@ -254,18 +245,12 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
 
           // 🎯 카테고리는 로컬에서 가져온 값 사용, 공개범위는 서버에서 가져옴
           _currentCategoryId = localCategoryId;
-          _currentAccessLevel = metadata['accessLevel'] as String? ?? 'PUBLIC';
-          _currentSharedGroupIds = metadata['sharedGroupIds'] as List<int>?;
-          _currentSharedGroupNames =
-              metadata['sharedGroupNames'] as List<String>?;
+          _currentAccessLevel =
+              metadata['accessLevel'] as String? ?? SystemCategoryKeys.public;
 
           // 원본 카테고리 및 공개범위 저장 (변경 감지용)
           _originalCategoryId = _currentCategoryId;
           _originalAccessLevel = _currentAccessLevel;
-          _originalSharedGroupIds =
-              _currentSharedGroupIds != null
-                  ? List<int>.from(_currentSharedGroupIds!)
-                  : null;
 
           _isLoading = false;
         });
@@ -397,8 +382,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
       originalCategoryId: _originalCategoryId,
       currentAccessLevel: _currentAccessLevel,
       originalAccessLevel: _originalAccessLevel,
-      currentSharedGroupIds: _currentSharedGroupIds,
-      originalSharedGroupIds: _originalSharedGroupIds,
     );
 
     if (!changeResult.hasChanges) {
@@ -487,7 +470,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
         await blogService.updatePostAccessLevel(
           postId: int.parse(widget.postId),
           accessLevel: _currentAccessLevel,
-          sharedGroupIds: _currentSharedGroupIds,
         );
 
         // 🎯 피드 프로바이더에서 메타데이터 업데이트 (공개범위 변경)
@@ -496,7 +478,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
           feedProvider.updatePostMetadata(
             widget.postId,
             accessLevel: _currentAccessLevel,
-            sharedGroupIds: _currentSharedGroupIds,
           );
           debugPrint(
             '[ThumbnailEditOverlay] 피드 프로바이더 메타데이터 업데이트 완료: postId=${widget.postId}, accessLevel=$_currentAccessLevel',
@@ -522,10 +503,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
       }
       if (changeResult.hasAccessLevelChanges) {
         _originalAccessLevel = _currentAccessLevel;
-        _originalSharedGroupIds =
-            _currentSharedGroupIds != null
-                ? List<int>.from(_currentSharedGroupIds!)
-                : null;
       }
 
       if (mounted) {
@@ -601,14 +578,11 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
       context,
       postId: widget.postId,
       currentAccessLevel: _currentAccessLevel,
-      currentSharedGroupIds: _currentSharedGroupIds,
-      currentSharedGroupNames: _currentSharedGroupNames,
       isBatchMode: false,
-      onChanged: (String accessLevel, List<int>? sharedGroupIds) async {
+      onChanged: (String accessLevel) async {
         if (mounted) {
           setState(() {
             _currentAccessLevel = accessLevel;
-            _currentSharedGroupIds = sharedGroupIds;
           });
         }
       },
@@ -685,8 +659,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
                         originalCategoryId: _originalCategoryId,
                         currentAccessLevel: _currentAccessLevel,
                         originalAccessLevel: _originalAccessLevel,
-                        currentSharedGroupIds: _currentSharedGroupIds,
-                        originalSharedGroupIds: _originalSharedGroupIds,
                       );
 
                       if (changeResult.hasChanges) {
@@ -780,8 +752,6 @@ class _ThumbnailEditOverlayState extends State<ThumbnailEditOverlay>
                     originalCategoryId: _originalCategoryId,
                     currentAccessLevel: _currentAccessLevel,
                     originalAccessLevel: _originalAccessLevel,
-                    currentSharedGroupIds: _currentSharedGroupIds,
-                    originalSharedGroupIds: _originalSharedGroupIds,
                   );
 
                   final isDisabled =

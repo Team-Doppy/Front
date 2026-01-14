@@ -7,14 +7,13 @@ import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/data/services/like_service.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
-import 'package:doppy/pages/screens/group_selection_screen.dart';
 import 'package:doppy/pages/components/liked_users_bottom_sheet.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/utils/access_level_parser.dart';
 import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
 import 'package:provider/provider.dart';
-import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -124,10 +123,11 @@ class DeepLinkHandler {
           break;
 
         case DeepLinkType.friendRequest:
-          await _handleFriendRequestDeepLink(
-            context,
-            showLoadingOverlay: showLoadingOverlay,
-          );
+          // 친구 요청 딥링크 처리 제거 (나중에 다시 추가 예정)
+          debugPrint('[DeepLinkHandler] 친구 요청 딥링크는 현재 지원되지 않습니다.');
+          if (context.mounted) {
+            ErrorHandler.showError(context, '친구 요청 링크는 현재 지원되지 않습니다.');
+          }
           break;
 
         case DeepLinkType.unknown:
@@ -369,55 +369,7 @@ class DeepLinkHandler {
     }
   }
 
-  /// 친구 요청 딥링크 처리
-  /// 🎯 필요한 데이터를 순서대로 로드한 후 화면으로 이동
-  static Future<void> _handleFriendRequestDeepLink(
-    BuildContext context, {
-    required bool showLoadingOverlay,
-  }) async {
-    final bool loadingShown =
-        showLoadingOverlay ? await _pushDeepLinkLoading(context) : false;
-    try {
-      // 1️⃣ 친구 데이터 로드 (받은 요청 포함)
-      debugPrint('[DeepLinkHandler] 1/2 친구 데이터 로드 중...');
-      final friendProvider = Provider.of<FriendProvider>(
-        context,
-        listen: false,
-      );
-      await friendProvider.fetchAllFriendData(forceRefresh: true);
-
-      if (!context.mounted) return;
-
-      debugPrint('[DeepLinkHandler] ✅ 친구 데이터 로딩 완료!');
-
-      // 2️⃣ 내 그룹 화면으로 이동 (앱 시작 시 표시되는 바텀시트만 사용)
-      debugPrint('[DeepLinkHandler] 2/2 내 그룹 화면으로 이동 중...');
-      final nav = Navigator.of(context, rootNavigator: true);
-      final targetRoute = PageRouteBuilder(
-        pageBuilder:
-            (context, animation, secondaryAnimation) =>
-                const GroupSelectionScreen(showReceivedRequests: false),
-        transitionDuration: const Duration(milliseconds: 220),
-        reverseTransitionDuration: const Duration(milliseconds: 220),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-      );
-      await _afterFrameVoid(context, () async {
-        if (loadingShown) {
-          await nav.pushReplacement(targetRoute);
-        } else {
-          await nav.push(targetRoute);
-        }
-      });
-    } catch (e) {
-      debugPrint('[DeepLinkHandler] 친구 요청 딥링크 처리 오류: $e');
-      if (context.mounted) {
-        _dismissDeepLinkLoadingIfNeeded(context, loadingShown: loadingShown);
-        ErrorHandler.showError(context, '친구 요청을 불러올 수 없습니다.');
-      }
-    }
-  }
+  // 친구 요청 딥링크 처리 제거 (나중에 다시 추가 예정)
 
   /// 서버 응답을 exported 데이터 형식으로 변환
   static Map<String, dynamic> _convertToExportedData(
@@ -445,9 +397,9 @@ class DeepLinkHandler {
       'authorProfileImageUrl':
           postData['authorProfileImageUrl']?.toString() ?? '',
       'content': content,
-      'accessLevel': parsed['accessLevel'] as String? ?? 'PUBLIC',
-      'sharedGroupIds': parsed['sharedGroupIds'] as List<int>?,
-      'sharedGroupNames': parsed['sharedGroupNames'] as List<String>?,
+      'accessLevel':
+          parsed['accessLevel'] as String? ?? SystemCategoryKeys.public,
+      // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
       'likeCount': postData['likeCount'] as int? ?? 0,
       'commentCount': postData['commentCount'] as int? ?? 0,
       'isLiked': postData['isLiked'] == true,

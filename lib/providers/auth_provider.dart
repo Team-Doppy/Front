@@ -6,7 +6,6 @@ import '../../data/services/blog_service.dart';
 import 'package:doppy/image/utils/read_image_cache_manager.dart';
 import 'user_provider.dart';
 import 'friend_provider.dart';
-import 'group_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -40,7 +39,6 @@ class AuthProvider extends ChangeNotifier {
     FriendProvider().logout();
     OtherProfileFeedProvider().logout();
     MyProfileFeedProvider().logout();
-    GroupProvider().logout();
 
     // 4. 모든 서비스 캐시 초기화
     BlogService.clearAllCache();

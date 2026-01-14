@@ -48,11 +48,12 @@ import 'package:doppy/utils/time_utils.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/utils/access_level_parser.dart';
 import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/pages/components/retry_cancel_bottom_sheet.dart';
+import 'package:doppy/data/models/system_category_keys.dart';
 
-/// 글 공개 범위 옵션
-enum VisibilityOption { public, partial, private }
+// 그룹 기능 제거로 인해 VisibilityOption enum 제거 - SystemCategoryKeys 사용
 
 enum NodeType {
   paragraph,
@@ -126,8 +127,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   late final String _editorUploadSessionId;
 
   // 공개범위 설정 (편집 모드용)
-  String _editVisibility = 'public';
-  List<int> _editGroupIds = [];
+  String _editVisibility = SystemCategoryKeys.public;
+  // 그룹 기능 제거로 인해 _editGroupIds 제거
 
   // 서버에 적용된 제목 (썸네일 오버레이에서 변경 시 업데이트)
   String? _serverAppliedTitle;
@@ -239,8 +240,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
-        visibility: 'public',
-        selectedGroupIds: [],
+        visibility: SystemCategoryKeys.public,
         textStylingService: textStylingService,
       );
     } finally {
@@ -279,25 +279,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           '[PostwriteScreen] initState: 문서 복원 완료 (nodes: ${document.length}개)',
         );
 
-        // 기존 공개범위 정보 복원
-        final metadata =
-            widget.exportedDataForEdit!['metadata'] as Map<String, dynamic>?;
-        if (metadata != null) {
-          final rawVis = (metadata['visibility'] ?? 'PUBLIC').toString();
-          final visUpper = rawVis.toUpperCase();
-          if (visUpper == 'PRIVATE') {
-            _editVisibility = 'private';
-            _editGroupIds = [];
-          } else if (visUpper == 'GROUPS' || visUpper == 'PARTIAL') {
-            _editVisibility = 'partial';
-            final groupIds = metadata['groupIds'] as List<dynamic>?;
-            _editGroupIds =
-                groupIds?.map((e) => (e as num).toInt()).toList() ?? [];
-          } else {
-            _editVisibility = 'public';
-            _editGroupIds = [];
-          }
-        }
+        // 기존 공개범위 정보 복원 (accessLevel 직접 사용)
+        final accessLevel =
+            AccessLevelParser.parseAccessLevelString(
+              widget.exportedDataForEdit!['accessLevel'],
+            ) ??
+            SystemCategoryKeys.public;
+        _editVisibility = accessLevel;
 
         // 🎯 편집 모드: 초기 제목 설정 (수정 완료 버튼에서 변경 체크용)
         // 제목은 썸네일 편집 화면에서 입력하므로 여기서는 처리하지 않음
@@ -875,8 +863,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
-        visibility: 'public',
-        selectedGroupIds: [],
+        visibility: SystemCategoryKeys.public,
         textStylingService: textStylingService,
       );
 
@@ -1287,19 +1274,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                         editorService: editorService,
                         onSave: _saveEditedPost,
                         currentVisibility: _editVisibility,
-                        currentGroupIds: _editGroupIds,
+                        // 그룹 기능 제거로 인해 currentGroupIds 제거
                         postId: widget.postId,
                         isSaving: _isSaving,
                         isAutoSaving: _isAutoSaving,
                         videoUploadIndicatorNotifier:
                             _videoUploadIndicatorNotifier,
-                        onVisibilityChanged: (visibility, groupIds) {
-                          setState(() {
-                            _editVisibility = visibility;
-                            _editGroupIds = groupIds;
-                          });
-                          _shouldRefreshMyFeed = true;
-                        },
+                        // 그룹 기능 제거로 인해 onVisibilityChanged 제거
                         onTitleSummaryChanged: (title, summary) {
                           setState(() {
                             _serverAppliedTitle = title;
@@ -2074,8 +2055,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
-        visibility: 'public', // 기본값
-        selectedGroupIds: [],
+        visibility: SystemCategoryKeys.public, // 기본값
+
         existingDraftId: currentDraftId, // UUID 기반 ID 사용
         textStylingService: textStylingService,
       );
@@ -2311,7 +2292,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
         visibility: _editVisibility,
-        selectedGroupIds: _editGroupIds,
         existingDraftId: draftId,
         textStylingService: textStylingService,
       );
