@@ -1091,37 +1091,24 @@ class _ManageGroupScreenState extends State<ManageGroupScreen>
   }
 
   Widget _buildGroupAvatarPlaceholder(Group group) {
+    // 🎯 그라데이션과 고양이 아이콘 제거, 단순한 원형 배경만 표시
     return Container(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            GroupColorPalette.getColor(group.id).withOpacity(0.55),
-            GroupColorPalette.getColor(group.id),
-            GroupColorPalette.getColor(group.id).withOpacity(0.95),
-          ],
-          stops: const [0.0, 0.5, 1.0],
-        ),
+        color: Theme.of(context).colorScheme.surfaceVariant,
       ),
-      child: Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            center: Alignment(-0.4, -0.4),
-            radius: 1.0,
-            colors: [Colors.white.withOpacity(0.12), Colors.transparent],
-          ),
-        ),
-        child: Center(
-          child: ClipOval(
-            child: Image.asset(
-              'assets/images/doppy_nobg.png',
-              width: 25,
-              height: 25,
-              color: Colors.white,
-              fit: BoxFit.contain,
+      child: Center(
+        child: IconButton(
+          onPressed: () {
+            _showEditGroupSheet();
+          },
+          icon: SvgPicture.asset(
+            'assets/icons/editor_gallery.svg',
+            width: 20,
+            height: 20,
+            colorFilter: ColorFilter.mode(
+              Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+              BlendMode.srcIn,
             ),
           ),
         ),

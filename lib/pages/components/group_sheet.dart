@@ -409,37 +409,19 @@ class GroupDropDown {
       _selectedGroupImageUrl = null;
     }
 
-    // 🎯 전체 화면 페이지로 이동
+    // 🎯 기본 Material push 방식으로 화면 이동 (옆에서 나오는 기본 애니메이션)
     await Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) {
-          return _GroupCreateEditPage(
-            groupDropDown: this,
-            groups: groups,
-            selectedGroup: selectedGroup,
-            onGroupSelected: onGroupSelected,
-            onCreateGroup: onCreateGroup,
-            editMode: editMode,
-            onDeleteGroup: onDeleteGroup,
-          );
-        },
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          // 아래에서 위로 슬라이드 애니메이션
-          const begin = Offset(0.0, 1.0);
-          const end = Offset.zero;
-          const curve = Curves.easeOutCubic;
-
-          var tween = Tween(
-            begin: begin,
-            end: end,
-          ).chain(CurveTween(curve: curve));
-
-          return SlideTransition(
-            position: animation.drive(tween),
-            child: child,
-          );
-        },
-        transitionDuration: const Duration(milliseconds: 300),
+      MaterialPageRoute(
+        builder:
+            (context) => _GroupCreateEditPage(
+              groupDropDown: this,
+              groups: groups,
+              selectedGroup: selectedGroup,
+              onGroupSelected: onGroupSelected,
+              onCreateGroup: onCreateGroup,
+              editMode: editMode,
+              onDeleteGroup: onDeleteGroup,
+            ),
       ),
     );
   }

@@ -41,316 +41,328 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
     final surfaceColor = isDark ? const Color(0xFF1A1A1A) : Colors.white;
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: keyboardHeight),
-      child: Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.92 - keyboardHeight,
-        ),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 핸들바
-            Container(
-              margin: const EdgeInsets.only(top: 12, bottom: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(2),
+    return WillPopScope(
+      onWillPop: () async {
+        // 탈퇴 진행 중에는 뒤로 가기/드래그로 닫기 방지
+        if (_isDeleting) {
+          return false;
+        }
+        return true;
+      },
+      child: Padding(
+        padding: EdgeInsets.only(bottom: keyboardHeight),
+        child: Container(
+          constraints: BoxConstraints(
+            maxHeight:
+                MediaQuery.of(context).size.height * 0.92 - keyboardHeight,
+          ),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 핸들바
+              Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
 
-            // 제목
-            Padding(
-              padding: const EdgeInsets.fromLTRB(30, 8, 24, 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      context.tr('delete_account'),
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurface,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 18,
+              // 제목
+              Padding(
+                padding: const EdgeInsets.fromLTRB(30, 8, 24, 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        context.tr('delete_account'),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 18,
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: Icon(
-                      Icons.close,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.6),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            Flexible(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                shrinkWrap: true,
-                children: [
-                  // 경고 메시지
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 24, left: 10),
-                    child: Text(
-                      context.tr('delete_account_warning'),
-                      textAlign: TextAlign.left,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.6),
-                        height: 1.6,
+                    IconButton(
+                      onPressed:
+                          _isDeleting ? null : () => Navigator.pop(context),
+                      icon: Icon(
+                        Icons.close,
+                        color: Theme.of(context).colorScheme.onSurface
+                            .withOpacity(_isDeleting ? 0.2 : 0.6),
                       ),
                     ),
-                  ),
+                  ],
+                ),
+              ),
 
-                  // 탈퇴 사유 선택 - 애플 스타일 그룹
-                  Container(
-                    decoration: BoxDecoration(
-                      color: surfaceColor,
-                      borderRadius: BorderRadius.circular(12),
+              Flexible(
+                child: ListView(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  shrinkWrap: true,
+                  children: [
+                    // 경고 메시지
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 24, left: 10),
+                      child: Text(
+                        context.tr('delete_account_warning'),
+                        textAlign: TextAlign.left,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.6),
+                          height: 1.6,
+                        ),
+                      ),
                     ),
-                    child: Column(
-                      children: [
-                        ..._getReasonsWithContext(context).asMap().entries.map((
-                          entry,
-                        ) {
-                          final index = entry.key;
-                          final reasonData = entry.value;
-                          final reasonKey = reasonData['key']!;
-                          final reasonText = reasonData['text']!;
-                          final isSelected = _selectedReason == reasonKey;
-                          final isFirst = index == 0;
-                          final isLast =
-                              index ==
-                              _getReasonsWithContext(context).length - 1;
 
-                          return Column(
-                            children: [
-                              if (!isFirst)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 16),
-                                  child: Divider(
-                                    height: 1,
-                                    thickness: 0.5,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.1),
-                                  ),
-                                ),
-                              InkWell(
-                                onTap: () {
-                                  setState(() {
-                                    _selectedReason = reasonKey;
-                                    // 기타가 아닌 다른 이유 선택 시 상세 설명 초기화
-                                    if (reasonKey != 'other') {
-                                      _detailController.clear();
-                                    }
-                                  });
-                                },
-                                borderRadius: BorderRadius.vertical(
-                                  top:
-                                      isFirst
-                                          ? const Radius.circular(12)
-                                          : Radius.zero,
-                                  bottom:
-                                      isLast && _selectedReason != 'other'
-                                          ? const Radius.circular(12)
-                                          : Radius.zero,
-                                ),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 16,
-                                    horizontal: 16,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          reasonText,
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w400,
-                                            color:
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface,
-                                          ),
-                                        ),
-                                      ),
-                                      if (isSelected)
-                                        Icon(
-                                          Icons.check,
-                                          color:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                          size: 24,
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        }).toList(),
-                      ],
-                    ),
-                  ),
-
-                  // 상세 사유 입력 - 애플 스타일 (기타 선택 시만)
-                  if (_selectedReason == 'other') ...[
-                    const SizedBox(height: 16),
+                    // 탈퇴 사유 선택 - 애플 스타일 그룹
                     Container(
                       decoration: BoxDecoration(
                         color: surfaceColor,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: TextField(
-                        controller: _detailController,
-                        maxLines: 4,
-                        maxLength: 200,
-                        onChanged:
-                            (value) => setState(
-                              () {},
-                            ), // 🎯 입력 시 상태 업데이트 (버튼 활성화/비활성화)
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface,
-                          fontSize: 16,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: context.tr('detail_reason_hint'),
-                          hintStyle: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.4),
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          filled: true,
-                          fillColor: surfaceColor,
-                          contentPadding: const EdgeInsets.all(16),
-                        ),
+                      child: Column(
+                        children: [
+                          ..._getReasonsWithContext(
+                            context,
+                          ).asMap().entries.map((entry) {
+                            final index = entry.key;
+                            final reasonData = entry.value;
+                            final reasonKey = reasonData['key']!;
+                            final reasonText = reasonData['text']!;
+                            final isSelected = _selectedReason == reasonKey;
+                            final isFirst = index == 0;
+                            final isLast =
+                                index ==
+                                _getReasonsWithContext(context).length - 1;
+
+                            return Column(
+                              children: [
+                                if (!isFirst)
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 16),
+                                    child: Divider(
+                                      height: 1,
+                                      thickness: 0.5,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.1),
+                                    ),
+                                  ),
+                                InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      _selectedReason = reasonKey;
+                                      // 기타가 아닌 다른 이유 선택 시 상세 설명 초기화
+                                      if (reasonKey != 'other') {
+                                        _detailController.clear();
+                                      }
+                                    });
+                                  },
+                                  borderRadius: BorderRadius.vertical(
+                                    top:
+                                        isFirst
+                                            ? const Radius.circular(12)
+                                            : Radius.zero,
+                                    bottom:
+                                        isLast && _selectedReason != 'other'
+                                            ? const Radius.circular(12)
+                                            : Radius.zero,
+                                  ),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                      horizontal: 16,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            reasonText,
+                                            style: TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w400,
+                                              color:
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.onSurface,
+                                            ),
+                                          ),
+                                        ),
+                                        if (isSelected)
+                                          Icon(
+                                            Icons.check,
+                                            color:
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
+                                            size: 24,
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          }).toList(),
+                        ],
                       ),
                     ),
-                  ],
-                  const SizedBox(height: 20),
-                ],
-              ),
-            ),
 
-            // 하단 고정 버튼 - 애플 스타일
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-              ),
-              child: SafeArea(
-                child: TextButton(
-                  onPressed:
-                      (_selectedReason == null ||
-                              (_selectedReason == 'other' &&
-                                  _detailController.text.trim().isEmpty) ||
-                              _isDeleting)
-                          ? null
-                          : () async {
-                            // 🎯 기타 선택 시 상세 설명 필수 검증
-                            if (_selectedReason == 'other' &&
-                                _detailController.text.trim().isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('기타를 선택하셨을 경우 탈퇴 이유를 입력해주세요'),
-                                  backgroundColor:
-                                      Theme.of(context).colorScheme.error,
-                                ),
-                              );
-                              return;
-                            }
-
-                            final confirmed =
-                                await DialogUtils.showConfirmDialog(
-                                  context,
-                                  title: context.tr('delete_account'),
-                                  message: context.tr(
-                                    'delete_account_final_confirm',
-                                  ),
-                                  confirmText: context.tr('delete_confirm'),
-                                  cancelText: context.tr('cancel'),
-                                  isDestructive: true,
-                                );
-
-                            if (confirmed == true) {
-                              await _handleAccountDeletion(context);
-                            }
-                          },
-                  style: TextButton.styleFrom(
-                    backgroundColor:
-                        (_selectedReason == null ||
-                                (_selectedReason == 'other' &&
-                                    _detailController.text.trim().isEmpty) ||
-                                _isDeleting)
-                            ? Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.1)
-                            : (isDark ? Colors.white : AppColors.darkSurface),
-                    foregroundColor:
-                        (_selectedReason == null ||
-                                (_selectedReason == 'other' &&
-                                    _detailController.text.trim().isEmpty) ||
-                                _isDeleting)
-                            ? Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.4)
-                            : (isDark ? Colors.black : Colors.white),
-                    minimumSize: const Size.fromHeight(54),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                  child:
-                      _isDeleting
-                          ? SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Theme.of(context).colorScheme.onSurface,
-                              ),
-                            ),
-                          )
-                          : Text(
-                            context.tr('delete_action'),
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 17,
-                            ),
+                    // 상세 사유 입력 - 애플 스타일 (기타 선택 시만)
+                    if (_selectedReason == 'other') ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: surfaceColor,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: TextField(
+                          controller: _detailController,
+                          maxLines: 4,
+                          maxLength: 200,
+                          onChanged:
+                              (value) => setState(
+                                () {},
+                              ), // 🎯 입력 시 상태 업데이트 (버튼 활성화/비활성화)
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface,
+                            fontSize: 16,
                           ),
+                          decoration: InputDecoration(
+                            hintText: context.tr('detail_reason_hint'),
+                            hintStyle: TextStyle(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.4),
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            filled: true,
+                            fillColor: surfaceColor,
+                            contentPadding: const EdgeInsets.all(16),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                  ],
                 ),
               ),
-            ),
-          ],
+
+              // 하단 고정 버튼 - 애플 스타일
+              Container(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                ),
+                child: SafeArea(
+                  child: TextButton(
+                    onPressed:
+                        (_selectedReason == null ||
+                                (_selectedReason == 'other' &&
+                                    _detailController.text.trim().isEmpty) ||
+                                _isDeleting)
+                            ? null
+                            : () async {
+                              // 🎯 기타 선택 시 상세 설명 필수 검증
+                              if (_selectedReason == 'other' &&
+                                  _detailController.text.trim().isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('기타를 선택하셨을 경우 탈퇴 이유를 입력해주세요'),
+                                    backgroundColor:
+                                        Theme.of(context).colorScheme.error,
+                                  ),
+                                );
+                                return;
+                              }
+
+                              final confirmed =
+                                  await DialogUtils.showConfirmDialog(
+                                    context,
+                                    title: context.tr('delete_account'),
+                                    message: context.tr(
+                                      'delete_account_final_confirm',
+                                    ),
+                                    confirmText: context.tr('delete_confirm'),
+                                    cancelText: context.tr('cancel'),
+                                    isDestructive: true,
+                                  );
+
+                              if (confirmed == true) {
+                                await _handleAccountDeletion(context);
+                              }
+                            },
+                    style: TextButton.styleFrom(
+                      backgroundColor:
+                          (_selectedReason == null ||
+                                  (_selectedReason == 'other' &&
+                                      _detailController.text.trim().isEmpty) ||
+                                  _isDeleting)
+                              ? Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.1)
+                              : (isDark ? Colors.white : AppColors.darkSurface),
+                      foregroundColor:
+                          (_selectedReason == null ||
+                                  (_selectedReason == 'other' &&
+                                      _detailController.text.trim().isEmpty) ||
+                                  _isDeleting)
+                              ? Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.4)
+                              : (isDark ? Colors.black : Colors.white),
+                      minimumSize: const Size.fromHeight(54),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child:
+                        _isDeleting
+                            ? SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Theme.of(context).colorScheme.onSurface,
+                                ),
+                              ),
+                            )
+                            : Text(
+                              context.tr('delete_action'),
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 17,
+                              ),
+                            ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -11,7 +11,11 @@ import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/received_request_bottom_sheet.dart';
 import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
-import 'package:doppy/pages/screens/email_verification_screen.dart';
+import 'package:doppy/pages/screens/join_screen.dart';
+import 'package:doppy/providers/blur_overlay_provider.dart';
+import 'package:doppy/pages/components/blur_overlay_widget.dart';
+import 'package:doppy/pages/components/week_preview_content.dart';
+import 'package:doppy/pages/components/week_post_list_content.dart';
 
 import 'package:doppy/pages/screens/onboarding_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
@@ -322,6 +326,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => NodeComponentService()),
         ChangeNotifierProvider(create: (_) => StickerService()),
         ChangeNotifierProvider(create: (_) => UploadService()),
+        ChangeNotifierProvider(create: (_) => BlurOverlayProvider()),
       ],
       child: MyApp(
         hasSeenOnboarding: hasSeenOnboarding,
@@ -421,7 +426,8 @@ class MyApp extends StatelessWidget {
               '/splash': (_) => const SplashScreen(),
               '/login': (_) => const LoginScreen(),
               '/post-write': (_) => PostwriteScreen(isEditingMode: false),
-              '/email-verify': (_) => const EmailVerificationScreen(),
+              '/email-verify':
+                  (_) => const JoinScreen(emailVerificationOnly: true),
             },
 
             // ✅ IMPORTANT: iOS/Android App Links가 "엔진 initialRoute"로 들어올 수 있음 (예: /334)
@@ -902,6 +908,37 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
                   onTap: _onTap,
                   isSearching: context.watch<SearchProvider>().isSearchActive,
                 ),
+              ),
+              // 전역 블러 오버레이 (바텀바까지 덮음)
+              Consumer<BlurOverlayProvider>(
+                builder: (context, blurProvider, _) {
+                  return BlurOverlayWidget(
+                    contentBuilder: (
+                      context,
+                      weekNumber,
+                      year,
+                      position,
+                      controller,
+                    ) {
+                      final overlayType = blurProvider.overlayType;
+
+                      // weekPostList일 때는 PostList 표시
+                      if (overlayType == BlurOverlayType.weekPostList) {
+                        return WeekPostListContent(
+                          weekNumber: weekNumber,
+                          year: year,
+                          controller: controller,
+                        );
+                      }
+
+                      // longPress일 때는 기존 WeekPreviewContent 표시
+                      return WeekPreviewContent(
+                        weekNumber: weekNumber,
+                        year: year,
+                      );
+                    },
+                  );
+                },
               ),
             ],
           );

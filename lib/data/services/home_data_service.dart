@@ -148,16 +148,16 @@ class HomeDataService {
   /// 스플래시에서 사용: 두 섹션 데이터 동시 로드
   Future<HomeData> preloadAllSections({int page = 0, int size = 20}) async {
     try {
-      // 두 섹션 데이터를 병렬로 로드
-      final results = await Future.wait([
-        _loadFriendsPostsDirect(page: page, size: size),
-        _loadAllPostsDirect(page: page, size: size),
-      ]);
+      // 통합 API로 두 섹션 데이터를 한 번에 로드
+      final homeFeedData = await _blogService.getHomeFeedData(
+        page: page,
+        size: size,
+      );
 
       // 🎯 스플래시 스피너/애니메이션이 끊기지 않도록, PostData 파싱을 compute(isolate)로 이동
       final parsed = await compute(_parseHomeDataInBackground, {
-        'friends': results[0],
-        'all': results[1],
+        'friends': homeFeedData['friends'] ?? [],
+        'all': homeFeedData['all'] ?? [],
       });
 
       final friendsPosts =
@@ -452,7 +452,12 @@ class HomeDataService {
     int page = 0,
     int size = 10,
   }) async {
-    return _blogService.getFriendsPosts(page: page, size: size);
+    // 통합 API 사용
+    final homeFeedData = await _blogService.getHomeFeedData(
+      page: page,
+      size: size,
+    );
+    return homeFeedData['friends'] ?? [];
   }
 
   /// 전체글 직접 로드
@@ -460,6 +465,11 @@ class HomeDataService {
     int page = 0,
     int size = 10,
   }) async {
-    return _blogService.getRecommendedPosts(page: page, size: size);
+    // 통합 API 사용
+    final homeFeedData = await _blogService.getHomeFeedData(
+      page: page,
+      size: size,
+    );
+    return homeFeedData['all'] ?? [];
   }
 }

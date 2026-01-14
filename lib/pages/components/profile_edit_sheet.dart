@@ -300,39 +300,42 @@ class _ProfileInfoEditBottomSheetState
     final theme = Theme.of(context);
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
-    return DraggableScrollableSheet(
-      // 기본 높이 고정: 화면의 85%
-      initialChildSize: 0.85,
-      minChildSize: 0.6, // 🎯 자동 닫힘 역치 높임 (0.4 -> 0.6)
-      maxChildSize: 0.95,
-      snap: true, // 🎯 스냅 기능 활성화 (더 많이 드래그해야 닫힘)
-      builder: (context, scrollController) {
-        return Container(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 20),
+      decoration: const BoxDecoration(color: Colors.transparent),
+      child: Stack(
+        children: [
+          // 배경 터치 영역 (닫기)
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              child: Container(color: Colors.transparent),
+            ),
           ),
-          child: SingleChildScrollView(
-            controller: scrollController,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.onSurface.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
+          // 콘텐츠 영역
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: GestureDetector(
+              onTap: () {}, // 콘텐츠 영역 터치 시 이벤트 전파 방지
+              child: Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.85,
                 ),
-                const SizedBox(height: 20),
-
-                // 원형 프로필 + 액션 버튼]
-                /*
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 24,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 원형 프로필 + 액션 버튼]
+                      /*
                 Center(
                   child: Stack(
                     alignment: Alignment.center,
@@ -381,255 +384,276 @@ class _ProfileInfoEditBottomSheetState
                     ],
                   ),
                 ),*/
-                Text(
-                  AppLocalizations.of(context).translate('nickname'),
-                  style: TextStyle(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.8),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w400,
-                  ),
-                ),
-                // 별명 텍스트필드
-                TextField(
-                  controller: _nameController,
-                  focusNode: _nameFocus,
-                  textAlign: TextAlign.center,
-                  cursorColor: Theme.of(context).colorScheme.onSurface,
-                  onChanged: (value) => setState(() {}),
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w400,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: AppLocalizations.of(
-                      context,
-                    ).translate('nickname_hint'),
-                    hintStyle: TextStyle(color: Colors.grey[600]),
-                    filled: true,
-                    fillColor: Theme.of(context).colorScheme.surfaceVariant,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    border: OutlineInputBorder(
-                      borderSide: BorderSide.none,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderSide: BorderSide.none,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderSide: BorderSide.none,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    errorBorder: OutlineInputBorder(
-                      borderSide: BorderSide(
-                        color: Theme.of(context).colorScheme.error,
-                        width: 1,
-                      ),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    focusedErrorBorder: OutlineInputBorder(
-                      borderSide: BorderSide(
-                        color: Theme.of(context).colorScheme.error,
-                        width: 2,
-                      ),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    errorText:
-                        _nameController.text.trim().isEmpty
-                            ? AppLocalizations.of(
-                              context,
-                            ).translate('nickname_required')
-                            : null,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  AppLocalizations.of(context).translate('introduction'),
-                  style: TextStyle(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.8),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w400,
-                  ),
-                ),
-                // 소개글 텍스트필드
-                TextField(
-                  controller: _descriptionController,
-                  focusNode: _descriptionFocus,
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  cursorColor: Theme.of(context).colorScheme.onSurface,
-                  onChanged: (value) => setState(() {}),
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w400,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: AppLocalizations.of(
-                      context,
-                    ).translate('introduction_hint'),
-                    hintStyle: TextStyle(color: Colors.grey[600]),
-                    filled: true,
-                    fillColor: Theme.of(context).colorScheme.surfaceVariant,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    border: OutlineInputBorder(
-                      borderSide: BorderSide.none,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderSide: BorderSide.none,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderSide: BorderSide.none,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // 🎯 링크 섹션
-                Row(
-                  children: [
-                    Text(
-                      AppLocalizations.of(context).translate('link'),
-                      style: TextStyle(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.8),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                    const Spacer(),
-                    GestureDetector(
-                      onTap: () => _showLinkOverlay(context),
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.onSurface,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.add,
-                          color: Theme.of(context).colorScheme.surface,
-                          size: 20,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-
-                // 🎯 링크 목록 표시 (Column 내에서 직접 빌드)
-                if (_links.isNotEmpty) ...[
-                  ...List.generate(_links.length, (index) {
-                    return Padding(
-                      padding: EdgeInsets.only(
-                        bottom: index < _links.length - 1 ? 8 : 0,
-                      ),
-                      child: _buildLinkItem(context, _links[index], index),
-                    );
-                  }),
-                  const SizedBox(height: 8),
-                ],
-
-                if (_links.isEmpty) ...[
-                  Container(
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceVariant,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Center(
-                      child: Text(
-                        AppLocalizations.of(context).translate('no_links'),
+                      Text(
+                        AppLocalizations.of(context).translate('nickname'),
                         style: TextStyle(
                           color: Theme.of(
                             context,
-                          ).colorScheme.onSurface.withOpacity(0.5),
-                          fontSize: 14,
+                          ).colorScheme.onSurface.withOpacity(0.8),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w400,
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                ],
+                      // 별명 텍스트필드
+                      TextField(
+                        controller: _nameController,
+                        focusNode: _nameFocus,
+                        textAlign: TextAlign.center,
+                        cursorColor: Theme.of(context).colorScheme.onSurface,
+                        onChanged: (value) => setState(() {}),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w400,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: AppLocalizations.of(
+                            context,
+                          ).translate('nickname_hint'),
+                          hintStyle: TextStyle(color: Colors.grey[600]),
+                          filled: true,
+                          fillColor:
+                              Theme.of(context).colorScheme.surfaceVariant,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          border: OutlineInputBorder(
+                            borderSide: BorderSide.none,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide.none,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderSide: BorderSide.none,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          errorBorder: OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: Theme.of(context).colorScheme.error,
+                              width: 1,
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          focusedErrorBorder: OutlineInputBorder(
+                            borderSide: BorderSide(
+                              color: Theme.of(context).colorScheme.error,
+                              width: 2,
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          errorText:
+                              _nameController.text.trim().isEmpty
+                                  ? AppLocalizations.of(
+                                    context,
+                                  ).translate('nickname_required')
+                                  : null,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        AppLocalizations.of(context).translate('introduction'),
+                        style: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.8),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                      // 소개글 텍스트필드
+                      TextField(
+                        controller: _descriptionController,
+                        focusNode: _descriptionFocus,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        cursorColor: Theme.of(context).colorScheme.onSurface,
+                        onChanged: (value) => setState(() {}),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w400,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: AppLocalizations.of(
+                            context,
+                          ).translate('introduction_hint'),
+                          hintStyle: TextStyle(color: Colors.grey[600]),
+                          filled: true,
+                          fillColor:
+                              Theme.of(context).colorScheme.surfaceVariant,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          border: OutlineInputBorder(
+                            borderSide: BorderSide.none,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide.none,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderSide: BorderSide.none,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
 
-                const SizedBox(height: 16),
-
-                // 저장 버튼 (별명이 있고 변경사항이 있을 때만)
-                if (widget.onSave != null &&
-                    _hasChanges &&
-                    _nameController.text.trim().isNotEmpty)
-                  _buildActionButton(
-                    context: context,
-                    icon: Icons.save,
-                    label: AppLocalizations.of(
-                      context,
-                    ).translate('save_profile'),
-                    onTap: () async {
-                      final hasChanges = _hasChanges;
-                      if (!hasChanges) return;
-
-                      setState(() => _saving = true);
-
-                      try {
-                        await widget.onSave!(
-                          alias: _nameController.text.trim(),
-                          description: _descriptionController.text.trim(),
-                          links: _links, // 🎯 빈 배열도 전달하여 링크 삭제 가능하게
-                          linkTitles: _linkTitles.isEmpty ? null : _linkTitles,
-                          linkThumbnails:
-                              _linkThumbnails.isEmpty ? null : _linkThumbnails,
-                        );
-
-                        // 저장 완료 후 잠시 대기
-                        await Future.delayed(const Duration(milliseconds: 500));
-
-                        if (context.mounted) Navigator.pop(context);
-                      } catch (e) {
-                        // 에러 처리
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                AppLocalizations.of(
-                                  context,
-                                ).translate('save_error'),
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onError,
-                                ),
+                      // 🎯 링크 섹션
+                      Row(
+                        children: [
+                          Text(
+                            AppLocalizations.of(context).translate('link'),
+                            style: TextStyle(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.8),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                          const Spacer(),
+                          GestureDetector(
+                            onTap: () => _showLinkOverlay(context),
+                            child: Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.onSurface,
+                                shape: BoxShape.circle,
                               ),
-                              backgroundColor:
-                                  Theme.of(context).colorScheme.error,
+                              child: Icon(
+                                Icons.add,
+                                color: Theme.of(context).colorScheme.surface,
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+
+                      // 🎯 링크 목록 표시 (Column 내에서 직접 빌드)
+                      if (_links.isNotEmpty) ...[
+                        ...List.generate(_links.length, (index) {
+                          return Padding(
+                            padding: EdgeInsets.only(
+                              bottom: index < _links.length - 1 ? 8 : 0,
+                            ),
+                            child: _buildLinkItem(
+                              context,
+                              _links[index],
+                              index,
                             ),
                           );
-                        }
-                      } finally {
-                        if (mounted) setState(() => _saving = false);
-                      }
-                    },
+                        }),
+                        const SizedBox(height: 8),
+                      ],
+
+                      if (_links.isEmpty) ...[
+                        Container(
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surfaceVariant,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Center(
+                            child: Text(
+                              AppLocalizations.of(
+                                context,
+                              ).translate('no_links'),
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.5),
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+
+                      const SizedBox(height: 16),
+
+                      // 저장 버튼 (별명이 있고 변경사항이 있을 때만)
+                      if (widget.onSave != null &&
+                          _hasChanges &&
+                          _nameController.text.trim().isNotEmpty)
+                        _buildActionButton(
+                          context: context,
+                          icon: Icons.save,
+                          label: AppLocalizations.of(
+                            context,
+                          ).translate('save_profile'),
+                          onTap: () async {
+                            final hasChanges = _hasChanges;
+                            if (!hasChanges) return;
+
+                            setState(() => _saving = true);
+
+                            try {
+                              await widget.onSave!(
+                                alias: _nameController.text.trim(),
+                                description: _descriptionController.text.trim(),
+                                links: _links, // 🎯 빈 배열도 전달하여 링크 삭제 가능하게
+                                linkTitles:
+                                    _linkTitles.isEmpty ? null : _linkTitles,
+                                linkThumbnails:
+                                    _linkThumbnails.isEmpty
+                                        ? null
+                                        : _linkThumbnails,
+                              );
+
+                              // 저장 완료 후 잠시 대기
+                              await Future.delayed(
+                                const Duration(milliseconds: 500),
+                              );
+
+                              if (context.mounted) Navigator.pop(context);
+                            } catch (e) {
+                              // 에러 처리
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      AppLocalizations.of(
+                                        context,
+                                      ).translate('save_error'),
+                                      style: TextStyle(
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onError,
+                                      ),
+                                    ),
+                                    backgroundColor:
+                                        Theme.of(context).colorScheme.error,
+                                  ),
+                                );
+                              }
+                            } finally {
+                              if (mounted) setState(() => _saving = false);
+                            }
+                          },
+                        ),
+                      // 키보드가 올라올 때 하단 여백 추가
+                      SizedBox(
+                        height: keyboardHeight > 0 ? keyboardHeight : 16,
+                      ),
+                    ],
                   ),
-                // 키보드가 올라올 때 하단 여백 추가
-                SizedBox(height: keyboardHeight > 0 ? keyboardHeight : 16),
-              ],
+                ),
+              ),
             ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -756,7 +780,7 @@ class _ProfileInfoEditBottomSheetState
       onTap: () => _showLinkEditOverlay(context, link, index),
       child: Container(
         height: 56,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surfaceVariant,
           borderRadius: BorderRadius.circular(16),
@@ -765,8 +789,8 @@ class _ProfileInfoEditBottomSheetState
           children: [
             // 🎯 링크 썸네일 또는 아이콘 (저장된 썸네일 우선, 없으면 Google Favicon API)
             Container(
-              width: 40,
-              height: 40,
+              width: 50,
+              height: 50,
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
@@ -844,8 +868,8 @@ class _ProfileInfoEditBottomSheetState
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.onSurface,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                   const SizedBox(height: 2),
@@ -857,7 +881,7 @@ class _ProfileInfoEditBottomSheetState
                       color: Theme.of(
                         context,
                       ).colorScheme.onSurface.withOpacity(0.6),
-                      fontSize: 12,
+                      fontSize: 14,
                     ),
                   ),
                 ],

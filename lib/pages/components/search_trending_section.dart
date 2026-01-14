@@ -2,11 +2,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/data/services/like_service.dart';
-import 'package:doppy/pages/components/search_results.dart';
 import 'package:doppy/pages/components/search_video_widgets.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 
 /// 실시간 검색어 (이미지 프리로드 포함)
 class TrendingKeywordsWithPreload extends StatefulWidget {
@@ -155,137 +153,277 @@ class _TrendingKeywordsWithPreloadState
     // 🎯 shimmer를 표시해야 하는 경우 (새로고침 중이거나 로딩 중일 때만)
     // 캐시 사용 시에는 이미지 프리로드가 완료되지 않아도 shimmer 표시하지 않음
     if (widget.shouldShowShimmer) {
-      return const TrendingKeywordsShimmer();
+      return const TrendingKeywordsShimmer(); // 🎯 TrendingKeywordsShimmer는 Sliver를 반환해야 함
     }
 
     // 이미지 프리로드가 완료되지 않았어도 캐시 사용 시에는 기존 데이터 표시
     // (이미지가 로드되는 동안 기존 데이터를 보여줌)
 
-    // 🎯 키워드와 추천 포스트 모두 없는 경우
+    // 🎯 키워드와 추천 포스트 모두 없는 경우 - Sliver로 반환
     if (widget.keywords.isEmpty && widget.recommendedPosts.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [],
+      return SliverToBoxAdapter(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [],
+          ),
         ),
       );
     }
 
-    return CustomRefreshIndicator(
-      onRefresh: widget.onRefresh,
-      child: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        children: [
-          // 🎯 실시간 검색어 리스트
-          if (widget.keywords.isNotEmpty) ...[
-            ...widget.keywords.take(5).map((keyword) {
-              return AccountListItem(
-                account: SearchContentItem.blogKeyword(
-                  id: 'trending_$keyword',
-                  keyword: keyword,
-                ),
-                onTap: () => widget.onTapKeyword(keyword),
-                showRemoveButton: false,
-              );
-            }).toList(),
-            const SizedBox(height: 30),
-          ],
-          // 🎯 추천 콘텐츠 섹션 (실제 데이터)
-          if (widget.recommendedPosts.isNotEmpty) ...[
-            Builder(
-              builder: (context) {
-                debugPrint(
-                  '[TrendingKeywords] Rendering posts: ${widget.recommendedPosts.length}',
-                );
-                return RecommendedContentSection(
-                  title: '추천 포스트',
-                  posts: widget.recommendedPosts,
-                  onTapItem: (post) => widget.onTapPost(post),
-                  onPostIndexChanged:
-                      widget.onPostIndexChanged, // 🎯 인덱스 변경 콜백 전달
-                );
-              },
-            ),
-          ] else ...[
-            Builder(
-              builder: (context) {
-                debugPrint('[TrendingKeywords] No posts to display');
-                return const SizedBox.shrink();
-              },
-            ),
-          ],
+    // 🎯 OTT 스타일 레이아웃 (Sliver 구조)
+    final screenHeight = MediaQuery.of(context).size.height;
+    final heroHeight = screenHeight * 0.5; // 화면 높이의 50%를 히어로 섹션에 할당
 
-          const SizedBox(height: 100),
-        ],
-      ),
+    // 🎯 Sliver 리스트를 직접 반환 (CustomScrollView는 상위에서 처리)
+    // CustomRefreshIndicator는 상위에서 처리하므로 여기서는 Sliver만 반환
+    return _TrendingSliverContent(
+      heroHeight: heroHeight,
+      recommendedPosts: widget.recommendedPosts,
+      keywords: widget.keywords,
+      onPostIndexChanged: widget.onPostIndexChanged,
+      onTapPost: widget.onTapPost,
+      onTapKeyword: widget.onTapKeyword,
+      excludeHero: true, // 🎯 Hero 섹션은 상위 SliverAppBar에서 처리하므로 제외
     );
   }
 }
 
-/// 실시간 검색어 Shimmer
+/// 🎯 Sliver 리스트를 반환하는 위젯 (CustomScrollView 없이 Sliver만)
+class _TrendingSliverContent extends StatelessWidget {
+  final double heroHeight;
+  final List<SearchContentItem> recommendedPosts;
+  final List<String> keywords;
+  final Function(int)? onPostIndexChanged;
+  final Function(SearchContentItem) onTapPost;
+  final Function(String) onTapKeyword;
+  final bool excludeHero; // 🎯 Hero 섹션 제외 여부
+
+  const _TrendingSliverContent({
+    required this.heroHeight,
+    required this.recommendedPosts,
+    required this.keywords,
+    this.onPostIndexChanged,
+    required this.onTapPost,
+    required this.onTapKeyword,
+    this.excludeHero = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // 🎯 Sliver 리스트를 반환 (CustomScrollView는 상위에서 처리)
+    return SliverList(
+      delegate: SliverChildListDelegate([
+        // 🎯 위쪽: 히어로 섹션 (배경을 덮는 추천 컨텐츠) - excludeHero가 false일 때만
+        if (!excludeHero) ...[
+          SizedBox(
+            height: heroHeight,
+            child:
+                recommendedPosts.isNotEmpty
+                    ? _HeroSection(
+                      posts: recommendedPosts,
+                      onPostIndexChanged: onPostIndexChanged,
+                      onTapPost: onTapPost,
+                    )
+                    : Container(
+                      color: Theme.of(context).colorScheme.background,
+                    ),
+          ),
+        ],
+
+        // 🎯 아래쪽: 가로 스크롤 섹션들
+        _HorizontalScrollSectionsWidget(
+          recommendedPosts: recommendedPosts,
+          keywords: keywords,
+          onTapKeyword: onTapKeyword,
+          onTapPost: onTapPost,
+        ),
+      ]),
+    );
+  }
+}
+
+/// 🎯 가로 스크롤 섹션들 (일반 위젯 버전)
+class _HorizontalScrollSectionsWidget extends StatelessWidget {
+  final List<SearchContentItem> recommendedPosts;
+  final List<String> keywords;
+  final Function(String) onTapKeyword;
+  final Function(SearchContentItem) onTapPost;
+
+  const _HorizontalScrollSectionsWidget({
+    required this.recommendedPosts,
+    required this.keywords,
+    required this.onTapKeyword,
+    required this.onTapPost,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const SizedBox(height: 20),
+        // 🎯 첫 번째 섹션: 추천 포스트
+        if (recommendedPosts.isNotEmpty)
+          _OTTSection(
+            title: '지수님의 인생작이 될 작품',
+            posts: recommendedPosts,
+            onTapItem: onTapPost,
+            onMoreTap: () {
+              // 더보기 액션
+            },
+          ),
+
+        const SizedBox(height: 24),
+
+        // 🎯 두 번째 섹션: 키워드 기반 추천 (임시로 같은 데이터 사용)
+        if (recommendedPosts.isNotEmpty)
+          _OTTSection(
+            title: '지수님을 위한 컬렉션',
+            posts: recommendedPosts,
+            onTapItem: onTapPost,
+            onMoreTap: () {
+              // 더보기 액션
+            },
+          ),
+
+        const SizedBox(height: 100),
+      ],
+    );
+  }
+}
+
+/// 실시간 검색어 Shimmer (OTT 스타일)
 class TrendingKeywordsShimmer extends StatelessWidget {
   const TrendingKeywordsShimmer({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
     final screenWidth = MediaQuery.of(context).size.width;
-    // 🎯 실제 UI와 동일한 크기 계산
-    final cardWidth = (screenWidth - 16) / 1.8;
-    final cardImageHeight = cardWidth * 4.6 / 4;
+    final heroHeight = screenHeight * 0.5;
+    final cardWidth = (screenWidth - 32) / 2.5;
+    final cardImageHeight = cardWidth * 1.4;
 
-    return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      children: [
-        // 🎯 원형 검색칩 Shimmer (원형 아이콘 + 텍스트, 좌측 정렬)
-        ...List.generate(5, (index) {
-          return Padding(
-            padding: const EdgeInsets.only(left: 16, top: 6, bottom: 6),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Row(
-                children: [
-                  // 원형 아이콘
-                  ShimmerBox(
-                    width: 50,
-                    height: 50,
-                    borderRadius: BorderRadius.circular(25),
-                  ),
-                  const SizedBox(width: 16),
-                  // 텍스트 (100px 너비)
-                  ShimmerBox(
-                    width: 100,
-                    height: 16,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }),
-
-        const SizedBox(height: 12),
-
-        // 🎯 하단 카드 Shimmer (카드 이미지만)
-        SizedBox(
-          height: cardImageHeight,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.only(left: 16, right: 16),
-            itemCount: 5,
-            itemBuilder: (context, index) {
-              return Padding(
-                padding: EdgeInsets.only(right: index < 4 ? 10 : 0),
-                child: ShimmerBox(
-                  width: cardWidth,
-                  height: cardImageHeight,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              );
-            },
+    // 🎯 Sliver 구조로 반환
+    return SliverToBoxAdapter(
+      child: Column(
+        children: [
+          // 🎯 히어로 섹션 Shimmer
+          SizedBox(
+            height: heroHeight,
+            child: ShimmerBox(width: double.infinity, height: heroHeight),
           ),
-        ),
-        const SizedBox(height: 100),
-      ],
+          // 🎯 가로 스크롤 섹션 Shimmer
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.only(top: 20),
+              children: [
+                // 섹션 헤더 Shimmer
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      ShimmerBox(
+                        width: 150,
+                        height: 20,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      ShimmerBox(
+                        width: 50,
+                        height: 16,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // 카드 리스트 Shimmer
+                SizedBox(
+                  height: cardImageHeight + 40,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.only(left: 20, right: 20),
+                    itemCount: 5,
+                    itemBuilder: (context, index) {
+                      return Padding(
+                        padding: EdgeInsets.only(right: index < 4 ? 12 : 0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ShimmerBox(
+                              width: cardWidth,
+                              height: cardImageHeight,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            const SizedBox(height: 8),
+                            ShimmerBox(
+                              width: cardWidth,
+                              height: 16,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 24),
+                // 두 번째 섹션 Shimmer
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      ShimmerBox(
+                        width: 150,
+                        height: 20,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      ShimmerBox(
+                        width: 50,
+                        height: 16,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: cardImageHeight + 40,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.only(left: 20, right: 20),
+                    itemCount: 5,
+                    itemBuilder: (context, index) {
+                      return Padding(
+                        padding: EdgeInsets.only(right: index < 4 ? 12 : 0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ShimmerBox(
+                              width: cardWidth,
+                              height: cardImageHeight,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            const SizedBox(height: 8),
+                            ShimmerBox(
+                              width: cardWidth,
+                              height: 16,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 100),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -442,6 +580,368 @@ class _RecommendedContentSectionState extends State<RecommendedContentSection> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 🎯 히어로 섹션 (위쪽 큰 배경 이미지)
+class _HeroSection extends StatefulWidget {
+  final List<SearchContentItem> posts;
+  final Function(int)? onPostIndexChanged;
+  final Function(SearchContentItem) onTapPost;
+
+  const _HeroSection({
+    required this.posts,
+    this.onPostIndexChanged,
+    required this.onTapPost,
+  });
+
+  @override
+  State<_HeroSection> createState() => _HeroSectionState();
+}
+
+class _HeroSectionState extends State<_HeroSection> {
+  late PageController _pageController;
+  int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+    _pageController.addListener(_onPageChanged);
+    // 🎯 build 중 setState 방지: 다음 프레임에 콜백 실행
+    if (widget.posts.isNotEmpty && widget.onPostIndexChanged != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          widget.onPostIndexChanged!(0);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageController.removeListener(_onPageChanged);
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _onPageChanged() {
+    if (!_pageController.hasClients) return;
+    final newIndex = _pageController.page?.round() ?? 0;
+    if (newIndex != _currentIndex) {
+      setState(() {
+        _currentIndex = newIndex;
+      });
+      widget.onPostIndexChanged?.call(_currentIndex);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.posts.isEmpty) {
+      return Container(color: Theme.of(context).colorScheme.background);
+    }
+
+    return Stack(
+      children: [
+        // 배경 이미지/비디오
+        PageView.builder(
+          controller: _pageController,
+          itemCount: widget.posts.length,
+          // 🎯 onPageChanged는 제거하고 PageController 리스너만 사용
+          itemBuilder: (context, index) {
+            final post = widget.posts[index];
+            final imageUrl = post.imageUrl ?? '';
+
+            // 비디오 URL 체크
+            final isVideoUrl =
+                imageUrl.toLowerCase().endsWith('.mp4') ||
+                imageUrl.toLowerCase().endsWith('.mov') ||
+                imageUrl.toLowerCase().endsWith('.avi') ||
+                imageUrl.toLowerCase().endsWith('.webm') ||
+                imageUrl.contains('/videos/');
+
+            return GestureDetector(
+              onTap: () => widget.onTapPost(post),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (isVideoUrl)
+                    SearchBackgroundVideoWidget(
+                      videoUrl: imageUrl,
+                      key: ValueKey('hero-video-$imageUrl'),
+                    )
+                  else if (imageUrl.isNotEmpty)
+                    CachedNetworkImage(
+                      imageUrl: imageUrl,
+                      fit: BoxFit.cover,
+                      errorWidget:
+                          (context, url, error) => Container(
+                            color: Theme.of(context).colorScheme.surfaceVariant,
+                          ),
+                    )
+                  else
+                    Container(
+                      color: Theme.of(context).colorScheme.surfaceVariant,
+                    ),
+                  // 그라데이션 오버레이
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withOpacity(0.7),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        // 텍스트 오버레이 (하단 중앙)
+        Positioned(
+          bottom: 60,
+          left: 0,
+          right: 0,
+          child: Column(
+            children: [
+              Text(
+                '이 시간에 어때요?',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w600,
+                  shadows: [
+                    Shadow(
+                      offset: Offset(0, 2),
+                      blurRadius: 4,
+                      color: Colors.black.withOpacity(0.5),
+                    ),
+                  ],
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '보내기 싫은 일요일 밤',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w400,
+                  shadows: [
+                    Shadow(
+                      offset: Offset(0, 2),
+                      blurRadius: 4,
+                      color: Colors.black.withOpacity(0.5),
+                    ),
+                  ],
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+        // 페이지 인디케이터 (하단)
+        Positioned(
+          bottom: 20,
+          left: 0,
+          right: 0,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(
+              widget.posts.length.clamp(0, 5), // 최대 5개만 표시
+              (index) => Container(
+                width: index == _currentIndex ? 8 : 6,
+                height: 6,
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                decoration: BoxDecoration(
+                  shape:
+                      index == _currentIndex
+                          ? BoxShape.rectangle
+                          : BoxShape.circle,
+                  borderRadius:
+                      index == _currentIndex ? BorderRadius.circular(3) : null,
+                  color:
+                      index == _currentIndex
+                          ? Colors.white
+                          : Colors.white.withOpacity(0.5),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 🎯 OTT 스타일 섹션 (제목 + 가로 스크롤 리스트)
+class _OTTSection extends StatelessWidget {
+  final String title;
+  final List<SearchContentItem> posts;
+  final Function(SearchContentItem) onTapItem;
+  final VoidCallback onMoreTap;
+
+  const _OTTSection({
+    required this.title,
+    required this.posts,
+    required this.onTapItem,
+    required this.onMoreTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final cardWidth = (screenWidth - 32) / 2.2; // 좌우 패딩 16씩, 2.5개 표시
+    final cardImageHeight = cardWidth * 1.3; // 약 4:5.6 비율
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 섹션 헤더
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        // 가로 스크롤 리스트
+        SizedBox(
+          height: cardImageHeight + 40, // 이미지 + 제목 영역
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.only(left: 20, right: 20),
+            itemCount: posts.length,
+            itemBuilder: (context, index) {
+              final post = posts[index];
+              return Padding(
+                padding: EdgeInsets.only(
+                  right: index < posts.length - 1 ? 10 : 0,
+                ),
+                child: _OTTCard(
+                  post: post,
+                  cardWidth: cardWidth,
+                  cardImageHeight: cardImageHeight,
+                  onTap: () => onTapItem(post),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 🎯 OTT 스타일 카드
+class _OTTCard extends StatelessWidget {
+  final SearchContentItem post;
+  final double cardWidth;
+  final double cardImageHeight;
+  final VoidCallback onTap;
+
+  const _OTTCard({
+    required this.post,
+    required this.cardWidth,
+    required this.cardImageHeight,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = post.imageUrl ?? '';
+    final isVideoUrl =
+        imageUrl.toLowerCase().endsWith('.mp4') ||
+        imageUrl.toLowerCase().endsWith('.mov') ||
+        imageUrl.toLowerCase().endsWith('.avi') ||
+        imageUrl.toLowerCase().endsWith('.webm') ||
+        imageUrl.contains('/videos/');
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 썸네일
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: cardWidth,
+              height: cardImageHeight,
+              child: Stack(
+                children: [
+                  if (isVideoUrl)
+                    ThumbnailVideoPlayer(
+                      videoUrl: imageUrl,
+                      width: cardWidth,
+                      height: cardImageHeight,
+                    )
+                  else if (imageUrl.isNotEmpty)
+                    CachedNetworkImage(
+                      imageUrl: imageUrl,
+                      width: cardWidth,
+                      height: cardImageHeight,
+                      fit: BoxFit.cover,
+                      errorWidget:
+                          (context, url, error) => Container(
+                            color: Theme.of(context).colorScheme.surfaceVariant,
+                            child: Icon(
+                              Icons.image,
+                              size: 40,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant.withOpacity(0.3),
+                            ),
+                          ),
+                    )
+                  else
+                    Container(
+                      color: Theme.of(context).colorScheme.surfaceVariant,
+                      child: Icon(
+                        Icons.image,
+                        size: 40,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurfaceVariant.withOpacity(0.3),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // 제목
+          SizedBox(
+            width: cardWidth,
+            child: Text(
+              post.title ?? '제목 없음',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

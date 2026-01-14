@@ -2280,6 +2280,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                             _isBottomSheetAnimationComplete,
                         imageSize: imageSize,
                         displayImageRect: currentImageRect,
+                        containerSize: effectiveContainerSize,
                         controller: _overlayControllers.putIfAbsent(
                           index,
                           () => OverlayController(),
@@ -2571,19 +2572,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       _bottomSheetController.forward();
 
       // ✅ 스티커 모드 진입 시 자동으로 사각형 오버레이 추가
-      final uiImage = _uiImageCache[_currentIndex];
-      if (uiImage != null) {
-        final imageSize = Size(
-          uiImage.width.toDouble(),
-          uiImage.height.toDouble(),
-        );
-        final controller = _overlayControllers.putIfAbsent(
-          _currentIndex,
-          () => OverlayController(),
-        );
-        // 더미 사각형 자동 생성
-        controller.ensureDemoItems(imageSize);
-      }
+      // 바텀시트 애니메이션 완료 후에 생성 (크롭과 동일한 패턴)
+      // OverlayStage의 didUpdateWidget에서 _isBottomSheetAnimationComplete 확인 후 생성
     });
   }
 

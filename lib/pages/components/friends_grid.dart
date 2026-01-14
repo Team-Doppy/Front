@@ -448,6 +448,7 @@ class FriendTile extends StatelessWidget {
               context,
             ).colorScheme.onSurface.withOpacity(0.1),
             borderWidth: 0.5,
+            // backgroundColor 제거: 기본 배경색 사용
           ),
           // 🎯 다중 선택 모드일 때 체크 표시
           if (isMultiSelectMode)

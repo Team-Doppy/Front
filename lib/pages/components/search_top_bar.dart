@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -33,13 +34,15 @@ class SearchTopBar extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final searchService = context.watch<SearchService>();
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          if (searchService.isFocused) ...[
-            const SizedBox(width: 10),
+          // 🎯 검색 중일 때는 뒤로가기 버튼 숨김
+          if (searchService.isFocused && !isSearching) ...[
             SizedBox(
               width: 28,
+              height: 48,
               child: IgnorePointer(
                 ignoring:
                     !(searchService.hasSearched || searchService.isFocused),
@@ -48,25 +51,27 @@ class SearchTopBar extends StatelessWidget {
                       (!(searchService.hasSearched || searchService.isFocused))
                           ? 0
                           : 1,
-                  child: GestureDetector(
-                    onTap: onBack,
-                    child: Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      size: 24,
-                      color:
-                          isDark
-                              ? Colors.white.withOpacity(0.75)
-                              : Colors.black.withOpacity(0.75),
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: onBack,
+                      child: Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        size: 24,
+                        color:
+                            isDark
+                                ? Colors.white.withOpacity(0.75)
+                                : Colors.black.withOpacity(0.75),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
+            const SizedBox(width: 12),
           ],
-          const SizedBox(width: 10),
           Expanded(
             child: SizedBox(
-              height: 48,
+              height: 52,
               child: TextField(
                 controller: controller,
                 focusNode: focusNode,
@@ -77,68 +82,59 @@ class SearchTopBar extends StatelessWidget {
                 },
                 onTap: () => context.read<SearchService>().setFocused(true),
                 style: TextStyle(
-                  color: isDark ? Colors.white : Colors.black,
-                  fontSize: 16,
+                  color: Theme.of(context).colorScheme.onSurface,
+                  fontSize: 18,
                 ),
-                cursorColor: isDark ? Colors.white : Colors.black,
+                cursorColor: Theme.of(context).colorScheme.onSurface,
                 decoration: InputDecoration(
-                  filled: true,
-                  fillColor: Theme.of(context).colorScheme.surface,
+                  filled: isSearching ? false : true,
+                  fillColor: Theme.of(context).colorScheme.surfaceVariant,
                   hintText: context.tr('search_placeholder'),
                   hintStyle: TextStyle(
-                    color:
-                        isDark
-                            ? Colors.white.withOpacity(0.6)
-                            : Colors.black.withOpacity(0.6),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
                   suffixIcon:
                       isSearching
-                          ? Padding(
-                            padding: const EdgeInsets.all(12),
+                          ? Center(
                             child: SizedBox(
-                              width: 15,
-                              height: 15,
+                              width: 24,
+                              height: 24,
                               child: CircularProgressIndicator(
-                                strokeWidth: 3,
+                                strokeWidth: 4,
                                 color:
-                                    isDark
-                                        ? Colors.white.withOpacity(0.8)
-                                        : Colors.black.withOpacity(0.8),
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
                               ),
                             ),
                           )
-                          : query.isNotEmpty
-                          ? IconButton(
+                          : IconButton(
                             tooltip: context.tr('search_hint'),
                             onPressed: () {
-                              FocusScope.of(context).unfocus();
-                              onSubmitted();
+                              if (query.isNotEmpty) {
+                                FocusScope.of(context).unfocus();
+                                onSubmitted();
+                              }
                             },
-                            icon: Icon(
-                              Icons.search,
+                            icon: SvgPicture.asset(
+                              'assets/icons/ic_search.svg',
+                              width: 24,
+                              height: 24,
                               color:
-                                  isDark
-                                      ? Colors.white.withOpacity(0.8)
-                                      : Colors.black.withOpacity(0.8),
-                              size: 22,
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
                             ),
-                          )
-                          : Icon(
-                            Icons.search,
-                            color:
-                                isDark
-                                    ? Colors.white.withOpacity(0.6)
-                                    : Colors.black.withOpacity(0.6),
-                            size: 22,
                           ),
                   contentPadding: const EdgeInsets.symmetric(
                     vertical: 8,
                     horizontal: 16,
                   ),
                   isDense: true,
-                  border: const OutlineInputBorder(
+                  border: OutlineInputBorder(
+                    borderSide: BorderSide.none,
                     borderRadius: BorderRadius.all(Radius.circular(20)),
                   ),
                   enabledBorder: OutlineInputBorder(
@@ -150,14 +146,13 @@ class SearchTopBar extends StatelessWidget {
                     borderSide: BorderSide.none,
                   ),
                   disabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(20)),
+                    borderRadius: BorderRadius.all(Radius.circular(24)),
                     borderSide: BorderSide.none,
                   ),
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 10),
         ],
       ),
     );

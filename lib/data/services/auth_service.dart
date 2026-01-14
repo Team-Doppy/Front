@@ -400,6 +400,81 @@ class AuthService {
     return s.isEmpty ? null : s;
   }
 
+  /// JWT payload의 userId (없으면 null)
+  Future<int?> getUserIdFromToken() async {
+    try {
+      final token = await getToken();
+      if (token == null || token.isEmpty) {
+        debugPrint('[AuthService] getUserIdFromToken: 토큰이 없습니다');
+        return null;
+      }
+
+      debugPrint('[AuthService] getUserIdFromToken: 토큰 존재, payload 디코딩 시도');
+      final payload = _decodeJwtPayload(token);
+
+      if (payload == null) {
+        debugPrint('[AuthService] getUserIdFromToken: payload 디코딩 실패');
+        return null;
+      }
+
+      debugPrint(
+        '[AuthService] getUserIdFromToken: payload 키 목록: ${payload.keys.toList()}',
+      );
+      debugPrint('[AuthService] getUserIdFromToken: payload 전체 내용: $payload');
+
+      // userId 또는 sub 필드에서 가져오기
+      final userId =
+          payload['userId'] ??
+          payload['sub'] ??
+          payload['id'] ??
+          payload['user_id'];
+
+      if (userId == null) {
+        debugPrint(
+          '[AuthService] getUserIdFromToken: userId/sub/id/user_id 필드가 없습니다',
+        );
+        return null;
+      }
+
+      debugPrint(
+        '[AuthService] getUserIdFromToken: 찾은 userId 값: $userId (타입: ${userId.runtimeType})',
+      );
+
+      // 숫자로 변환
+      int? result;
+      if (userId is int) {
+        result = userId;
+      } else if (userId is String) {
+        result = int.tryParse(userId);
+        if (result == null) {
+          debugPrint(
+            '[AuthService] getUserIdFromToken: String을 int로 변환 실패: $userId',
+          );
+        }
+      } else if (userId is num) {
+        result = userId.toInt();
+      } else {
+        debugPrint(
+          '[AuthService] getUserIdFromToken: 지원하지 않는 타입: ${userId.runtimeType}',
+        );
+      }
+
+      if (result != null && result > 0) {
+        debugPrint('[AuthService] getUserIdFromToken: 성공! userId=$result');
+      } else {
+        debugPrint(
+          '[AuthService] getUserIdFromToken: userId가 유효하지 않음: $result',
+        );
+      }
+
+      return result;
+    } catch (e, stackTrace) {
+      debugPrint('[AuthService] getUserIdFromToken: 예외 발생: $e');
+      debugPrint('[AuthService] getUserIdFromToken: 스택 트레이스: $stackTrace');
+      return null;
+    }
+  }
+
   /// 현재 refreshToken으로 토큰을 "강제로" 갱신
   Future<bool> refreshTokenNow() async {
     return await _refreshToken();
@@ -411,6 +486,7 @@ class AuthService {
   Future<EmailSendCodeResult> sendEmailVerificationCode({
     required String email,
     required String region,
+    String mode = 'REGISTER', // 'REGISTER' 또는 'FIND'
   }) async {
     try {
       final url = Uri.parse('$baseUrl/api/auth/email/send-code');
@@ -423,7 +499,7 @@ class AuthService {
       final response = await http.post(
         url,
         headers: headers,
-        body: jsonEncode({'email': email, 'region': region}),
+        body: jsonEncode({'email': email, 'region': region, 'mode': mode}),
       );
 
       Map<String, dynamic>? decoded;
@@ -589,6 +665,7 @@ class AuthService {
   Future<EmailVerifyCodeResult> verifyEmailCode({
     required String email,
     required String code,
+    String mode = 'REGISTER', // 'REGISTER' 또는 'FIND'
   }) async {
     try {
       final url = Uri.parse('$baseUrl/api/auth/email/verify-code');
@@ -601,7 +678,7 @@ class AuthService {
       final response = await http.post(
         url,
         headers: headers,
-        body: jsonEncode({'email': email, 'code': code}),
+        body: jsonEncode({'email': email, 'code': code, 'mode': mode}),
       );
 
       Map<String, dynamic>? decoded;
@@ -795,5 +872,222 @@ class AuthService {
     // 모든 재시도 실패
     debugPrint('[AuthService] ❌ 토큰 갱신 실패: 모든 재시도 소진');
     return false;
+  }
+
+  /// 아이디 찾기 (이메일 인증 완료 후)
+  Future<String?> findUsername(String email) async {
+    try {
+      final url = Uri.parse('$baseUrl/api/auth/username/find');
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email}),
+      );
+
+      Map<String, dynamic>? decoded;
+      try {
+        decoded =
+            response.bodyBytes.isNotEmpty
+                ? jsonDecode(utf8.decode(response.bodyBytes))
+                    as Map<String, dynamic>?
+                : null;
+      } catch (e) {
+        debugPrint('[AuthService] findUsername JSON 파싱 실패: $e');
+        return null;
+      }
+
+      if (response.statusCode == 200 && decoded != null) {
+        return decoded['username']?.toString();
+      }
+
+      // 에러 정보 추출
+      ApiErrorModel? err;
+      if (decoded is Map<String, dynamic>) {
+        try {
+          err = ApiErrorModel.fromJson(decoded);
+        } catch (e) {
+          debugPrint('[AuthService] ApiErrorModel 파싱 실패: $e');
+        }
+      }
+
+      final errorMessage =
+          err?.message ?? decoded?['message']?.toString() ?? 'Unknown error';
+      debugPrint(
+        '[AuthService] ❌ 아이디 찾기 실패: $errorMessage (error: ${err?.error})',
+      );
+
+      // 에러 정보를 포함한 예외 발생
+      if (err != null) {
+        throw Exception('${err.error}: ${err.message}');
+      }
+
+      return null;
+    } catch (e) {
+      debugPrint('[AuthService] ❌ findUsername 예외: $e');
+      rethrow; // 에러를 상위로 전달
+    }
+  }
+
+  /// 비밀번호 재설정 인증 코드 발송
+  Future<EmailSendCodeResult> sendPasswordResetCode({
+    required String username,
+    required String email,
+    required String region,
+  }) async {
+    try {
+      final url = Uri.parse('$baseUrl/api/auth/password/reset/send-code');
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': username,
+          'email': email,
+          'region': region,
+        }),
+      );
+
+      Map<String, dynamic>? decoded;
+      try {
+        decoded =
+            response.bodyBytes.isNotEmpty
+                ? jsonDecode(utf8.decode(response.bodyBytes))
+                    as Map<String, dynamic>?
+                : null;
+      } catch (e) {
+        debugPrint('[AuthService] sendPasswordResetCode JSON 파싱 실패: $e');
+        return EmailSendCodeResult(
+          success: false,
+          statusCode: response.statusCode,
+          message: ErrorHandler.getHttpErrorMessage(response.statusCode),
+          error: ApiErrorModel(
+            error: 'PARSE_ERROR',
+            message: '서버 응답을 처리하는 중 오류가 발생했습니다.',
+          ),
+        );
+      }
+
+      if (response.statusCode == 200) {
+        DateTime? expiresAt;
+        int? expiresIn;
+
+        if (decoded?['expiresAt'] != null) {
+          try {
+            expiresAt = DateTime.parse(decoded!['expiresAt'].toString());
+          } catch (e) {
+            debugPrint('[AuthService] expiresAt 파싱 실패: $e');
+          }
+        }
+
+        if (decoded?['expiresIn'] != null) {
+          try {
+            expiresIn = int.tryParse(decoded!['expiresIn'].toString());
+          } catch (e) {
+            debugPrint('[AuthService] expiresIn 파싱 실패: $e');
+          }
+        }
+
+        return EmailSendCodeResult(
+          success: true,
+          statusCode: response.statusCode,
+          message: decoded?['message']?.toString(),
+          expiresAt: expiresAt,
+          expiresIn: expiresIn,
+        );
+      }
+
+      ApiErrorModel? err;
+      if (decoded is Map<String, dynamic>) {
+        try {
+          err = ApiErrorModel.fromJson(decoded);
+        } catch (e) {
+          debugPrint('[AuthService] ApiErrorModel 파싱 실패: $e');
+        }
+      }
+      return EmailSendCodeResult(
+        success: false,
+        statusCode: response.statusCode,
+        message:
+            err?.message ??
+            ErrorHandler.getHttpErrorMessage(response.statusCode),
+        error: err,
+      );
+    } catch (e) {
+      debugPrint('[AuthService] sendPasswordResetCode 예외: $e');
+      return EmailSendCodeResult(
+        success: false,
+        statusCode: null,
+        message: ErrorHandler.getErrorMessage(e),
+        error: ApiErrorModel(
+          error: 'NETWORK_ERROR',
+          message: ErrorHandler.getErrorMessage(e),
+        ),
+      );
+    }
+  }
+
+  /// 비밀번호 변경
+  Future<bool> changePassword({
+    required String username,
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    try {
+      final url = Uri.parse('$baseUrl/api/auth/password/change');
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': username,
+          'email': email,
+          'code': code,
+          'newPassword': newPassword,
+        }),
+      );
+
+      Map<String, dynamic>? decoded;
+      try {
+        decoded =
+            response.bodyBytes.isNotEmpty
+                ? jsonDecode(utf8.decode(response.bodyBytes))
+                    as Map<String, dynamic>?
+                : null;
+      } catch (e) {
+        debugPrint('[AuthService] changePassword JSON 파싱 실패: $e');
+        return false;
+      }
+
+      if (response.statusCode == 200) {
+        debugPrint('[AuthService] ✅ 비밀번호 변경 성공');
+        return true;
+      }
+
+      // 에러 정보 추출
+      ApiErrorModel? err;
+      if (decoded is Map<String, dynamic>) {
+        try {
+          err = ApiErrorModel.fromJson(decoded);
+        } catch (e) {
+          debugPrint('[AuthService] ApiErrorModel 파싱 실패: $e');
+        }
+      }
+
+      final errorMessage =
+          err?.message ?? decoded?['message']?.toString() ?? 'Unknown error';
+      debugPrint(
+        '[AuthService] ❌ 비밀번호 변경 실패: $errorMessage (error: ${err?.error})',
+      );
+
+      // 에러 정보를 포함한 예외 발생
+      if (err != null) {
+        throw Exception('${err.error}: ${err.message}');
+      }
+
+      return false;
+    } catch (e) {
+      debugPrint('[AuthService] ❌ changePassword 예외: $e');
+      // 예외를 다시 throw하여 호출자가 구체적인 에러 정보를 받을 수 있도록 함
+      rethrow;
+    }
   }
 }

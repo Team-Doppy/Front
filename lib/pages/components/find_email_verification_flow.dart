@@ -8,31 +8,28 @@ import 'package:provider/provider.dart';
 
 import '../../providers/locale_provider.dart';
 
-class EmailVerificationFlow extends StatefulWidget {
+/// 아이디 찾기/비밀번호 재설정용 이메일 인증 컴포넌트
+class FindEmailVerificationFlow extends StatefulWidget {
   final String title;
   final String subtitle;
-  final String? codeSentSubtitle; // 🎯 코드 발송 후 표시할 서브텍스트
   final String? initialEmail;
-  final bool enabledEmailEdit;
-  final String mode; // 'REGISTER' 또는 'FIND'
-  final Future<void> Function(String verifiedEmail) onVerified;
+  final Future<void> Function(String verifiedEmail, String verifiedCode)
+  onVerified;
 
-  const EmailVerificationFlow({
+  const FindEmailVerificationFlow({
     super.key,
     required this.title,
     required this.subtitle,
-    this.codeSentSubtitle,
     this.initialEmail,
-    this.enabledEmailEdit = true,
-    this.mode = 'REGISTER', // 기본값은 회원가입 모드
     required this.onVerified,
   });
 
   @override
-  State<EmailVerificationFlow> createState() => _EmailVerificationFlowState();
+  State<FindEmailVerificationFlow> createState() =>
+      _FindEmailVerificationFlowState();
 }
 
-class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
+class _FindEmailVerificationFlowState extends State<FindEmailVerificationFlow> {
   final AuthService _authService = AuthService();
 
   final TextEditingController _emailController = TextEditingController();
@@ -45,10 +42,6 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
   DateTime? _cooldownUntil;
   Timer? _timer;
   Duration _remaining = Duration.zero;
-
-  // 재발송 버튼 쿨다운 (10초)
-  DateTime? _resendCooldownUntil;
-  Duration _resendRemaining = Duration.zero;
 
   int _failedAttempts = 0;
   static const int _maxAttempts = 5;
@@ -84,52 +77,25 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
 
   void _tick() {
     final now = DateTime.now();
-    bool needsUpdate = false;
-
-    // 메인 쿨다운 체크
     final until = _cooldownUntil;
     if (until != null) {
       final remain = until.difference(now);
       final newRemaining = remain.isNegative ? Duration.zero : remain;
       if (_remaining != newRemaining) {
-        _remaining = newRemaining;
-        needsUpdate = true;
+        setState(() {
+          _remaining = newRemaining;
+        });
       }
       if (remain.isNegative || remain == Duration.zero) {
         _cooldownUntil = null;
       }
     }
-
-    // 재발송 버튼 쿨다운 체크
-    final resendUntil = _resendCooldownUntil;
-    if (resendUntil != null) {
-      final remain = resendUntil.difference(now);
-      final newResendRemaining = remain.isNegative ? Duration.zero : remain;
-      if (_resendRemaining != newResendRemaining) {
-        _resendRemaining = newResendRemaining;
-        needsUpdate = true;
-      }
-      if (remain.isNegative || remain == Duration.zero) {
-        _resendCooldownUntil = null;
-      }
-    }
-
-    if (needsUpdate) {
-      setState(() {});
-    }
-
-    // 모든 쿨다운이 끝났으면 타이머 정리
-    if (_cooldownUntil == null && _resendCooldownUntil == null) {
-      _timer?.cancel();
-      _timer = null;
-    }
   }
 
-  String _mmss(Duration d) {
-    final s = d.inSeconds.clamp(0, 24 * 3600);
-    final m = (s ~/ 60).toString().padLeft(1, '0');
-    final ss = (s % 60).toString().padLeft(2, '0');
-    return '$m:$ss';
+  String _formatDuration(Duration d) {
+    final minutes = d.inMinutes;
+    final seconds = d.inSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   Future<void> _sendCode() async {
@@ -146,7 +112,6 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
       return;
     }
 
-    // 5분 쿨다운(서버 레이트리밋) 중이면 막기
     if (_remaining > Duration.zero) return;
 
     setState(() {
@@ -154,11 +119,16 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
     });
 
     try {
-      final region = context.read<LocaleProvider>().regionCode;
+      final localeProvider = Provider.of<LocaleProvider>(
+        context,
+        listen: false,
+      );
+      final region = localeProvider.isKorean ? 'KR' : 'US';
+
       final result = await _authService.sendEmailVerificationCode(
         email: email,
         region: region,
-        mode: widget.mode,
+        mode: 'FIND',
       );
 
       if (!mounted) return;
@@ -166,11 +136,11 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
       if (result.success) {
         setState(() {
           _codeSent = true;
+          _sending = false;
           _failedAttempts = 0;
           _codeController.clear();
         });
 
-        // 서버에서 만료시간을 받았으면 사용, 없으면 기본값 5분
         Duration cooldownDuration = const Duration(minutes: 5);
         if (result.expiresAt != null) {
           final now = DateTime.now();
@@ -183,45 +153,46 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
         }
 
         _startCooldown(cooldownDuration);
-
-        // 재발송 버튼 10초 쿨다운 시작
-        _resendCooldownUntil = DateTime.now().add(const Duration(seconds: 10));
-        _resendRemaining = const Duration(seconds: 10);
-        _tick();
-        if (_timer == null) {
-          _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
-        }
-
-        // 인증번호 발송 성공 메시지는 스낵바로 표시하지 않음 (화면 전환으로 충분)
       } else {
-        final code = result.error?.error;
-        // 사용자 친화적인 메시지로 변환
-        final msg =
-            result.error?.message ??
-            result.message ??
-            ErrorHandler.getHttpErrorMessage(result.statusCode ?? 400);
+        // 에러 코드별 메시지 처리
+        final errorCode = result.error?.error;
+        String errorMessage =
+            result.message ?? context.tr('email_verification_send_first');
 
-        // 서버 에러코드에 맞춘 UX
-        if (code == 'SEND_CODE_FAILED') {
-          setState(() {
-            _emailError = msg;
-          });
-        } else {
-          // 기술적 에러 메시지 필터링
-          final userFriendlyMsg = ErrorHandler.getErrorMessage(msg);
-          ErrorHandler.showError(context, userFriendlyMsg);
+        if (errorCode != null) {
+          switch (errorCode) {
+            case 'EMAIL_NOT_FOUND':
+              errorMessage = context.tr('error_email_not_found');
+              break;
+            case 'INVALID_EMAIL_FORMAT':
+              errorMessage = context.tr('error_invalid_email_format');
+              break;
+            case 'RATE_LIMIT_EXCEEDED':
+              errorMessage = context.tr('error_rate_limit_exceeded');
+              break;
+            case 'EMAIL_REQUIRED':
+              errorMessage = context.tr('error_email_required');
+              break;
+            case 'SEND_CODE_FAILED':
+              // 서버 메시지 그대로 사용
+              break;
+            default:
+              // 기본 메시지 사용
+              break;
+          }
         }
+
+        setState(() {
+          _sending = false;
+          _emailError = errorMessage;
+        });
       }
     } catch (e) {
       if (!mounted) return;
-      // catch 블록의 에러도 사용자 친화적으로 변환
-      ErrorHandler.handleError(context, e);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _sending = false;
-        });
-      }
+      setState(() {
+        _sending = false;
+        _emailError = ErrorHandler.getErrorMessage(e);
+      });
     }
   }
 
@@ -238,6 +209,7 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
       });
       return;
     }
+
     final code = _codeController.text.trim();
     if (code.length != 6) {
       setState(() {
@@ -260,60 +232,52 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
     try {
       final result = await _authService.verifyEmailCode(
         email: email,
-        code: _codeController.text.trim(),
-        mode: widget.mode,
+        code: code,
+        mode: 'FIND',
       );
+
       if (!mounted) return;
 
       if (result.success && (result.verified ?? true)) {
-        // 인증 성공 메시지는 스낵바로 표시하지 않음 (다음 단계로 진행)
-        await widget.onVerified(email);
+        await widget.onVerified(email, code);
       } else {
-        final code = result.error?.error;
-        // 사용자 친화적인 메시지로 변환
-        final rawMsg =
-            result.error?.message ??
-            result.message ??
-            ErrorHandler.getHttpErrorMessage(result.statusCode ?? 400);
-        final msg = ErrorHandler.getErrorMessage(rawMsg);
+        // 에러 코드별 메시지 처리
+        final errorCode = result.error?.error;
+        String errorMessage =
+            result.message ?? context.tr('email_verification_code_mismatch');
 
-        if (code == 'INVALID_VERIFICATION_CODE') {
-          setState(() {
-            _failedAttempts += 1;
-            final remain = (_maxAttempts - _failedAttempts).clamp(
-              0,
-              _maxAttempts,
-            );
-            _pinError =
-                remain > 0
-                    ? context
-                        .tr('email_verification_code_mismatch')
-                        .replaceAll('{count}', '$remain')
-                    : context.tr('email_verification_too_many_attempts');
-          });
-        } else if (code == 'VERIFICATION_CODE_EXPIRED' ||
-            code == 'VERIFICATION_CODE_NOT_FOUND') {
-          setState(() {
-            _codeController.clear();
-            _codeSent = false;
-            _pinError = msg;
-          });
-        } else {
-          setState(() {
-            _pinError = msg;
-          });
+        if (errorCode != null) {
+          switch (errorCode) {
+            case 'VERIFICATION_CODE_EXPIRED':
+              errorMessage = context.tr('error_verification_code_expired');
+              _codeController.clear();
+              _codeSent = false;
+              break;
+            case 'INVALID_VERIFICATION_CODE':
+              errorMessage = context.tr('error_verification_code_invalid');
+              break;
+            case 'VERIFY_FAILED':
+              // 서버 메시지 그대로 사용
+              break;
+            default:
+              // 기본 메시지 사용
+              break;
+          }
         }
+
+        setState(() {
+          _verifying = false;
+          _failedAttempts++;
+          _pinError = errorMessage;
+        });
       }
     } catch (e) {
       if (!mounted) return;
-      // catch 블록의 에러도 사용자 친화적으로 변환
-      ErrorHandler.handleError(context, e);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _verifying = false;
-        });
-      }
+      setState(() {
+        _verifying = false;
+        _failedAttempts++;
+        _pinError = ErrorHandler.getErrorMessage(e);
+      });
     }
   }
 
@@ -323,7 +287,6 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
 
     return Column(
       children: [
-        // 스크롤 가능한 컨텐츠 영역
         Expanded(
           child: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
@@ -341,21 +304,17 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  // 🎯 코드 발송 후에는 codeSentSubtitle 사용, 없으면 기본 subtitle
-                  _codeSent && widget.codeSentSubtitle != null
-                      ? widget.codeSentSubtitle!
-                      : widget.subtitle,
+                  widget.subtitle,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     fontSize: 16,
                     color: theme.colorScheme.onSurfaceVariant.withOpacity(0.7),
                   ),
                 ),
                 const SizedBox(height: 24),
-
                 // 이메일 입력 필드
                 TextField(
                   controller: _emailController,
-                  enabled: widget.enabledEmailEdit && !_sending && !_codeSent,
+                  enabled: !_codeSent,
                   keyboardType: TextInputType.emailAddress,
                   textInputAction: TextInputAction.done,
                   cursorColor: theme.colorScheme.onSurface,
@@ -422,12 +381,12 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                   },
                 ),
 
-                // 인증번호 입력 필드 (코드 발송 후 표시)
+                // 인증 코드 입력 필드
                 if (_codeSent) ...[
                   const SizedBox(height: 12),
                   TextField(
                     controller: _codeController,
-                    enabled: !_sending && !_verifying,
+                    enabled: !_verifying,
                     keyboardType: TextInputType.number,
                     textInputAction: TextInputAction.done,
                     maxLength: 6,
@@ -466,7 +425,7 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(
-                                      _mmss(_remaining),
+                                      _formatDuration(_remaining),
                                       style: TextStyle(
                                         color: theme
                                             .colorScheme
@@ -476,7 +435,7 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
-                                    SizedBox(width: 6),
+                                    const SizedBox(width: 6),
                                   ],
                                 ),
                               )
@@ -491,7 +450,6 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderSide: BorderSide.none,
-
                         borderRadius: BorderRadius.circular(24),
                       ),
                       errorText: _pinError,
@@ -502,7 +460,7 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                       ),
                       counterText: '',
                     ),
-                    onChanged: (value) {
+                    onChanged: (_) {
                       setState(() {
                         if (_pinError != null) {
                           _pinError = null;
@@ -510,72 +468,38 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                       });
                     },
                     onSubmitted: (_) {
-                      final canVerify = !_verifying && !_sending;
+                      final canVerify =
+                          !_verifying &&
+                          _codeController.text.trim().length == 6;
                       if (canVerify) _verifyCode();
                     },
                   ),
                   const SizedBox(height: 12),
                   // 재발송 버튼 - 10초 쿨다운 후 부드럽게 나타남
                   AnimatedOpacity(
-                    opacity: _resendRemaining == Duration.zero ? 1.0 : 0.0,
+                    opacity: _remaining == Duration.zero ? 1.0 : 0.0,
                     duration: const Duration(milliseconds: 300),
                     curve: Curves.easeInOut,
                     child: Align(
                       alignment: Alignment.centerRight,
-                      child:
-                          _sending && _codeSent
-                              ? Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                ),
-                                child: SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      theme.colorScheme.onSurfaceVariant
-                                          .withOpacity(0.5),
-                                    ),
-                                  ),
-                                ),
-                              )
-                              : TextButton(
-                                onPressed:
-                                    (!_sending &&
-                                            _remaining == Duration.zero &&
-                                            _resendRemaining == Duration.zero)
-                                        ? () {
-                                          // 재발송 시 다시 10초 쿨다운 시작
-                                          _resendCooldownUntil = DateTime.now()
-                                              .add(const Duration(seconds: 10));
-                                          _resendRemaining = const Duration(
-                                            seconds: 10,
-                                          );
-                                          _tick();
-                                          _timer ??= Timer.periodic(
-                                            const Duration(seconds: 1),
-                                            (_) => _tick(),
-                                          );
-                                          _sendCode();
-                                        }
-                                        : null,
-                                child: Text(
-                                  context.tr('email_verification_resend_code'),
-                                  style: TextStyle(
-                                    color: theme.colorScheme.onSurfaceVariant
-                                        .withOpacity(0.5),
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
+                      child: TextButton(
+                        onPressed:
+                            (!_sending && _remaining == Duration.zero)
+                                ? _sendCode
+                                : null,
+                        child: Text(
+                          context.tr('email_verification_resend_code'),
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurfaceVariant
+                                .withOpacity(0.5),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ],
-
-                // 하단 여백 (키보드가 올라올 때 버튼과 겹치지 않도록)
-                const SizedBox(height: 100),
               ],
             ),
           ),
@@ -597,12 +521,10 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
             top: false,
             child:
                 _codeSent
-                    ? // 🎯 인증 버튼: 활성화되거나 로딩 중일 때만 보이기 (에러 없을 때만)
-                    ((!_verifying &&
-                                !_sending &&
-                                _codeController.text.trim().length == 6 &&
-                                _pinError == null) ||
-                            _verifying)
+                    ? // 🎯 인증 버튼: 로딩 중이거나 활성화되어 있을 때만 표시
+                    (_verifying ||
+                            (!_sending &&
+                                _codeController.text.trim().length == 6))
                         ? SizedBox(
                           width: double.infinity,
                           height: 55,
@@ -610,9 +532,7 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                             onPressed:
                                 (!_verifying &&
                                         !_sending &&
-                                        _codeController.text.trim().length ==
-                                            6 &&
-                                        _pinError == null)
+                                        _codeController.text.trim().length == 6)
                                     ? _verifyCode
                                     : null,
                             style: ElevatedButton.styleFrom(
@@ -624,16 +544,22 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                             ),
                             child:
                                 _verifying
-                                    ? SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                              theme.colorScheme.onSurface,
-                                            ),
-                                      ),
+                                    ? Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  theme.colorScheme.onSurface,
+                                                ),
+                                          ),
+                                        ),
+                                      ],
                                     )
                                     : Text(
                                       context.tr('email_verification_verify'),
@@ -646,12 +572,10 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                           ),
                         )
                         : const SizedBox.shrink()
-                    : // 🎯 발송 버튼: 활성화되거나 로딩 중일 때만 보이기 (에러 없을 때만)
-                    ((!_sending &&
-                            _remaining == Duration.zero &&
-                            _isValidEmail(_emailController.text.trim()) &&
-                            _emailError == null) ||
-                        _sending)
+                    : // 🎯 발송 버튼: 로딩 중이거나 활성화되어 있을 때만 표시
+                    (_sending ||
+                        (_remaining == Duration.zero &&
+                            _isValidEmail(_emailController.text.trim())))
                     ? SizedBox(
                       width: double.infinity,
                       height: 56,
@@ -659,10 +583,7 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                         onPressed:
                             (!_sending &&
                                     _remaining == Duration.zero &&
-                                    _isValidEmail(
-                                      _emailController.text.trim(),
-                                    ) &&
-                                    _emailError == null)
+                                    _isValidEmail(_emailController.text.trim()))
                                 ? _sendCode
                                 : null,
                         style: ElevatedButton.styleFrom(
@@ -674,15 +595,21 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                         ),
                         child:
                             _sending
-                                ? SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      theme.colorScheme.onSurface,
+                                ? Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              theme.colorScheme.onSurface,
+                                            ),
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 )
                                 : Text(
                                   context.tr('email_verification_send_code'),

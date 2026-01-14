@@ -281,8 +281,8 @@ class _StaticAvatarPlaceholder extends StatelessWidget {
       child: Text(
         firstLetter,
         style: TextStyle(
-          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-          fontSize: size * 0.4,
+          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+          fontSize: size * 0.2,
           fontWeight: FontWeight.w600,
         ),
       ),

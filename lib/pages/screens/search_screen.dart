@@ -1,6 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/data/models/user_model.dart';
-import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/data/models/post_data.dart';
@@ -12,6 +11,7 @@ import 'package:doppy/pages/components/search_top_bar.dart';
 import 'package:doppy/pages/components/search_results.dart';
 import 'package:doppy/pages/components/search_video_widgets.dart';
 import 'package:doppy/pages/components/search_trending_section.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -104,8 +104,8 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
 
     // 🎯 초기화 및 초기 검색어 처리
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // 🎯 UI 렌더링 완료 후 지연 실행하여 블로킹 방지
-      Future.delayed(const Duration(milliseconds: 300), () async {
+      // 🎯 UI 렌더링 완료 후 즉시 실행 (지연 제거하여 빠른 로딩)
+      Future.microtask(() async {
         if (!mounted) return;
 
         final searchService = context.read<SearchService>();
@@ -119,10 +119,14 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
           debugPrint('[SearchScreen] 초기 검색어로 포커스 설정: $q');
         }
 
-        // initialize는 백그라운드에서 실행 (캐시 사용)
+        // 🎯 앱 시작 시 splash_screen에서 이미 로드했으므로, 여기서는 트렌딩 데이터만 확인
+        // initialize는 검색 기록만 로드 (이미 splash에서 로드했을 수 있지만 안전하게 다시 로드)
         await searchService.initialize(forceRefresh: false);
 
-        debugPrint('[SearchScreen] 초기화 완료');
+        // 🎯 트렌딩 데이터가 없으면 로드 (splash에서 로드했을 수도 있지만 확인)
+        await searchService.ensureTrendingData();
+
+        debugPrint('[SearchScreen] 초기화 완료 (검색 기록 + 트렌딩 데이터 확인)');
       });
     });
   }
@@ -361,35 +365,10 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                   color: Theme.of(context).colorScheme.background,
                 ),
               ),
-              SafeArea(
-                child: Column(
-                  children: [
-                    // 🎯 검색 결과가 표시될 때는 검색창 숨김
-                    if (!_isShowingSearchResults) ...[
-                      SearchTopBar(
-                        controller: _searchController,
-                        focusNode: _searchFocusNode,
-                        query: searchService.query,
-                        onClear: _clearSearch,
-                        onBack: _resetToInitial,
-                        onClose: widget.onClose,
-                        onSubmitted: _runSearch,
-                        onCancel: () {
-                          _searchFocusNode.unfocus();
-                          context.read<SearchService>().setFocused(false);
-                        },
-                        isSearching: _isSearching, // 🎯 검색 중 여부 전달
-                      ),
-                    ],
-                    Expanded(
-                      child:
-                          _isShowingSearchResults
-                              ? _buildSearchResultsView(context)
-                              : _buildDefaultSearchBody(context, searchService),
-                    ),
-                  ],
-                ),
-              ),
+              // 🎯 통짜 스크롤 구조 (Sliver 사용)
+              _isShowingSearchResults
+                  ? _buildSearchResultsView(context)
+                  : _buildDefaultSearchBodyWithSliver(context, searchService),
             ],
           ),
         );
@@ -483,8 +462,208 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     }
   }
 
-  // 🎯 기본 검색 화면 (trending/history/live)
-  Widget _buildDefaultSearchBody(
+  // 🎯 기본 검색 화면 (trending/history/live) - Sliver 구조
+  Widget _buildDefaultSearchBodyWithSliver(
+    BuildContext context,
+    SearchService searchService,
+  ) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final heroHeight = screenHeight * 0.4; // 🎯 화면 높이의 40%
+
+    return CustomScrollView(
+      slivers: [
+        // 🎯 Hero 섹션이 있는 SliverAppBar (검색 중이거나 포커스되면 숨김)
+        if (!searchService.isFocused && !_isSearching)
+          SliverAppBar(
+            expandedHeight: heroHeight,
+            toolbarHeight: 0, // 🎯 toolbarHeight를 0으로 설정
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            floating: true, // 🎯 위로 스크롤하면 숨겨지고, 아래로 내리면 나타남
+            snap: false,
+            automaticallyImplyLeading: false,
+            pinned: false,
+            flexibleSpace: LayoutBuilder(
+              builder: (context, constraints) {
+                // 🎯 스크롤 위치에 따라 텍스트 투명도 계산
+                final shrinkOffset = constraints.maxHeight;
+                final expandedHeight = heroHeight;
+                // 50px만 스크롤해도 투명도가 0이 되도록 계산
+                final scrollDistance = expandedHeight - shrinkOffset;
+                final textOpacity = (1.0 - (scrollDistance / 50.0)).clamp(
+                  0.0,
+                  1.0,
+                );
+
+                return Stack(
+                  children: [
+                    // 🎯 Hero 섹션 (배경)
+                    Positioned.fill(
+                      child: _buildHeroSection(
+                        context,
+                        searchService,
+                        textOpacity: textOpacity, // 위로 스크롤할수록 텍스트가 투명해짐
+                      ),
+                    ),
+                    // 🎯 WATCHA 로고와 검색 아이콘 오버레이 (상단)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 0,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              // WATCHA 로고
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                ),
+                                child: Text(
+                                  'Doppy',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.5,
+                                  ),
+                                ),
+                              ),
+                              // 검색 아이콘
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  top: 8,
+                                  right: 12,
+                                  left: 12,
+                                ),
+                                child: GestureDetector(
+                                  onTap: () {
+                                    // 🎯 포커스 상태를 먼저 설정하고, 그 다음 포커스 요청
+                                    context.read<SearchService>().setFocused(
+                                      true,
+                                    );
+                                    // 🎯 requestFocus는 비동기이므로 즉시 실행
+                                    _searchFocusNode.requestFocus();
+                                  },
+                                  child: SvgPicture.asset(
+                                    'assets/icons/ic_search.svg',
+                                    width: 28,
+                                    height: 28,
+                                    // ignore: deprecated_member_use
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        // 🎯 검색창 (포커스되거나 검색 중일 때만 표시) - SliverAppBar로 고정
+        if (searchService.isFocused || searchService.query.isNotEmpty)
+          SliverAppBar(
+            toolbarHeight: 56, // 검색창 높이(48) + 패딩(8)
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            pinned: true,
+            floating: false,
+            automaticallyImplyLeading: false,
+            flexibleSpace: SafeArea(
+              bottom: false,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: SearchTopBar(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  query: searchService.query,
+                  onClear: _clearSearch,
+                  onBack: _resetToInitial,
+                  onClose: widget.onClose,
+                  onSubmitted: _runSearch,
+                  onCancel: () {
+                    _searchFocusNode.unfocus();
+                    context.read<SearchService>().setFocused(false);
+                  },
+                  isSearching: _isSearching,
+                ),
+              ),
+            ),
+          ),
+
+        // 🎯 트렌딩/검색 기록/실시간 검색 결과를 Sliver로 변환
+        // 🎯 검색 중일 때는 추천 화면 표시하지 않음
+        if (!_isSearching)
+          _buildDefaultSearchBodySliver(context, searchService)
+        else
+          // 🎯 검색 중일 때는 빈 화면 (로딩은 suffix_icon에 표시)
+          SliverFillRemaining(hasScrollBody: false, child: Container()),
+      ],
+    );
+  }
+
+  // 🎯 Hero 섹션 빌드
+  Widget _buildHeroSection(
+    BuildContext context,
+    SearchService searchService, {
+    double textOpacity = 1.0,
+  }) {
+    if (searchService.recommendedPosts.isEmpty) {
+      return Container(color: Theme.of(context).colorScheme.background);
+    }
+
+    return _SearchHeroSection(
+      posts: searchService.recommendedPosts,
+      textOpacity: textOpacity,
+      onPostIndexChanged: (index) {
+        setState(() {
+          _currentTrendingPostIndex = index;
+        });
+      },
+      onTapPost: (post) {
+        final postData = PostData(
+          id: post.id,
+          thumbnailImageUrl: post.imageUrl ?? '',
+          title: post.title ?? '',
+          summary: post.summary ?? post.parsedContent ?? '',
+          author: post.author ?? post.username ?? '',
+          authorProfileImageUrl: post.profileImageUrl ?? '',
+          content: post.content ?? '',
+          accessLevel: AccessLevel.public,
+          viewCount: 0,
+          likeCount: post.likes ?? 0,
+          commentCount: post.comments ?? 0,
+          isLiked: false,
+          createdAt: post.createdAt ?? DateTime.now().toIso8601String(),
+          updatedAt: post.createdAt ?? DateTime.now().toIso8601String(),
+        );
+
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder:
+                (_) => PostReaderScreen(
+                  exported: postData.toExportedData(),
+                  heroTag: 'search-post-${post.id}',
+                ),
+          ),
+        );
+      },
+    );
+  }
+
+  // 🎯 기본 검색 화면을 Sliver로 변환
+  Widget _buildDefaultSearchBodySliver(
     BuildContext context,
     SearchService searchService,
   ) {
@@ -495,138 +674,204 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
             : (searchService.isFocused ? 'history' : 'trending'),
       ),
       builder: (_) {
-        // 1) 입력 중: 실시간 계정 검색 결과
+        // 🎯 검색 중일 때는 아무것도 표시하지 않음 (로딩은 suffix_icon에 표시)
+        if (_isSearching) {
+          return SliverFillRemaining(hasScrollBody: false, child: Container());
+        }
+
+        // 1) 입력 중: 실시간 계정 검색 결과 (Sliver 구조)
         if (searchService.query.isNotEmpty && searchService.isFocused) {
-          return SearchResults(
-            accounts: searchService.searchingAccounts,
-            searchHistory: const [],
-            query: searchService.query,
-            hasNetworkError: _hasNetworkError,
-            onAnyTapDown: () {},
-            onTapAccount: (item) {
-              // 🎯 중복 탭 방지
-              if (_isNavigating) return;
+          final searchingAccounts = searchService.searchingAccounts;
 
-              setState(() {
-                _isNavigating = true;
-              });
+          // 🎯 검색 결과가 없으면 빈 화면
+          if (searchingAccounts.isEmpty && !_hasNetworkError) {
+            return SliverFillRemaining(hasScrollBody: false, child: Center());
+          }
 
-              searchService.onTapContentItem(
-                item,
-                onNavigateToProfile: (username) {
-                  Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder:
-                              (_) => UserProfileScreen(
-                                otherUser: User(
-                                  username: username,
-                                  alias: item.alias,
-                                  profileImageUrl: item.profileImageUrl,
+          // 🎯 SliverList로 검색 결과 표시 (검색어 실행 타일 포함)
+          return SliverPadding(
+            padding: const EdgeInsets.only(
+              top: 16,
+              bottom: 8,
+              left: 0,
+              right: 0,
+            ),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  // 첫 번째 아이템은 검색어 실행 타일
+                  if (index == 0) {
+                    return AccountListItem(
+                      account: SearchContentItem.blogKeyword(
+                        id: 'current_search',
+                        keyword: searchService.query,
+                      ),
+                      onTap: _runSearch,
+                      onTapDown: () {},
+                      showRemoveButton: false,
+                    );
+                  }
+                  final item = searchingAccounts[index - 1];
+                  return AccountListItem(
+                    account: item,
+                    onTapDown: () {},
+                    onTap: () {
+                      // 🎯 중복 탭 방지
+                      if (_isNavigating) return;
+
+                      setState(() {
+                        _isNavigating = true;
+                      });
+
+                      searchService.onTapContentItem(
+                        item,
+                        onNavigateToProfile: (username) {
+                          Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder:
+                                      (_) => UserProfileScreen(
+                                        otherUser: User(
+                                          username: username,
+                                          alias: item.alias,
+                                          profileImageUrl: item.profileImageUrl,
+                                        ),
+                                      ),
                                 ),
-                              ),
-                        ),
-                      )
-                      .then((_) {
-                        if (mounted) {
-                          setState(() {
-                            _isNavigating = false;
-                          });
-                          _searchFocusNode.requestFocus();
-                        }
-                      })
-                      .catchError((error) {
-                        debugPrint('[SearchScreen] 네비게이션 에러: $error');
-                        if (mounted) {
-                          setState(() {
-                            _isNavigating = false;
-                          });
-                        }
-                      });
+                              )
+                              .then((_) {
+                                if (mounted) {
+                                  setState(() {
+                                    _isNavigating = false;
+                                  });
+                                  _searchFocusNode.requestFocus();
+                                }
+                              })
+                              .catchError((error) {
+                                debugPrint('[SearchScreen] 네비게이션 에러: $error');
+                                if (mounted) {
+                                  setState(() {
+                                    _isNavigating = false;
+                                  });
+                                }
+                              });
+                        },
+                      );
+                    },
+                    onRemove: null,
+                    showRemoveButton: false,
+                  );
                 },
-              );
-            },
-            onTapHistory: (_) {},
-            onRemoveHistory: (item) {},
-            enableHero: true,
-            onTapSearch: _runSearch,
+                childCount: searchingAccounts.length + 1, // 검색어 실행 타일 포함
+              ),
+            ),
           );
         }
 
-        // 2) 포커스 O & 쿼리 없음: 검색 기록 펼침
+        // 2) 포커스 O & 쿼리 없음: 검색 기록 펼침 (Sliver 구조)
         if (searchService.isFocused) {
-          return SearchResults(
-            accounts: searchService.searchHistory,
-            searchHistory: const [],
-            query: '',
-            hasNetworkError: false,
-            onAnyTapDown: () {},
-            onTapAccount: (item) {
-              // 🎯 중복 탭 방지
-              if (_isNavigating) return;
+          final historyItems = searchService.searchHistory;
 
-              // 🎯 글 검색 기록이면 검색 실행
-              if (item.isBlog) {
-                _searchController.text = item.title ?? '';
-                searchService.onSearchChanged(item.title ?? '');
-                _runSearch();
-                return;
-              }
+          // 🎯 검색 기록이 없으면 빈 화면
+          if (historyItems.isEmpty) {
+            return SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Text(
+                  '검색 기록이 없습니다',
+                  style: TextStyle(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.5),
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            );
+          }
 
-              setState(() {
-                _isNavigating = true;
-              });
+          // 🎯 SliverList로 검색 기록 표시
+          return SliverPadding(
+            padding: const EdgeInsets.only(
+              top: 16,
+              bottom: 8,
+              left: 0,
+              right: 0,
+            ),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final item = historyItems[index];
+                return AccountListItem(
+                  account: item,
+                  onTapDown: () {},
+                  onTap: () {
+                    // 🎯 중복 탭 방지
+                    if (_isNavigating) return;
 
-              Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder:
-                          (_) => UserProfileScreen(
-                            otherUser: User(
-                              username: item.username ?? '',
-                              alias: item.alias,
-                              profileImageUrl: item.profileImageUrl,
-                            ),
+                    // 🎯 글 검색 기록이면 검색 실행
+                    if (item.isBlog) {
+                      _searchController.text = item.title ?? '';
+                      searchService.onSearchChanged(item.title ?? '');
+                      _runSearch();
+                      return;
+                    }
+
+                    setState(() {
+                      _isNavigating = true;
+                    });
+
+                    Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder:
+                                (_) => UserProfileScreen(
+                                  otherUser: User(
+                                    username: item.username ?? '',
+                                    alias: item.alias,
+                                    profileImageUrl: item.profileImageUrl,
+                                  ),
+                                ),
                           ),
-                    ),
-                  )
-                  .then((_) {
-                    if (mounted) {
-                      setState(() {
-                        _isNavigating = false;
-                      });
-                      _searchFocusNode.requestFocus();
+                        )
+                        .then((_) {
+                          if (mounted) {
+                            setState(() {
+                              _isNavigating = false;
+                            });
+                            _searchFocusNode.requestFocus();
+                          }
+                        })
+                        .catchError((error) {
+                          debugPrint('[SearchScreen] 네비게이션 에러: $error');
+                          if (mounted) {
+                            setState(() {
+                              _isNavigating = false;
+                            });
+                          }
+                        });
+                  },
+                  onRemove: () {
+                    // 🎯 글 검색 기록이면 글 검색 기록에서 제거
+                    if (item.isBlog) {
+                      context.read<SearchService>().removeBlogSearchKeyword(
+                        item.title ?? '',
+                      );
+                    } else {
+                      context.read<SearchService>().removeFromSearchHistory(
+                        item.username ?? '',
+                      );
                     }
-                  })
-                  .catchError((error) {
-                    debugPrint('[SearchScreen] 네비게이션 에러: $error');
-                    if (mounted) {
-                      setState(() {
-                        _isNavigating = false;
-                      });
-                    }
-                  });
-            },
-            onTapHistory: (_) {},
-            onRemoveHistory: (item) {
-              // 🎯 글 검색 기록이면 글 검색 기록에서 제거
-              if (item.isBlog) {
-                context.read<SearchService>().removeBlogSearchKeyword(
-                  item.title ?? '',
+                  },
+                  showRemoveButton: true,
                 );
-              } else {
-                context.read<SearchService>().removeFromSearchHistory(
-                  item.username ?? '',
-                );
-              }
-            },
-            enableHero: false,
-            onTapSearch: _runSearch,
+              }, childCount: historyItems.length),
+            ),
           );
         }
 
-        // 3) 포커스 X: 실시간 검색어 표시
-        return TrendingKeywordsWithPreload(
+        // 3) 포커스 X: 실시간 검색어 표시 (OTT 스타일 - Sliver 구조)
+        // 🎯 TrendingKeywordsWithPreload는 이제 Sliver를 반환하므로 직접 사용
+        final trendingWidget = TrendingKeywordsWithPreload(
           keywords: searchService.trendingKeywords,
           recommendedPosts: searchService.recommendedPosts,
           isLoading: searchService.isTrendingLoading,
@@ -678,6 +923,12 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
             await searchService.fetchTrendingKeywords(forceRefresh: true);
             debugPrint('[SearchScreen] 트렌딩 데이터 새로고침 완료');
           },
+        );
+
+        // 🎯 TrendingKeywordsWithPreload가 Sliver를 반환하므로 SliverPadding으로 감싸서 상단 여백 추가
+        return SliverPadding(
+          padding: const EdgeInsets.only(top: 16, bottom: 0, left: 0, right: 0),
+          sliver: trendingWidget,
         );
       },
     );
@@ -867,6 +1118,206 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   }
 }
 
+/// 🎯 검색 화면용 Hero 섹션
+class _SearchHeroSection extends StatefulWidget {
+  final List<SearchContentItem> posts;
+  final Function(int)? onPostIndexChanged;
+  final Function(SearchContentItem) onTapPost;
+  final double textOpacity; // 🎯 텍스트 투명도
+
+  const _SearchHeroSection({
+    required this.posts,
+    this.onPostIndexChanged,
+    required this.onTapPost,
+    this.textOpacity = 1.0,
+  });
+
+  @override
+  State<_SearchHeroSection> createState() => _SearchHeroSectionState();
+}
+
+class _SearchHeroSectionState extends State<_SearchHeroSection> {
+  late PageController _pageController;
+  int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+    _pageController.addListener(_onPageChanged);
+    if (widget.posts.isNotEmpty && widget.onPostIndexChanged != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          widget.onPostIndexChanged!(0);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageController.removeListener(_onPageChanged);
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _onPageChanged() {
+    if (!_pageController.hasClients) return;
+    final newIndex = _pageController.page?.round() ?? 0;
+    if (newIndex != _currentIndex) {
+      setState(() {
+        _currentIndex = newIndex;
+      });
+      widget.onPostIndexChanged?.call(_currentIndex);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.posts.isEmpty) {
+      return Container(color: Theme.of(context).colorScheme.background);
+    }
+
+    return Stack(
+      children: [
+        // 배경 이미지/비디오
+        PageView.builder(
+          controller: _pageController,
+          physics: const ClampingScrollPhysics(),
+          itemCount: widget.posts.length,
+          itemBuilder: (context, index) {
+            final post = widget.posts[index];
+            final imageUrl = post.imageUrl ?? '';
+
+            // 비디오 URL 체크
+            final isVideoUrl =
+                imageUrl.toLowerCase().endsWith('.mp4') ||
+                imageUrl.toLowerCase().endsWith('.mov') ||
+                imageUrl.toLowerCase().endsWith('.avi') ||
+                imageUrl.toLowerCase().endsWith('.webm') ||
+                imageUrl.contains('/videos/');
+
+            return GestureDetector(
+              onTap: () => widget.onTapPost(post),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (isVideoUrl)
+                    SearchBackgroundVideoWidget(
+                      videoUrl: imageUrl,
+                      key: ValueKey('hero-video-$imageUrl'),
+                    )
+                  else if (imageUrl.isNotEmpty)
+                    CachedNetworkImage(
+                      imageUrl: imageUrl,
+                      fit: BoxFit.cover,
+                      errorWidget:
+                          (context, url, error) => Container(
+                            color: Theme.of(context).colorScheme.surfaceVariant,
+                          ),
+                    )
+                  else
+                    Container(
+                      color: Theme.of(context).colorScheme.surfaceVariant,
+                    ),
+                  // 그라데이션 오버레이
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withOpacity(0.7),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        // 텍스트 오버레이 (하단 중앙) - 스크롤 시 투명도 적용
+        Positioned(
+          bottom: 60,
+          left: 0,
+          right: 0,
+          child: Opacity(
+            opacity: widget.textOpacity,
+            child: Column(
+              children: [
+                Text(
+                  '이 시간에 어때요?',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w600,
+                    shadows: [
+                      Shadow(
+                        offset: Offset(0, 2),
+                        blurRadius: 4,
+                        color: Colors.black.withOpacity(0.5),
+                      ),
+                    ],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '보내기 싫은 일요일 밤',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w400,
+                    shadows: [
+                      Shadow(
+                        offset: Offset(0, 2),
+                        blurRadius: 4,
+                        color: Colors.black.withOpacity(0.5),
+                      ),
+                    ],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+        // 페이지 인디케이터 (하단)
+        Positioned(
+          bottom: 20,
+          left: 0,
+          right: 0,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(
+              widget.posts.length.clamp(0, 5), // 최대 5개만 표시
+              (index) => Container(
+                width: index == _currentIndex ? 8 : 6,
+                height: 6,
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                decoration: BoxDecoration(
+                  shape:
+                      index == _currentIndex
+                          ? BoxShape.rectangle
+                          : BoxShape.circle,
+                  borderRadius:
+                      index == _currentIndex ? BorderRadius.circular(3) : null,
+                  color:
+                      index == _currentIndex
+                          ? Colors.white
+                          : Colors.white.withOpacity(0.5),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// -------------------- 검색 결과 뷰 (독립적인 UI) --------------------
 class _SearchResultsView extends StatefulWidget {
   final List<PostData> posts;
@@ -913,10 +1364,20 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
   bool _isGestureActive = false;
   bool _isHorizontalGesture = false; // 가로 제스처 감지 여부
 
+  // ✅ 좌/우 넘김 애니메이션을 통일해서 체감을 부드럽게 (PostList와 동일)
+  static const Duration _pageTurnDuration = Duration(milliseconds: 180); // 클릭용
+  static const Duration _swipeDuration = Duration(
+    milliseconds: 400,
+  ); // 텍스트 영역 스와이프용 (더 부드럽게)
+  static const Curve _pageTurnCurve = Curves.easeInOut;
+  static const Curve _swipeCurve = Curves.easeOutCubic; // 스와이프용 더 부드러운 curve
+
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(viewportFraction: 0.75);
+    _pageController = PageController(
+      viewportFraction: 0.75,
+    ); // 🎯 PostList와 동일한 viewport
     _likeService.addListener(_onLikeServiceChanged);
     _loadLikeStatusForAllPosts();
   }
@@ -957,13 +1418,16 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
     final screenWidth = MediaQuery.of(context).size.width;
 
     return Listener(
+      behavior: HitTestBehavior.opaque, // 🎯 PostList와 동일
       // 🎯 가로/세로 제스처 감지 (PostList와 동일)
+      onPointerDown: (details) {
+        _gestureAccumY = 0.0;
+        _gestureAccumX = 0.0;
+        _isGestureActive = true;
+        _isHorizontalGesture = false;
+      },
       onPointerMove: (details) {
-        if (!_isGestureActive) {
-          setState(() {
-            _isGestureActive = true;
-          });
-        }
+        if (!_isGestureActive) return;
 
         // 제스처 방향 결정 (더 빠르게, 더 민감하게)
         if (!_isHorizontalGesture) {
@@ -977,6 +1441,10 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
               setState(() {
                 _isHorizontalGesture = true;
               });
+              assert(() {
+                debugPrint('🔄 가로 제스처 감지! 세로 완전 차단');
+                return true;
+              }());
             }
           }
         }
@@ -986,33 +1454,40 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
           _gestureAccumX += details.delta.dx;
           // 세로 움직임은 완전히 무시 (누적하지 않음)
 
-          // 수평 스크롤만 처리
+          // 수평 스크롤만 처리 (텍스트 영역 스와이프는 더 부드럽게)
           if (_gestureAccumX.abs() > 30) {
             if (_gestureAccumX > 0 && _currentIndex > 0) {
-              // 오른쪽으로 스크롤 - 이전 페이지
+              // 오른쪽으로 스크롤 - 이전 페이지 (텍스트 영역이므로 더 부드럽게)
               _pageController.previousPage(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
+                duration: _swipeDuration,
+                curve: _swipeCurve,
               );
               _isGestureActive = false;
             } else if (_gestureAccumX < 0 &&
                 _currentIndex < widget.posts.length - 1) {
-              // 왼쪽으로 스크롤 - 다음 페이지
+              // 왼쪽으로 스크롤 - 다음 페이지 (텍스트 영역이므로 더 부드럽게)
               _pageController.nextPage(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
+                duration: _swipeDuration,
+                curve: _swipeCurve,
               );
               _isGestureActive = false;
             }
           }
           return; // 세로 동작 완전 차단
         }
+
+        // 세로 제스처 처리 (가로가 아닐 때만)
       },
       onPointerUp: (details) {
-        setState(() {
+        if (_isGestureActive || _isHorizontalGesture) {
+          setState(() {
+            _isGestureActive = false;
+            _isHorizontalGesture = false;
+          });
+        } else {
           _isGestureActive = false;
           _isHorizontalGesture = false;
-        });
+        }
         _gestureAccumY = 0.0;
         _gestureAccumX = 0.0;
       },
@@ -1025,7 +1500,7 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
         slivers: [
           // AppBar with 검색 칩
           SliverAppBar(
-            toolbarHeight: 35,
+            toolbarHeight: 48,
             backgroundColor: Colors.transparent,
             elevation: 0,
             scrolledUnderElevation: 0,
@@ -1065,34 +1540,38 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
                             margin: const EdgeInsets.only(right: 8),
                             child: Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
+                                horizontal: 16,
+                                vertical: 8,
                               ),
                               decoration: BoxDecoration(
                                 color: Theme.of(
                                   context,
                                 ).colorScheme.surface.withOpacity(0.6),
-                                borderRadius: BorderRadius.circular(16),
+                                borderRadius: BorderRadius.circular(20),
                                 border: Border.all(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.primary.withOpacity(0.8),
-                                  width: 1,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant
+                                      .withOpacity(0.7),
+                                  width: 1.2,
                                 ),
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   const SizedBox(width: 8),
-                                  Text(
-                                    widget.searchQuery,
-                                    style: TextStyle(
-                                      color:
-                                          Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(
+                                      widget.searchQuery,
+                                      style: TextStyle(
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 10),
@@ -1100,10 +1579,11 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
                                     onTap: widget.onClearSearch,
                                     child: Icon(
                                       Icons.close,
-                                      size: 20,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.primary.withOpacity(0.8),
+                                      size: 22,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant
+                                          .withOpacity(0.9),
                                     ),
                                   ),
                                 ],
@@ -1131,35 +1611,7 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
                   padding: const EdgeInsets.symmetric(horizontal: 32),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        AppLocalizations.of(
-                          context,
-                        ).translate('no_search_results'),
-                        style: GoogleFonts.notoSansKr(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w500,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.7),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        AppLocalizations.of(
-                          context,
-                        ).translate('try_different_search'),
-                        style: GoogleFonts.notoSansKr(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w400,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.5),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
+                    children: [],
                   ),
                 ),
               ),
@@ -1275,6 +1727,9 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
     int index,
     double screenWidth,
   ) {
+    // viewportFraction이 0.75이므로 실제 카드 너비는 screenWidth * 0.75
+    final cardWidth = screenWidth * 0.75;
+
     return GestureDetector(
       onTapUp: (details) {
         final tapX = details.globalPosition.dx;
@@ -1331,7 +1786,7 @@ class _SearchResultsViewState extends State<_SearchResultsView> {
               child: AspectRatio(
                 aspectRatio: 4 / 5,
                 child: PostCard(
-                  containerWidth: screenWidth,
+                  containerWidth: cardWidth,
                   thumbnailImageUrl: post.thumbnailImageUrl,
                   heroTag: 'search-post-${post.id}-$index',
                   title: post.title,

@@ -1,8 +1,12 @@
 import 'package:doppy/pages/screens/join_screen.dart';
-import 'package:doppy/pages/screens/setting_screen.dart';
-import 'package:doppy/main.dart' show AppConstants;
+import 'package:doppy/pages/screens/find_id_screen.dart';
+import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/providers/auth_provider.dart';
+import 'package:doppy/providers/locale_provider.dart';
+import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'dart:ui';
 import 'dart:math' as math;
 
@@ -17,6 +21,17 @@ class _LoginScreenState extends State<LoginScreen>
     with TickerProviderStateMixin {
   late AnimationController _typingController;
   late AnimationController _fadeController;
+
+  // 로그인 필드 컨트롤러
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final FocusNode _emailFocusNode = FocusNode();
+  final FocusNode _loginPasswordFocusNode = FocusNode();
+
+  // 비밀번호 표시 여부
+  bool _obscurePassword = true;
+  bool _isLoggingIn = false;
+  bool _isFadingOut = false; // 로고 페이드아웃 상태
 
   @override
   void initState() {
@@ -35,152 +50,466 @@ class _LoginScreenState extends State<LoginScreen>
   void dispose() {
     _typingController.dispose();
     _fadeController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    _emailFocusNode.dispose();
+    _loginPasswordFocusNode.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final backgroundColor = isDark ? Colors.black : Colors.black;
+    // 키보드가 올라왔는지 확인
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    final isKeyboardVisible = keyboardHeight > 0;
 
     return Scaffold(
-      backgroundColor: backgroundColor,
-      body: Stack(
-        children: [
-          // 배경 이미지
-          Positioned.fill(
-            child: Image.asset(
-              'assets/images/onboarding0.png',
-              fit: BoxFit.cover,
-            ),
-          ),
-          // 배경 이미지
-          Positioned.fill(
-            child: Container(color: Colors.black.withOpacity(0.25)),
-          ),
-          // 메인 콘텐츠
-          SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 180),
-                const Spacer(),
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: SafeArea(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            // 여백을 누르면 키보드 내리기
+            if (isKeyboardVisible) {
+              FocusScope.of(context).unfocus();
+            }
+          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Spacer(flex: 2),
 
-                // Doppy 로딩 로고 스타일 제목
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: AnimatedBuilder(
-                    animation: _typingController,
-                    builder: (context, child) {
-                      return _buildTitleText(
-                        context,
-                        "Doppy",
-                        ValueKey("Doppy"),
-                      );
-                    },
+              // Doppy 로딩 로고 스타일 제목 - 키보드 올라올 때 또는 로그인 중일 때 숨기기
+              AnimatedOpacity(
+                opacity: (isKeyboardVisible || _isFadingOut) ? 0.0 : 1.0,
+                duration:
+                    _isFadingOut
+                        ? const Duration(milliseconds: 150) // 페이드아웃은 더 빠르게
+                        : const Duration(milliseconds: 300),
+                curve: _isFadingOut ? Curves.easeOut : Curves.easeInOut,
+                child: AnimatedContainer(
+                  duration:
+                      _isFadingOut
+                          ? const Duration(milliseconds: 150)
+                          : const Duration(milliseconds: 300),
+                  curve: _isFadingOut ? Curves.easeOut : Curves.easeInOut,
+                  transform: Matrix4.translationValues(
+                    0,
+                    (isKeyboardVisible || _isFadingOut) ? -50 : 0,
+                    0,
                   ),
-                ),
-                // 서브 텍스트
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 30),
-                  child: Text(
-                    context.tr('onboarding_subtitle'),
-                    textAlign: TextAlign.left,
-                    style: TextStyle(
-                      color: const Color.fromARGB(255, 190, 190, 190),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                // 하단 시작하기 버튼
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: Padding(
-                    padding: const EdgeInsets.only(bottom: 0),
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.black,
-                        minimumSize: Size(double.infinity, 56),
-                        elevation: 0,
-                      ),
-                      onPressed: () {
-                        showModalBottomSheet(
-                          context: context,
-                          isScrollControlled: true,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.vertical(
-                              top: Radius.circular(16),
-                            ),
-                          ),
-                          builder:
-                              (context) => Container(
-                                height:
-                                    MediaQuery.of(context).size.height * 0.92,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.vertical(
-                                    top: Radius.circular(16),
-                                  ),
-                                ),
-                                child: Column(
-                                  children: [
-                                    // 핸들
-                                    Container(
-                                      margin: EdgeInsets.only(top: 8),
-                                      width: 40,
-                                      height: 4,
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey[400],
-                                        borderRadius: BorderRadius.circular(2),
-                                      ),
-                                    ),
-                                    Expanded(child: JoinScreen()),
-                                  ],
-                                ),
-                              ),
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: AnimatedBuilder(
+                      animation: _typingController,
+                      builder: (context, child) {
+                        return _buildTitleText(
+                          context,
+                          "doppy",
+                          ValueKey("doppy"),
                         );
                       },
-                      child: Text(
-                        context.tr('onboarding_start_button'),
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: Colors.black,
-                          fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 40),
+
+              // 로그인 입력 필드
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                child: Column(
+                  children: [
+                    // UserId 입력 필드
+                    TextField(
+                      controller: _emailController,
+                      focusNode: _emailFocusNode,
+                      cursorColor: Theme.of(context).colorScheme.onSurface,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        fontSize: 18,
+                      ),
+                      textInputAction: TextInputAction.next,
+                      decoration: InputDecoration(
+                        hintText: context.tr('login_id_hint'),
+                        hintStyle: TextStyle(
+                          fontWeight: FontWeight.w500,
+                          fontSize: 16,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                        filled: true,
+                        fillColor: Theme.of(
+                          context,
+                        ).colorScheme.surfaceVariant.withOpacity(1),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 30,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.only(
+                            topLeft: Radius.circular(24),
+                            topRight: Radius.circular(24),
+                            bottomLeft: Radius.circular(10),
+                            bottomRight: Radius.circular(10),
+                          ),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.only(
+                            topLeft: Radius.circular(24),
+                            topRight: Radius.circular(24),
+                            bottomLeft: Radius.circular(10),
+                            bottomRight: Radius.circular(10),
+                          ),
+                          borderSide: BorderSide.none,
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.only(
+                            topLeft: Radius.circular(24),
+                            topRight: Radius.circular(24),
+                            bottomLeft: Radius.circular(10),
+                            bottomRight: Radius.circular(10),
+                          ),
+                          borderSide: BorderSide.none,
+                        ),
+                        suffixIcon: Icon(
+                          Icons.alternate_email_rounded,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.5),
+                          size: 20,
+                        ),
+                      ),
+                      onChanged: (_) {
+                        setState(() {}); // 버튼 활성화 상태 업데이트
+                      },
+                      onSubmitted: (_) {
+                        FocusScope.of(
+                          context,
+                        ).requestFocus(_loginPasswordFocusNode);
+                      },
+                    ),
+
+                    const SizedBox(height: 6),
+
+                    // Password 입력 필드
+                    TextField(
+                      controller: _passwordController,
+                      focusNode: _loginPasswordFocusNode,
+                      obscureText: _obscurePassword,
+                      cursorColor: Theme.of(context).colorScheme.onSurface,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        fontSize: 18,
+                      ),
+                      textInputAction: TextInputAction.done,
+                      decoration: InputDecoration(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 30,
+                        ),
+                        hintText: context.tr('password_hint'),
+                        hintStyle: TextStyle(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.5),
+                          fontWeight: FontWeight.w500,
+                          fontSize: 16,
+                        ),
+                        filled: true,
+                        fillColor: Theme.of(
+                          context,
+                        ).colorScheme.surfaceVariant.withOpacity(1),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.only(
+                            bottomLeft: Radius.circular(24),
+                            bottomRight: Radius.circular(24),
+                            topLeft: Radius.circular(10),
+                            topRight: Radius.circular(10),
+                          ),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.only(
+                            bottomLeft: Radius.circular(24),
+                            bottomRight: Radius.circular(24),
+                            topLeft: Radius.circular(10),
+                            topRight: Radius.circular(10),
+                          ),
+                          borderSide: BorderSide.none,
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.only(
+                            bottomLeft: Radius.circular(24),
+                            bottomRight: Radius.circular(24),
+                            topLeft: Radius.circular(10),
+                            topRight: Radius.circular(10),
+                          ),
+                          borderSide: BorderSide.none,
+                        ),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscurePassword
+                                ? Icons.lock_outline_rounded
+                                : Icons.lock_open_outlined,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.5),
+                            size: 20,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
+                        ),
+                      ),
+                      onChanged: (_) {
+                        setState(() {}); // 버튼 활성화 상태 업데이트
+                      },
+                      onSubmitted: (_) {
+                        if (_emailController.text.trim().isNotEmpty &&
+                            _passwordController.text.isNotEmpty &&
+                            !_isLoggingIn) {
+                          _handleLogin();
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
+              // 아이디/비밀번호 찾기 링크 - 키보드 올라올 때 숨기기
+              AnimatedOpacity(
+                opacity: isKeyboardVisible ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: () async {
+                        // 키보드 먼저 내리기
+                        FocusScope.of(context).unfocus();
+                        // FindIdScreen으로 이동하고 돌아올 때까지 대기
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const FindIdScreen(),
+                          ),
+                        );
+                        // 돌아왔을 때 키보드가 내린 상태로 유지
+                        FocusScope.of(context).unfocus();
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 12.0),
+                        child: Text(
+                          context.tr('forgot_id_password'),
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.6),
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 20),
-                // 하단 푸터 정보
-                Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        "© 2025 Doppy",
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.7),
-                          fontWeight: FontWeight.w400,
+              ),
+
+              const Spacer(),
+
+              // 로그인 버튼 - 키보드 올라올 때 숨기기
+              AnimatedOpacity(
+                opacity: isKeyboardVisible ? 0.0 : 1.0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                  transform: Matrix4.translationValues(
+                    0,
+                    isKeyboardVisible ? 50 : 0,
+                    0,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 75),
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 60,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(40),
+                          ),
+                          backgroundColor:
+                              (_emailController.text.trim().isNotEmpty &&
+                                      _passwordController.text.isNotEmpty &&
+                                      !_isLoggingIn)
+                                  ? Theme.of(context).colorScheme.onSurface
+                                  : Colors.grey[400],
+                          foregroundColor: Colors.white,
+                          elevation: 0,
                         ),
+                        onPressed:
+                            (_emailController.text.trim().isNotEmpty &&
+                                    _passwordController.text.isNotEmpty &&
+                                    !_isLoggingIn)
+                                ? _handleLogin
+                                : null,
+                        child:
+                            _isLoggingIn
+                                ? SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Theme.of(context).colorScheme.onSurface,
+                                    ),
+                                  ),
+                                )
+                                : Text(
+                                  context.tr('login_button'),
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color:
+                                        (_emailController.text
+                                                    .trim()
+                                                    .isNotEmpty &&
+                                                _passwordController
+                                                    .text
+                                                    .isNotEmpty &&
+                                                !_isLoggingIn)
+                                            ? Theme.of(
+                                              context,
+                                            ).colorScheme.surface
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .onSurfaceVariant
+                                                .withOpacity(0.7),
+                                  ),
+                                ),
                       ),
-                      const SizedBox(height: 4),
-                    ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 10),
-              ],
-            ),
+              ),
+
+              const SizedBox(height: 8),
+
+              // Sign up 링크 - 키보드 올라올 때 숨기기
+              AnimatedOpacity(
+                opacity: isKeyboardVisible ? 0.0 : 1.0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                  transform: Matrix4.translationValues(
+                    0,
+                    isKeyboardVisible ? 50 : 0,
+                    0,
+                  ),
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: () {
+                        // 🎯 Material page push 방식으로 회원가입 화면 이동
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder:
+                                (context) =>
+                                    JoinScreen(skipModeSelection: true),
+                          ),
+                        );
+                      },
+
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 12.0),
+                        child: Text(
+                          context.tr('signup_link'),
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.6),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
           ),
-        ],
+        ),
       ),
     );
+  }
+
+  Future<void> _handleLogin() async {
+    // 로고 즉시 페이드아웃
+    setState(() {
+      _isFadingOut = true;
+      _isLoggingIn = true;
+    });
+
+    // 페이드아웃 애니메이션 완료 대기
+    await Future.delayed(const Duration(milliseconds: 150));
+
+    if (!mounted) return;
+
+    final username = _emailController.text.trim();
+    final password = _passwordController.text;
+    final region = context.read<LocaleProvider>().regionCode;
+
+    final success = await AuthProvider().login(
+      username,
+      password,
+      region: region,
+    );
+
+    if (!mounted) return;
+
+    if (success) {
+      // 로그인 후 스플래시로 부드럽게 페이드 전환
+      Navigator.of(context).pushAndRemoveUntil(
+        PageRouteBuilder(
+          pageBuilder: (_, __, ___) => const SplashScreen(),
+          transitionDuration: const Duration(milliseconds: 250), // 더 빠르게
+          transitionsBuilder: (_, animation, __, child) {
+            return FadeTransition(
+              opacity: CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeOut, // 더 빠른 전환
+              ),
+              child: child,
+            );
+          },
+        ),
+        (route) => false,
+      );
+    } else {
+      // 로그인 실패 시 페이드아웃 상태 해제
+      setState(() {
+        _isFadingOut = false;
+        _isLoggingIn = false;
+      });
+      ErrorHandler.showError(
+        context,
+        context.tr('login_failed_invalid_credentials'),
+      );
+    }
   }
 
   // Doppy 로딩 로고 스타일 제목 (o에 스핀)
@@ -194,23 +523,24 @@ class _LoginScreenState extends State<LoginScreen>
           Text(
             "D",
             style: TextStyle(
-              fontSize: 72,
+              fontSize: 53,
               fontWeight: FontWeight.w800,
-              color: Colors.white,
-              letterSpacing: 2,
+              color: Theme.of(context).colorScheme.onSurface,
+              letterSpacing: -2,
             ),
           ),
+
           // "o" - 회전하는 스피너 (Painter 사용)
           Padding(
             padding: const EdgeInsets.only(top: 10),
             child: SizedBox(
-              width: 42,
-              height: 42,
+              width: 34,
+              height: 34,
               child: CustomPaint(
                 painter: _DoppyOSpinnerPainter(
                   progress: _typingController.value,
                   color: Theme.of(context).colorScheme.primary,
-                  strokeWidth: 9,
+                  strokeWidth: 8,
                 ),
               ),
             ),
@@ -219,10 +549,10 @@ class _LoginScreenState extends State<LoginScreen>
           Text(
             "ppy",
             style: TextStyle(
-              fontSize: 72,
+              fontSize: 52,
               fontWeight: FontWeight.w800,
-              color: Colors.white,
-              letterSpacing: 2,
+              color: Theme.of(context).colorScheme.onSurface,
+              letterSpacing: -1,
             ),
           ),
         ],
@@ -350,12 +680,10 @@ class ORingPainter extends CustomPainter {
 class _SlowCircularProgressIndicator extends StatefulWidget {
   final Color color;
   final double strokeWidth;
-  final Color? backgroundColor;
 
   const _SlowCircularProgressIndicator({
     required this.color,
     required this.strokeWidth,
-    this.backgroundColor,
   });
 
   @override
@@ -395,7 +723,6 @@ class _SlowCircularProgressIndicatorState
             progress: _controller.value,
             color: widget.color,
             strokeWidth: widget.strokeWidth,
-            backgroundColor: widget.backgroundColor,
           ),
         );
       },
@@ -407,13 +734,11 @@ class _SlowCircularProgressPainter extends CustomPainter {
   final double progress;
   final Color color;
   final double strokeWidth;
-  final Color? backgroundColor;
 
   _SlowCircularProgressPainter({
     required this.progress,
     required this.color,
     required this.strokeWidth,
-    this.backgroundColor,
   });
 
   @override
@@ -423,14 +748,12 @@ class _SlowCircularProgressPainter extends CustomPainter {
     final radius = ((size.width - strokeWidth) / 2) * 0.8;
 
     // 배경 원
-    if (backgroundColor != null) {
-      final backgroundPaint =
-          Paint()
-            ..color = backgroundColor!
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = strokeWidth;
-      canvas.drawCircle(center, radius, backgroundPaint);
-    }
+    final backgroundPaint =
+        Paint()
+          ..color = Colors.grey.withOpacity(0.25)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = strokeWidth;
+    canvas.drawCircle(center, radius, backgroundPaint);
 
     // 진행 원호
     final paint =
@@ -457,8 +780,7 @@ class _SlowCircularProgressPainter extends CustomPainter {
   bool shouldRepaint(_SlowCircularProgressPainter oldDelegate) {
     return oldDelegate.progress != progress ||
         oldDelegate.color != color ||
-        oldDelegate.strokeWidth != strokeWidth ||
-        oldDelegate.backgroundColor != backgroundColor;
+        oldDelegate.strokeWidth != strokeWidth;
   }
 }
 
@@ -497,23 +819,6 @@ class _DoppyOSpinnerPainter extends CustomPainter {
       sweepAngle,
       false,
       paint,
-    );
-
-    // 글로우 효과를 위한 추가 레이어
-    final glowPaint =
-        Paint()
-          ..color = color.withOpacity(0.3)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = strokeWidth * 1.5
-          ..strokeCap = StrokeCap.butt
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 4);
-
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      startAngle,
-      sweepAngle,
-      false,
-      glowPaint,
     );
   }
 

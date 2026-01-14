@@ -931,8 +931,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     nodeComponentService.removeListener(_onNodeSelectionChanged);
     document.removeListener(_onDocumentStructureChanged);
     try {
-      // ✅ StickerService는 singleton이므로 dispose 대신 세션 상태만 정리
-      stickerService.resetSession();
+      stickerService.resetSession(shouldNotify: false);
     } catch (_) {}
     _keyboardVisibleNotifier.dispose();
     _isEmptyNotifier.dispose();

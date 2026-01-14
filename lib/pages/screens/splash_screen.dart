@@ -8,9 +8,10 @@ import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/data/services/region_service.dart';
+import 'package:doppy/data/services/firestore_notification_service.dart';
 import 'package:doppy/utils/deep_link_store.dart';
 import 'package:doppy/utils/deep_link_handler.dart';
-import 'package:doppy/pages/screens/email_verification_screen.dart';
+import 'package:doppy/pages/screens/join_screen.dart';
 
 import 'dart:async';
 
@@ -276,6 +277,11 @@ class _SplashScreenState extends State<SplashScreen>
         _loadSettingsAndFriendRequests();
       });
 
+      // 6. 초기 알림 데이터 로드 (비동기, 앱 시작을 막지 않음)
+      Future.delayed(const Duration(milliseconds: 800), () {
+        _loadInitialNotifications();
+      });
+
       return _BootstrapResult.loggedIn(homeData);
     } catch (e) {
       debugPrint('[SplashScreen] 부트스트랩 오류: $e');
@@ -394,6 +400,17 @@ class _SplashScreenState extends State<SplashScreen>
     }
   }
 
+  /// 🎯 초기 알림 데이터 로드 (스플래시에서 사용)
+  Future<void> _loadInitialNotifications() async {
+    try {
+      final notificationService = FirestoreNotificationService();
+      await notificationService.loadInitialNotifications(limit: 20);
+      debugPrint('[SplashScreen] 초기 알림 데이터 로드 완료');
+    } catch (e) {
+      debugPrint('[SplashScreen] 초기 알림 데이터 로드 실패 (무시): $e');
+    }
+  }
+
   Future<void> _transitionAfterReady() async {
     // 🎯 애니메이션과 부트스트랩을 동일한 await 그룹으로 묶기
     await Future.wait([
@@ -407,13 +424,38 @@ class _SplashScreenState extends State<SplashScreen>
     final result = await _bootstrapFuture;
     if (!mounted) return;
 
-    // 이메일 인증이 필요하면: 홈 대신 이메일 인증 화면으로 이동
+    // 이메일 인증이 필요하면: JoinScreen의 이메일 인증 단계 재활용
     if (result.loggedIn && result.requiresEmailVerification) {
       await _fadeOutController.forward();
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
-          pageBuilder: (_, __, ___) => const EmailVerificationScreen(),
+          pageBuilder:
+              (_, __, ___) => JoinScreen(
+                emailVerificationOnly: true,
+                onEmailVerified: () {
+                  // 이메일 인증 완료 후 스플래시로 돌아가서 다시 부트스트랩
+                  // 스택을 완전히 비우고 스플래시로 이동
+                  if (mounted) {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      PageRouteBuilder(
+                        pageBuilder: (_, __, ___) => const SplashScreen(),
+                        transitionDuration: const Duration(milliseconds: 250),
+                        transitionsBuilder: (_, animation, __, child) {
+                          return FadeTransition(
+                            opacity: CurvedAnimation(
+                              parent: animation,
+                              curve: Curves.easeInOut,
+                            ),
+                            child: child,
+                          );
+                        },
+                      ),
+                      (route) => false, // 모든 이전 라우트 제거
+                    );
+                  }
+                },
+              ),
           transitionDuration: const Duration(milliseconds: 250),
           transitionsBuilder: (_, animation, __, child) {
             return FadeTransition(

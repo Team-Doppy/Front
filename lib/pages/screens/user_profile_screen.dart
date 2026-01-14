@@ -492,32 +492,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                             return Stack(
                                               clipBehavior: Clip.none,
                                               children: [
-                                                IconButton(
-                                                  onPressed: () {
-                                                    Navigator.of(context).push(
-                                                      MaterialPageRoute(
-                                                        builder:
-                                                            (_) =>
-                                                                const FriendRequestsScreen(),
-                                                      ),
-                                                    );
-                                                  },
-                                                  icon: SvgPicture.asset(
-                                                    'assets/icons/person_add_alt_1.svg',
-                                                    width: 26,
-                                                    height: 26,
-                                                    colorFilter:
-                                                        ColorFilter.mode(
-                                                          Theme.of(context)
-                                                              .colorScheme
-                                                              .onSurface,
-                                                          BlendMode.srcIn,
-                                                        ),
-                                                  ),
-                                                  tooltip: context.tr(
-                                                    'sent_requests',
-                                                  ),
-                                                ),
                                                 if (receivedCount > 0)
                                                   Positioned(
                                                     right: 7,

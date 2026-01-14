@@ -148,6 +148,32 @@ class BlogService {
             e.type == DioExceptionType.receiveTimeout) {
           rethrow; // DioException 그대로 전달
         }
+        
+        // 400 에러인 경우, 서버 응답을 확인하여 빈 상태로 처리
+        if (e.response?.statusCode == 400) {
+          final responseData = e.response?.data;
+          if (responseData is Map<String, dynamic>) {
+            final message = responseData['message']?.toString() ?? '';
+            // "포스트 데이터 조회 중 오류" 메시지인 경우 빈 응답 반환 (회원가입 직후 포스트 없음)
+            if (message.contains('포스트 데이터 조회 중 오류') || 
+                message.contains('포스트') && message.contains('오류')) {
+              debugPrint('[BlogService] 포스트 없음으로 빈 응답 반환');
+              return {
+                'success': true,
+                'data': {
+                  'posts': [],
+                  'totalPages': 0,
+                  'totalElements': 0,
+                  'pageNumber': page,
+                  'pageSize': size,
+                },
+              };
+            }
+          }
+          // 기타 400 에러는 그대로 전달
+          rethrow;
+        }
+        
         // HTTP 상태 코드가 있는 경우에만 Exception 변환
         if (e.response?.statusCode == 404) {
           throw Exception('사용자를 찾을 수 없습니다.');
@@ -1153,6 +1179,85 @@ class BlogService {
       return posts;
     } catch (e) {
       // 네트워크 에러는 상위로 전파 (fallback 하지 않음)
+      rethrow;
+    }
+  }
+
+  /// 홈 피드 데이터를 가져옵니다 (친구글 + 추천글 통합)
+  ///
+  /// [page] - 페이지 번호 (0부터 시작)
+  /// [size] - 페이지 크기
+  ///
+  /// Returns: {friends: [...], all: [...]} 형태의 Map
+  Future<Map<String, List<Map<String, dynamic>>>> getHomeFeedData({
+    int page = 0,
+    int size = 20,
+  }) async {
+    try {
+      final response = await _dio.get(
+        '/api/posts/home',
+        queryParameters: {'page': page, 'size': size},
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      final data = response.data as Map<String, dynamic>;
+
+      // 응답 구조 확인: 통합 API는 친구글과 추천글이 분리되어 올 수 있음
+      // 가능한 응답 구조:
+      // 1. {friends: {content: [...]}, all: {content: [...]}}
+      // 2. {friendsPosts: [...], recommendedPosts: [...]}
+      // 3. {content: [...]} (단일 리스트로 합쳐진 경우)
+
+      List<Map<String, dynamic>> friendsPosts = [];
+      List<Map<String, dynamic>> allPosts = [];
+
+      // 구조 1: friends와 all이 각각 Page 형태
+      if (data.containsKey('friends') && data.containsKey('all')) {
+        final friendsData = data['friends'] as Map<String, dynamic>?;
+        final allData = data['all'] as Map<String, dynamic>?;
+
+        if (friendsData != null) {
+          friendsPosts = List<Map<String, dynamic>>.from(
+            friendsData['content'] ?? [],
+          );
+        }
+        if (allData != null) {
+          allPosts = List<Map<String, dynamic>>.from(allData['content'] ?? []);
+        }
+      }
+      // 구조 2: friendsPosts와 recommendedPosts로 직접 제공
+      else if (data.containsKey('friendsPosts') ||
+          data.containsKey('recommendedPosts')) {
+        friendsPosts = List<Map<String, dynamic>>.from(
+          data['friendsPosts'] ?? [],
+        );
+        allPosts = List<Map<String, dynamic>>.from(
+          data['recommendedPosts'] ?? [],
+        );
+      }
+      // 구조 3: 단일 content 리스트 (친구글과 추천글이 합쳐진 경우)
+      else if (data.containsKey('content')) {
+        final allContent = List<Map<String, dynamic>>.from(
+          data['content'] ?? [],
+        );
+        // 단일 리스트인 경우, 친구글과 추천글을 구분할 방법이 없으므로
+        // 전체를 추천글로 처리하고 친구글은 빈 배열로 설정
+        // 또는 서버에서 구분 필드(예: isFriendPost)를 제공하는 경우 그에 따라 분리
+        allPosts = allContent;
+        friendsPosts = [];
+      }
+      // 기본 구조: content가 직접 있는 경우
+      else {
+        final content = data['content'] as List?;
+        if (content != null) {
+          allPosts = content.cast<Map<String, dynamic>>();
+        }
+      }
+
+      return {'friends': friendsPosts, 'all': allPosts};
+    } catch (e) {
+      debugPrint('[BlogService] getHomeFeedData 에러: $e');
+      // 네트워크 에러는 상위로 전파
       rethrow;
     }
   }

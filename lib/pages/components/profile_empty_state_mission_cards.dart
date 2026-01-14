@@ -47,7 +47,7 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
         children: [
           const SizedBox(height: 10),
           SizedBox(
-            height: 180,
+            height: 200,
             child: Selector2<UserProvider, FriendProvider, _MissionState>(
               selector: (context, userProvider, friendProvider) {
                 final user = userProvider.currentUser;
@@ -116,9 +116,9 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
                   key: const ValueKey('mission_cards_list'),
                   scrollDirection: Axis.horizontal,
                   physics: const ClampingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
                   itemCount: missions.length,
-                  itemExtent: 174, // 🎯 아이템 너비(170) + 마진(4) 고정
+                  itemExtent: 200, // 🎯 아이템 너비(170) + 마진(4) 고정
                   itemBuilder: (context, index) {
                     final mission = missions[index];
                     return RepaintBoundary(
@@ -379,14 +379,14 @@ class _MissionCard extends StatelessWidget {
             : theme.scaffoldBackgroundColor;
 
     return Container(
-      width: 170,
-      margin: const EdgeInsets.only(right: 4),
+      width: 200,
+      margin: const EdgeInsets.only(right: 8),
       decoration: BoxDecoration(
         color: cardBackgroundColor,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: theme.colorScheme.onSurface.withOpacity(0.2),
-          width: 0.5,
+          width: 1,
         ),
       ),
       child: Material(
@@ -410,8 +410,8 @@ class _MissionCard extends StatelessWidget {
                     child: Text(
                       mission.title,
                       style: GoogleFonts.notoSansKr(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w400,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
                         // 🎯 완료 안했을 때: onBackground 텍스트
                         // 완료했을 때: backgroundColor 텍스트
                         color:
@@ -431,7 +431,7 @@ class _MissionCard extends StatelessWidget {
                     child: Text(
                       mission.isCompleted ? '완료됨' : '시작하기',
                       style: GoogleFonts.notoSansKr(
-                        fontSize: 13,
+                        fontSize: 15,
                         fontWeight: FontWeight.w400,
                         // 🎯 완료 안했을 때: onBackground (약간 투명)
                         // 완료했을 때: backgroundColor

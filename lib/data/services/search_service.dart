@@ -1185,10 +1185,8 @@ class SearchService extends ChangeNotifier {
     if (_isFocused == v) return;
     _isFocused = v;
 
-    // 🎯 notifyListeners를 지연시켜 UI 블로킹 방지
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      notifyListeners();
-    });
+    // 🎯 포커스 변경은 즉시 반영되어야 하므로 지연 없이 바로 notify
+    notifyListeners();
   }
 
   void lockView() {

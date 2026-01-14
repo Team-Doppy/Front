@@ -240,6 +240,9 @@ class BaseApiService {
               path.contains('/api/auth/login') ||
               path.contains('/api/auth/refresh');
 
+          // 🎯 회원 탈퇴 API는 401 에러 시 토큰 갱신하지 않음 (계정이 이미 삭제되었을 수 있음)
+          final isAccountDeletionEndpoint = path.contains('/api/users/account');
+
           // 401 또는 만료 표시가 있는 500만 리프레시 시도
           final status = error.response?.statusCode;
           final bodyStr = error.response?.data?.toString() ?? '';
@@ -249,7 +252,7 @@ class BaseApiService {
           // 🎯 401 에러 발생 시 실제로 토큰이 만료되었는지 JWT 디코딩으로 확인
           bool isTokenActuallyExpired = false;
 
-          if (!isAuthEndpoint && status == 401) {
+          if (!isAuthEndpoint && !isAccountDeletionEndpoint && status == 401) {
             final token = await _authService.getToken();
 
             if (token != null && token.isNotEmpty) {
@@ -288,7 +291,8 @@ class BaseApiService {
               (status == 401 && isTokenActuallyExpired) ||
               isExpiredJwtException;
 
-          if (!isAuthEndpoint && shouldRefresh) {
+          // 🎯 회원 탈퇴 API는 토큰 갱신하지 않음
+          if (!isAuthEndpoint && !isAccountDeletionEndpoint && shouldRefresh) {
             // 🎯 마지막 갱신 후 10분 이내면 다시 갱신하지 않음 (중복 갱신 방지)
             final shouldSkipRefresh =
                 _lastRefreshTime != null &&

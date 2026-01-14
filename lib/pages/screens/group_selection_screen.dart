@@ -164,89 +164,88 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
 
       body: SafeArea(
         child: Stack(
-            children: [
-              Consumer<GroupProvider>(
-                builder: (context, groupProv, child) {
-                  List<Group> groups = groupProv.myGroups;
+          children: [
+            Consumer<GroupProvider>(
+              builder: (context, groupProv, child) {
+                List<Group> groups = groupProv.myGroups;
 
-                  // 🎯 전체 그룹(allFriends) 보장 - 없으면 새로 로드
-                  final hasAllFriendsGroup = groups.any(
-                    (g) => g.isSystem == true,
-                  );
-                  if (!groupProv.isLoading &&
-                      (groups.isEmpty || !hasAllFriendsGroup)) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) async {
-                      if (!mounted) return;
-                      final friendProvider = context.read<FriendProvider>();
-                      debugPrint('🔄 [GroupSelectionScreen] 전체 그룹 보장 - 새로 로드');
-                      await groupProv.fetchMyGroups(
-                        forceRefresh: true,
-                        friendProvider: friendProvider,
-                      );
-                    });
-                  }
+                // 🎯 전체 그룹(allFriends) 보장 - 없으면 새로 로드
+                final hasAllFriendsGroup = groups.any(
+                  (g) => g.isSystem == true,
+                );
+                if (!groupProv.isLoading &&
+                    (groups.isEmpty || !hasAllFriendsGroup)) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) async {
+                    if (!mounted) return;
+                    final friendProvider = context.read<FriendProvider>();
+                    debugPrint('🔄 [GroupSelectionScreen] 전체 그룹 보장 - 새로 로드');
+                    await groupProv.fetchMyGroups(
+                      forceRefresh: true,
+                      friendProvider: friendProvider,
+                    );
+                  });
+                }
 
-                  // 🎯 서버에서 받은 순서 유지 (정렬 제거)
-                  // displayOrder가 있다면 그 순서로 정렬, 없으면 createdAt 순서 유지
-                  // groups는 이미 서버에서 displayOrder 순서로 정렬되어 옴
+                // 🎯 서버에서 받은 순서 유지 (정렬 제거)
+                // displayOrder가 있다면 그 순서로 정렬, 없으면 createdAt 순서 유지
+                // groups는 이미 서버에서 displayOrder 순서로 정렬되어 옴
 
-                  // 🎯 _groups 업데이트 (reorder를 위해) - 드래그 중이거나 reorder 중에는 업데이트 금지
-                  if (!_isDragMode && !_isReordering) {
-                    // 그룹 수나 ID가 다르면 업데이트
-                    final needsUpdate =
-                        _groups.length != groups.length ||
-                        !_groups.every(
-                          (g) => groups.any((g2) => g2.id == g.id),
-                        ) ||
-                        _groups.asMap().entries.any((entry) {
-                          final index = entry.key;
-                          final group = entry.value;
-                          if (index >= groups.length) return true;
-                          final updatedGroup = groups[index];
-                          return updatedGroup.id != group.id ||
-                              updatedGroup.name != group.name ||
-                              updatedGroup.memberCount != group.memberCount ||
-                              updatedGroup.postCount != group.postCount ||
-                              updatedGroup.profileImageUrl !=
-                                  group.profileImageUrl ||
-                              updatedGroup.description != group.description;
+                // 🎯 _groups 업데이트 (reorder를 위해) - 드래그 중이거나 reorder 중에는 업데이트 금지
+                if (!_isDragMode && !_isReordering) {
+                  // 그룹 수나 ID가 다르면 업데이트
+                  final needsUpdate =
+                      _groups.length != groups.length ||
+                      !_groups.every(
+                        (g) => groups.any((g2) => g2.id == g.id),
+                      ) ||
+                      _groups.asMap().entries.any((entry) {
+                        final index = entry.key;
+                        final group = entry.value;
+                        if (index >= groups.length) return true;
+                        final updatedGroup = groups[index];
+                        return updatedGroup.id != group.id ||
+                            updatedGroup.name != group.name ||
+                            updatedGroup.memberCount != group.memberCount ||
+                            updatedGroup.postCount != group.postCount ||
+                            updatedGroup.profileImageUrl !=
+                                group.profileImageUrl ||
+                            updatedGroup.description != group.description;
+                      });
+
+                  if (needsUpdate) {
+                    // 🎯 빌드 중에는 setState 호출 불가하므로 PostFrameCallback 사용
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted && !_isDragMode && !_isReordering) {
+                        setState(() {
+                          _groups = List<Group>.from(groups);
+                          // ❌ _currentGroupIndex 직접 변경 금지 - PageView가 onPageChanged로 변경하도록 맡김
                         });
 
-                    if (needsUpdate) {
-                      // 🎯 빌드 중에는 setState 호출 불가하므로 PostFrameCallback 사용
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (mounted && !_isDragMode && !_isReordering) {
-                          setState(() {
-                            _groups = List<Group>.from(groups);
-                            // ❌ _currentGroupIndex 직접 변경 금지 - PageView가 onPageChanged로 변경하도록 맡김
-                          });
-
-                          // PageView index 재동기화 (범위 체크)
-                          if (_pageController.hasClients &&
-                              _groups.isNotEmpty) {
-                            if (_currentGroupIndex >= _groups.length) {
-                              // 인덱스가 범위를 벗어났을 때만 이동
-                              final targetIndex = (_groups.length - 1).clamp(
-                                0,
-                                _groups.length - 1,
-                              );
-                              _pageController.animateToPage(
-                                targetIndex,
-                                duration: const Duration(milliseconds: 1),
-                                curve: Curves.linear,
-                              );
-                            }
+                        // PageView index 재동기화 (범위 체크)
+                        if (_pageController.hasClients && _groups.isNotEmpty) {
+                          if (_currentGroupIndex >= _groups.length) {
+                            // 인덱스가 범위를 벗어났을 때만 이동
+                            final targetIndex = (_groups.length - 1).clamp(
+                              0,
+                              _groups.length - 1,
+                            );
+                            _pageController.animateToPage(
+                              targetIndex,
+                              duration: const Duration(milliseconds: 1),
+                              curve: Curves.linear,
+                            );
                           }
                         }
-                      });
-                    }
+                      }
+                    });
                   }
+                }
 
-                  return _buildGroupSelectionContent(groups);
-                },
-              ),
-              Positioned(top: 6, left: 0, right: 0, child: _buildAppBar()),
-            ],
+                return _buildGroupSelectionContent(groups);
+              },
+            ),
+            Positioned(top: 6, left: 0, right: 0, child: _buildAppBar()),
+          ],
         ),
       ),
     );
@@ -1123,22 +1122,10 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                                         return Container(
                                           decoration: BoxDecoration(
                                             shape: BoxShape.circle,
-                                            gradient: LinearGradient(
-                                              begin: Alignment.topLeft,
-                                              end: Alignment.bottomRight,
-                                              colors: [
-                                                GroupColorPalette.getColor(
-                                                  group.id,
-                                                ).withOpacity(0.55),
-                                                GroupColorPalette.getColor(
-                                                  group.id,
-                                                ),
-                                                GroupColorPalette.getColor(
-                                                  group.id,
-                                                ).withOpacity(0.95),
-                                              ],
-                                              stops: const [0.0, 0.5, 1.0],
-                                            ),
+                                            color:
+                                                Theme.of(context)
+                                                    .colorScheme
+                                                    .surfaceVariant, // 🎯 기본 테마 색상 사용
                                           ),
                                           child: Container(
                                             decoration: BoxDecoration(
@@ -1161,35 +1148,14 @@ class _GroupSelectionScreenState extends State<GroupSelectionScreen>
                                     : Container(
                                       decoration: BoxDecoration(
                                         shape: BoxShape.circle,
-                                        gradient: LinearGradient(
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                          colors: [
-                                            // 🎯 절제된 그라디언트
-                                            GroupColorPalette.getColor(
-                                              group.id,
-                                            ).withOpacity(0.55),
-                                            GroupColorPalette.getColor(
-                                              group.id,
-                                            ),
-                                            GroupColorPalette.getColor(
-                                              group.id,
-                                            ).withOpacity(0.95),
-                                          ],
-                                          stops: const [0.0, 0.5, 1.0],
-                                        ),
+                                        color:
+                                            Theme.of(context)
+                                                .colorScheme
+                                                .surfaceVariant, // 🎯 기본 테마 색상 사용
                                       ),
                                       child: Container(
                                         decoration: BoxDecoration(
                                           shape: BoxShape.circle,
-                                          gradient: RadialGradient(
-                                            center: Alignment(-0.4, -0.4),
-                                            radius: 1.0,
-                                            colors: [
-                                              Colors.white.withOpacity(0.12),
-                                              Colors.transparent,
-                                            ],
-                                          ),
                                         ),
                                       ),
                                     ),

@@ -680,7 +680,9 @@ class StickerService extends ChangeNotifier {
   }
 
   /// 에디터 세션 종료 시 스티커 관련 상태를 완전히 정리한다.
-  void resetSession() {
+  /// [shouldNotify]가 false이면 notifyListeners()를 호출하지 않는다.
+  /// dispose() 중 호출 시 위젯 트리가 잠겨있을 수 있으므로 false로 설정해야 한다.
+  void resetSession({bool shouldNotify = true}) {
     _isRestoringFromHistory = false;
     _lastChangeKind = StickerChangeKind.none;
     _lastChangedStickerId = null;
@@ -688,6 +690,8 @@ class StickerService extends ChangeNotifier {
     _stickers.clear();
     _initialStickers.clear();
     _selectedId = null;
-    notifyListeners();
+    if (shouldNotify) {
+      notifyListeners();
+    }
   }
 }

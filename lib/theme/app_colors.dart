@@ -21,7 +21,7 @@ class AppColors {
   // ===== Light Theme Colors =====
   static const Color lightBackground = Color(0xFFFFFFFF); // 순백
   static const Color lightSurface = Color(0xFFFAFAFA); // 약간 회색 배경
-  static const Color lightSurfaceVariant = Color(0xFFF5F5F5); // 더 진한 회색
+  static const Color lightSurfaceVariant = Color(0xFFEEEEEE); // 더 진한 회색
   static const Color lightTextPrimary = Color(0xFF1A1A1A); // 거의 검정
   static const Color lightTextSecondary = Color(0xFF666666); // 중간 회색
   static const Color lightBorder = Color(0xFFE5E5E5); // 연한 테두리

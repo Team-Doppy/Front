@@ -1,16 +1,17 @@
-import 'package:doppy/pages/components/post_list.dart';
+import 'dart:ui';
+import 'package:doppy/pages/components/card_view.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/home_data_service.dart';
-import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/pages/components/weekly_contribution_grid.dart';
 import 'package:doppy/pages/components/error_state_widget.dart';
+import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/blur_overlay_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
-import 'package:doppy/data/services/video_cache_service.dart';
-import 'package:doppy/image/utils/read_image_provider.dart';
+import 'package:doppy/utils/week_utils.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:video_player/video_player.dart';
-import 'dart:ui' as ui;
 import 'dart:async';
 
 class HomeScreen extends StatefulWidget {
@@ -31,12 +32,11 @@ class HomeScreen extends StatefulWidget {
 
 class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final HomeDataService _homeDataService = HomeDataService();
+  final ScrollController _scrollController = ScrollController();
 
   // 🎯 포그라운드 복귀 시 새로고침을 위한 GlobalKey
   static final GlobalKey<HomeScreenState> globalKey =
       GlobalKey<HomeScreenState>();
-
-  double _appBarOpacity = 1.0; // 앱바 투명도
 
   // 통합 포스트 리스트 (친구글 먼저, 추천글 뒤에)
   List<PostData> _allPosts = [];
@@ -48,69 +48,18 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _recommendedCurrentPage = 0; // 추천글 페이지
   bool _friendsHasMoreData = true;
   bool _recommendedHasMoreData = true;
-  int _allCurrentPostIndex = 0;
-  bool _allIsCardShimmering = false;
   int _allLoadTick = 0;
-  int _allRefreshCount = 0; // 리프레시 카운터
   bool _friendsLoaded = false; // 친구글 로드 완료 여부
   StreamSubscription<dynamic>? _networkSub;
   bool _refreshInProgress = false;
 
-  // 새로고침 시 배경 이미지 유지용
-  String? _previousBackgroundImageUrl;
+  // 잔디 심기 UI 관련 상태
+  int? _selectedYear; // 선택된 연도
+  int? _selectedWeek; // 선택된 주차
 
-  // ✅ 실제로 화면에 "보이는" 배경 URL은 이 값 하나로만 결정한다.
-  // 섹션 토글/로딩 중 friends/all 값을 즉시 바꾸면 fallback과 섞이며 빠르게 떨릴 수 있어서,
-  // 프리캐시가 끝난 뒤에만 이 값을 교체한다.
-  String? _visibleBackgroundImageUrl;
-  int _bgToken = 0;
-  String? _bgRequestedUrl; // ✅ 현재 요청 중(또는 직전 요청) URL (중복 프리캐시/세트 방지)
-
-  Future<void> _precacheBackground(String url) async {
-    if (!(url.startsWith('http://') || url.startsWith('https://'))) return;
-    // ✅ 카드 썸네일/프리캐시와 같은 크기로 통일해서 캐시/디코딩 중복을 줄인다
-    // (배경은 블러가 들어가므로 고해상도 불필요 + imageCache thrash 방지)
-    const int widthPx = 800;
-    try {
-      await precacheImage(
-        ReadImageProvider.build(url: url, decodeWidth: widthPx),
-        context,
-      );
-    } catch (_) {}
-  }
-
-  void _requestBackground({required bool friends, required String? url}) {
-    // ✅ 렌더링은 _visibleBackgroundImageUrl 하나이므로, 중복 체크도 이 값 기준으로만 한다
-    if (url != null && url.isNotEmpty && url == _visibleBackgroundImageUrl) {
-      return;
-    }
-    if (url != null && url.isNotEmpty && url == _bgRequestedUrl) {
-      // ✅ 같은 URL을 연속으로 요청하는 경우(스와이프/리빌드 타이밍) 중복 실행 방지
-      return;
-    }
-
-    final int token = ++_bgToken;
-
-    // ✅ null/empty는 무시: 로딩/리프레시 중 배경이 null로 떨어지며 이전/현재가 번갈아 깜빡이는 현상 방지
-    if (url == null || url.isEmpty) return;
-
-    // 요청 URL 기록 (중복 방지용)
-    _bgRequestedUrl = url;
-
-    // ✅ 배경은 "프리캐시 완료 후에만" 교체해서, 매 전환마다 Shimmer/검정으로 떨어지는 깜빡임 제거
-    Future.microtask(() async {
-      if (!mounted) return;
-      await _precacheBackground(url);
-      if (!mounted) return;
-      final stillLatest = token == _bgToken;
-      if (!stillLatest) return;
-      setState(() {
-        // ✅ 프리캐시 완료 후에만 "보이는 배경"을 교체한다 (파르르 떨림 방지의 핵심)
-        _visibleBackgroundImageUrl = url;
-        _previousBackgroundImageUrl = url;
-      });
-    });
-  }
+  // 길게 누르기 미리보기 관련 상태
+  int? _longPressedWeek; // 길게 누른 주차 (로컬 추적용)
+  late final AnimationController _previewAnimationController;
 
   @override
   void initState() {
@@ -133,26 +82,16 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _friendsCurrentPage = homeData.friendsPosts.isNotEmpty ? 1 : 0;
       _recommendedCurrentPage = homeData.allPosts.isNotEmpty ? 1 : 0;
       _friendsLoaded = true; // 스플래시에서 로드했으므로 완료로 표시
-
-      // ✅ 첫 프레임부터 배경이 검정으로 깜빡이지 않도록 초기 배경 URL을 즉시 세팅
-      if (_allPosts.isNotEmpty) {
-        final post = _allPosts.first;
-        final url = post.thumbnailUrlForCache.trim();
-        if (url.isNotEmpty) {
-          _visibleBackgroundImageUrl = url; // ✅ 첫 프레임부터 단일 소스로 배경 고정
-          _previousBackgroundImageUrl = url;
-        }
-      }
     }
 
-    // 초기 배경도 프리캐시를 걸어두면 첫 전환부터 안정적
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final initUrl = _visibleBackgroundImageUrl ?? _previousBackgroundImageUrl;
-      if (initUrl != null) {
-        _precacheBackground(initUrl);
-      }
-    });
+    // 초기 연도 설정
+    _selectedYear = WeekUtils.getCurrentYear();
+
+    // 미리보기 애니메이션 컨트롤러 초기화
+    _previewAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 150), // 🎯 300ms → 150ms로 빠르게
+      vsync: this,
+    );
 
     // 네트워크 에러는 API 요청 시점에서만 처리
 
@@ -183,28 +122,32 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (_allPosts.isEmpty && !_allIsLoading) {
         _loadAllPosts(refresh: false);
       }
+
+      // 스크롤 리스너 추가 (무한 스크롤)
+      _scrollController.addListener(_onScroll);
     });
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      if (!_allIsLoadingMore &&
+          (_friendsHasMoreData || _recommendedHasMoreData)) {
+        _loadMoreAllPosts();
+      }
+    }
   }
 
   @override
   void dispose() {
     // 네트워크 구독 취소
     _networkSub?.cancel();
-
+    _scrollController.dispose();
+    _previewAnimationController.dispose();
     super.dispose();
   }
 
   void _resetAllFeed({bool showLoading = true}) {
-    // 새로고침 시 현재 배경 이미지를 이전 이미지로 저장
-    if (_allPosts.isNotEmpty) {
-      final safeIndex = _allCurrentPostIndex.clamp(0, _allPosts.length - 1);
-      final currentPost = _allPosts[safeIndex];
-      final String imageUrl = currentPost.thumbnailUrlForCache.trim();
-      if (imageUrl.startsWith('http')) {
-        _previousBackgroundImageUrl = imageUrl;
-      }
-    }
-
     setState(() {
       _allPosts = [];
       _friendsCurrentPage = 0;
@@ -214,9 +157,6 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _allIsLoading = showLoading;
       _allIsLoadingMore = false;
       _allError = null;
-      _allCurrentPostIndex = 0;
-      _allIsCardShimmering = false;
-      _allRefreshCount++; // 리프레시 카운터 증가
       _friendsLoaded = false; // 새로고침 시 친구글부터 다시 로드
     });
   }
@@ -257,10 +197,6 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     try {
       if (refresh) {
         _resetAllFeed(showLoading: true);
-        // 새로고침 시 shimmer 표시
-        setState(() {
-          _allIsCardShimmering = true;
-        });
       } else if (!_allIsRetrying) {
         // 재시도 중이 아닐 때만 로딩 상태 변경
         setState(() {
@@ -370,7 +306,6 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       setState(() {
         _allIsLoading = false;
         _allIsLoadingMore = false;
-        _allIsCardShimmering = false; // 데이터 로드 완료 즉시 shimmer 해제
         _allError = null; // 성공 시 에러 클리어
       });
 
@@ -385,7 +320,6 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _allError = networkError;
         _allIsLoading = false;
         _allIsLoadingMore = false;
-        _allIsCardShimmering = false; // 에러 시에도 shimmer 해제
       });
     }
   }
@@ -471,96 +405,9 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildDynamicBackground() {
-    // ✅ 렌더링은 단일 소스만 사용 (섹션 토글/로딩 중 흔들림 방지)
-    String? imageUrl =
-        _visibleBackgroundImageUrl ?? _previousBackgroundImageUrl;
-
-    // 이미지가 없으면 빈 위젯 반환
-    if (imageUrl == null) {
-      return const SizedBox.shrink();
-    }
-
-    final bool isNetwork = imageUrl.startsWith('http');
-    final bool isLocalAsset = imageUrl.startsWith('assets/');
-
-    // 🎯 비디오 URL 체크
-    final isVideoUrl =
-        imageUrl.toLowerCase().endsWith('.mp4') ||
-        imageUrl.toLowerCase().endsWith('.mov') ||
-        imageUrl.toLowerCase().endsWith('.avi') ||
-        imageUrl.toLowerCase().endsWith('.webm') ||
-        imageUrl.contains('/videos/');
-
-    // 🎯 배경 이미지 위젯 (네트워크/로컬 에셋/비디오 처리)
-    final backgroundImageWidget =
-        (isNetwork && !isVideoUrl)
-            ? Image(
-              image: ReadImageProvider.build(url: imageUrl, decodeWidth: 800),
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
-              filterQuality: FilterQuality.low,
-              key: ValueKey('bg-$imageUrl'),
-              loadingBuilder: (context, child, loadingProgress) {
-                // ✅ 배경은 URL 교체 전에 precache를 끝내도록 했으므로 로딩 위젯으로 깜빡이지 않게 함
-                if (loadingProgress == null) return child;
-                return const SizedBox.shrink();
-              },
-              errorBuilder: (context, error, stackTrace) {
-                return const Icon(Icons.error);
-              },
-            )
-            : (isNetwork && isVideoUrl)
-            ? _BackgroundVideoWidget(
-              videoUrl: imageUrl,
-              key: ValueKey('bg-video-$imageUrl'),
-            )
-            : (isLocalAsset)
-            ? Image.asset(
-              imageUrl,
-              fit: BoxFit.cover,
-              width: double.infinity,
-              height: double.infinity,
-              key: ValueKey('bg-asset-$imageUrl'),
-            )
-            : const SizedBox.shrink();
-
+    // 단색 배경으로 단순화
     return Positioned.fill(
-      child: Stack(
-        children: [
-          Positioned.fill(child: backgroundImageWidget),
-          Theme.of(context).brightness == Brightness.dark
-              ? Positioned.fill(
-                child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Theme.of(
-                            context,
-                          ).colorScheme.background.withValues(alpha: 0.83),
-                          Theme.of(
-                            context,
-                          ).colorScheme.background.withValues(alpha: 0.83),
-                          Theme.of(
-                            context,
-                          ).colorScheme.background.withValues(alpha: 0.83),
-                        ],
-                        stops: const [0.0, 0.7, 1.0],
-                      ),
-                    ),
-                  ),
-                ),
-              )
-              : Positioned.fill(
-                child: Container(
-                  color: Theme.of(context).colorScheme.background,
-                ),
-              ),
-        ],
-      ),
+      child: Container(color: Theme.of(context).colorScheme.background),
     );
   }
 
@@ -569,7 +416,11 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final screenWidth = MediaQuery.of(context).size.width;
 
     return Stack(
-      children: [_buildDynamicBackground(), _buildContent(screenWidth)],
+      children: [
+        _buildDynamicBackground(),
+        _buildContent(screenWidth),
+        // 길게 누르기 미리보기 오버레이는 이제 RootShell에서 전역으로 처리
+      ],
     );
   }
 
@@ -598,142 +449,595 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
     }
 
-    return PostList(
-      key: ValueKey('all-${_allRefreshCount}'),
-      containerWidth: screenWidth,
-      posts: _allPosts,
-      onLoadMore:
-          (_friendsHasMoreData || _recommendedHasMoreData)
-              ? _loadMoreAllPosts
-              : null,
-      isLoadingMore: _allIsLoadingMore,
-      isLoading: _allIsLoading,
-      onRefresh: () => _loadAllPosts(refresh: true),
-      showCardShimmer: _allIsCardShimmering,
-      onPageChanged: (index) {
-        setState(() {
-          _allCurrentPostIndex = index;
-        });
-        if (_allPosts.isNotEmpty) {
-          final safeIndex = index.clamp(0, _allPosts.length - 1);
-          final post = _allPosts[safeIndex];
-          _requestBackground(
-            friends: false,
-            url: post.thumbnailUrlForCache.trim(),
-          );
-        }
-      },
-      isShowingFriendsOnly: false,
-      onFilterTap: null, // 탭 전환 제거
-      showAppBar: true,
-      // 통합 피드 섹션
-      sectionLabel: 'Doppy',
-      appBarOpacity: _appBarOpacity, // 앱바 투명도 전달
-      networkError: _allError, // 에러 상태 전달
-      onRetryError: () => _loadAllPosts(refresh: true), // 에러 재시도 콜백
-      isTabActive: widget.isActive, // 탭 활성
-    );
-  }
-}
+    // 기존 포스트 데이터를 분석하여 주차별 기여도 데이터 생성
+    final contributions = _generateContributionsFromPosts();
 
-/// 🎯 배경 비디오 위젯 (VideoCacheService로 프리로드)
-class _BackgroundVideoWidget extends StatefulWidget {
-  final String videoUrl;
-
-  const _BackgroundVideoWidget({super.key, required this.videoUrl});
-
-  @override
-  State<_BackgroundVideoWidget> createState() => _BackgroundVideoWidgetState();
-}
-
-class _BackgroundVideoWidgetState extends State<_BackgroundVideoWidget> {
-  VideoPlayerController? _videoController;
-  bool _isInitialized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeVideo();
-  }
-
-  @override
-  void didUpdateWidget(_BackgroundVideoWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.videoUrl != widget.videoUrl) {
-      _disposeVideo();
-      _initializeVideo();
-    }
-  }
-
-  @override
-  void dispose() {
-    _disposeVideo();
-    super.dispose();
-  }
-
-  void _initializeVideo() {
-    // 🎯 VideoCacheService에서 컨트롤러 가져오기 (프리로드)
-    _videoController = VideoCacheService().getOrCreateController(
-      widget.videoUrl,
-      namespace: 'background',
-    );
-
-    // 이미 초기화된 경우
-    if (_videoController!.value.isInitialized) {
-      setState(() {
-        _isInitialized = true;
-      });
-      // 첫 프레임에서 멈춤 (배경으로 사용)
-      _videoController!.seekTo(Duration.zero);
-      _videoController!.pause();
-      _videoController!.setVolume(0);
-    } else {
-      // 초기화 대기
-      _videoController!.addListener(_onVideoInitialized);
-    }
-  }
-
-  void _onVideoInitialized() {
-    if (_videoController?.value.isInitialized ?? false) {
-      _videoController?.removeListener(_onVideoInitialized);
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-        // 첫 프레임에서 멈춤 (배경으로 사용)
-        _videoController!.seekTo(Duration.zero);
-        _videoController!.pause();
-        _videoController!.setVolume(0);
-      }
-    }
-  }
-
-  void _disposeVideo() {
-    _videoController?.removeListener(_onVideoInitialized);
-    if (_videoController != null) {
-      VideoCacheService().releaseController(
-        widget.videoUrl,
-        namespace: 'background',
-      );
-      _videoController = null;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_isInitialized || _videoController == null) {
-      return ShimmerBox(width: double.infinity, height: double.infinity);
+    // 필터링된 포스트 리스트 (주차 선택 시)
+    List<PostData> filteredPosts = _allPosts;
+    if (_selectedYear != null && _selectedWeek != null) {
+      filteredPosts =
+          _allPosts.where((post) {
+            try {
+              final postDate = DateTime.parse(post.createdAt);
+              final (
+                year: postYear,
+                weekNumber: postWeek,
+              ) = WeekUtils.getYearAndWeekFromUtc(postDate);
+              return postYear == _selectedYear && postWeek == _selectedWeek;
+            } catch (e) {
+              return false;
+            }
+          }).toList();
     }
 
-    return SizedBox.expand(
-      child: FittedBox(
-        fit: BoxFit.cover,
-        child: SizedBox(
-          width: _videoController!.value.size.width,
-          height: _videoController!.value.size.height,
-          child: VideoPlayer(_videoController!),
-        ),
+    // 최대 5개까지만 표시
+    final displayedPosts = filteredPosts.take(5).toList();
+
+    return SafeArea(
+      child: CustomScrollView(
+        controller: _scrollController,
+        slivers: [
+          // AppBar
+          SliverAppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            pinned: false,
+            floating: true,
+            snap: false,
+            title: Container(
+              padding: const EdgeInsets.only(bottom: 6, left: 6),
+              child: Text(
+                '',
+                style: GoogleFonts.notoSansKr(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.3,
+                  height: 1.2,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
+            centerTitle: false,
+            actions: [
+              // 연도 선택 버튼
+              if (_selectedYear != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 12, bottom: 6),
+                  child: GestureDetector(
+                    onTap: () {
+                      _showYearPicker(context);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color:
+                            Theme.of(context).brightness == Brightness.dark
+                                ? const Color(0xFF2A2A2A)
+                                : const Color(0xFFF5F5F5),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '$_selectedYear',
+                            style: GoogleFonts.notoSansKr(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.keyboard_arrow_down,
+                            size: 16,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              SizedBox(width: _selectedYear != null ? 0 : 12),
+            ],
+          ),
+
+          // 환영 인사
+          SliverToBoxAdapter(child: _buildWelcomeMessage(context)),
+
+          // 잔디 심기 UI (이번주 친구글)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 16),
+              child: WeeklyContributionGrid(
+                year: _selectedYear ?? WeekUtils.getCurrentYear(),
+                selectedWeek: _selectedWeek,
+                onWeekSelected: _handleWeekSelected,
+                contributions: contributions,
+                onLongPress:
+                    (year, weekNumber, position, cellCenter) =>
+                        _handleWeekLongPress(year, weekNumber, position),
+              ),
+            ),
+          ),
+
+          // 섹션 헤더: 친구들 도피 (포스트가 있거나 로딩 중일 때만 표시)
+          if (!displayedPosts.isEmpty || _allIsLoading)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                child: Text(
+                  '친구들 도피',
+                  style: GoogleFonts.notoSansKr(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.3,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              ),
+            ),
+
+          // 포스트 리스트
+          if (_allIsLoading && displayedPosts.isEmpty)
+            // 로딩 중
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12.0),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 0,
+                        vertical: 3,
+                      ),
+                      height: 125,
+                      child: Row(
+                        children: [
+                          // 썸네일 Shimmer
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 5),
+                            child: Container(
+                              width: 140,
+                              height: 125,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(11),
+                                border: Border.all(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.3),
+                                  width: 0.8,
+                                ),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Container(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.surface.withOpacity(0.1),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          // 텍스트 영역 Shimmer
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Container(
+                                  width: double.infinity,
+                                  height: 16,
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.surface.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Container(
+                                  width: screenWidth * 0.4,
+                                  height: 16,
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.surface.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  width: 80,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.surface.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Container(
+                                  width: double.infinity,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.surface.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Container(
+                                  width: screenWidth * 0.3,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.surface.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }, childCount: 5),
+              ),
+            )
+          else if (displayedPosts.isEmpty)
+            // 빈 상태
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.article_outlined,
+                      size: 64,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.3),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      '포스트가 없습니다',
+                      style: GoogleFonts.notoSansKr(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w500,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.7),
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            // 카드뷰 리스트 (최대 5개)
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  if (index >= displayedPosts.length) {
+                    return const SizedBox.shrink();
+                  }
+
+                  final post = displayedPosts[index];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 4.0),
+                    child: GestureDetector(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder:
+                                (context) => PostReaderScreen(
+                                  exported: post.toExportedData(),
+                                  heroTag: 'home-post-${post.id}-$index',
+                                ),
+                          ),
+                        );
+                      },
+                      child: CardView(
+                        post: post,
+                        isLast: index == displayedPosts.length - 1,
+                      ),
+                    ),
+                  );
+                }, childCount: displayedPosts.length),
+              ),
+            ),
+
+          // 하단 여백
+          const SliverToBoxAdapter(child: SizedBox(height: 100)),
+        ],
       ),
     );
+  }
+
+  /// 연도 선택 다이얼로그 표시
+  void _showYearPicker(BuildContext context) {
+    if (_selectedYear == null) return;
+
+    final currentYear = WeekUtils.getCurrentYear();
+    final selectedYear = _selectedYear ?? currentYear;
+    final years = List.generate(
+      5,
+      (index) => currentYear - 2 + index,
+    ); // 현재 연도 기준 ±2년
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            backgroundColor: Theme.of(context).colorScheme.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: Text(
+              '연도 선택',
+              style: GoogleFonts.notoSansKr(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: years.length,
+                itemBuilder: (context, index) {
+                  final year = years[index];
+                  final isSelected = year == selectedYear;
+                  return ListTile(
+                    title: Text(
+                      '$year',
+                      style: GoogleFonts.notoSansKr(
+                        fontSize: 16,
+                        fontWeight:
+                            isSelected ? FontWeight.w700 : FontWeight.w400,
+                        color:
+                            isSelected
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                    trailing:
+                        isSelected
+                            ? Icon(
+                              Icons.check,
+                              color: Theme.of(context).colorScheme.primary,
+                            )
+                            : null,
+                    onTap: () {
+                      // 연도 변경 시 주차 선택 초기화하고 콜백 호출
+                      _handleWeekSelected(year, 0);
+                      Navigator.of(context).pop();
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+    );
+  }
+
+  /// 환영 인사 메시지 위젯
+  Widget _buildWelcomeMessage(BuildContext context) {
+    final userProvider = context.watch<UserProvider>();
+    final currentUser = userProvider.currentUser;
+
+    // 사용자 이름 결정 (alias가 있으면 alias, 없으면 username)
+    final displayName =
+        currentUser?.alias?.isNotEmpty == true
+            ? currentUser!.alias!
+            : (currentUser?.username ?? '');
+
+    // 시간대별 인사말
+    final hour = DateTime.now().hour;
+    String greeting;
+    if (hour >= 5 && hour < 12) {
+      greeting = '좋은 아침이에요';
+    } else if (hour >= 12 && hour < 18) {
+      greeting = '안녕하세요';
+    } else if (hour >= 18 && hour < 22) {
+      greeting = '좋은 저녁이에요';
+    } else {
+      greeting = '안녕하세요';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (displayName.isNotEmpty)
+            RichText(
+              text: TextSpan(
+                style: GoogleFonts.notoSansKr(
+                  fontSize: 40,
+                  fontWeight: FontWeight.w300,
+                  letterSpacing: -0.5,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+                children: [
+                  TextSpan(text: '$greeting,\n'),
+                  TextSpan(
+                    text: displayName,
+                    style: GoogleFonts.notoSansKr(
+                      fontSize: 40,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.5,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            Text(
+              greeting,
+              style: GoogleFonts.notoSansKr(
+                fontSize: 40,
+                fontWeight: FontWeight.w300,
+                letterSpacing: -0.5,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 주차 길게 누르기 핸들러
+  void _handleWeekLongPress(int year, int weekNumber, Offset? position) {
+    final blurProvider = context.read<BlurOverlayProvider>();
+
+    if (weekNumber == 0) {
+      // 종료: 애니메이션 역재생 후 상태 초기화
+      // 🎯 weekPostList 타입일 때는 hideBlurOverlay 호출하지 않음 (탭으로 열린 경우)
+      // 🎯 또는 _longPressedWeek가 null이면 롱프레스가 시작되지 않은 것이므로 무시
+      if (blurProvider.overlayType == BlurOverlayType.weekPostList ||
+          _longPressedWeek == null) {
+        debugPrint(
+          '[HomeScreen] _handleWeekLongPress: weekNumber==0이지만 weekPostList 타입이거나 롱프레스가 시작되지 않았으므로 hideBlurOverlay 호출 안 함',
+        );
+        setState(() => _longPressedWeek = null);
+        return;
+      }
+
+      debugPrint(
+        '[HomeScreen] _handleWeekLongPress: weekNumber==0, hideBlurOverlay 호출',
+      );
+      _previewAnimationController.reverse().then((_) {
+        if (mounted) {
+          blurProvider.hideBlurOverlay();
+          setState(() => _longPressedWeek = null);
+        }
+      });
+      return;
+    }
+
+    // 시작 또는 위치 업데이트
+    if (_longPressedWeek == null) {
+      setState(() => _longPressedWeek = weekNumber);
+      blurProvider.showBlurOverlay(
+        year: year,
+        weekNumber: weekNumber,
+        position: position,
+        controller: _previewAnimationController,
+      );
+      _previewAnimationController.forward();
+    } else {
+      blurProvider.updateBlurPosition(position);
+    }
+  }
+
+  /// 주차 선택 핸들러
+  void _handleWeekSelected(int year, int weekNumber) {
+    debugPrint('[HomeScreen] _handleWeekSelected 호출: $year년 $weekNumber주차');
+
+    // weekNumber가 0이면 연도만 변경
+    if (weekNumber == 0) {
+      debugPrint('[HomeScreen] weekNumber가 0이므로 연도만 변경');
+      setState(() {
+        _selectedYear = year;
+        _selectedWeek = null; // 연도 변경 시 주차 선택 초기화
+      });
+      return;
+    }
+
+    // 해당 주차의 포스트 필터링 (포스트가 있든 없든 항상 블러 오버레이 표시)
+    debugPrint('[HomeScreen] 포스트 필터링 시작: 전체 포스트 ${_allPosts.length}개');
+    final filteredPosts =
+        _allPosts.where((post) {
+          try {
+            final postDate = DateTime.parse(post.createdAt);
+            final (
+              year: postYear,
+              weekNumber: postWeek,
+            ) = WeekUtils.getYearAndWeekFromUtc(postDate);
+            return postYear == year && postWeek == weekNumber;
+          } catch (e) {
+            return false;
+          }
+        }).toList();
+    debugPrint('[HomeScreen] 필터링된 포스트: ${filteredPosts.length}개');
+
+    // 블러 오버레이 표시 (포스트가 있든 없든 항상 표시)
+    final blurProvider = context.read<BlurOverlayProvider>();
+
+    // 🎯 단순화: 애니메이션 컨트롤러가 완료 상태면 리셋
+    if (_previewAnimationController.isCompleted) {
+      _previewAnimationController.reset();
+    }
+
+    // 🎯 상태 설정 및 애니메이션 시작을 한 번에
+    blurProvider.showWeekPostListOverlay(
+      weekNumber: weekNumber,
+      year: year,
+      controller: _previewAnimationController,
+      filteredPosts: filteredPosts,
+    );
+
+    // 🎯 애니메이션 시작 (단순화: then 제거)
+    _previewAnimationController.forward();
+  }
+
+  /// 기존 포스트 데이터를 분석하여 주차별 기여도 데이터 생성
+  List<WeeklyContributionData> _generateContributionsFromPosts() {
+    final year = _selectedYear ?? WeekUtils.getCurrentYear();
+    final totalWeeks = WeekUtils.getWeeksInYear(year);
+    final contributions = <WeeklyContributionData>[];
+
+    // 주차별로 포스트 개수 집계
+    final weekPostCounts = <int, int>{};
+    for (final post in _allPosts) {
+      try {
+        final postDate = DateTime.parse(post.createdAt);
+        final (
+          year: postYear,
+          weekNumber: postWeek,
+        ) = WeekUtils.getYearAndWeekFromUtc(postDate);
+
+        if (postYear == year) {
+          weekPostCounts[postWeek] = (weekPostCounts[postWeek] ?? 0) + 1;
+        }
+      } catch (e) {
+        debugPrint('[HomeScreen] 포스트 날짜 파싱 실패: ${post.createdAt}, 에러: $e');
+      }
+    }
+
+    // 모든 주차에 대해 데이터 생성
+    for (int week = 1; week <= totalWeeks; week++) {
+      final postCount = weekPostCounts[week] ?? 0;
+      contributions.add(
+        WeeklyContributionData(
+          year: year,
+          weekNumber: week,
+          hasPost: postCount > 0,
+          postCount: postCount,
+        ),
+      );
+    }
+
+    return contributions;
   }
 }

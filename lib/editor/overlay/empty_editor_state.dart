@@ -42,12 +42,16 @@ class EmptyEditorState extends StatelessWidget {
                       color: Theme.of(context).colorScheme.surfaceVariant,
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(
-                      Icons.edit_outlined,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.45),
-                      size: 42,
+                    child: Center(
+                      child: Text(
+                        username.isNotEmpty ? username[0].toUpperCase() : '?',
+                        style: TextStyle(
+                          fontSize: 24,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.45),
+                        ),
+                      ),
                     ),
                   ),
               const SizedBox(height: 16),
