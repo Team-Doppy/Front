@@ -255,6 +255,7 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
+                /*
 
                 // 닫기 버튼
                 Align(
@@ -272,11 +273,12 @@ class _ShareBottomSheetState extends State<ShareBottomSheet> {
                 ),
 
                 // 프리뷰 위젯 (프로필 사진 또는 글 썸네일)
+            
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   child: widget.previewWidget,
                 ),
-
+*/
                 const SizedBox(height: 15),
 
                 // 프로필 공유 URL 섹션

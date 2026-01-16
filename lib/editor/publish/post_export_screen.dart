@@ -1,11 +1,9 @@
 import 'dart:convert';
-import 'dart:ui' as ui;
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -23,7 +21,6 @@ import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/editor/component/clip_component.dart'
     show cleanupAllVideoPlayers;
-import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/components/retry_cancel_bottom_sheet.dart';
 import 'dart:io';
 import 'package:video_player/video_player.dart';
@@ -933,139 +930,9 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
   }
 
-  /// 🎯 URL이 비디오인지 확인하는 헬퍼 메서드
-  static bool _isVideoUrl(String url) {
-    if (url.isEmpty) return false;
-    final lowerUrl = url.toLowerCase();
-    return lowerUrl.endsWith('.mp4') ||
-        lowerUrl.endsWith('.mov') ||
-        lowerUrl.endsWith('.m4v') ||
-        lowerUrl.contains('/videos/') ||
-        lowerUrl.contains('video');
-  }
-
   Widget _buildDynamicBackground() {
     return Positioned.fill(
-      child: Stack(
-        children: [
-          // 썸네일 이미지 또는 단색 배경
-          Positioned.fill(
-            child:
-                // 우선순위: 로컬 썸네일 > 서버 URL (비디오/이미지) > 기본 배경
-                _localThumbnailFile != null
-                    ? Image.file(_localThumbnailFile!, fit: BoxFit.cover)
-                    : _exportedThumbnailImageUrl.isNotEmpty
-                    ? Builder(
-                      builder: (context) {
-                        // 🎯 비디오 URL인 경우: 비디오 플레이어 표시
-                        if (_isVideoUrl(_exportedThumbnailImageUrl)) {
-                          if (_videoController != null) {
-                            try {
-                              if (_videoController!.value.isInitialized) {
-                                final size = _videoController!.value.size;
-                                return FittedBox(
-                                  fit: BoxFit.cover,
-                                  child: SizedBox(
-                                    width: size.width,
-                                    height: size.height,
-                                    child: VideoPlayer(_videoController!),
-                                  ),
-                                );
-                              }
-                            } catch (e) {
-                              debugPrint('[PostExportScreen] 비디오 컨트롤러 오류: $e');
-                            }
-                          }
-                          // 비디오 컨트롤러가 없거나 초기화되지 않은 경우 shimmer 표시
-                          return ShimmerBox(
-                            width: double.infinity,
-                            height: double.infinity,
-                            borderRadius: BorderRadius.zero,
-                          );
-                        }
-
-                        // 🎯 이미지 URL인 경우: EditorImageProvider를 사용하여 step1_thumbnail_edit과
-                        // 동일한 캐시 키(ResizeImage)를 사용하여 캐시 재사용률을 높임
-                        final screenWidth = MediaQuery.sizeOf(context).width;
-                        final decodeWidth =
-                            EditorImageProvider.editingDecodeWidth(
-                              context,
-                              screenWidth,
-                            );
-                        final built = EditorImageProvider.build(
-                          url: _exportedThumbnailImageUrl,
-                          isEditing: true, // 배경 이미지도 편집 모드
-                          decodeWidth: decodeWidth,
-                        );
-
-                        return Image(
-                          image: built.effectiveProvider,
-                          fit: BoxFit.cover,
-                          filterQuality: FilterQuality.low,
-                          gaplessPlayback: true, // ✅ provider가 바뀌어도 기존 프레임 유지
-                          frameBuilder: (context, child, frame, wasSyncLoaded) {
-                            if (wasSyncLoaded || frame != null) {
-                              return child;
-                            }
-                            // 로딩 중: shimmer placeholder
-                            return ShimmerBox(
-                              width: double.infinity,
-                              height: double.infinity,
-                              borderRadius: BorderRadius.zero,
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) {
-                            assert(() {
-                              debugPrint(
-                                '[PostExportScreen] ❌ 배경 이미지 로드 실패: url=$_exportedThumbnailImageUrl, error=$error',
-                              );
-                              return true;
-                            }());
-                            return Container(color: AppColors.darkSurface);
-                          },
-                        );
-                      },
-                    )
-                    : Container(color: Theme.of(context).colorScheme.surface),
-          ), // 블러 오버레이 (썸네일이 있을 때만)
-          if (_localThumbnailFile != null ||
-              _exportedThumbnailImageUrl.isNotEmpty)
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        const ui.Color.fromARGB(
-                          235,
-                          45,
-                          45,
-                          45,
-                        ).withOpacity(0.7),
-                        const ui.Color.fromARGB(
-                          235,
-                          45,
-                          45,
-                          45,
-                        ).withOpacity(0.7),
-                        const ui.Color.fromARGB(
-                          235,
-                          45,
-                          45,
-                          45,
-                        ).withOpacity(0.7),
-                      ],
-                      stops: const [0.0, 0.7, 1.0],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
+      child: Container(color: Theme.of(context).colorScheme.surface),
     );
   }
 
@@ -1366,11 +1233,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // 포커스 상태의 간단한 앱바 (완료 버튼만)
   PreferredSizeWidget _buildFocusAppBar() {
-    // 1단계(Step 0)이고 이미지가 없을 때만 테마 색상 사용
-    final textColor =
-        _currentStep == 0 && _exportedThumbnailImageUrl.isEmpty
-            ? Theme.of(context).colorScheme.onSurface
-            : AppColors.darkTextPrimary;
+    final textColor = Theme.of(context).colorScheme.onSurface;
 
     return AppBar(
       toolbarHeight: 53,
@@ -1420,11 +1283,7 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // 일반 상태의 앱바 (진행바와 다음/업로드 버튼)
   PreferredSizeWidget _buildNormalAppBar() {
-    // 1단계(Step 0)이고 이미지가 없을 때만 테마 색상 사용
-    final textColor =
-        _currentStep == 0 && _exportedThumbnailImageUrl.isEmpty
-            ? Theme.of(context).colorScheme.onSurface
-            : AppColors.darkTextPrimary;
+    final textColor = Theme.of(context).colorScheme.onSurface;
 
     return AppBar(
       toolbarHeight: 50,
@@ -1506,10 +1365,10 @@ class _PostExportScreenState extends State<PostExportScreen>
                           key: const ValueKey('loading'),
                           width: 26,
                           height: 26,
-                          child: const CircularProgressIndicator(
+                          child: CircularProgressIndicator(
                             strokeWidth: 4,
                             valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.white,
+                              Theme.of(context).colorScheme.onSurface,
                             ),
                           ),
                         )
@@ -1517,7 +1376,7 @@ class _PostExportScreenState extends State<PostExportScreen>
                           context.tr('publish'),
                           key: const ValueKey('text'),
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
+                            color: Theme.of(context).colorScheme.onSurface,
                             fontWeight: FontWeight.w600,
                             fontSize: 16,
                           ),
@@ -1526,19 +1385,6 @@ class _PostExportScreenState extends State<PostExportScreen>
             ),
           ),
       ],
-      bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(4),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: LinearProgressIndicator(
-            value: (_currentStep + 1) / _totalSteps,
-            backgroundColor: Theme.of(
-              context,
-            ).colorScheme.onSurface.withOpacity(0.1),
-            valueColor: AlwaysStoppedAnimation<Color>(textColor),
-          ),
-        ),
-      ),
     );
   }
 }

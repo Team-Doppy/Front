@@ -18,6 +18,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:convert';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:super_editor/super_editor.dart';
+import 'package:doppy/editor/postwrite_screen.dart' show PostWriteMode;
+import 'package:doppy/pages/screens/splash_screen.dart';
 
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
@@ -365,6 +367,7 @@ class EditorAppBar extends StatelessWidget {
   final String? initialTitleForExport; // ✅ 다음(썸네일 편집) 프리필용
   final String? initialSummaryForExport; // ✅ 다음(썸네일 편집) 프리필용
   final String? initialThumbnailUrlForExport; // ✅ 다음(썸네일 편집) 프리필용
+  final PostWriteMode? mode; // ✅ 온보딩 모드 여부
 
   const EditorAppBar({
     super.key,
@@ -378,9 +381,28 @@ class EditorAppBar extends StatelessWidget {
     this.initialTitleForExport,
     this.initialSummaryForExport,
     this.initialThumbnailUrlForExport,
+    this.mode,
   });
 
   Future<void> _onNextButtonTapped(BuildContext context) async {
+    // ✅ 온보딩 모드일 때는 스플래시로 이동 (디버그용)
+    if (mode == PostWriteMode.onboarding) {
+      debugPrint('[EditorAppBar] 온보딩 모드: 스플래시로 이동 (온보딩 플로우 스킵)');
+      // 스택을 완전히 비우고 스플래시로 이동 (온보딩 플로우 스킵 플래그 전달)
+      Navigator.of(context).pushAndRemoveUntil(
+        PageRouteBuilder(
+          pageBuilder: (_, __, ___) => const SplashScreen(skipOnboarding: true),
+          transitionDuration: const Duration(milliseconds: 300),
+          reverseTransitionDuration: const Duration(milliseconds: 300),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+        ),
+        (route) => false, // 모든 이전 라우트 제거
+      );
+      return;
+    }
+
     // 업로드 가드: 업로드 중인 미디어가 있으면 진행 차단 (압축 중인 비디오도 포함)
     if (editorService.hasUnuploadedMedia()) {
       // 🎯 상세한 디버그 정보 출력 (kDebugMode에서만 실행)

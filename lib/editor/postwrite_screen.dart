@@ -65,16 +65,27 @@ enum NodeType {
   unknown,
 }
 
+/// PostWriteScreen의 모드를 정의하는 enum
+enum PostWriteMode {
+  /// 일반 글쓰기 모드
+  normal,
+
+  /// 온보딩 모드 (온보딩 플로우에서 진입)
+  onboarding,
+}
+
 class PostwriteScreen extends StatefulWidget {
   final bool isEditingMode;
   final Map<String, dynamic>? exportedDataForEdit;
   final String? postId; // 수정 모드용 post ID
+  final PostWriteMode mode; // ✅ 모드 enum
 
   const PostwriteScreen({
     super.key,
     this.isEditingMode = false,
     this.exportedDataForEdit,
     this.postId,
+    this.mode = PostWriteMode.normal, // ✅ 기본값은 일반 모드
   });
 
   @override
@@ -590,7 +601,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
   }
 
-  void _cleanupAndExit() {
+  Future<void> _cleanupAndExit() async {
     // 🎯 키보드를 먼저 내려서 레이아웃 재계산 문제 방지
     // 다이얼로그가 닫힌 후 키보드가 내려가면서 빈 공간이 생기는 문제 해결
     _editorFocusNode.unfocus();
@@ -621,6 +632,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     debugPrint(
       '[PostwriteScreen][EXIT] _cleanupAndExit: isEditingMode=${widget.isEditingMode} shouldRefreshMyFeed=$_shouldRefreshMyFeed categoryChanged=$_categoryChanged serverAppliedTitle=$_serverAppliedTitle serverAppliedSummary=$_serverAppliedSummary serverAppliedThumbnail=$_serverAppliedThumbnailUrl',
     );
+
+    // ✅ 온보딩 모드일 때는 'back'을 반환하여 index 3으로 돌아가도록
+    if (widget.mode == PostWriteMode.onboarding) {
+      Navigator.of(context).pop('back');
+      return;
+    }
 
     // ✅ 편집 모드에서 "메타데이터만 변경"된 경우에도 PostReader에 즉시 반영할 수 있도록 pop 결과를 제공
     if (widget.isEditingMode &&
@@ -671,7 +688,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
 
     if (!mounted) return;
-    _cleanupAndExit();
+    await _cleanupAndExit();
   }
 
   // 제목은 썸네일 편집 화면에서 입력하므로 제목 노드 업데이트 로직 제거됨
@@ -816,6 +833,19 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (!mounted || !context.mounted) return;
     // 이미 저장 중이면 스킵
     if (_isAutoSaving || _isSaving) return;
+
+    // ✅ 썸네일 편집 및 발행 플로우(PostExportScreen)에 있을 때는 자동저장 건너뛰기
+    // PostwriteScreen이 deactivated 상태이면 자동저장 건너뛰기
+    try {
+      final route = ModalRoute.of(context);
+      if (route == null || !route.isActive) {
+        debugPrint('[PostwriteScreen] ⏭️ 자동 저장 스킵 (화면 비활성화 상태)');
+        return;
+      }
+    } catch (e) {
+      // Route 접근 실패 시 무시하고 계속 진행
+      debugPrint('[PostwriteScreen] Route 확인 실패 (무시): $e');
+    }
 
     // 변경사항이 없으면 스킵
     if (!editorService.shouldPromptSaveOnExit(context)) return;
@@ -1097,7 +1127,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     // 🎯 키보드 이벤트로 setState 제거 (스크롤 기반으로만 앱바 제어)
 
-    return WillPopScope(
+    // ✅ 온보딩 모드일 때는 화이트 테마로 강제 적용
+    final content = WillPopScope(
       onWillPop: () async {
         if (widget.isEditingMode) {
           // 수정 모드: 변경사항이 있는지 확인
@@ -1119,7 +1150,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
           // 변경사항이 없으면 바로 나가기
           if (!hasChanges) {
             // ✅ 본문은 그대로인데 썸네일/제목/요약/카테고리/공개범위만 바뀐 케이스
-            _cleanupAndExit();
+            await _cleanupAndExit();
             return false;
           }
 
@@ -1133,7 +1164,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             isDestructive: true,
           );
           if (shouldCancel == true) {
-            _cleanupAndExit();
+            await _cleanupAndExit();
           }
           return false;
         }
@@ -1325,6 +1356,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                         initialTitleForExport: _draftTitleOverride,
                         initialSummaryForExport: _draftSummaryOverride,
                         initialThumbnailUrlForExport: _draftThumbnailOverride,
+                        mode: widget.mode, // ✅ 온보딩 모드 전달
                         onExportMetadataChanged: (
                           title,
                           summary,
@@ -1587,6 +1619,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         ],
       ),
     );
+
+    return content;
   }
 
   Widget _buildDragOverlay() {
@@ -2126,7 +2160,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       );
       // ✅ 메타데이터만 변경된 경우: result를 담아서 나가기
       if (hasMetadataChanges) {
-        _cleanupAndExit();
+        await _cleanupAndExit();
         return;
       }
       // 변경사항이 없으면 조용히 나가기

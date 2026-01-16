@@ -1,18 +1,13 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:doppy/data/models/user_model.dart';
-import 'package:doppy/pages/screens/user_profile_screen.dart';
+import 'package:doppy/pages/components/search_result.dart';
+import 'package:doppy/pages/components/search_top_section.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/pages/screens/search_history_screen.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:doppy/pages/components/custom_refresh_indicator.dart';
-import 'package:doppy/pages/components/post_card.dart';
-import 'package:doppy/data/services/like_service.dart';
-import 'package:doppy/pages/components/search_top_bar.dart';
-import 'package:doppy/pages/components/search_results.dart';
 import 'package:doppy/pages/components/search_video_widgets.dart';
 import 'package:doppy/pages/components/search_trending_section.dart';
 import 'package:flutter_svg/svg.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart';
@@ -47,9 +42,9 @@ class SearchScreenOverlay extends StatefulWidget {
 class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
-  bool _hasNetworkError = false;
+
   bool _isSearching = false; // 🎯 중복 검색 방지
-  bool _isNavigating = false; // 🎯 네비게이션 중 중복 탭 방지
+
   bool _shouldIgnoreControllerChanges = false; // 🎯 검색 칩 탭 시 리스너 무시 플래그
   VoidCallback? _initialQueryListener;
 
@@ -89,10 +84,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       }
     });
 
-    _searchFocusNode.addListener(() {
-      context.read<SearchService>().setFocused(_searchFocusNode.hasFocus);
-    });
-
     // ✅ RootShell에서 initialQuery를 notifier로 전달하는 경우, 변경을 직접 반영
     if (widget.initialQueryListenable != null) {
       _initialQueryListener = () {
@@ -115,8 +106,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
           final q =
               hasExternalQuery ? externalQuery : (widget.initialQuery ?? '');
           searchService.onSearchChanged(q);
-          searchService.setFocused(true);
-          debugPrint('[SearchScreen] 초기 검색어로 포커스 설정: $q');
+          debugPrint('[SearchScreen] 초기 검색어 설정: $q');
         }
 
         // initialize는 검색 기록만 로드 (이미 splash에서 로드했을 수 있지만 안전하게 다시 로드)
@@ -128,6 +118,22 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         );
       });
     });
+  }
+
+  void _openSearchExplore() {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder:
+            (_, __, ___) => SearchExploreScreen(
+              searchController: _searchController,
+              searchFocusNode: _searchFocusNode,
+              onSearchSubmitted: _runSearch,
+              onClose: widget.onClose ?? () {},
+            ),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
   }
 
   void _applyIncomingInitialQuery(String? q) {
@@ -143,7 +149,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       _shouldIgnoreControllerChanges = false;
 
       searchService.onSearchChanged(normalized);
-      searchService.setFocused(true);
       _searchFocusNode.requestFocus();
     } else {
       _shouldIgnoreControllerChanges = true;
@@ -151,7 +156,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       _shouldIgnoreControllerChanges = false;
 
       searchService.clearSearch();
-      searchService.setFocused(false);
       _searchFocusNode.unfocus();
     }
   }
@@ -186,10 +190,9 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       final searchService = context.read<SearchService>();
       searchService.clearRecommendedPosts();
 
-      // 검색어 설정 및 포커스
+      // 검색어 설정
       _searchController.text = widget.initialQuery!;
       searchService.onSearchChanged(widget.initialQuery!);
-      searchService.setFocused(true);
       _searchFocusNode.requestFocus();
 
       debugPrint(
@@ -200,7 +203,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       _searchController.clear();
       final searchService = context.read<SearchService>();
       searchService.clearSearch();
-      searchService.setFocused(false);
       _searchFocusNode.unfocus();
       debugPrint('[SearchScreen] didUpdateWidget - 초기 검색어 제거됨');
     }
@@ -215,17 +217,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
-  }
-
-  void _clearSearch() {
-    _searchController.clear();
-    context.read<SearchService>().clearSearch();
-  }
-
-  void _resetToInitial() {
-    _searchController.clear();
-    _searchFocusNode.unfocus();
-    context.read<SearchService>().resetToInitial();
   }
 
   /// 현재 배경 이미지 URL 가져오기
@@ -391,7 +382,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
 
       setState(() {
         _isSearching = true;
-        _hasNetworkError = false;
       });
 
       // 페이지네이션 초기화: 20개씩
@@ -447,7 +437,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       debugPrint('[SearchOverlay] 검색 실패: $e');
       if (mounted) {
         setState(() {
-          _hasNetworkError = true;
           _searchResults = [];
           _isShowingSearchResults = false;
         });
@@ -465,45 +454,86 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     SearchService searchService,
   ) {
     final screenHeight = MediaQuery.of(context).size.height;
-    final heroHeight = screenHeight * 0.4; // 🎯 화면 높이의 40%
+    final heroHeight = screenHeight * 0.55; // 🎯 화면 높이의 40%
 
     return CustomScrollView(
+      key: const ValueKey('search-default-scroll'),
       slivers: [
-        // 🎯 Hero 섹션이 있는 SliverAppBar (검색 중이거나 포커스되면 숨김)
-        if (!searchService.isFocused && !_isSearching)
+        // 🎯 Hero 섹션이 있는 SliverAppBar (검색 중이면 숨김)
+        if (!_isSearching)
           SliverAppBar(
+            key: const ValueKey('search-hero-appbar'),
             expandedHeight: heroHeight,
-            toolbarHeight: 0, // 🎯 toolbarHeight를 0으로 설정
+            toolbarHeight: 56, // 🎯 최소 높이 100px 유지
             backgroundColor: Colors.transparent,
             elevation: 0,
             scrolledUnderElevation: 0,
-            floating: true, // 🎯 위로 스크롤하면 숨겨지고, 아래로 내리면 나타남
+            floating: false,
             snap: false,
             automaticallyImplyLeading: false,
-            pinned: false,
+            pinned: true, // 🎯 pinned을 true로 설정하여 최소 높이 유지
             flexibleSpace: LayoutBuilder(
               builder: (context, constraints) {
                 // 🎯 스크롤 위치에 따라 텍스트 투명도 계산
-                final shrinkOffset = constraints.maxHeight;
+                final currentHeight = constraints.maxHeight;
                 final expandedHeight = heroHeight;
-                // 50px만 스크롤해도 투명도가 0이 되도록 계산
-                final scrollDistance = expandedHeight - shrinkOffset;
+                final collapsedHeight = 20.0; // toolbarHeight와 동일
+
+                // 접힌 정도 계산 (0.0 = 완전히 펼쳐짐, 1.0 = 완전히 접힘)
+                final collapseProgress = ((expandedHeight - currentHeight) /
+                        (expandedHeight - collapsedHeight))
+                    .clamp(0.0, 1.0);
+
+                // 텍스트 투명도: 50px 스크롤 시 투명해짐
+                final scrollDistance = expandedHeight - currentHeight;
                 final textOpacity = (1.0 - (scrollDistance / 50.0)).clamp(
                   0.0,
                   1.0,
                 );
 
+                // 이미지 투명도: 접힐수록 투명해짐 (겹침 방지)
+                final imageOpacity = (1.0 - collapseProgress * 1.5).clamp(
+                  0.0,
+                  1.0,
+                );
+
+                // 🎯 이미지가 거의 투명해졌을 때 AppBar 배경 표시 (더 늦게 나타나도록)
+                final showAppBarBackground = imageOpacity < 0.1;
+                // 🎯 배경도 점진적으로 나타나도록 opacity 적용
+                final backgroundOpacity = (1.0 - imageOpacity / 0.1).clamp(
+                  0.0,
+                  1.0,
+                );
+
+                // 🎯 로고와 검색 아이콘 색상: 접힐수록 primary 색상으로 변경
+                final primaryColor = Theme.of(context).colorScheme.primary;
+                final iconColor =
+                    Color.lerp(Colors.white, primaryColor, collapseProgress)!;
+
                 return Stack(
                   children: [
-                    // 🎯 Hero 섹션 (배경)
+                    // 🎯 AppBar 배경 (이미지가 투명해졌을 때 점진적으로 표시)
+                    if (showAppBarBackground)
+                      Positioned.fill(
+                        child: Opacity(
+                          opacity: backgroundOpacity,
+                          child: Container(
+                            color: Theme.of(context).colorScheme.background,
+                          ),
+                        ),
+                      ),
+                    // 🎯 Hero 섹션 (배경) - 접힐 때 투명해짐
                     Positioned.fill(
-                      child: _buildHeroSection(
-                        context,
-                        searchService,
-                        textOpacity: textOpacity, // 위로 스크롤할수록 텍스트가 투명해짐
+                      child: Opacity(
+                        opacity: imageOpacity,
+                        child: _buildHeroSection(
+                          context,
+                          searchService,
+                          textOpacity: textOpacity, // 위로 스크롤할수록 텍스트가 투명해짐
+                        ),
                       ),
                     ),
-                    // 🎯 WATCHA 로고와 검색 아이콘 오버레이 (상단)
+                    // 로고와 검색 아이콘 오버레이 (상단) - 접힐 때 색상이 primary로 변경
                     Positioned(
                       top: 0,
                       left: 0,
@@ -517,7 +547,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              // WATCHA 로고
+                              // Doppy 로고
                               Padding(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 12,
@@ -525,7 +555,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                                 child: Text(
                                   'Doppy',
                                   style: TextStyle(
-                                    color: Colors.white,
+                                    color: iconColor,
                                     fontSize: 24,
                                     fontWeight: FontWeight.w800,
                                     letterSpacing: -0.5,
@@ -541,19 +571,14 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                                 ),
                                 child: GestureDetector(
                                   onTap: () {
-                                    // 🎯 포커스 상태를 먼저 설정하고, 그 다음 포커스 요청
-                                    context.read<SearchService>().setFocused(
-                                      true,
-                                    );
-                                    // 🎯 requestFocus는 비동기이므로 즉시 실행
-                                    _searchFocusNode.requestFocus();
+                                    _openSearchExplore();
                                   },
                                   child: SvgPicture.asset(
                                     'assets/icons/ic_search.svg',
                                     width: 28,
                                     height: 28,
                                     // ignore: deprecated_member_use
-                                    color: Colors.white,
+                                    color: iconColor,
                                   ),
                                 ),
                               ),
@@ -567,42 +592,16 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
               },
             ),
           ),
-        // 🎯 검색창 (포커스되거나 검색 중일 때만 표시) - SliverAppBar로 고정
-        if (searchService.isFocused || searchService.query.isNotEmpty)
-          SliverAppBar(
-            toolbarHeight: 56, // 검색창 높이(48) + 패딩(8)
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            pinned: true,
-            floating: false,
-            automaticallyImplyLeading: false,
-            flexibleSpace: SafeArea(
-              bottom: false,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: SearchTopBar(
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  query: searchService.query,
-                  onClear: _clearSearch,
-                  onBack: _resetToInitial,
-                  onClose: widget.onClose,
-                  onSubmitted: _runSearch,
-                  onCancel: () {
-                    _searchFocusNode.unfocus();
-                    context.read<SearchService>().setFocused(false);
-                  },
-                  isSearching: _isSearching,
-                ),
-              ),
-            ),
-          ),
 
         // 🎯 트렌딩/검색 기록/실시간 검색 결과를 Sliver로 변환
         // 🎯 검색 중일 때는 추천 화면 표시하지 않음
         if (!_isSearching)
-          _buildDefaultSearchBodySliver(context, searchService)
+          // 🎯 Hero 섹션이 접혔을 때 SafeArea 적용 (콘텐츠가 SafeArea 영역까지 올라가지 않도록)
+          SliverSafeArea(
+            top: true,
+            bottom: false,
+            sliver: _buildDefaultSearchBodySliver(context, searchService),
+          )
         else
           // 🎯 검색 중일 때는 빈 화면 (로딩은 suffix_icon에 표시)
           SliverFillRemaining(hasScrollBody: false, child: Container()),
@@ -620,7 +619,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       return Container(color: Theme.of(context).colorScheme.background);
     }
 
-    return _SearchHeroSection(
+    return SearchHeroSection(
       posts: searchService.recommendedPosts,
       textOpacity: textOpacity,
       onPostIndexChanged: (index) {
@@ -665,214 +664,23 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
     SearchService searchService,
   ) {
     return Builder(
-      key: ValueKey(
-        searchService.query.isNotEmpty
-            ? 'live'
-            : (searchService.isFocused ? 'history' : 'trending'),
-      ),
+      key: ValueKey('trending'),
       builder: (_) {
         // 🎯 검색 중일 때는 아무것도 표시하지 않음 (로딩은 suffix_icon에 표시)
         if (_isSearching) {
           return SliverFillRemaining(hasScrollBody: false, child: Container());
         }
 
-        // 1) 입력 중: 실시간 계정 검색 결과 (Sliver 구조)
-        if (searchService.query.isNotEmpty && searchService.isFocused) {
-          final searchingAccounts = searchService.searchingAccounts;
-
-          // 🎯 검색 결과가 없으면 빈 화면
-          if (searchingAccounts.isEmpty && !_hasNetworkError) {
-            return SliverFillRemaining(hasScrollBody: false, child: Center());
-          }
-
-          // 🎯 SliverList로 검색 결과 표시 (검색어 실행 타일 포함)
-          return SliverPadding(
-            padding: const EdgeInsets.only(
-              top: 16,
-              bottom: 8,
-              left: 0,
-              right: 0,
-            ),
-            sliver: SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  // 첫 번째 아이템은 검색어 실행 타일
-                  if (index == 0) {
-                    return AccountListItem(
-                      account: SearchContentItem.blogKeyword(
-                        id: 'current_search',
-                        keyword: searchService.query,
-                      ),
-                      onTap: _runSearch,
-                      onTapDown: () {},
-                      showRemoveButton: false,
-                    );
-                  }
-                  final item = searchingAccounts[index - 1];
-                  return AccountListItem(
-                    account: item,
-                    onTapDown: () {},
-                    onTap: () {
-                      // 🎯 중복 탭 방지
-                      if (_isNavigating) return;
-
-                      setState(() {
-                        _isNavigating = true;
-                      });
-
-                      searchService.onTapContentItem(
-                        item,
-                        onNavigateToProfile: (username) {
-                          Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder:
-                                      (_) => UserProfileScreen(
-                                        otherUser: User(
-                                          username: username,
-                                          alias: item.alias,
-                                          profileImageUrl: item.profileImageUrl,
-                                        ),
-                                      ),
-                                ),
-                              )
-                              .then((_) {
-                                if (mounted) {
-                                  setState(() {
-                                    _isNavigating = false;
-                                  });
-                                  _searchFocusNode.requestFocus();
-                                }
-                              })
-                              .catchError((error) {
-                                debugPrint('[SearchScreen] 네비게이션 에러: $error');
-                                if (mounted) {
-                                  setState(() {
-                                    _isNavigating = false;
-                                  });
-                                }
-                              });
-                        },
-                      );
-                    },
-                    onRemove: null,
-                    showRemoveButton: false,
-                  );
-                },
-                childCount: searchingAccounts.length + 1, // 검색어 실행 타일 포함
-              ),
-            ),
-          );
-        }
-
-        // 2) 포커스 O & 쿼리 없음: 검색 기록 펼침 (Sliver 구조)
-        if (searchService.isFocused) {
-          final historyItems = searchService.searchHistory;
-
-          // 🎯 검색 기록이 없으면 빈 화면
-          if (historyItems.isEmpty) {
-            return SliverFillRemaining(
-              hasScrollBody: false,
-              child: Center(
-                child: Text(
-                  '검색 기록이 없습니다',
-                  style: TextStyle(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.5),
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-            );
-          }
-
-          // 🎯 SliverList로 검색 기록 표시
-          return SliverPadding(
-            padding: const EdgeInsets.only(
-              top: 16,
-              bottom: 8,
-              left: 0,
-              right: 0,
-            ),
-            sliver: SliverList(
-              delegate: SliverChildBuilderDelegate((context, index) {
-                final item = historyItems[index];
-                return AccountListItem(
-                  account: item,
-                  onTapDown: () {},
-                  onTap: () {
-                    // 🎯 중복 탭 방지
-                    if (_isNavigating) return;
-
-                    // 🎯 글 검색 기록이면 검색 실행
-                    if (item.isBlog) {
-                      _searchController.text = item.title ?? '';
-                      searchService.onSearchChanged(item.title ?? '');
-                      _runSearch();
-                      return;
-                    }
-
-                    setState(() {
-                      _isNavigating = true;
-                    });
-
-                    Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder:
-                                (_) => UserProfileScreen(
-                                  otherUser: User(
-                                    username: item.username ?? '',
-                                    alias: item.alias,
-                                    profileImageUrl: item.profileImageUrl,
-                                  ),
-                                ),
-                          ),
-                        )
-                        .then((_) {
-                          if (mounted) {
-                            setState(() {
-                              _isNavigating = false;
-                            });
-                            _searchFocusNode.requestFocus();
-                          }
-                        })
-                        .catchError((error) {
-                          debugPrint('[SearchScreen] 네비게이션 에러: $error');
-                          if (mounted) {
-                            setState(() {
-                              _isNavigating = false;
-                            });
-                          }
-                        });
-                  },
-                  onRemove: () {
-                    // 🎯 글 검색 기록이면 글 검색 기록에서 제거
-                    if (item.isBlog) {
-                      context.read<SearchService>().removeBlogSearchKeyword(
-                        item.title ?? '',
-                      );
-                    } else {
-                      context.read<SearchService>().removeFromSearchHistory(
-                        item.username ?? '',
-                      );
-                    }
-                  },
-                  showRemoveButton: true,
-                );
-              }, childCount: historyItems.length),
-            ),
-          );
-        }
-
-        // 3) 포커스 X: 추천 포스트 표시 (OTT 스타일 - Sliver 구조)
+        // ✅ 검색(기록/실시간)은 별도 화면(push)로 분리됨
+        // 3) 추천 포스트 표시 (OTT 스타일 - Sliver 구조)
         // 🎯 TrendingKeywordsWithPreload는 이제 Sliver를 반환하므로 직접 사용
-        final trendingWidget = TrendingKeywordsWithPreload(
-          keywords: const [], // 키워드 제거
+        final trendingWidget = TrendingListView(
           recommendedPosts: searchService.recommendedPosts,
+          friendsPosts: searchService.friendsPosts,
           isLoading: searchService.isRecommendedLoading,
           shouldShowShimmer: searchService.isRecommendedLoading,
+          friendsHasMore: searchService.friendsHasMore,
+          recommendedHasMore: searchService.recommendedHasMore,
           onTapKeyword: (keyword) {
             // 키워드 기능 제거
           },
@@ -881,6 +689,12 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
             setState(() {
               _currentTrendingPostIndex = index;
             });
+          },
+          onLoadMoreFriends: () {
+            searchService.loadMoreFriendsPosts();
+          },
+          onLoadMoreRecommended: () {
+            searchService.loadMoreRecommendedPosts();
           },
           onTapPost: (post) {
             // 🎯 포스트 상세 화면으로 이동
@@ -919,7 +733,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
 
         // 🎯 TrendingKeywordsWithPreload가 Sliver를 반환하므로 SliverPadding으로 감싸서 상단 여백 추가
         return SliverPadding(
-          padding: const EdgeInsets.only(top: 16, bottom: 0, left: 0, right: 0),
+          padding: const EdgeInsets.only(top: 0, bottom: 0, left: 0, right: 0),
           sliver: trendingWidget,
         );
       },
@@ -928,7 +742,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
 
   // 🎯 검색 결과 뷰 (독립적인 UI, 홈 화면 의존성 제거)
   Widget _buildSearchResultsView(BuildContext context) {
-    return _SearchResultsView(
+    return SearchResultsView(
       key: ValueKey('search-${_searchRefreshCount}'),
       posts: _searchResults,
       searchQuery: _searchQuery,
@@ -958,10 +772,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         _searchController.text = _searchQuery;
 
         // 🎯 SearchService 상태 설정 (clearSearch() 호출하지 않음 - 플로우 끊김 방지)
-        // 1. 포커스 설정 먼저 (검색 기록 화면 표시를 위해)
-        searchService.setFocused(true);
-
-        // 2. 검색어를 비워서 검색 기록 화면이 표시되도록
+        // 검색어를 비워서 검색 기록 화면이 표시되도록
         // 단, 리스너가 무시되므로 필드의 검색어는 유지됨
         searchService.onSearchChanged('');
 
@@ -1107,826 +918,5 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         setState(() => _isLoadingMore = false);
       }
     }
-  }
-}
-
-/// 🎯 검색 화면용 Hero 섹션
-class _SearchHeroSection extends StatefulWidget {
-  final List<SearchContentItem> posts;
-  final Function(int)? onPostIndexChanged;
-  final Function(SearchContentItem) onTapPost;
-  final double textOpacity; // 🎯 텍스트 투명도
-
-  const _SearchHeroSection({
-    required this.posts,
-    this.onPostIndexChanged,
-    required this.onTapPost,
-    this.textOpacity = 1.0,
-  });
-
-  @override
-  State<_SearchHeroSection> createState() => _SearchHeroSectionState();
-}
-
-class _SearchHeroSectionState extends State<_SearchHeroSection> {
-  late PageController _pageController;
-  int _currentIndex = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _pageController = PageController();
-    _pageController.addListener(_onPageChanged);
-    if (widget.posts.isNotEmpty && widget.onPostIndexChanged != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          widget.onPostIndexChanged!(0);
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _pageController.removeListener(_onPageChanged);
-    _pageController.dispose();
-    super.dispose();
-  }
-
-  void _onPageChanged() {
-    if (!_pageController.hasClients) return;
-    final newIndex = _pageController.page?.round() ?? 0;
-    if (newIndex != _currentIndex) {
-      setState(() {
-        _currentIndex = newIndex;
-      });
-      widget.onPostIndexChanged?.call(_currentIndex);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.posts.isEmpty) {
-      return Container(color: Theme.of(context).colorScheme.background);
-    }
-
-    return Stack(
-      children: [
-        // 배경 이미지/비디오
-        PageView.builder(
-          controller: _pageController,
-          physics: const ClampingScrollPhysics(),
-          itemCount: widget.posts.length,
-          itemBuilder: (context, index) {
-            final post = widget.posts[index];
-            final imageUrl = post.imageUrl ?? '';
-
-            // 비디오 URL 체크
-            final isVideoUrl =
-                imageUrl.toLowerCase().endsWith('.mp4') ||
-                imageUrl.toLowerCase().endsWith('.mov') ||
-                imageUrl.toLowerCase().endsWith('.avi') ||
-                imageUrl.toLowerCase().endsWith('.webm') ||
-                imageUrl.contains('/videos/');
-
-            return GestureDetector(
-              onTap: () => widget.onTapPost(post),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (isVideoUrl)
-                    SearchBackgroundVideoWidget(
-                      videoUrl: imageUrl,
-                      key: ValueKey('hero-video-$imageUrl'),
-                    )
-                  else if (imageUrl.isNotEmpty)
-                    CachedNetworkImage(
-                      imageUrl: imageUrl,
-                      fit: BoxFit.cover,
-                      errorWidget:
-                          (context, url, error) => Container(
-                            color: Theme.of(context).colorScheme.surfaceVariant,
-                          ),
-                    )
-                  else
-                    Container(
-                      color: Theme.of(context).colorScheme.surfaceVariant,
-                    ),
-                  // 그라데이션 오버레이
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black.withOpacity(0.7),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-        // 텍스트 오버레이 (하단 중앙) - 스크롤 시 투명도 적용
-        Positioned(
-          bottom: 60,
-          left: 0,
-          right: 0,
-          child: Opacity(
-            opacity: widget.textOpacity,
-            child: Column(
-              children: [
-                Text(
-                  '이 시간에 어때요?',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w600,
-                    shadows: [
-                      Shadow(
-                        offset: Offset(0, 2),
-                        blurRadius: 4,
-                        color: Colors.black.withOpacity(0.5),
-                      ),
-                    ],
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '보내기 싫은 일요일 밤',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w400,
-                    shadows: [
-                      Shadow(
-                        offset: Offset(0, 2),
-                        blurRadius: 4,
-                        color: Colors.black.withOpacity(0.5),
-                      ),
-                    ],
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-        ),
-        // 페이지 인디케이터 (하단)
-        Positioned(
-          bottom: 20,
-          left: 0,
-          right: 0,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(
-              widget.posts.length.clamp(0, 5), // 최대 5개만 표시
-              (index) => Container(
-                width: index == _currentIndex ? 8 : 6,
-                height: 6,
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                decoration: BoxDecoration(
-                  shape:
-                      index == _currentIndex
-                          ? BoxShape.rectangle
-                          : BoxShape.circle,
-                  borderRadius:
-                      index == _currentIndex ? BorderRadius.circular(3) : null,
-                  color:
-                      index == _currentIndex
-                          ? Colors.white
-                          : Colors.white.withOpacity(0.5),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// -------------------- 검색 결과 뷰 (독립적인 UI) --------------------
-class _SearchResultsView extends StatefulWidget {
-  final List<PostData> posts;
-  final String searchQuery;
-  final bool isLoading;
-  final bool isLoadingMore;
-  final bool hasMore;
-  final Future<void> Function()? onRefresh;
-  final VoidCallback? onLoadMore;
-  final Function(int)? onPageChanged;
-  final VoidCallback onSearchChipTap;
-  final VoidCallback onClearSearch;
-
-  const _SearchResultsView({
-    super.key,
-    required this.posts,
-    required this.searchQuery,
-    required this.isLoading,
-    required this.isLoadingMore,
-    required this.hasMore,
-    this.onRefresh,
-    this.onLoadMore,
-    this.onPageChanged,
-    required this.onSearchChipTap,
-    required this.onClearSearch,
-  });
-
-  @override
-  State<_SearchResultsView> createState() => _SearchResultsViewState();
-}
-
-class _SearchResultsViewState extends State<_SearchResultsView> {
-  late PageController _pageController;
-  final ScrollController _scrollController = ScrollController();
-  int _currentIndex = 0;
-  final Set<String> _likingInFlight = <String>{};
-  final LikeService _likeService = LikeService();
-  bool _suppressVisibility = false;
-  double _pullProgress = 0.0;
-
-  // 🎯 가로/세로 제스처 감지 (PostList와 동일)
-  double _gestureAccumY = 0.0;
-  double _gestureAccumX = 0.0;
-  bool _isGestureActive = false;
-  bool _isHorizontalGesture = false; // 가로 제스처 감지 여부
-
-  // ✅ 좌/우 넘김 애니메이션을 통일해서 체감을 부드럽게 (PostList와 동일)
-  static const Duration _pageTurnDuration = Duration(milliseconds: 180); // 클릭용
-  static const Duration _swipeDuration = Duration(
-    milliseconds: 400,
-  ); // 텍스트 영역 스와이프용 (더 부드럽게)
-  static const Curve _pageTurnCurve = Curves.easeInOut;
-  static const Curve _swipeCurve = Curves.easeOutCubic; // 스와이프용 더 부드러운 curve
-
-  @override
-  void initState() {
-    super.initState();
-    _pageController = PageController(
-      viewportFraction: 0.75,
-    ); // 🎯 PostList와 동일한 viewport
-    _likeService.addListener(_onLikeServiceChanged);
-    _loadLikeStatusForAllPosts();
-  }
-
-  @override
-  void didUpdateWidget(_SearchResultsView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.posts != oldWidget.posts) {
-      _loadLikeStatusForAllPosts();
-    }
-  }
-
-  @override
-  void dispose() {
-    _likeService.removeListener(_onLikeServiceChanged);
-    _scrollController.dispose();
-    _pageController.dispose();
-    super.dispose();
-  }
-
-  void _onLikeServiceChanged() {
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  void _loadLikeStatusForAllPosts() {
-    // 🎯 LikeService에 값이 없을 때만 설정 (다른 화면에서 좋아요를 누른 경우 덮어쓰지 않음)
-    for (final post in widget.posts) {
-      final postId = post.id.toString();
-      if (postId.isNotEmpty && !_likeService.hasPost(postId)) {
-        _likeService.setInitialLikeData(postId, post.isLiked, post.likeCount);
-      }
-    }
-  }
-
-  Widget _buildScrollView(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-
-    return Listener(
-      behavior: HitTestBehavior.opaque, // 🎯 PostList와 동일
-      // 🎯 가로/세로 제스처 감지 (PostList와 동일)
-      onPointerDown: (details) {
-        _gestureAccumY = 0.0;
-        _gestureAccumX = 0.0;
-        _isGestureActive = true;
-        _isHorizontalGesture = false;
-      },
-      onPointerMove: (details) {
-        if (!_isGestureActive) return;
-
-        // 제스처 방향 결정 (더 빠르게, 더 민감하게)
-        if (!_isHorizontalGesture) {
-          _gestureAccumY += details.delta.dy;
-          _gestureAccumX += details.delta.dx;
-
-          // 제스처 방향 빠르게 결정 (3px 이상 움직임 시)
-          if (_gestureAccumX.abs() > 3 || _gestureAccumY.abs() > 3) {
-            // 가로 움직임이 세로보다 크면 가로 제스처로 고정
-            if (_gestureAccumX.abs() > _gestureAccumY.abs()) {
-              setState(() {
-                _isHorizontalGesture = true;
-              });
-              assert(() {
-                debugPrint('🔄 가로 제스처 감지! 세로 완전 차단');
-                return true;
-              }());
-            }
-          }
-        }
-
-        // 가로 제스처가 활성화되면 세로 누적값 무시
-        if (_isHorizontalGesture) {
-          _gestureAccumX += details.delta.dx;
-          // 세로 움직임은 완전히 무시 (누적하지 않음)
-
-          // 수평 스크롤만 처리 (텍스트 영역 스와이프는 더 부드럽게)
-          if (_gestureAccumX.abs() > 30) {
-            if (_gestureAccumX > 0 && _currentIndex > 0) {
-              // 오른쪽으로 스크롤 - 이전 페이지 (텍스트 영역이므로 더 부드럽게)
-              _pageController.previousPage(
-                duration: _swipeDuration,
-                curve: _swipeCurve,
-              );
-              _isGestureActive = false;
-            } else if (_gestureAccumX < 0 &&
-                _currentIndex < widget.posts.length - 1) {
-              // 왼쪽으로 스크롤 - 다음 페이지 (텍스트 영역이므로 더 부드럽게)
-              _pageController.nextPage(
-                duration: _swipeDuration,
-                curve: _swipeCurve,
-              );
-              _isGestureActive = false;
-            }
-          }
-          return; // 세로 동작 완전 차단
-        }
-
-        // 세로 제스처 처리 (가로가 아닐 때만)
-      },
-      onPointerUp: (details) {
-        if (_isGestureActive || _isHorizontalGesture) {
-          setState(() {
-            _isGestureActive = false;
-            _isHorizontalGesture = false;
-          });
-        } else {
-          _isGestureActive = false;
-          _isHorizontalGesture = false;
-        }
-        _gestureAccumY = 0.0;
-        _gestureAccumX = 0.0;
-      },
-      child: CustomScrollView(
-        controller: _scrollController,
-        physics:
-            _isHorizontalGesture
-                ? const NeverScrollableScrollPhysics() // 🎯 가로 제스처 감지 시 세로 스크롤 차단
-                : const AlwaysScrollableScrollPhysics(),
-        slivers: [
-          // AppBar with 검색 칩
-          SliverAppBar(
-            toolbarHeight: 48,
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            pinned: false,
-            floating: true,
-            snap: false,
-            title: AnimatedOpacity(
-              opacity: (1.0 - _pullProgress),
-              duration:
-                  _pullProgress != 0.0
-                      ? Duration(milliseconds: 0)
-                      : Duration(milliseconds: 100),
-              curve: Curves.easeInOut,
-              child: Container(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                  '',
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-              ),
-            ),
-            centerTitle: false,
-            actions: [
-              AnimatedOpacity(
-                opacity: (1.0 - _pullProgress),
-                duration: Duration(milliseconds: 150),
-                curve: Curves.easeInOut,
-                child:
-                    widget.searchQuery.isNotEmpty
-                        ? GestureDetector(
-                          onTap: widget.onSearchChipTap,
-                          child: Container(
-                            margin: const EdgeInsets.only(right: 8),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surface.withOpacity(0.6),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant
-                                      .withOpacity(0.7),
-                                  width: 1.2,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const SizedBox(width: 8),
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      widget.searchQuery,
-                                      style: TextStyle(
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface,
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  GestureDetector(
-                                    onTap: widget.onClearSearch,
-                                    child: Icon(
-                                      Icons.close,
-                                      size: 22,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant
-                                          .withOpacity(0.9),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        )
-                        : const SizedBox.shrink(),
-              ),
-            ],
-          ),
-          SliverToBoxAdapter(
-            child: Container(
-              height: 50,
-              decoration: BoxDecoration(color: Colors.transparent),
-            ),
-          ),
-
-          // PageView 또는 빈 상태
-          if (widget.posts.isEmpty && !widget.isLoading)
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [],
-                  ),
-                ),
-              ),
-            )
-          else
-            SliverToBoxAdapter(
-              child: Container(
-                height: 400,
-                decoration: BoxDecoration(color: Colors.transparent),
-                child: PageView.builder(
-                  scrollDirection: Axis.horizontal,
-                  controller: _pageController,
-                  pageSnapping: true,
-                  physics: const ClampingScrollPhysics(),
-                  clipBehavior: Clip.none,
-                  padEnds: true,
-                  onPageChanged: (index) {
-                    setState(() {
-                      _currentIndex = index;
-                    });
-
-                    if (widget.onPageChanged != null) {
-                      widget.onPageChanged!(index);
-                    }
-
-                    // 무한 스크롤
-                    if (widget.onLoadMore != null &&
-                        index >= widget.posts.length - 5 &&
-                        !widget.isLoadingMore) {
-                      widget.onLoadMore!();
-                    }
-                  },
-                  itemCount:
-                      widget.posts.length + (widget.isLoadingMore ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index >= widget.posts.length) {
-                      return const Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            CircularProgressIndicator(color: Colors.white),
-                            SizedBox(height: 16),
-                            Text(
-                              '더 많은 포스트를 불러오는 중...',
-                              style: TextStyle(color: Colors.white70),
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-
-                    final post = widget.posts[index];
-                    return _buildPostItem(context, post, index, screenWidth);
-                  },
-                ),
-              ),
-            ),
-
-          // Author Section
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: GestureDetector(
-              onTapUp: (details) async {
-                final screenWidth = MediaQuery.of(context).size.width;
-                final tapX = details.globalPosition.dx;
-
-                if (tapX < screenWidth * 0.3) {
-                  if (_currentIndex > 0) {
-                    _pageController.previousPage(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
-                    );
-                  }
-                } else if (tapX > screenWidth * 0.7) {
-                  if (_currentIndex < widget.posts.length - 1) {
-                    _pageController.nextPage(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
-                    );
-                  }
-                } else {
-                  setState(() => _suppressVisibility = true);
-                  await Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder:
-                          (_) => PostReaderScreen(
-                            exported:
-                                widget.posts[_currentIndex].toExportedData(),
-                            heroTag:
-                                'search-post-${widget.posts[_currentIndex].id}-$_currentIndex',
-                          ),
-                    ),
-                  );
-                  if (mounted) {
-                    setState(() => _suppressVisibility = false);
-                  }
-                }
-              },
-              child: Container(
-                decoration: BoxDecoration(color: Colors.transparent),
-                child: _textArea(context),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPostItem(
-    BuildContext context,
-    PostData post,
-    int index,
-    double screenWidth,
-  ) {
-    // viewportFraction이 0.75이므로 실제 카드 너비는 screenWidth * 0.75
-    final cardWidth = screenWidth * 0.75;
-
-    return GestureDetector(
-      onTapUp: (details) {
-        final tapX = details.globalPosition.dx;
-
-        if (tapX < screenWidth * 0.3) {
-          if (_currentIndex > 0) {
-            _pageController.previousPage(
-              duration: const Duration(milliseconds: 150),
-              curve: Curves.easeOut,
-            );
-          }
-        } else if (tapX > screenWidth * 0.7) {
-          if (_currentIndex < widget.posts.length - 1) {
-            _pageController.nextPage(
-              duration: const Duration(milliseconds: 150),
-              curve: Curves.easeOut,
-            );
-          }
-        } else {
-          setState(() => _suppressVisibility = true);
-          WidgetsBinding.instance.addPostFrameCallback((_) async {
-            if (!mounted) return;
-            await Navigator.of(context).push(
-              MaterialPageRoute(
-                builder:
-                    (_) => PostReaderScreen(
-                      exported: post.toExportedData(),
-                      heroTag: 'search-post-${post.id}-$index',
-                    ),
-              ),
-            );
-            if (mounted) {
-              setState(() => _suppressVisibility = false);
-            }
-          });
-        }
-      },
-      child: AnimatedBuilder(
-        animation: _pageController,
-        builder: (context, _) {
-          final double pageNow =
-              _pageController.hasClients
-                  ? (_pageController.page ?? _currentIndex.toDouble())
-                  : _currentIndex.toDouble();
-          final double ad = (pageNow - index).abs().clamp(0.0, 1.0);
-          final double t = 1.0 - ad;
-          final double eased = Curves.easeOutCubic.transform(t);
-          final double scale = 0.85 + 0.15 * eased;
-          final bool isMainVisible = !_suppressVisibility && t >= 0.7;
-
-          return Transform.scale(
-            scale: scale,
-            child: Center(
-              child: AspectRatio(
-                aspectRatio: 4 / 5,
-                child: PostCard(
-                  containerWidth: cardWidth,
-                  thumbnailImageUrl: post.thumbnailImageUrl,
-                  heroTag: 'search-post-${post.id}-$index',
-                  title: post.title,
-                  author: post.author,
-                  authorProfileImageUrl: post.authorProfileImageUrl,
-                  content: post.parsedContent,
-                  isVisible: isMainVisible,
-                  postId: post.id.toString(),
-                  isLiked: _likeService.isPostLiked(post.id.toString()),
-                  likeCount: _likeService.getPostLikeCount(post.id.toString()),
-                  onLikePressed: () async {
-                    final id = post.id.toString();
-                    if (id.isEmpty || _likingInFlight.contains(id)) return;
-                    _likingInFlight.add(id);
-                    setState(() {});
-                    try {
-                      await _likeService.togglePostLike(id);
-                    } catch (e) {
-                      if (mounted) {
-                        setState(() {});
-                      }
-                    } finally {
-                      _likingInFlight.remove(id);
-                    }
-                  },
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _textArea(BuildContext context) {
-    if (widget.posts.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
-    final post = widget.posts[safeIndex];
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        mainAxisAlignment: MainAxisAlignment.start,
-        children: [
-          SizedBox(height: 10),
-          Text(
-            post.title,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 32,
-              fontWeight: FontWeight.bold,
-              letterSpacing: -0.2,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          Expanded(
-            child: Text(
-              post.parsedContent,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                fontSize: 14,
-                fontWeight: FontWeight.w300,
-                height: 1.8,
-                letterSpacing: -0.1,
-              ),
-              maxLines: 5,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(height: 30),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: CustomRefreshIndicator(
-        top: 50,
-        onRefresh: widget.onRefresh,
-        onPullProgress: (progress) {
-          setState(() {
-            _pullProgress = progress;
-          });
-        },
-        child:
-            widget.isLoading
-                ? _buildRefreshingShimmer()
-                : _buildScrollView(context),
-      ),
-    );
-  }
-
-  Widget _buildRefreshingShimmer() {
-    return CustomScrollView(
-      slivers: [
-        SliverAppBar(
-          toolbarHeight: 35,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          pinned: false,
-          floating: true,
-          title: Text(
-            ' Doppy',
-            style: GoogleFonts.notoSansKr(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-          ),
-        ),
-        SliverToBoxAdapter(
-          child: Container(
-            height: 50,
-            decoration: BoxDecoration(color: Colors.transparent),
-          ),
-        ),
-        SliverToBoxAdapter(
-          child: Container(
-            height: 400,
-            decoration: BoxDecoration(color: Colors.transparent),
-            child: Center(
-              child: AspectRatio(
-                aspectRatio: 4 / 5,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: ShimmerBox(
-                      width: double.infinity,
-                      height: double.infinity,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        SliverFillRemaining(hasScrollBody: false, child: Container()),
-      ],
-    );
   }
 }

@@ -124,6 +124,11 @@ class AppLocalizations {
       'friends_posts': '친구글',
       'my_network_feed': '',
       'all_posts': '전체글',
+
+      // 홈피드
+      'home_friend_recommend_header': '아는 친구인가요?',
+      'home_empty_s1_line1': '안 남기면 없어지는 순간,',
+      'home_empty_s1_line2': '지금 기록하기',
       'all': '모든 포스트',
       'public': '전체공개',
       'private': '나만보기',
@@ -430,6 +435,11 @@ class AppLocalizations {
       'friend_request_already_cancelled': '이미 취소된 요청입니다',
       'friend_request_cancelled': '{count}개의 팔로우 요청을 취소했습니다',
       'cancel_request_failed': '요청 취소에 실패했습니다',
+      'friend': '친구',
+      'respond': '응답',
+      'search_username_hint': '사용자 이름 검색',
+      'friend_request_sent_to_user': '{username}에게 친구 요청을 보냈습니다',
+      'request_cancelled_for_user': '{username} 요청을 취소했습니다',
       'change_to_private': '나만보기로 변경',
       'change_to_private_selected_posts': '선택한 포스트 그룹에서 숨기기 ({count})',
       'change_to_private_confirm': '선택한 {count}개의 포스트를 나만보기로 변경하시겠어요?',
@@ -799,6 +809,11 @@ class AppLocalizations {
       'friends_posts': 'Friends',
       'my_network_feed': '',
       'all_posts': 'All Posts',
+
+      // Home Feed
+      'home_friend_recommend_header': 'Do you know them?',
+      'home_empty_s1_line1': 'Moments fade away,',
+      'home_empty_s1_line2': 'Record now',
       'all': 'All',
       'public': 'Public',
       'private': 'Private',

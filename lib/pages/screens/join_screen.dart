@@ -8,6 +8,7 @@ import 'package:doppy/pages/screens/onboarding_screen.dart' show LoginScreen;
 import 'package:doppy/pages/components/email_verification_flow.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../data/services/auth_service.dart';
 
 class JoinScreen extends StatefulWidget {
@@ -918,6 +919,23 @@ class _JoinScreenState extends State<JoinScreen> {
 
       if (success) {
         // 회원가입 성공
+        // 🎯 첫 회원가입 플래그 저장 (계정별로 저장)
+        try {
+          final authService = AuthService();
+          final userId = await authService.getUserIdFromToken();
+
+          if (userId != null) {
+            final prefs = await SharedPreferences.getInstance();
+            final key = 'is_first_signup_$userId';
+            await prefs.setBool(key, true);
+            debugPrint('[JoinScreen] 첫 회원가입 플래그 저장 완료 (userId: $userId)');
+          } else {
+            debugPrint('[JoinScreen] 사용자 ID를 가져올 수 없어 플래그 저장 실패');
+          }
+        } catch (e) {
+          debugPrint('[JoinScreen] 첫 회원가입 플래그 저장 실패: $e');
+        }
+
         _nextStep(); // 완료 화면으로 이동
 
         // 1초 후 스플래시 화면으로 부드럽게 페이드 전환 (로그인 성공 시와 동일)

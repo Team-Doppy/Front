@@ -1,5 +1,5 @@
-import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/category_sheet.dart';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/feed.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:doppy/pages/components/share_profile_bottom_sheet.dart';
@@ -398,7 +398,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     },
 
                     child: CustomRefreshIndicator(
-                      top: 120,
+                      top: 80,
                       onRefresh: _handleRefresh,
                       onPullProgress: (progress) {
                         setState(() {
@@ -454,16 +454,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                         onTap:
                                             () => Navigator.of(context).pop(),
                                       ),
-                                    Text(
-                                      _displayUsername,
-                                      style: TextStyle(
-                                        fontSize: 24,
-                                        fontWeight: FontWeight.bold,
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurface.withOpacity(1),
-                                      ),
-                                    ),
                                   ],
                                 ),
                               ),
@@ -620,8 +610,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
-                                  const SizedBox(height: 50),
-
                                   // 원형 아바타 (링크 아래에 위치)
                                   // 🎯 Consumer로 UploadService 감시하여 프로필 이미지 업로드 상태 자동 감지
                                   Consumer<UploadService>(
@@ -645,20 +633,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                           profileUploadTasks.isNotEmpty ||
                                           _isUploadingProfileImage;
 
-                                      final borderColor =
-                                          Theme.of(context).brightness ==
-                                                  Brightness.dark
-                                              ? Colors.grey.shade500
-                                              : Colors.grey.shade400;
-
                                       // ✅ Hero는 Transform/Progress/Shimmer 등 "동적 요소"와 분리된
                                       //    정적 아바타만 사용해야 비행 시작 깜빡임/튐이 줄어듭니다.
                                       final heroAvatar = StaticProfileAvatar(
                                         imageUrl: _displayImageUrl,
                                         username: _displayUsername,
-                                        size: 150,
-                                        borderWidth: isUploading ? 0 : 3,
-                                        borderColor: borderColor,
+                                        size: 180,
+                                        borderWidth: isUploading ? 0 : 2,
+                                        borderColor: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.1),
                                       );
 
                                       // Hero 애니메이션 적용

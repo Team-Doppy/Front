@@ -321,6 +321,52 @@ class FriendProvider with ChangeNotifier {
     }
   }
 
+  /// 🎯 친구 신청 보내기(낙관적): UI에서 즉시 "요청취소"로 바뀌도록 sentRequests를 먼저 갱신
+  /// - 성공: 유지
+  /// - 실패: sentRequests 롤백
+  Future<bool> sendFriendRequestOptimistic(String targetUsername) async {
+    final username = targetUsername.trim();
+    if (username.isEmpty) return false;
+
+    // 이미 상태가 있으면 중복 방지
+    final alreadyKnown =
+        _acceptedFriends.any((f) => f.username == username) ||
+        _receivedRequests.any((f) => f.username == username) ||
+        _sentRequests.any((f) => f.username == username);
+    if (alreadyKnown) return false;
+
+    // ✅ 낙관적 추가 (서버 응답 전에 UI 반영)
+    _sentRequests.insert(
+      0,
+      Friend(
+        id: 0,
+        username: username,
+        alias: username,
+        profileImageUrl: null,
+        status: FriendStatus.REQUESTED,
+        createdAt: DateTime.now().toUtc(),
+        isRequester: true,
+      ),
+    );
+    _lastFetchTime = null;
+    notifyListeners();
+
+    try {
+      await _friendService.sendFriendRequest(username);
+      _friendStatus = FriendRequestStatus.requested;
+      _lastFetchTime = null;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      // ❌ 실패 시 롤백
+      _sentRequests.removeWhere((f) => f.username == username);
+      _lastFetchTime = null;
+      notifyListeners();
+      debugPrint('sendFriendRequestOptimistic failed: $e');
+      return false;
+    }
+  }
+
   /// 이웃(친구) 해제
   Future<bool> deleteFriend(String targetUsername) async {
     _isLoadingStatus = true;

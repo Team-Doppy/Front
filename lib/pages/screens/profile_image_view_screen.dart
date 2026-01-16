@@ -6,9 +6,16 @@ import 'package:doppy/image/crop_editor.dart';
 import 'package:doppy/image/media_picker_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+
+/// 프로필 이미지 화면 모드
+enum ProfileImageMode {
+  normal, // 일반 모드 (기존 기능)
+  onboarding, // 온보딩 모드 (투명 배경, 간단한 UI)
+}
 
 /// 프로필 사진 전체 화면
 class ProfileImageViewScreen extends StatefulWidget {
@@ -26,6 +33,10 @@ class ProfileImageViewScreen extends StatefulWidget {
   final List<String>? links;
   final Map<String, String>? linkTitles;
   final Map<String, String>? linkThumbnails;
+  // ✅ 모드 설정
+  final ProfileImageMode mode;
+  // ✅ 온보딩 모드용 초기 이미지 파일
+  final File? initialImageFile;
 
   const ProfileImageViewScreen({
     Key? key,
@@ -42,6 +53,8 @@ class ProfileImageViewScreen extends StatefulWidget {
     this.links,
     this.linkTitles,
     this.linkThumbnails,
+    this.mode = ProfileImageMode.normal,
+    this.initialImageFile,
   }) : super(key: key);
 
   @override
@@ -143,6 +156,18 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         }
       });
     }
+    // ✅ 온보딩 모드에서 초기 이미지 파일이 있으면 로드
+    if (widget.mode == ProfileImageMode.onboarding &&
+        widget.initialImageFile != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _loadImageAndCalculateScale(widget.initialImageFile!);
+        }
+      });
+    }
+
+    // ✅ 온보딩 모드: 이미지 피커는 index2_bg.dart에서 먼저 띄우고, 선택한 이미지와 함께 진입
+    // 따라서 여기서는 자동으로 피커를 띄우지 않음
     // ✅ 처음에는 0으로 시작 (이미지 로드 후에만 forward)
     // _imageEditorFadeController.forward(); // 제거: 처음 로드 시 흔들림 방지
   }
@@ -169,8 +194,15 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
     // ✅ 이미지 편집(추가/크롭/이동) 중에는 스와이프-닫기 제스처를 막아야 편집 제스처와 충돌하지 않음
     final bool canSwipeDismiss = _selectedImage == null && !_isAdjustMode;
 
+    // ✅ 온보딩 모드일 때는 어두운 배경
+    final backgroundColor =
+        widget.mode == ProfileImageMode.onboarding
+            ? AppColors
+                .darkSurface // const Color(0xFF0F0F0F)
+            : theme.colorScheme.surface;
+
     return Scaffold(
-      backgroundColor: theme.colorScheme.surface,
+      backgroundColor: backgroundColor,
       body: GestureDetector(
         onVerticalDragStart:
             !canSwipeDismiss
@@ -339,8 +371,8 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
               ),
             ),
 
-            // 상단 뒤로가기 버튼 (바텀시트 올라왔을 때 숨김)
-            if (!_isAdjustMode)
+            // 상단 뒤로가기 버튼 (바텀시트 올라왔을 때 숨김, 온보딩 모드에서는 항상 표시)
+            if (!_isAdjustMode && widget.mode == ProfileImageMode.normal)
               SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
@@ -360,7 +392,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                   ),
                 ),
               ),
-
             // 하단 버튼들
             SafeArea(
               child: Align(
@@ -399,6 +430,10 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                             }
                                           }
                                         },
+                                        isOnboarding:
+                                            widget.mode ==
+                                            ProfileImageMode.onboarding,
+                                        isCompleteButton: true,
                                       ),
                                       const SizedBox(width: 12),
                                       _buildCircleButton(
@@ -408,6 +443,10 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                           context,
                                         ).translate('adjust'),
                                         onTap: _enterAdjustMode,
+                                        isOnboarding:
+                                            widget.mode ==
+                                            ProfileImageMode.onboarding,
+                                        isCompleteButton: false,
                                       ),
                                       const SizedBox(width: 12),
                                       _buildCircleButton(
@@ -417,6 +456,13 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                           context,
                                         ).translate('cancel'),
                                         onTap: () async {
+                                          // ✅ 온보딩 모드: 취소 시 바로 돌아가기
+                                          if (widget.mode ==
+                                              ProfileImageMode.onboarding) {
+                                            Navigator.pop(context);
+                                            return;
+                                          }
+
                                           // ✅ 부드럽게 페이드 아웃 후 상태 초기화
                                           await _imageEditorFadeController
                                               .reverse();
@@ -442,6 +488,10 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                           // 다음 이미지 선택을 위해 애니메이션 리셋
                                           _imageEditorFadeController.reset();
                                         },
+                                        isOnboarding:
+                                            widget.mode ==
+                                            ProfileImageMode.onboarding,
+                                        isCompleteButton: false,
                                       ),
                                     ],
                                   ))
@@ -576,8 +626,34 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
     required IconData icon,
     required String label,
     required VoidCallback onTap,
+    bool isOnboarding = false,
+    bool isCompleteButton = false,
   }) {
     final theme = Theme.of(context);
+
+    // 온보딩 모드일 때: 완료는 흰색 배경, 조정/취소는 연하게
+    final Color buttonColor;
+    final Color iconColor;
+    final Color textColor;
+
+    if (isOnboarding) {
+      if (isCompleteButton) {
+        // 완료 버튼: 흰색 배경
+        buttonColor = Colors.white;
+        iconColor = Colors.black;
+        textColor = Colors.white;
+      } else {
+        // 조정/취소 버튼: 연하게
+        buttonColor = theme.colorScheme.onSurface.withOpacity(0.1);
+        iconColor = Colors.white.withOpacity(1);
+        textColor = Colors.white.withOpacity(1);
+      }
+    } else {
+      // 일반 모드: 기존 스타일
+      buttonColor = theme.colorScheme.onSurface;
+      iconColor = theme.colorScheme.surface;
+      textColor = theme.colorScheme.onSurface;
+    }
 
     return GestureDetector(
       onTap: onTap,
@@ -588,16 +664,16 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
             width: 64,
             height: 64,
             decoration: BoxDecoration(
-              color: theme.colorScheme.onSurface,
+              color: buttonColor,
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, color: theme.colorScheme.surface, size: 28),
+            child: Icon(icon, color: iconColor, size: 28),
           ),
           const SizedBox(height: 8),
           Text(
             label,
             style: TextStyle(
-              color: theme.colorScheme.onSurface,
+              color: textColor,
               fontSize: 13,
               fontWeight: FontWeight.w400,
             ),
@@ -1066,9 +1142,13 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
           image: _uiImage!,
           screenImageRect: screenImageRect,
           cropRect: cropRect,
-          borderColor: theme.colorScheme.onSurface.withOpacity(0.3),
+          borderColor:
+              widget.mode == ProfileImageMode.onboarding
+                  ? Colors.white.withOpacity(0.25)
+                  : theme.colorScheme.onSurface.withOpacity(0.3),
           adjustmentFilter: _buildAdjustmentColorFilter(),
           rotation: _imageRotation,
+          isOnboardingMode: widget.mode == ProfileImageMode.onboarding,
         ),
       ),
     );
@@ -1135,6 +1215,46 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
     final c = math.cos(angle);
     final s = math.sin(angle);
     return Offset(v.dx * c - v.dy * s, v.dx * s + v.dy * c) + center;
+  }
+
+  /// ✅ 온보딩 모드: 전체 화면 크기로 이미지 rect 계산
+  Rect _computeFullScreenImageRect({
+    required Rect imageRect,
+    required Size containerSize,
+    required Offset cropCenter,
+    required Size screenSize,
+    required Size imageSize,
+    required double scale,
+    required Offset offset,
+  }) {
+    // 원형 크롭 영역 기준의 이미지 rect를 전체 화면으로 확장
+    // 이미지의 scale과 offset을 유지하면서 전체 화면에 맞게 확장
+    final imageAspectRatio = imageSize.width / imageSize.height;
+    final screenAspectRatio = screenSize.width / screenSize.height;
+
+    double fullWidth, fullHeight;
+    if (imageAspectRatio > screenAspectRatio) {
+      // 이미지가 더 넓음: 화면 너비에 맞춤
+      fullWidth = screenSize.width;
+      fullHeight = screenSize.width / imageAspectRatio;
+    } else {
+      // 이미지가 더 높음: 화면 높이에 맞춤
+      fullHeight = screenSize.height;
+      fullWidth = screenSize.height * imageAspectRatio;
+    }
+
+    // scale 적용
+    fullWidth *= scale;
+    fullHeight *= scale;
+
+    // offset 적용 (원형 크롭 영역 중심 기준)
+    final fullRect = Rect.fromCenter(
+      center: cropCenter + offset,
+      width: fullWidth,
+      height: fullHeight,
+    );
+
+    return fullRect;
   }
 
   /// 원형 크롭된 이미지 생성
@@ -1244,6 +1364,7 @@ class _UnifiedImagePainter extends CustomPainter {
   final Color borderColor;
   final ColorFilter? adjustmentFilter;
   final double rotation;
+  final bool isOnboardingMode; // ✅ 온보딩 모드 여부
 
   _UnifiedImagePainter({
     required this.image,
@@ -1252,6 +1373,7 @@ class _UnifiedImagePainter extends CustomPainter {
     required this.borderColor,
     this.adjustmentFilter,
     this.rotation = 0.0,
+    this.isOnboardingMode = false,
   });
 
   @override
@@ -1265,51 +1387,67 @@ class _UnifiedImagePainter extends CustomPainter {
 
     final center = cropRect.center;
 
-    // 1. 배경: 원형 영역 밖에 반투명 이미지 그리기
-    // 원형 영역을 제외한 나머지 영역에만 그리기
-    final backgroundPaint =
+    // ✅ 온보딩 모드: 전체 화면에 이미지 그리기 (원형 외부도 보이도록)
+    if (isOnboardingMode) {
+      // 전체 화면에 이미지 그리기 (원형 클립 없음)
+      canvas.save();
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(rotation);
+      canvas.translate(-center.dx, -center.dy);
+      canvas.drawImageRect(
+        image,
+        srcRect,
+        screenImageRect,
         Paint()
-          ..color = Colors.white.withOpacity(0.3)
           ..isAntiAlias = true
           ..filterQuality = FilterQuality.high
-          ..colorFilter = adjustmentFilter;
+          ..colorFilter = adjustmentFilter,
+      );
+      canvas.restore();
+    } else {
+      // 일반 모드: 원형 영역 밖에 반투명 이미지 그리기
+      final backgroundPaint =
+          Paint()
+            ..color = Colors.white.withOpacity(0.3)
+            ..isAntiAlias = true
+            ..filterQuality = FilterQuality.high
+            ..colorFilter = adjustmentFilter;
 
-    // 원형 영역을 제외한 경로 생성
-    final backgroundPath =
-        Path()
-          ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
-          ..addOval(cropRect)
-          ..fillType = PathFillType.evenOdd;
+      // 원형 영역을 제외한 경로 생성
+      final backgroundPath =
+          Path()
+            ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
+            ..addOval(cropRect)
+            ..fillType = PathFillType.evenOdd;
 
-    canvas.save();
-    canvas.clipPath(backgroundPath);
-    canvas.save();
-    canvas.translate(center.dx, center.dy);
-    canvas.rotate(rotation);
-    canvas.translate(-center.dx, -center.dy);
-    canvas.drawImageRect(image, srcRect, screenImageRect, backgroundPaint);
-    canvas.restore();
-    canvas.restore();
+      canvas.save();
+      canvas.clipPath(backgroundPath);
+      canvas.save();
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(rotation);
+      canvas.translate(-center.dx, -center.dy);
+      canvas.drawImageRect(image, srcRect, screenImageRect, backgroundPaint);
+      canvas.restore();
+      canvas.restore();
 
-    // 2. 중앙: 원형 클립된 이미지 그리기
-    canvas.save();
-    // 원형 클립 경로
-    final cropPath = Path()..addOval(cropRect);
-    canvas.clipPath(cropPath);
-    // 원형 영역 내부에 이미지 그리기 (회전 포함)
-    canvas.translate(center.dx, center.dy);
-    canvas.rotate(rotation);
-    canvas.translate(-center.dx, -center.dy);
-    canvas.drawImageRect(
-      image,
-      srcRect,
-      screenImageRect,
-      Paint()
-        ..isAntiAlias = true
-        ..filterQuality = FilterQuality.high
-        ..colorFilter = adjustmentFilter,
-    );
-    canvas.restore();
+      // 원형 클립된 이미지 그리기
+      canvas.save();
+      final cropPath = Path()..addOval(cropRect);
+      canvas.clipPath(cropPath);
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(rotation);
+      canvas.translate(-center.dx, -center.dy);
+      canvas.drawImageRect(
+        image,
+        srcRect,
+        screenImageRect,
+        Paint()
+          ..isAntiAlias = true
+          ..filterQuality = FilterQuality.high
+          ..colorFilter = adjustmentFilter,
+      );
+      canvas.restore();
+    }
 
     // 3. 원형 테두리 그리기
     final borderPaint =
@@ -1327,7 +1465,8 @@ class _UnifiedImagePainter extends CustomPainter {
         oldDelegate.image != image ||
         oldDelegate.borderColor != borderColor ||
         oldDelegate.adjustmentFilter != adjustmentFilter ||
-        oldDelegate.rotation != rotation;
+        oldDelegate.rotation != rotation ||
+        oldDelegate.isOnboardingMode != isOnboardingMode;
   }
 }
 

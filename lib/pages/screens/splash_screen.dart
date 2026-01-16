@@ -3,7 +3,6 @@ import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
-import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/data/services/region_service.dart';
@@ -11,6 +10,7 @@ import 'package:doppy/data/services/firestore_notification_service.dart';
 import 'package:doppy/utils/deep_link_store.dart';
 import 'package:doppy/utils/deep_link_handler.dart';
 import 'package:doppy/pages/screens/join_screen.dart';
+import 'package:doppy/pages/onbording/onbording_flow.dart';
 
 import 'dart:async';
 
@@ -19,38 +19,39 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 앱 부트스트랩 결과
 class _BootstrapResult {
   final bool loggedIn;
-  final HomeData? homeData;
   final bool requiresEmailVerification;
 
   const _BootstrapResult({
     required this.loggedIn,
-    this.homeData,
+
     this.requiresEmailVerification = false,
   });
 
   factory _BootstrapResult.notLoggedIn() {
-    return const _BootstrapResult(loggedIn: false, homeData: null);
+    return const _BootstrapResult(loggedIn: false);
   }
 
-  factory _BootstrapResult.loggedIn(HomeData? homeData) {
-    return _BootstrapResult(loggedIn: true, homeData: homeData);
+  factory _BootstrapResult.loggedIn() {
+    return _BootstrapResult(loggedIn: true);
   }
 
   factory _BootstrapResult.emailVerificationRequired() {
     return const _BootstrapResult(
       loggedIn: true,
-      homeData: null,
       requiresEmailVerification: true,
     );
   }
 }
 
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
+  final bool skipOnboarding; // ✅ 임시: 온보딩 플로우 스킵 플래그 (포스트에서 진입 시)
+
+  const SplashScreen({super.key, this.skipOnboarding = false});
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -63,12 +64,10 @@ class _SplashScreenState extends State<SplashScreen>
   late final AnimationController _fadeOutController;
   late final Animation<double> _fadeOutOpacity;
 
-  final HomeDataService _homeDataService = HomeDataService();
-
   late final Future<_BootstrapResult> _bootstrapFuture;
   bool _showRootShell = false;
   bool _hideSplashOverlay = false;
-  HomeData? _preloadedHomeData;
+  bool _isFirstSignup = false; // 🎯 첫 회원가입 여부
 
   @override
   void initState() {
@@ -152,7 +151,7 @@ class _SplashScreenState extends State<SplashScreen>
         return _BootstrapResult.notLoggedIn();
       }
 
-      // ✅ 이메일 인증 강제: JWT payload의 email이 null/empty면 이메일 인증 화면으로 보냄
+      // 이메일 인증 강제: JWT payload의 email이 null/empty면 이메일 인증 화면으로 보냄
       try {
         final email = await AuthService().getEmailFromToken();
         if (email == null) {
@@ -243,62 +242,22 @@ class _SplashScreenState extends State<SplashScreen>
       }
 
       // 2. FCM 토큰 검사 및 필요시 재발급 (스피너 렌더링 안정화를 위해 약간 지연)
-      // ✅ 스피너가 먼저 안정적으로 렌더링된 후 FCM 작업 시작
-      Future.delayed(const Duration(milliseconds: 300), () {
-        _checkAndSyncFcmToken();
-      });
-
-      // 3. 앱 시작 시 필수 데이터만 로드 (그룹 스키마 포함)
-      // ✅ 스피너가 먼저 안정적으로 렌더링된 후 필수 데이터 로드 시작 (100ms 지연)
-      await Future.delayed(const Duration(milliseconds: 100));
+      // 스피너가 먼저 안정적으로 렌더링된 후 FCM 작업 시작
+      _checkAndSyncFcmToken();
 
       // 홈 데이터, 검색 기록, 유저 정보, 그룹 스키마를 병렬로 로드
-      final homeDataFuture = _loadHomeData();
-      await Future.wait([
-        homeDataFuture.then((_) => null),
-        _loadSearchHistory(),
-        _loadUserData(),
-      ]);
+      await Future.wait([_loadSearchHistory(), _loadUserData()]);
 
-      // 홈 데이터 가져오기
-      final homeData = await homeDataFuture;
+      _loadSearchScreenData();
 
-      // 4. 트렌딩 데이터는 비동기로 백그라운드에서 로드 (스피너 안정화를 위해 약간 지연)
-      // ✅ 스피너가 먼저 안정적으로 렌더링된 후 트렌딩 데이터 로드 시작
-      Future.delayed(const Duration(milliseconds: 500), () {
-        _loadRecommendedPosts();
-      });
+      _loadSettingsAndFriendRequests();
 
-      // 5. 설정 정보 및 받은 요청은 비동기로 백그라운드에서 로드 (스피너 안정화를 위해 약간 지연)
-      // ✅ 스피너가 먼저 안정적으로 렌더링된 후 설정/친구 요청 로드 시작
-      Future.delayed(const Duration(milliseconds: 700), () {
-        _loadSettingsAndFriendRequests();
-      });
+      //_loadInitialNotifications();
 
-      // 6. 초기 알림 데이터 로드 (비동기, 앱 시작을 막지 않음)
-      Future.delayed(const Duration(milliseconds: 800), () {
-        _loadInitialNotifications();
-      });
-
-      return _BootstrapResult.loggedIn(homeData);
+      return _BootstrapResult.loggedIn();
     } catch (e) {
       debugPrint('[SplashScreen] 부트스트랩 오류: $e');
       return _BootstrapResult.notLoggedIn();
-    }
-  }
-
-  Future<HomeData> _loadHomeData() async {
-    try {
-      // 통합 피드 데이터 서비스를 사용하여 두 섹션 동시 로드
-      final homeData = await _homeDataService.preloadAllSections(
-        page: 0,
-        size: 20, // 🎯 10 -> 20으로 증가 (앱 시작 시에도 20개 로드)
-      );
-
-      return homeData;
-    } catch (e) {
-      debugPrint('[SplashScreen] 피드 데이터 로드 실패: $e');
-      return HomeData(friendsPosts: [], allPosts: []);
     }
   }
 
@@ -312,6 +271,34 @@ class _SplashScreenState extends State<SplashScreen>
     }
   }
 
+  /// 첫 회원가입 여부 확인 (플래그 확인 후 제거) - 계정별로 체크
+  Future<bool> _checkAndClearFirstSignupFlag() async {
+    try {
+      final authService = AuthService();
+      final userId = await authService.getUserIdFromToken();
+
+      if (userId == null) {
+        debugPrint('[SplashScreen] 사용자 ID를 가져올 수 없어 첫 회원가입 체크 불가');
+        return false;
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      final key = 'is_first_signup_$userId';
+      final isFirstSignup = prefs.getBool(key) ?? false;
+
+      if (isFirstSignup) {
+        // 플래그를 확인했으므로 제거 (한 번만 실행되도록)
+        await prefs.remove(key);
+        debugPrint('[SplashScreen] 첫 회원가입 감지됨 (userId: $userId)');
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[SplashScreen] 첫 회원가입 플래그 확인 실패: $e');
+      return false;
+    }
+  }
+
   Future<void> _loadUserData() async {
     try {
       final userProvider = context.read<UserProvider>();
@@ -321,18 +308,30 @@ class _SplashScreenState extends State<SplashScreen>
 
       // 그 다음 서버에서 최신 정보 가져오기
       await userProvider.fetchMyProfile();
+
+      // 🎯 첫 회원가입 여부 확인
+      final isFirstSignup = await _checkAndClearFirstSignupFlag();
+      if (isFirstSignup) {
+        // 첫 회원가입인 경우 상태 저장
+        setState(() {
+          _isFirstSignup = true;
+        });
+        debugPrint('[SplashScreen] 첫 회원가입 사용자 감지됨 - 온보딩 플로우로 이동 예정');
+      }
     } catch (e) {
       // 유저 정보 로드 실패는 앱 시작을 막지 않음
     }
   }
 
-  Future<void> _loadRecommendedPosts() async {
+  /// 🎯 검색 화면용 데이터 미리 로드 (추천 포스트만)
+  Future<void> _loadSearchScreenData() async {
     try {
-      // SearchService를 통해 추천 포스트 비동기 로드
       final searchService = SearchService();
-      await searchService.fetchRecommendedPosts(page: 0, size: 5);
+      // 추천 포스트 20개만 로드 (5개는 Hero, 나머지는 그리드용)
+      await searchService.fetchRecommendedPosts(page: 0, size: 20);
     } catch (e) {
-      // 추천 포스트 로드 실패는 앱 시작을 막지 않음
+      // 데이터 로드 실패는 앱 시작을 막지 않음
+      debugPrint('[SplashScreen] 검색 화면 데이터 로드 실패: $e');
     }
   }
 
@@ -455,13 +454,36 @@ class _SplashScreenState extends State<SplashScreen>
       return;
     }
 
+    // 🎯 첫 회원가입이면 온보딩 플로우로 이동
+    // ✅ 임시: 포스트에서 진입한 경우(skipOnboarding=true)는 온보딩 플로우 스킵
+    if (result.loggedIn && !_isFirstSignup && !widget.skipOnboarding) {
+      //테스트 (반대로))
+      await _fadeOutController.forward();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (_, __, ___) => const OnboardingFlow(),
+          transitionDuration: const Duration(milliseconds: 400),
+          transitionsBuilder: (_, animation, __, child) {
+            return FadeTransition(
+              opacity: CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeInOut,
+              ),
+              child: child,
+            );
+          },
+        ),
+      );
+      return;
+    }
+
     if (result.loggedIn) {
       // ✅ RootShell은 항상 초기화 (홈 화면은 항상 생성됨)
       // 앱이 종료된 상태에서 딥링크로 열릴 때는 스플래시를 보여주고 초기화 후 타겟 페이지로 이동
       // RootShell을 먼저 "아래에" 렌더링해두고, 스플래시 오버레이만 페이드아웃
       // 화면 전환 시 포스트 리스트/배경이 "빡" 하고 늦게 나타나는 느낌을 줄인다.
       setState(() {
-        _preloadedHomeData = result.homeData;
         _showRootShell = true;
       });
 
@@ -481,27 +503,6 @@ class _SplashScreenState extends State<SplashScreen>
       setState(() {
         _hideSplashOverlay = true;
       });
-
-      // ✅ 스플래시 로고 애니메이션이 끝난 뒤에만 이미지 프리캐시 시작
-      // (스플래시 중 precacheImage/디코딩이 돌면 원형 스피너가 버벅여 보일 수 있음)
-      try {
-        final homeData = result.homeData;
-        if (homeData != null && !homeData.isEmpty) {
-          final primaryPosts =
-              homeData.friendsPosts.isNotEmpty
-                  ? homeData.friendsPosts
-                  : homeData.allPosts;
-          if (primaryPosts.isNotEmpty) {
-            _homeDataService.startPreloadingImagesInBackground(
-              primaryPosts,
-              context,
-              count: 5,
-            );
-          }
-        }
-      } catch (e) {
-        debugPrint('[SplashScreen] 이미지 프리캐시 시작 실패(무시): $e');
-      }
     } else {
       // 로그인 화면으로 전환 (스택 초기화)
       await _fadeOutController.forward();
@@ -525,8 +526,7 @@ class _SplashScreenState extends State<SplashScreen>
         fit: StackFit.expand,
         children: [
           // ✅ 홈을 미리 렌더링 (스플래시가 위에 덮여있어서 사용자는 못 봄)
-          if (_showRootShell)
-            RootShell(initialIndex: 0, preloadedHomeData: _preloadedHomeData),
+          if (_showRootShell) RootShell(initialIndex: 0),
 
           // ✅ 스플래시 오버레이 (페이드아웃 후 제거)
           if (!_hideSplashOverlay)

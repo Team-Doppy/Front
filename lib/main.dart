@@ -6,16 +6,12 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/screens/search_screen.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/screens/home_screen.dart';
-import 'package:doppy/data/services/home_data_service.dart';
 import 'package:doppy/pages/components/custom_bottom_navigation_bar.dart';
 import 'package:doppy/pages/components/received_request_bottom_sheet.dart';
 import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/pages/screens/join_screen.dart';
-import 'package:doppy/providers/blur_overlay_provider.dart';
-import 'package:doppy/pages/components/blur_overlay_widget.dart';
-import 'package:doppy/pages/components/week_preview_content.dart';
-import 'package:doppy/pages/components/week_post_list_content.dart';
+// (기존) 전역 블러/주차 오버레이 제거됨
 
 import 'package:doppy/pages/screens/onboarding_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
@@ -324,7 +320,6 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => NodeComponentService()),
         ChangeNotifierProvider(create: (_) => StickerService()),
         ChangeNotifierProvider(create: (_) => UploadService()),
-        ChangeNotifierProvider(create: (_) => BlurOverlayProvider()),
       ],
       child: MyApp(
         hasSeenOnboarding: hasSeenOnboarding,
@@ -479,8 +474,7 @@ class MyApp extends StatelessWidget {
 
 class RootShell extends StatefulWidget {
   final int initialIndex; // 0:홈,1:검색,2:작성,3:프로필
-  final HomeData? preloadedHomeData; // 스플래시 선로딩 데이터 전달용
-  const RootShell({super.key, this.initialIndex = 0, this.preloadedHomeData});
+  const RootShell({super.key, this.initialIndex = 0});
 
   @override
   State<RootShell> createState() => _RootShellState();
@@ -513,12 +507,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     _homeTab = ValueListenableBuilder<int>(
       valueListenable: _activeIndexNotifier,
       builder: (context, idx, _) {
-        return HomeScreen(
-          key: HomeScreenState.globalKey,
-          preloadedHomeData: widget.preloadedHomeData,
-          isActive: idx == 0,
-          onOpenSearchScreen: (query) => _openSearchScreen(query),
-        );
+        return HomeScreen(key: HomeScreenState.globalKey, isActive: idx == 0);
       },
     );
 
@@ -907,37 +896,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
                   isSearching: context.watch<SearchProvider>().isSearchActive,
                 ),
               ),
-              // 전역 블러 오버레이 (바텀바까지 덮음)
-              Consumer<BlurOverlayProvider>(
-                builder: (context, blurProvider, _) {
-                  return BlurOverlayWidget(
-                    contentBuilder: (
-                      context,
-                      weekNumber,
-                      year,
-                      position,
-                      controller,
-                    ) {
-                      final overlayType = blurProvider.overlayType;
-
-                      // weekPostList일 때는 PostList 표시
-                      if (overlayType == BlurOverlayType.weekPostList) {
-                        return WeekPostListContent(
-                          weekNumber: weekNumber,
-                          year: year,
-                          controller: controller,
-                        );
-                      }
-
-                      // longPress일 때는 기존 WeekPreviewContent 표시
-                      return WeekPreviewContent(
-                        weekNumber: weekNumber,
-                        year: year,
-                      );
-                    },
-                  );
-                },
-              ),
+              // (기존) 전역 블러 오버레이 제거됨: 주차 프리뷰는 HomeScreen에서 OverlayEntry로 처리
             ],
           );
         },

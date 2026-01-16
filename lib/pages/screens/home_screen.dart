@@ -1,164 +1,142 @@
-import 'dart:ui';
-import 'package:doppy/pages/components/card_view.dart';
 import 'package:doppy/data/models/post_data.dart';
-import 'package:doppy/data/services/home_data_service.dart';
+import 'package:doppy/pages/components/week_preview_content.dart';
 import 'package:doppy/pages/components/weekly_contribution_grid.dart';
-import 'package:doppy/pages/components/error_state_widget.dart';
-import 'package:doppy/pages/screens/post_reader_screen.dart';
+import 'package:doppy/pages/components/weekly_contribution_test_data.dart';
+import 'package:doppy/pages/screens/week_post_list_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/providers/blur_overlay_provider.dart';
-import 'package:doppy/utils/network_utils.dart';
+import 'package:doppy/data/services/home_feed_service.dart';
+import 'package:doppy/utils/home_greetings.dart';
 import 'package:doppy/utils/week_utils.dart';
+import 'package:doppy/pages/components/home_widgets.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
-import 'dart:async';
 
 class HomeScreen extends StatefulWidget {
-  final HomeData? preloadedHomeData;
   final bool isActive; // 현재 탭이 활성 상태인지
-  final Function(String?)? onOpenSearchScreen; // 검색 화면 열기 콜백 (검색어 전달)
 
-  const HomeScreen({
-    super.key,
-    this.preloadedHomeData,
-    this.isActive = true,
-    this.onOpenSearchScreen,
-  });
+  const HomeScreen({super.key, this.isActive = true});
 
   @override
   State<HomeScreen> createState() => HomeScreenState();
 }
 
 class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  final HomeDataService _homeDataService = HomeDataService();
   final ScrollController _scrollController = ScrollController();
+
+  final HomeFeedService _homeFeedService = HomeFeedService();
 
   // 🎯 포그라운드 복귀 시 새로고침을 위한 GlobalKey
   static final GlobalKey<HomeScreenState> globalKey =
       GlobalKey<HomeScreenState>();
 
-  // 통합 포스트 리스트 (친구글 먼저, 추천글 뒤에)
-  List<PostData> _allPosts = [];
-  bool _allIsLoading = true;
-  bool _allIsLoadingMore = false;
-  NetworkError? _allError;
-  bool _allIsRetrying = false;
-  int _friendsCurrentPage = 0; // 친구글 페이지
-  int _recommendedCurrentPage = 0; // 추천글 페이지
-  bool _friendsHasMoreData = true;
-  bool _recommendedHasMoreData = true;
-  int _allLoadTick = 0;
-  bool _friendsLoaded = false; // 친구글 로드 완료 여부
-  StreamSubscription<dynamic>? _networkSub;
-  bool _refreshInProgress = false;
-
   // 잔디 심기 UI 관련 상태
   int? _selectedYear; // 선택된 연도
   int? _selectedWeek; // 선택된 주차
 
-  // 길게 누르기 미리보기 관련 상태
-  int? _longPressedWeek; // 길게 누른 주차 (로컬 추적용)
-  late final AnimationController _previewAnimationController;
+  // 길게 누르기 미리보기(블러 없이) 오버레이
+  OverlayEntry? _weekPreviewEntry;
+  Offset _weekPreviewPosition = Offset.zero;
+  int? _weekPreviewWeek;
+  int? _weekPreviewYear;
+
+  bool _isTestMode = false; // 테스트 모드 활성화 여부
+  DateTime? _testSignupAt; // 테스트용 가입일
+  DateTime? _testAsOf; // 테스트용 기준일(asOf) - 행 수를 늘리려면 필수
+  List<WeeklyContributionData>? _testContributions; // 테스트용 기여도 데이터
+
+  // 디버그 모드: 샘플 데이터 표시 여부 (빈 데이터 토글용)
+  bool _showSampleData = true;
 
   @override
   void initState() {
     super.initState();
 
-    // 스플래시에서 전달된 선로딩 데이터 반영
-    if (widget.preloadedHomeData != null) {
-      final homeData = widget.preloadedHomeData!;
-
-      // 친구글과 추천글을 합쳐서 단일 리스트로 구성
-      final combinedPosts = <PostData>[
-        ...homeData.friendsPosts,
-        ...homeData.allPosts,
-      ];
-
-      _allPosts = List<PostData>.from(combinedPosts);
-      _allIsLoading = false;
-      _friendsHasMoreData = homeData.friendsPosts.length == 20;
-      _recommendedHasMoreData = homeData.allPosts.length == 20;
-      _friendsCurrentPage = homeData.friendsPosts.isNotEmpty ? 1 : 0;
-      _recommendedCurrentPage = homeData.allPosts.isNotEmpty ? 1 : 0;
-      _friendsLoaded = true; // 스플래시에서 로드했으므로 완료로 표시
-    }
-
     // 초기 연도 설정
     _selectedYear = WeekUtils.getCurrentYear();
 
-    // 미리보기 애니메이션 컨트롤러 초기화
-    _previewAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 150), // 🎯 300ms → 150ms로 빠르게
-      vsync: this,
-    );
-
-    // 네트워크 에러는 API 요청 시점에서만 처리
-
-    // 백그라운드에서 필요한 데이터 로드 (인스타그램 방식)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // 네트워크 복구 시 자동 새로고침 (단발 락)
-      _networkSub?.cancel();
-      _networkSub = NetworkManager.onConnectivityChanged.listen((
-        dynamic v,
-      ) async {
-        final bool isOnline = v == true;
-        if (!mounted || !isOnline) return;
-        if (_refreshInProgress) return;
-        _refreshInProgress = true;
-        try {
-          if (_allPosts.isEmpty) {
-            await _loadAllPosts(refresh: true);
-          }
-        } catch (_) {
-        } finally {
-          _refreshInProgress = false;
-        }
-      });
-
       _loadProfileSafely();
-
-      // 초기 로드: 친구글 먼저, 그 다음 추천글 자동 로드
-      if (_allPosts.isEmpty && !_allIsLoading) {
-        _loadAllPosts(refresh: false);
-      }
-
-      // 스크롤 리스너 추가 (무한 스크롤)
-      _scrollController.addListener(_onScroll);
     });
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 200) {
-      if (!_allIsLoadingMore &&
-          (_friendsHasMoreData || _recommendedHasMoreData)) {
-        _loadMoreAllPosts();
-      }
-    }
   }
 
   @override
   void dispose() {
-    // 네트워크 구독 취소
-    _networkSub?.cancel();
     _scrollController.dispose();
-    _previewAnimationController.dispose();
+    _removeWeekPreview();
     super.dispose();
   }
 
-  void _resetAllFeed({bool showLoading = true}) {
-    setState(() {
-      _allPosts = [];
-      _friendsCurrentPage = 0;
-      _recommendedCurrentPage = 0;
-      _friendsHasMoreData = true;
-      _recommendedHasMoreData = true;
-      _allIsLoading = showLoading;
-      _allIsLoadingMore = false;
-      _allError = null;
-      _friendsLoaded = false; // 새로고침 시 친구글부터 다시 로드
-    });
+  void _removeWeekPreview() {
+    _weekPreviewEntry?.remove();
+    _weekPreviewEntry = null;
+    _weekPreviewWeek = null;
+    _weekPreviewYear = null;
+  }
+
+  void _showOrMoveWeekPreview({
+    required int year,
+    required int weekNumber,
+    required Offset globalPosition,
+  }) {
+    _weekPreviewYear = year;
+    _weekPreviewWeek = weekNumber;
+    _weekPreviewPosition = globalPosition;
+
+    if (_weekPreviewEntry == null) {
+      final overlay = Overlay.of(context, rootOverlay: true);
+
+      _weekPreviewEntry = OverlayEntry(
+        builder: (context) {
+          final media = MediaQuery.of(context);
+          final size = media.size;
+          final safeTop = media.padding.top;
+          final safeBottom = media.padding.bottom;
+
+          // 프리뷰 카드 크기(WeekPreviewContent 기준)
+          const cardW = 250.0;
+          const cardH = 200.0;
+
+          // 손가락 근처에 표시(약간 위로)
+          double left = _weekPreviewPosition.dx - (cardW / 2);
+          double top = _weekPreviewPosition.dy - cardH - 16;
+
+          // 화면 밖으로 나가지 않도록 clamp
+          left = left.clamp(12.0, size.width - cardW - 12.0);
+          top = top.clamp(
+            safeTop + 12.0,
+            size.height - safeBottom - cardH - 12.0,
+          );
+
+          return Stack(
+            children: [
+              // 빈 곳 탭하면 닫기
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _removeWeekPreview,
+                ),
+              ),
+              Positioned(
+                left: left,
+                top: top,
+                child: IgnorePointer(
+                  child: WeekPreviewContent(
+                    weekNumber: _weekPreviewWeek ?? weekNumber,
+                    year: _weekPreviewYear ?? year,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+      overlay.insert(_weekPreviewEntry!);
+    } else {
+      _weekPreviewEntry?.markNeedsBuild();
+    }
   }
 
   Future<void> _loadProfileSafely() async {
@@ -171,307 +149,77 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _retryAllPosts() async {
-    setState(() {
-      _allIsRetrying = true;
-      _allError = null; // 에러 상태만 클리어 (데이터는 유지)
-    });
-
-    try {
-      // refresh=false로 호출해서 reset하지 않음
-      await _loadAllPosts(refresh: false);
-      // 재시도 후 0.5초 딜레이
-      await Future.delayed(const Duration(milliseconds: 500));
-    } finally {
-      setState(() {
-        _allIsRetrying = false;
-      });
-    }
-  }
-
-  Future<void> _loadAllPosts({bool refresh = false}) async {
-    debugPrint(
-      '[HomeScreen] _loadAllPosts 시작 - refresh: $refresh, 현재 데이터: ${_allPosts.length}개, 친구글 로드 완료: $_friendsLoaded',
-    );
-
-    try {
-      if (refresh) {
-        _resetAllFeed(showLoading: true);
-      } else if (!_allIsRetrying) {
-        // 재시도 중이 아닐 때만 로딩 상태 변경
-        setState(() {
-          _allIsLoading = _allPosts.isEmpty;
-          _allError = null;
-        });
-      }
-
-      final int token = ++_allLoadTick;
-
-      // 친구글을 아직 로드하지 않았으면 먼저 로드
-      if (!_friendsLoaded) {
-        try {
-          final friendsPosts = await _homeDataService.loadFriendsPosts(
-            page: _friendsCurrentPage,
-            size: 20,
-            refresh: refresh,
-          );
-
-          if (token != _allLoadTick) return;
-
-          // 🎯 이미지 프리캐싱: 친구글은 처음 3개만 동기
-          if (friendsPosts.isNotEmpty) {
-            if (refresh || _allPosts.isEmpty) {
-              await _homeDataService.precacheImages(
-                friendsPosts,
-                context,
-                syncCount: 3,
-                preloadVideos: false,
-              );
-            } else {
-              _homeDataService.precacheImages(
-                friendsPosts,
-                context,
-                syncCount: 0,
-                preloadVideos: false,
-              );
-            }
-          }
-
-          setState(() {
-            if (refresh) {
-              _allPosts = friendsPosts;
-            } else {
-              _allPosts.addAll(friendsPosts);
-            }
-            _friendsHasMoreData = friendsPosts.length == 20;
-            _friendsCurrentPage++;
-            _friendsLoaded = true;
-          });
-
-          debugPrint(
-            '[HomeScreen] 친구글 로드 성공: ${friendsPosts.length}개 (페이지 ${_friendsCurrentPage - 1})',
-          );
-        } catch (e) {
-          final networkError = NetworkUtils.parseError(e);
-          debugPrint('[HomeScreen] 친구글 로드 실패: ${networkError.message}');
-
-          // 친구글 로드 실패해도 추천글은 시도
-          setState(() {
-            _friendsLoaded = true; // 실패해도 다음 단계로 진행
-          });
-        }
-      }
-
-      // 추천글 로드 (친구글 로드 완료 후 또는 친구글이 없을 때)
-      if (_friendsLoaded && _recommendedHasMoreData) {
-        try {
-          final recommendedPosts = await _homeDataService.loadAllPosts(
-            page: refresh ? 0 : _recommendedCurrentPage, // 새로고침 시 페이지 0부터
-            size: 20,
-            refresh: refresh, // 새로고침 시 추천글도 새로고침
-          );
-
-          if (token != _allLoadTick) return;
-
-          // 🎯 이미지 프리캐싱: 추천글은 모두 비동기로 처리
-          if (recommendedPosts.isNotEmpty) {
-            _homeDataService.precacheImages(
-              recommendedPosts,
-              context,
-              syncCount: 0,
-            );
-          }
-
-          setState(() {
-            _allPosts.addAll(recommendedPosts);
-            _recommendedHasMoreData = recommendedPosts.length == 20;
-            _recommendedCurrentPage++;
-          });
-
-          debugPrint(
-            '[HomeScreen] 추천글 로드 성공: ${recommendedPosts.length}개 (페이지 ${_recommendedCurrentPage - 1})',
-          );
-        } catch (e) {
-          final networkError = NetworkUtils.parseError(e);
-          debugPrint('[HomeScreen] 추천글 로드 실패: ${networkError.message}');
-
-          setState(() {
-            _recommendedHasMoreData = false;
-          });
-        }
-      }
-
-      if (token != _allLoadTick) return;
-
-      setState(() {
-        _allIsLoading = false;
-        _allIsLoadingMore = false;
-        _allError = null; // 성공 시 에러 클리어
-      });
-
-      debugPrint(
-        '[HomeScreen] 전체 로드 완료: 총 ${_allPosts.length}개 (친구글: ${_friendsCurrentPage > 0 ? _friendsCurrentPage * 20 : 0}개, 추천글: ${_recommendedCurrentPage > 0 ? _recommendedCurrentPage * 20 : 0}개)',
-      );
-    } catch (e) {
-      final networkError = NetworkUtils.parseError(e);
-      debugPrint('[HomeScreen] 전체 로드 실패: ${networkError.message}');
-
-      setState(() {
-        _allError = networkError;
-        _allIsLoading = false;
-        _allIsLoadingMore = false;
-      });
-    }
-  }
-
-  Future<void> _loadMoreAllPosts() async {
-    if (_allIsLoadingMore) return;
-
-    // 친구글과 추천글 중 하나라도 더 로드할 데이터가 있으면 진행
-    if (!_friendsHasMoreData && !_recommendedHasMoreData) return;
-
-    setState(() {
-      _allIsLoadingMore = true;
-    });
-
-    // 친구글이 더 있으면 친구글부터, 없으면 추천글만
-    if (_friendsHasMoreData) {
-      try {
-        final friendsPosts = await _homeDataService.loadFriendsPosts(
-          page: _friendsCurrentPage,
-          size: 20,
-          refresh: false,
-        );
-
-        if (friendsPosts.isNotEmpty) {
-          _homeDataService.precacheImages(
-            friendsPosts,
-            context,
-            syncCount: 0,
-            preloadVideos: false,
-          );
-        }
-
-        setState(() {
-          _allPosts.addAll(friendsPosts);
-          _friendsHasMoreData = friendsPosts.length == 20;
-          _friendsCurrentPage++;
-        });
-
-        debugPrint('[HomeScreen] 친구글 추가 로드: ${friendsPosts.length}개');
-      } catch (e) {
-        debugPrint('[HomeScreen] 친구글 추가 로드 실패: $e');
-        setState(() {
-          _friendsHasMoreData = false;
-        });
-      }
-    }
-
-    // 추천글 로드
-    if (_recommendedHasMoreData) {
-      try {
-        final recommendedPosts = await _homeDataService.loadAllPosts(
-          page: _recommendedCurrentPage,
-          size: 20,
-          refresh: false,
-        );
-
-        if (recommendedPosts.isNotEmpty) {
-          _homeDataService.precacheImages(
-            recommendedPosts,
-            context,
-            syncCount: 0,
-          );
-        }
-
-        setState(() {
-          _allPosts.addAll(recommendedPosts);
-          _recommendedHasMoreData = recommendedPosts.length == 20;
-          _recommendedCurrentPage++;
-        });
-
-        debugPrint('[HomeScreen] 추천글 추가 로드: ${recommendedPosts.length}개');
-      } catch (e) {
-        debugPrint('[HomeScreen] 추천글 추가 로드 실패: $e');
-        setState(() {
-          _recommendedHasMoreData = false;
-        });
-      }
-    }
-
-    setState(() {
-      _allIsLoadingMore = false;
-    });
-  }
-
-  Widget _buildDynamicBackground() {
-    // 단색 배경으로 단순화
-    return Positioned.fill(
-      child: Container(color: Theme.of(context).colorScheme.background),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    return _buildGridSection();
+  }
 
-    return Stack(
-      children: [
-        _buildDynamicBackground(),
-        _buildContent(screenWidth),
-        // 길게 누르기 미리보기 오버레이는 이제 RootShell에서 전역으로 처리
+  void _handleS1EmptyActionTap() {
+    // TODO(서버 연동 후): 글 작성 화면으로 이동
+    debugPrint('지금 기록하기 버튼 클릭');
+  }
+
+  List<Widget> _buildHomeFeedSectionWidgets() {
+    // 디버그 빈 데이터 토글에서는 "원래 숨기는 섹션"도 빈 상태 UI를 확인할 수 있도록 허용
+    final debugShowEmptyStates = kDebugMode && !_showSampleData;
+
+    // 로케일 가져오기
+    final l10n = AppLocalizations.of(context);
+
+    // TODO(스플래시/서버 연동): 서버에서 받은 홈피드 데이터를 payload로 변환해서 주입
+    // 지금은 하드코딩 제거 요구사항에 맞춰 빈 payload만 사용 (UI는 빈 처리 규칙대로 동작)
+    final payload = const HomeFeedPayload.empty();
+
+    final chunks = _homeFeedService.buildChunks(
+      payload: payload,
+      debugShowEmptyStates: debugShowEmptyStates,
+      onS1EmptyActionTap: _handleS1EmptyActionTap,
+      onAddFriendTap: () => debugPrint('친구 추가 버튼 클릭'),
+      // 로케일 문자열 주입
+      emptyS1Line1: l10n.t('home_empty_s1_line1'),
+      emptyS1Line2Bold: l10n.t('home_empty_s1_line2'),
+      friendRecommendHeader: [
+        HomeTextChunk(l10n.t('home_friend_recommend_header')),
       ],
     );
+
+    return chunks.map((c) {
+      if (c is HomeSection1Chunk) {
+        return HomeWidgets.section1(
+          headerLine1: c.headerLine1,
+          headerLine2: c.headerLine2,
+          cards: c.cards,
+          hideWhenEmpty: c.hideWhenEmpty,
+          emptyMessage: c.emptyMessage,
+          emptyActionText: c.emptyActionText,
+          onEmptyActionTap: c.onEmptyActionTap,
+          bottomSpacing: c.bottomSpacing,
+        );
+      }
+      if (c is HomeSection2Chunk) {
+        return HomeWidgets.section2(
+          slides: c.slides,
+          hideWhenEmpty: c.hideWhenEmpty,
+          bottomSpacing: c.bottomSpacing,
+        );
+      }
+      if (c is HomeSection3Chunk) {
+        return HomeWidgets.section3(
+          header: c.header,
+          friends: c.friends,
+          hideWhenEmpty: c.hideWhenEmpty,
+          onAddFriendTap: c.onAddFriendTap,
+          emptyMessage: c.emptyMessage,
+          bottomSpacing: c.bottomSpacing,
+        );
+      }
+      return const SizedBox.shrink();
+    }).toList();
   }
 
-  Widget _buildContent(double screenWidth) {
-    // 단일 PostList로 통합 (친구글 + 추천글)
-    return _buildAllPostsSection(screenWidth);
-  }
-
-  Widget _buildAllPostsSection(double screenWidth) {
-    // 에러 상태 표시 (재시도 중이거나 에러가 있고 데이터가 비어있을 때)
-    if ((_allError != null || _allIsRetrying) &&
-        _allPosts.isEmpty &&
-        !_allIsLoading) {
-      return ErrorStateWidget(
-        error:
-            _allError ??
-            NetworkError(
-              type: NetworkErrorType.noConnection,
-              message: '오프라인 상태에요!',
-              userMessage: '오프라인 상태에요!',
-              isRetryable: true,
-            ),
-        onRetry: _retryAllPosts,
-        customTitle: '포스트를 불러올 수 없습니다',
-        isRetrying: _allIsRetrying,
-      );
-    }
-
-    // 기존 포스트 데이터를 분석하여 주차별 기여도 데이터 생성
+  Widget _buildGridSection() {
+    // 빈 기여도 데이터 생성 (포스트 로딩 제거됨)
     final contributions = _generateContributionsFromPosts();
-
-    // 필터링된 포스트 리스트 (주차 선택 시)
-    List<PostData> filteredPosts = _allPosts;
-    if (_selectedYear != null && _selectedWeek != null) {
-      filteredPosts =
-          _allPosts.where((post) {
-            try {
-              final postDate = DateTime.parse(post.createdAt);
-              final (
-                year: postYear,
-                weekNumber: postWeek,
-              ) = WeekUtils.getYearAndWeekFromUtc(postDate);
-              return postYear == _selectedYear && postWeek == _selectedWeek;
-            } catch (e) {
-              return false;
-            }
-          }).toList();
-    }
-
-    // 최대 5개까지만 표시
-    final displayedPosts = filteredPosts.take(5).toList();
 
     return SafeArea(
       child: CustomScrollView(
@@ -548,225 +296,36 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
           // 환영 인사
           SliverToBoxAdapter(child: _buildWelcomeMessage(context)),
-
           // 잔디 심기 UI (이번주 친구글)
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 16),
+              padding: const EdgeInsets.only(top: 8, bottom: 8),
               child: WeeklyContributionGrid(
                 year: _selectedYear ?? WeekUtils.getCurrentYear(),
+                signupAt: _testSignupAt,
+                asOf:
+                    _isTestMode
+                        ? (_testAsOf ?? DateTime.now())
+                        : DateTime.now(),
                 selectedWeek: _selectedWeek,
                 onWeekSelected: _handleWeekSelected,
-                contributions: contributions,
+                contributions: _isTestMode ? _testContributions : contributions,
                 onLongPress:
                     (year, weekNumber, position, cellCenter) =>
                         _handleWeekLongPress(year, weekNumber, position),
               ),
             ),
           ),
+          SliverToBoxAdapter(child: SizedBox(height: 50)),
+          if (kDebugMode) SliverToBoxAdapter(child: _buildTestModeButtons()),
 
-          // 섹션 헤더: 친구들 도피 (포스트가 있거나 로딩 중일 때만 표시)
-          if (!displayedPosts.isEmpty || _allIsLoading)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 12,
-                ),
-                child: Text(
-                  '친구들 도피',
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.3,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-              ),
-            ),
+          // 🧪 디버그 모드: 빈 데이터 토글 버튼
+          if (kDebugMode) SliverToBoxAdapter(child: _buildEmptyDataToggle()),
 
-          // 포스트 리스트
-          if (_allIsLoading && displayedPosts.isEmpty)
-            // 로딩 중
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate((context, index) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12.0),
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(
-                        horizontal: 0,
-                        vertical: 3,
-                      ),
-                      height: 125,
-                      child: Row(
-                        children: [
-                          // 썸네일 Shimmer
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 5),
-                            child: Container(
-                              width: 140,
-                              height: 125,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(11),
-                                border: Border.all(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.3),
-                                  width: 0.8,
-                                ),
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Container(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.surface.withOpacity(0.1),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          // 텍스트 영역 Shimmer
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Container(
-                                  width: double.infinity,
-                                  height: 16,
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Container(
-                                  width: screenWidth * 0.4,
-                                  height: 16,
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Container(
-                                  width: 80,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Container(
-                                  width: double.infinity,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Container(
-                                  width: screenWidth * 0.3,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }, childCount: 5),
-              ),
-            )
-          else if (displayedPosts.isEmpty)
-            // 빈 상태
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.article_outlined,
-                      size: 64,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.3),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      '포스트가 없습니다',
-                      style: GoogleFonts.notoSansKr(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w500,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.7),
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            // 카드뷰 리스트 (최대 5개)
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate((context, index) {
-                  if (index >= displayedPosts.length) {
-                    return const SizedBox.shrink();
-                  }
-
-                  final post = displayedPosts[index];
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 4.0),
-                    child: GestureDetector(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder:
-                                (context) => PostReaderScreen(
-                                  exported: post.toExportedData(),
-                                  heroTag: 'home-post-${post.id}-$index',
-                                ),
-                          ),
-                        );
-                      },
-                      child: CardView(
-                        post: post,
-                        isLast: index == displayedPosts.length - 1,
-                      ),
-                    ),
-                  );
-                }, childCount: displayedPosts.length),
-              ),
-            ),
-
-          // 하단 여백
-          const SliverToBoxAdapter(child: SizedBox(height: 100)),
+          // ====== 섹션 템플릿: HomeFeedService가 만든 청크를 렌더링 ======
+          SliverToBoxAdapter(
+            child: Column(children: _buildHomeFeedSectionWidgets()),
+          ),
         ],
       ),
     );
@@ -850,104 +409,182 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ? currentUser!.alias!
             : (currentUser?.username ?? '');
 
-    // 시간대별 인사말
-    final hour = DateTime.now().hour;
-    String greeting;
-    if (hour >= 5 && hour < 12) {
-      greeting = '좋은 아침이에요';
-    } else if (hour >= 12 && hour < 18) {
-      greeting = '안녕하세요';
-    } else if (hour >= 18 && hour < 22) {
-      greeting = '좋은 저녁이에요';
-    } else {
-      greeting = '안녕하세요';
-    }
+    // ✅ 로컬 시간대 사용 (미국/한국 등 사용자 위치에 따라 자동 적용)
+    // DateTime.now()는 디바이스의 현재 로컬 시간대를 반환합니다.
+    final now = DateTime.now();
+    final seedSalt = (currentUser?.username ?? displayName).trim();
+    final safeSeedSalt = seedSalt.isEmpty ? 'anon' : seedSalt;
+
+    // ✅ 홈 텍스트는 "그리드 상태" 기반이므로, 포스트가 없어도 contributions에서 신호를 만든다.
+    final contributionsForSignals =
+        _isTestMode
+            ? (_testContributions ?? const <WeeklyContributionData>[])
+            : _generateContributionsFromPosts();
+    final currentYW = WeekUtils.getCurrentYearAndWeek();
+    final postsThisWeek = contributionsForSignals
+        .where(
+          (c) =>
+              c.year == currentYW.year &&
+              c.weekNumber == currentYW.weekNumber &&
+              (c.postCount > 0),
+        )
+        .fold<int>(0, (acc, c) => acc + c.postCount);
+    final totalPosts = contributionsForSignals.fold<int>(
+      0,
+      (acc, c) => acc + c.postCount,
+    );
+    final weeklyStreak = _computeWeeklyStreakFromContributions(
+      contributionsForSignals,
+      currentYW.year,
+      currentYW.weekNumber,
+    );
+
+    final signals = HomeGreetingSignals(
+      displayName: displayName,
+      // 🎯 현재 User 모델에는 signupAt이 없어서, 테스트 모드에서만 주입
+      signupAt: _isTestMode ? _testSignupAt : null,
+      totalPosts: totalPosts,
+      postsThisWeek: postsThisWeek,
+      // 포스트 원본이 없어서 정확한 "마지막 작성일"은 계산 불가(필요해지면 week->date로 근사 가능)
+      lastPostAt: null,
+      // ✅ streakCount는 "연속 주(weekly streak)"로 사용
+      streakCount: weeklyStreak,
+      now: now, // 로컬 시간대 기준
+      seedSalt: safeSeedSalt,
+    );
+
+    final msg = HomeGreetings.pick(signals);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: _buildTwoLineHomeGreeting(context, msg),
+    );
+  }
+
+  Widget _buildTwoLineHomeGreeting(
+    BuildContext context,
+    HomeGreetingMessage msg,
+  ) {
+    final color = Theme.of(context).colorScheme.onSurface;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // ✅ 폰트는 2가지만: 얇은 것(w300) 또는 볼드(w700)
+    // ✅ 행간을 넓게 (1.4)로 여유 있게
+    // ✅ Noto Sans KR은 한글+영어 모두 지원하지만, 영어는 Noto Sans가 더 최적화됨
+    final line1Base = GoogleFonts.notoSansKr(
+      fontSize: 28,
+      fontWeight: FontWeight.w300, // 얇은 것
+      letterSpacing: -1,
+      height: 1.4, // 행간 넓게
+      color: color.withOpacity(0.85),
+    ).copyWith(
+      fontFamilyFallback: ['Noto Sans'], // 영어 폴백
+    );
+    // ✅ 볼드를 더 두껍게: letterSpacing을 더 줄이고, textShadow 추가
+    final line1Bold = GoogleFonts.notoSansKr(
+      fontSize: 28,
+      fontWeight: FontWeight.w900,
+      letterSpacing: -2.5, // 더 가깝게 (두껍게 보이게)
+      height: 1.4,
+      color: color.withOpacity(0.85),
+      shadows: [
+        // 약간의 shadow로 두께감 추가
+        Shadow(
+          offset: const Offset(0, 0.5),
+          blurRadius: 0,
+          color: color.withOpacity(isDark ? 0.3 : 0.15),
+        ),
+      ],
+    ).copyWith(
+      fontFamilyFallback: ['Noto Sans'], // 영어 폴백
+    );
+
+    final line2Base = GoogleFonts.notoSansKr(
+      fontSize: 28,
+      fontWeight: FontWeight.w300, // 얇은 것
+      letterSpacing: -1,
+      height: 1.4, // 행간 넓게
+      color: color,
+    ).copyWith(
+      fontFamilyFallback: ['Noto Sans'], // 영어 폴백
+    );
+    // ✅ 볼드를 더 두껍게: letterSpacing을 더 줄이고, textShadow 추가
+    final line2Bold = GoogleFonts.notoSansKr(
+      fontSize: 28,
+      fontWeight: FontWeight.w700,
+      letterSpacing: -1, // 더 가깝게 (두껍게 보이게)
+      height: 1.4,
+      color: color,
+      shadows: [
+        // 약간의 shadow로 두께감 추가
+        Shadow(
+          offset: const Offset(0, 0.8),
+          blurRadius: 0,
+          color: color.withOpacity(isDark ? 0.3 : 0.15),
+        ),
+      ],
+    ).copyWith(
+      fontFamilyFallback: ['Noto Sans'], // 영어 폴백
+    );
+
+    List<TextSpan> buildSpans(
+      List<HomeGreetingChunk> chunks,
+      TextStyle base,
+      TextStyle bold,
+    ) {
+      return chunks
+          .map((c) => TextSpan(text: c.text, style: c.bold ? bold : base))
+          .toList();
+    }
+
+    return RichText(
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(
         children: [
-          if (displayName.isNotEmpty)
-            RichText(
-              text: TextSpan(
-                style: GoogleFonts.notoSansKr(
-                  fontSize: 40,
-                  fontWeight: FontWeight.w300,
-                  letterSpacing: -0.5,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-                children: [
-                  TextSpan(text: '$greeting,\n'),
-                  TextSpan(
-                    text: displayName,
-                    style: GoogleFonts.notoSansKr(
-                      fontSize: 40,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.5,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else
-            Text(
-              greeting,
-              style: GoogleFonts.notoSansKr(
-                fontSize: 40,
-                fontWeight: FontWeight.w300,
-                letterSpacing: -0.5,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
+          ...buildSpans(msg.line1, line1Base, line1Bold),
+          const TextSpan(text: '\n'),
+          ...buildSpans(msg.line2, line2Base, line2Bold),
         ],
       ),
     );
   }
 
+  /// contributions 기반으로 "연속 주(weekly streak)" 계산
+  /// - currentYear/currentWeek부터 과거로 거슬러가며, 해당 주에 postCount>0이면 연속 카운트
+  int _computeWeeklyStreakFromContributions(
+    List<WeeklyContributionData> contributions,
+    int currentYear,
+    int currentWeek,
+  ) {
+    final map = <int, int>{};
+    for (final c in contributions) {
+      if (c.postCount <= 0) continue;
+      map[c.weekNumber] = (map[c.weekNumber] ?? 0) + c.postCount;
+    }
+
+    int streak = 0;
+    for (int w = currentWeek; w >= 1; w--) {
+      final has = (map[w] ?? 0) > 0;
+      if (!has) break;
+      streak++;
+    }
+    return streak;
+  }
+
   /// 주차 길게 누르기 핸들러
   void _handleWeekLongPress(int year, int weekNumber, Offset? position) {
-    final blurProvider = context.read<BlurOverlayProvider>();
-
     if (weekNumber == 0) {
-      // 종료: 애니메이션 역재생 후 상태 초기화
-      // 🎯 weekPostList 타입일 때는 hideBlurOverlay 호출하지 않음 (탭으로 열린 경우)
-      // 🎯 또는 _longPressedWeek가 null이면 롱프레스가 시작되지 않은 것이므로 무시
-      if (blurProvider.overlayType == BlurOverlayType.weekPostList ||
-          _longPressedWeek == null) {
-        debugPrint(
-          '[HomeScreen] _handleWeekLongPress: weekNumber==0이지만 weekPostList 타입이거나 롱프레스가 시작되지 않았으므로 hideBlurOverlay 호출 안 함',
-        );
-        setState(() => _longPressedWeek = null);
-        return;
-      }
-
-      debugPrint(
-        '[HomeScreen] _handleWeekLongPress: weekNumber==0, hideBlurOverlay 호출',
-      );
-      _previewAnimationController.reverse().then((_) {
-        if (mounted) {
-          blurProvider.hideBlurOverlay();
-          setState(() => _longPressedWeek = null);
-        }
-      });
+      _removeWeekPreview();
       return;
     }
 
-    // 시작 또는 위치 업데이트
-    if (_longPressedWeek == null) {
-      setState(() => _longPressedWeek = weekNumber);
-      blurProvider.showBlurOverlay(
-        year: year,
-        weekNumber: weekNumber,
-        position: position,
-        controller: _previewAnimationController,
-      );
-      _previewAnimationController.forward();
-    } else {
-      blurProvider.updateBlurPosition(position);
-    }
+    if (position == null) return;
+    _showOrMoveWeekPreview(
+      year: year,
+      weekNumber: weekNumber,
+      globalPosition: position,
+    );
   }
 
   /// 주차 선택 핸들러
@@ -964,76 +601,268 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    // 해당 주차의 포스트 필터링 (포스트가 있든 없든 항상 블러 오버레이 표시)
-    debugPrint('[HomeScreen] 포스트 필터링 시작: 전체 포스트 ${_allPosts.length}개');
-    final filteredPosts =
-        _allPosts.where((post) {
-          try {
-            final postDate = DateTime.parse(post.createdAt);
-            final (
-              year: postYear,
-              weekNumber: postWeek,
-            ) = WeekUtils.getYearAndWeekFromUtc(postDate);
-            return postYear == year && postWeek == weekNumber;
-          } catch (e) {
-            return false;
-          }
-        }).toList();
-    debugPrint('[HomeScreen] 필터링된 포스트: ${filteredPosts.length}개');
+    // 롱프레스 프리뷰가 떠있으면 닫고 이동
+    _removeWeekPreview();
 
-    // 블러 오버레이 표시 (포스트가 있든 없든 항상 표시)
-    final blurProvider = context.read<BlurOverlayProvider>();
+    setState(() {
+      _selectedYear = year;
+      _selectedWeek = weekNumber;
+    });
 
-    // 🎯 단순화: 애니메이션 컨트롤러가 완료 상태면 리셋
-    if (_previewAnimationController.isCompleted) {
-      _previewAnimationController.reset();
+    // 포스트 로딩 제거 상태라서 일단 빈 리스트로 전달 (화면 구조만 먼저)
+    final filteredPosts = <PostData>[];
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (context) => WeekPostListScreen(
+              year: year,
+              weekNumber: weekNumber,
+              posts: filteredPosts,
+            ),
+      ),
+    );
+  }
+
+  /// 🧪 디버그 모드: 빈 데이터 토글 버튼
+  Widget _buildEmptyDataToggle() {
+    if (!kDebugMode) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.blue.withOpacity(0.05),
+        border: Border(
+          top: BorderSide(color: Colors.blue.withOpacity(0.2), width: 1),
+          bottom: BorderSide(color: Colors.blue.withOpacity(0.2), width: 1),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.bug_report, size: 16, color: Colors.blue.shade700),
+          const SizedBox(width: 8),
+          Text(
+            '빈 데이터 토글',
+            style: GoogleFonts.notoSansKr(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.blue.shade700,
+            ),
+          ),
+          const Spacer(),
+          Switch(
+            value: _showSampleData,
+            onChanged: (value) {
+              setState(() {
+                _showSampleData = value;
+              });
+            },
+            activeColor: Colors.blue.shade700,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _showSampleData ? '샘플 데이터' : '빈 데이터',
+            style: GoogleFonts.notoSansKr(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: Colors.blue.shade700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 🧪 테스트 모드 버튼 UI (가로 스크롤 한 줄)
+  Widget _buildTestModeButtons() {
+    if (!kDebugMode) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.orange.withOpacity(0.05),
+        border: Border(
+          top: BorderSide(color: Colors.orange.withOpacity(0.2), width: 1),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 헤더 (리셋 버튼 포함)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                Icon(Icons.bug_report, size: 14, color: Colors.orange.shade700),
+                const SizedBox(width: 4),
+                Text(
+                  '테스트 모드',
+                  style: GoogleFonts.notoSansKr(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.orange.shade700,
+                  ),
+                ),
+                const Spacer(),
+                if (_isTestMode)
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _isTestMode = false;
+                        _testSignupAt = null;
+                        _testAsOf = null;
+                        _testContributions = null;
+                      });
+                    },
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      '리셋',
+                      style: GoogleFonts.notoSansKr(
+                        fontSize: 10,
+                        color: Colors.red,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          // 가로 스크롤 버튼 리스트
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                _buildTestButton('1. 가입일 초반', () => _loadTestCase(1)),
+                const SizedBox(width: 6),
+                _buildTestButton('2. 가입일 중반', () => _loadTestCase(2)),
+                const SizedBox(width: 6),
+                _buildTestButton('3. 가입일 말', () => _loadTestCase(3)),
+                const SizedBox(width: 6),
+                _buildTestButton('4. 포스트 많음', () => _loadTestCase(4)),
+                const SizedBox(width: 6),
+                _buildTestButton('5. 포스트 적음', () => _loadTestCase(5)),
+                const SizedBox(width: 6),
+                _buildTestButton('6. 그라데이션', () => _loadTestCase(6)),
+                const SizedBox(width: 6),
+                _buildTestButton('7. 최소 2행', () => _loadTestCase(7)),
+                const SizedBox(width: 6),
+                _buildTestButton('8. 오늘+미리보기', () => _loadTestCase(8)),
+                const SizedBox(width: 6),
+                _buildTestButton('9. 연말(45셀)', () => _loadTestCase(9)),
+                const SizedBox(width: 6),
+                _buildTestButton('10. 연중반(30셀)', () => _loadTestCase(10)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTestButton(String label, VoidCallback onPressed) {
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        backgroundColor: Colors.orange.shade50,
+        foregroundColor: Colors.orange.shade900,
+        elevation: 0,
+        minimumSize: const Size(0, 32),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(color: Colors.orange.shade200),
+        ),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.notoSansKr(
+          fontSize: 10,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
+  /// 🧪 테스트 케이스 로드 (통합 함수)
+  void _loadTestCase(int caseNumber) {
+    ({
+      DateTime signupAt,
+      DateTime asOf,
+      List<WeeklyContributionData> contributions,
+      int year,
+    })
+    testData;
+
+    switch (caseNumber) {
+      case 1:
+        testData = WeeklyContributionTestData.generateTestCase1();
+        break;
+      case 2:
+        testData = WeeklyContributionTestData.generateTestCase2();
+        break;
+      case 3:
+        testData = WeeklyContributionTestData.generateTestCase3();
+        break;
+      case 4:
+        testData = WeeklyContributionTestData.generateTestCase4();
+        break;
+      case 5:
+        testData = WeeklyContributionTestData.generateTestCase5();
+        break;
+      case 6:
+        testData = WeeklyContributionTestData.generateTestCase6();
+        break;
+      case 7:
+        testData = WeeklyContributionTestData.generateTestCase7();
+        break;
+      case 8:
+        testData = WeeklyContributionTestData.generateTestCase8();
+        break;
+      case 9:
+        testData = WeeklyContributionTestData.generateTestCase9();
+        break;
+      case 10:
+        testData = WeeklyContributionTestData.generateTestCase10();
+        break;
+      default:
+        return;
     }
 
-    // 🎯 상태 설정 및 애니메이션 시작을 한 번에
-    blurProvider.showWeekPostListOverlay(
-      weekNumber: weekNumber,
-      year: year,
-      controller: _previewAnimationController,
-      filteredPosts: filteredPosts,
-    );
-
-    // 🎯 애니메이션 시작 (단순화: then 제거)
-    _previewAnimationController.forward();
+    setState(() {
+      _isTestMode = true;
+      _testSignupAt = testData.signupAt;
+      _testAsOf = testData.asOf;
+      _testContributions = testData.contributions;
+      _selectedYear = testData.year;
+    });
   }
 
   /// 기존 포스트 데이터를 분석하여 주차별 기여도 데이터 생성
   List<WeeklyContributionData> _generateContributionsFromPosts() {
+    // 포스트 로딩 제거됨 - 빈 리스트 반환
     final year = _selectedYear ?? WeekUtils.getCurrentYear();
     final totalWeeks = WeekUtils.getWeeksInYear(year);
     final contributions = <WeeklyContributionData>[];
 
-    // 주차별로 포스트 개수 집계
-    final weekPostCounts = <int, int>{};
-    for (final post in _allPosts) {
-      try {
-        final postDate = DateTime.parse(post.createdAt);
-        final (
-          year: postYear,
-          weekNumber: postWeek,
-        ) = WeekUtils.getYearAndWeekFromUtc(postDate);
-
-        if (postYear == year) {
-          weekPostCounts[postWeek] = (weekPostCounts[postWeek] ?? 0) + 1;
-        }
-      } catch (e) {
-        debugPrint('[HomeScreen] 포스트 날짜 파싱 실패: ${post.createdAt}, 에러: $e');
-      }
-    }
-
-    // 모든 주차에 대해 데이터 생성
+    // 모든 주차에 대해 빈 데이터 생성
     for (int week = 1; week <= totalWeeks; week++) {
-      final postCount = weekPostCounts[week] ?? 0;
       contributions.add(
         WeeklyContributionData(
           year: year,
           weekNumber: week,
-          hasPost: postCount > 0,
-          postCount: postCount,
+          hasPost: false,
+          postCount: 0,
         ),
       );
     }

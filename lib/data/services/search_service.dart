@@ -22,7 +22,6 @@ class SearchService extends ChangeNotifier {
   Timer? _debounce;
   String _selectedCategory = '추천'; // '추천', '계정'
   bool _isSearching = false; // 검색 중인지 여부
-  bool _isFocused = false; // 검색창 포커스 여부
   bool _viewLocked = false; // 화면 전환 잠금 (네비게이션 중 레이아웃 고정)
   // 블로그 제목 검색 단발 결과 보관
   List<SearchContentItem> _blogResults = [];
@@ -48,6 +47,14 @@ class SearchService extends ChangeNotifier {
   // 🎯 추천 포스트 (서버)
   List<SearchContentItem> _recommendedPosts = [];
   bool _isRecommendedLoading = false;
+  bool _recommendedHasMore = true;
+  int _recommendedCurrentPage = 0;
+
+  // 🎯 친구 포스트 (서버)
+  List<SearchContentItem> _friendsPosts = [];
+  bool _isFriendsLoading = false;
+  bool _friendsHasMore = true;
+  int _friendsCurrentPage = 0;
 
   // 통합 컨텐츠 데이터 초기화
   late final List<SearchContentItem> _allContentItems = [];
@@ -66,7 +73,6 @@ class SearchService extends ChangeNotifier {
   String? get error => _error;
   String get selectedCategory => _selectedCategory;
   bool get isSearching => _isSearching;
-  bool get isFocused => _isFocused;
   bool get isViewLocked => _viewLocked;
   bool get hasSearched => _query.isNotEmpty && !_isSearching;
   List<SearchContentItem> get contentItems {
@@ -112,6 +118,12 @@ class SearchService extends ChangeNotifier {
   // 🎯 추천 포스트 getter
   List<SearchContentItem> get recommendedPosts => _recommendedPosts;
   bool get isRecommendedLoading => _isRecommendedLoading;
+  bool get recommendedHasMore => _recommendedHasMore;
+
+  // 🎯 친구 포스트 getter
+  List<SearchContentItem> get friendsPosts => _friendsPosts;
+  bool get isFriendsLoading => _isFriendsLoading;
+  bool get friendsHasMore => _friendsHasMore;
 
   // 검색 기록을 계정 형태로 변환
   List<SearchContentItem> get searchHistoryAsAccounts {
@@ -324,10 +336,20 @@ class SearchService extends ChangeNotifier {
   /// 🎯 추천 포스트 가져오기
   Future<void> fetchRecommendedPosts({
     int page = 0,
-    int size = 5,
+    int size = 20,
     bool forceRefresh = false,
   }) async {
     try {
+      if (forceRefresh) {
+        _recommendedPosts = [];
+        _recommendedCurrentPage = 0;
+        _recommendedHasMore = true;
+      }
+
+      if (page == 0 && _recommendedPosts.isNotEmpty && !forceRefresh) {
+        return; // 이미 로드된 경우 스킵
+      }
+
       // 🎯 forceRefresh가 true이거나 데이터가 없으면 로딩 표시
       final hasExistingData = _recommendedPosts.isNotEmpty;
       if (forceRefresh || !hasExistingData) {
@@ -349,7 +371,7 @@ class SearchService extends ChangeNotifier {
         final responseData = response.data as Map<String, dynamic>;
         final List<dynamic> posts = responseData['content'] ?? [];
 
-        _recommendedPosts =
+        final newPosts =
             posts
                 .map((post) {
                   if (post is Map<String, dynamic>) {
@@ -372,6 +394,12 @@ class SearchService extends ChangeNotifier {
                 .whereType<SearchContentItem>()
                 .toList();
 
+        if (page == 0) {
+          _recommendedPosts = newPosts;
+        } else {
+          _recommendedPosts.addAll(newPosts);
+        }
+
         // 포스트 데이터 저장
         for (final post in posts) {
           if (post is Map<String, dynamic>) {
@@ -382,21 +410,36 @@ class SearchService extends ChangeNotifier {
           }
         }
 
+        _recommendedHasMore = newPosts.length == size;
+        _recommendedCurrentPage = page + 1;
+
         debugPrint(
-          '[RecommendedPosts] loaded: ${_recommendedPosts.length} posts',
+          '[RecommendedPosts] loaded: ${_recommendedPosts.length} posts (hasMore: $_recommendedHasMore)',
         );
       } else {
-        _recommendedPosts = [];
+        if (page == 0) {
+          _recommendedPosts = [];
+        }
+        _recommendedHasMore = false;
         debugPrint('[RecommendedPosts] failed: ${response.statusCode}');
       }
     } catch (e, stackTrace) {
       debugPrint('[RecommendedPosts] error: $e');
       debugPrint('[RecommendedPosts] stackTrace: $stackTrace');
-      _recommendedPosts = [];
+      if (page == 0) {
+        _recommendedPosts = [];
+      }
+      _recommendedHasMore = false;
     } finally {
       _isRecommendedLoading = false;
       notifyListeners();
     }
+  }
+
+  /// 🎯 추천 포스트 더 불러오기
+  Future<void> loadMoreRecommendedPosts() async {
+    if (!_recommendedHasMore || _isRecommendedLoading) return;
+    await fetchRecommendedPosts(page: _recommendedCurrentPage);
   }
 
   /// 🎯 추천 포스트 데이터가 없으면 로드
@@ -413,6 +456,111 @@ class SearchService extends ChangeNotifier {
   /// 추천 게시글 새로고침
   Future<void> refreshRecommendations() async {
     _allContentItems.clear();
+  }
+
+  /// 🎯 친구 포스트 가져오기
+  Future<void> fetchFriendsPosts({
+    int page = 0,
+    int size = 20,
+    bool forceRefresh = false,
+  }) async {
+    try {
+      if (forceRefresh) {
+        _friendsPosts = [];
+        _friendsCurrentPage = 0;
+        _friendsHasMore = true;
+      }
+
+      if (page == 0 && _friendsPosts.isNotEmpty && !forceRefresh) {
+        return; // 이미 로드된 경우 스킵
+      }
+
+      _isFriendsLoading = true;
+      notifyListeners();
+
+      debugPrint('[FriendsPosts] Fetching with page: $page, size: $size');
+
+      final response = await _dio.get(
+        '/api/posts/friends',
+        queryParameters: {'page': page, 'size': size},
+        options: Options(receiveTimeout: const Duration(seconds: 30)),
+      );
+
+      debugPrint('[FriendsPosts] Response status: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final responseData = response.data as Map<String, dynamic>;
+        final List<dynamic> posts = responseData['content'] ?? [];
+
+        final newPosts =
+            posts
+                .map((post) {
+                  if (post is Map<String, dynamic>) {
+                    return SearchContentItem.post(
+                      id: post['id']?.toString() ?? '',
+                      title: post['title'] ?? '',
+                      author: post['author'] ?? '',
+                      imageUrl: post['thumbnailImageUrl'] ?? '',
+                      likes: (post['likeCount'] as num?)?.toInt() ?? 0,
+                      comments: (post['commentCount'] as num?)?.toInt() ?? 0,
+                      summary: post['summary'],
+                      content: post['content'],
+                      parsedContent: post['parsedContent'],
+                      profileImageUrl: post['authorProfileImageUrl'],
+                      createdAt: post['createdAt'],
+                    );
+                  }
+                  return null;
+                })
+                .whereType<SearchContentItem>()
+                .toList();
+
+        if (page == 0) {
+          _friendsPosts = newPosts;
+        } else {
+          _friendsPosts.addAll(newPosts);
+        }
+
+        // 포스트 데이터 저장
+        for (final post in posts) {
+          if (post is Map<String, dynamic>) {
+            final id = post['id']?.toString() ?? '';
+            if (id.isNotEmpty) {
+              _postData[id] = post;
+            }
+          }
+        }
+
+        _friendsHasMore = newPosts.length == size;
+        _friendsCurrentPage = page + 1;
+
+        debugPrint(
+          '[FriendsPosts] loaded: ${_friendsPosts.length} posts (hasMore: $_friendsHasMore)',
+        );
+      } else {
+        if (page == 0) {
+          _friendsPosts = [];
+        }
+        _friendsHasMore = false;
+        debugPrint('[FriendsPosts] failed: ${response.statusCode}');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('[FriendsPosts] error: $e');
+      debugPrint('[FriendsPosts] stackTrace: $stackTrace');
+      if (page == 0) {
+        _friendsPosts = [];
+      }
+      _friendsHasMore = false;
+    } finally {
+      _isFriendsLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 🎯 친구 포스트 더 불러오기
+  Future<void> loadMoreFriendsPosts() async {
+    if (!_friendsHasMore || _isFriendsLoading) return;
+    await fetchFriendsPosts(page: _friendsCurrentPage);
   }
 
   /// 최근 본 컨텐츠에 추가
@@ -470,6 +618,10 @@ class SearchService extends ChangeNotifier {
       _filteredItems = [];
       _lastAccountQuery = '';
       _lastAccountCount = -1;
+      // ✅ 검색 중이 아니므로 플래그 해제
+      if (_query == q) {
+        _isSearching = false;
+      }
       notifyListeners();
       return;
     }
@@ -481,6 +633,11 @@ class SearchService extends ChangeNotifier {
       debugPrint(
         '[RealTime] skip - query "$q" starts with "$_lastAccountQuery" with ${_lastAccountCount} results',
       );
+      // ✅ skip하는 경우에도 플래그 해제
+      if (_query == q) {
+        _isSearching = false;
+      }
+      notifyListeners();
       return;
     }
 
@@ -559,7 +716,20 @@ class SearchService extends ChangeNotifier {
       _lastAccountCount = 0;
     }
 
+    // ✅ 현재 쿼리에 대한 요청이 끝났다면 검색중 플래그 해제 (항상 해제)
+    if (_query == q) {
+      _isSearching = false;
+    }
     notifyListeners();
+  }
+
+  /// 🎯 검색 중 플래그를 강제로 해제 (화면 전환 시 사용)
+  void clearSearchingFlag() {
+    if (_isSearching) {
+      debugPrint('[SearchService] 강제로 검색 중 플래그 해제');
+      _isSearching = false;
+      notifyListeners();
+    }
   }
 
   /// 제목으로 블로그 단발 검색 (검색 버튼/엔터 콜백에서 호출)
@@ -976,7 +1146,6 @@ class SearchService extends ChangeNotifier {
     debugPrint('[Search] clear');
     _query = '';
     _filteredItems = List.from(_allContentItems);
-    _isFocused = false;
     _isSearching = false;
     _selectedCategory = '추천';
     _lastAccountQuery = '';
@@ -991,7 +1160,6 @@ class SearchService extends ChangeNotifier {
   void resetToInitial() {
     _query = '';
     _filteredItems = List.from(_allContentItems);
-    _isFocused = false;
     _isSearching = false;
     _selectedCategory = '추천';
     _isLoading = false;
@@ -1058,16 +1226,6 @@ class SearchService extends ChangeNotifier {
       debugPrint('[Friend:$actionName][UNEXPECTED] $e');
       return false;
     }
-  }
-
-  /// 포커스 상태 업데이트
-  void setFocused(bool v) {
-    if (_viewLocked) return; // 잠금 중에는 포커스 변화 무시
-    if (_isFocused == v) return;
-    _isFocused = v;
-
-    // 🎯 포커스 변경은 즉시 반영되어야 하므로 지연 없이 바로 notify
-    notifyListeners();
   }
 
   void lockView() {

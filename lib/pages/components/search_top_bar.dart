@@ -39,31 +39,16 @@ class SearchTopBar extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // 🎯 검색 중일 때는 뒤로가기 버튼 숨김
-          if (searchService.isFocused && !isSearching) ...[
+          if (!isSearching) ...[
             SizedBox(
               width: 28,
               height: 48,
-              child: IgnorePointer(
-                ignoring:
-                    !(searchService.hasSearched || searchService.isFocused),
-                child: Opacity(
-                  opacity:
-                      (!(searchService.hasSearched || searchService.isFocused))
-                          ? 0
-                          : 1,
-                  child: Center(
-                    child: GestureDetector(
-                      onTap: onBack,
-                      child: Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        size: 24,
-                        color:
-                            isDark
-                                ? Colors.white.withOpacity(0.75)
-                                : Colors.black.withOpacity(0.75),
-                      ),
-                    ),
-                  ),
+              child: GestureDetector(
+                onTap: onBack,
+                child: Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  size: 24,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
             ),
@@ -80,7 +65,6 @@ class SearchTopBar extends StatelessWidget {
                   FocusScope.of(context).unfocus();
                   onSubmitted();
                 },
-                onTap: () => context.read<SearchService>().setFocused(true),
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface,
                   fontSize: 18,

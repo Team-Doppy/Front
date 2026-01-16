@@ -482,14 +482,18 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
           onLongPress: _toggleEditMode,
           child: Container(
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(widget.cardRadius + 2),
+              borderRadius: BorderRadius.circular(
+                (widget.cardRadius + 2) * 2,
+              ), // ✅ 더 둥글게
               border: Border.all(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
                 width: 2,
               ),
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(widget.cardRadius),
+              borderRadius: BorderRadius.circular(
+                widget.cardRadius * 2,
+              ), // ✅ 더 둥글게
               child: Stack(
                 children: [
                   // 🎯 이미지/비디오 전환
@@ -886,11 +890,8 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       );
     }
 
-    // 🎯 썸네일 편집 모드이거나 썸네일 이미지가 없을 때는 onSurface 색상 사용
-    final textColor =
-        (widget.isThumbnailEditMode || widget.exportedThumbnailImageUrl.isEmpty)
-            ? Theme.of(context).colorScheme.onSurface
-            : Colors.white.withOpacity(0.85);
+    // ✅ 항상 onSurface 색상 사용
+    final textColor = Theme.of(context).colorScheme.onSurface;
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -961,11 +962,8 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       );
     }
 
-    // 🎯 썸네일 편집 모드이거나 썸네일 이미지가 없을 때는 onSurface 색상 사용
-    final textColor =
-        (widget.isThumbnailEditMode || widget.exportedThumbnailImageUrl.isEmpty)
-            ? Theme.of(context).colorScheme.onSurface
-            : Colors.white.withOpacity(0.85);
+    // ✅ 항상 onSurface 색상 사용
+    final textColor = Theme.of(context).colorScheme.onSurface;
 
     return TextField(
       controller: widget.excerptController,
@@ -1543,25 +1541,28 @@ class _EmptyImagePlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).colorScheme.brightness == Brightness.dark;
-    final bgColor =
-        isDark
-            ? Theme.of(context).colorScheme.surfaceContainerHighest
-            : const Color(0xFF1A1A1A);
-    final fgColor =
-        isDark
-            ? Theme.of(context).colorScheme.onSurface.withOpacity(0.65)
-            : Colors.white.withOpacity(0.72);
-
     return Container(
-      color: bgColor,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 30,
+            offset: const Offset(0, 20),
+          ),
+        ],
+      ),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               AppLocalizations.of(context).t('tap_to_select_thumbnail'),
-              style: TextStyle(color: fgColor, fontSize: 15),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontSize: 15,
+              ),
             ),
           ],
         ),

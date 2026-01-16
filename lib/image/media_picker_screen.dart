@@ -1356,26 +1356,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
             ],
           ),
         ),
-        child: Stack(
-          children: [
-            SafeArea(child: _buildBody()),
-            // 🎯 로딩 중일 때 어두운 배경과 블러 효과
-            if (_isLoading || _isSubmitting || _isLoadingMore)
-              Positioned.fill(
-                child: ClipRRect(
-                  child: BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                    child: Container(
-                      color: Colors.black.withOpacity(0.6),
-                      child: const Center(
-                        child: CupertinoActivityIndicator(radius: 16),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
+        child: Stack(children: [SafeArea(child: _buildBody())]),
       ),
     );
   }
@@ -1706,7 +1687,9 @@ class _VideoThumbnailWidget extends StatelessWidget {
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) {
                 return Container(
-                  color: CupertinoColors.systemGrey5,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.06),
                   child: const Icon(
                     CupertinoIcons.videocam,
                     color: CupertinoColors.systemGrey,
@@ -1813,7 +1796,9 @@ class _ImageThumbnailWidget extends StatelessWidget {
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) {
                 return Container(
-                  color: CupertinoColors.systemGrey5,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.06),
                   child: const Icon(
                     CupertinoIcons.photo,
                     color: CupertinoColors.systemGrey,

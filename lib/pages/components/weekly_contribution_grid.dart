@@ -1,6 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:doppy/utils/week_utils.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:shimmer/shimmer.dart';
 
 /// 주차별 기여도 데이터 모델 (하드코딩용, 나중에 서버 API로 대체)
 class WeeklyContributionData {
@@ -20,10 +22,11 @@ class WeeklyContributionData {
 /// 잔디 심기 스타일의 주차별 기여도 그리드 위젯
 class WeeklyContributionGrid extends StatefulWidget {
   final int year;
+  final DateTime? signupAt; // null이면 해당 연도의 1주차부터 시작
+  final DateTime? asOf; // null이면 DateTime.now() 기준 (서버 asOf가 있으면 주입)
   final int? selectedWeek;
   final Function(int year, int weekNumber)? onWeekSelected;
   final List<WeeklyContributionData>? contributions; // null이면 하드코딩 데이터 사용
-  final bool isCompact; // 간단 모드 (작은 크기)
   final Function(
     int year,
     int weekNumber,
@@ -31,86 +34,544 @@ class WeeklyContributionGrid extends StatefulWidget {
     Offset? cellCenter,
   )?
   onLongPress; // 길게 누르기 콜백 (위치 + 셀 중심 포함)
+  final bool isLoading; // 로딩 중일 때 쉬머 효과 표시
 
   const WeeklyContributionGrid({
     super.key,
     required this.year,
+    this.signupAt,
+    this.asOf,
     this.selectedWeek,
     this.onWeekSelected,
     this.contributions,
-    this.isCompact = false,
     this.onLongPress,
+    this.isLoading = false,
   });
 
   @override
   State<WeeklyContributionGrid> createState() => _WeeklyContributionGridState();
 }
 
-class _WeeklyContributionGridState extends State<WeeklyContributionGrid>
-    with TickerProviderStateMixin {
-  late final AnimationController _gridAnimationController;
-  late final AnimationController _selectionAnimationController;
-  late final Animation<double> _gridFadeAnimation;
-  late final Animation<double> _selectionGlowAnimation;
-
-  int? _hoveredWeek;
-  int? _longPressedWeek; // 길게 누른 주차 추적
-  int? _pendingTapWeek; // 탭 대기 중인 주차 (롱프레스와 구분하기 위해)
+class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
+  static const int _columns = 7; // 주 7일
 
   @override
-  void initState() {
-    super.initState();
+  Widget build(BuildContext context) {
+    final contributions = _getContributions();
 
-    // 그리드 페이드인 애니메이션
-    _gridAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: this,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [Text('${widget.year}')],
+        ),
+        // 그리드
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: _buildGrid(contributions),
+        ),
+      ],
     );
-
-    _gridFadeAnimation = CurvedAnimation(
-      parent: _gridAnimationController,
-      curve: Curves.easeOut,
-    );
-
-    // 선택 애니메이션
-    _selectionAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-
-    _selectionGlowAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _selectionAnimationController,
-        curve: Curves.easeInOut,
-      ),
-    );
-
-    // 그리드 애니메이션 시작
-    _gridAnimationController.forward();
-
-    // 선택된 주차가 있으면 애니메이션 시작
-    if (widget.selectedWeek != null) {
-      _selectionAnimationController.forward();
-    }
   }
 
-  @override
-  void didUpdateWidget(WeeklyContributionGrid oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.selectedWeek != oldWidget.selectedWeek) {
-      if (widget.selectedWeek != null) {
-        _selectionAnimationController.forward();
-      } else {
-        _selectionAnimationController.reverse();
+  Widget _buildGrid(List<WeeklyContributionData> contributions) {
+    final weeksInYear = WeekUtils.getWeeksInYear(widget.year);
+    final byWeek = <int, WeeklyContributionData>{};
+    for (final c in contributions) {
+      if (c.year == widget.year) byWeek[c.weekNumber] = c;
+    }
+
+    final range = _getRenderRange(weeksInYear);
+    final firstWeek = range.firstWeek;
+    final lastWeek = range.lastWeek;
+    final startWeek = range.startWeek;
+    final todayWeek = range.todayWeek;
+
+    final renderWeeks = <int>[];
+    for (int w = firstWeek; w <= lastWeek; w++) {
+      renderWeeks.add(w);
+    }
+
+    // ✅ 최소 2행 보장: 연말 등으로 실제 주차가 부족하면 아래 행을 placeholder로 채운다.
+    // (placeholder는 weeksInYear를 초과하는 weekNumber로 표시하며, 선택 불가/연하게 렌더링)
+    final minWeeksToRender = _columns * 2;
+    if (renderWeeks.length < minWeeksToRender) {
+      int next = lastWeek + 1;
+      while (renderWeeks.length < minWeeksToRender) {
+        renderWeeks.add(next);
+        next++;
       }
     }
+
+    final maxPostCount = renderWeeks
+        .map((w) => byWeek[w]?.postCount ?? 0)
+        .fold<int>(0, (a, b) => math.max(a, b));
+
+    final rows = (renderWeeks.length / _columns).ceil();
+
+    // ==============================
+    // 회색 셀 단계형 opacity 계산 (줄바꿈 없이 1D로 간주)
+    // - 보라 사이: 100% 고정
+    // - 바깥쪽: 80/60/40/20/10/0
+    // - 활동 셀: postCount > 0, 오늘 주차, 가입일 주차
+    // ==============================
+    bool isActiveAtIndex(int idx) {
+      final w = renderWeeks[idx];
+      if (w < 1 || w > weeksInYear) return false;
+
+      // ISO 주차의 "연도 소속"은 목요일(weekStart+3) 기준이 가장 자연스럽다.
+      // (week 1의 시작일이 12월 말일 수 있어도, 목요일은 1월이어서 해당 연도에 속함)
+      final weekStart = WeekUtils.getWeekStartDate(widget.year, w);
+      final anchor = weekStart.add(const Duration(days: 3)); // Thu
+      if (anchor.year != widget.year) return false; // 논리상 이전/다음년도는 "활동 없음"
+
+      // 포스트가 있는 경우
+      if ((byWeek[w]?.postCount ?? 0) > 0) return true;
+      // 오늘이 속한 셀
+      if (todayWeek != null && w == todayWeek) return true;
+      // 가입일이 속한 셀
+      if (w == startWeek) return true;
+      return false;
+    }
+
+    double stepOpacity(int dist) {
+      // dist: 보라 셀로부터의 거리(1부터) - 바깥쪽용
+      if (dist == 1) return 0.65; // 80
+      if (dist == 2) return 0.48; // 60
+      if (dist == 3) return 0.32; // 40
+      if (dist == 4) return 0.13; // 20
+      if (dist == 5) return 0.0; // 10
+      return 0.0; // 0
+    }
+
+    final leftActiveIdx = List<int?>.filled(renderWeeks.length, null);
+    int? lastActive;
+    for (int i = 0; i < renderWeeks.length; i++) {
+      if (isActiveAtIndex(i)) lastActive = i;
+      leftActiveIdx[i] = lastActive;
+    }
+
+    final rightActiveIdx = List<int?>.filled(renderWeeks.length, null);
+    int? nextActive;
+    for (int i = renderWeeks.length - 1; i >= 0; i--) {
+      if (isActiveAtIndex(i)) nextActive = i;
+      rightActiveIdx[i] = nextActive;
+    }
+
+    final grayOpacityByIndex = List<double>.filled(renderWeeks.length, 1.0);
+    final grayBetweenByIndex = List<bool>.filled(renderWeeks.length, false);
+    for (int i = 0; i < renderWeeks.length; i++) {
+      if (isActiveAtIndex(i)) {
+        grayOpacityByIndex[i] = 1.0;
+        grayBetweenByIndex[i] = false;
+        continue;
+      }
+      final l = leftActiveIdx[i];
+      final r = rightActiveIdx[i];
+      if (l == null && r == null) {
+        grayOpacityByIndex[i] = 0.0;
+        grayBetweenByIndex[i] = false;
+        continue;
+      }
+      if (l != null && r != null) {
+        // 보라 사이에 끼어있을 때는 100% opacity
+        grayOpacityByIndex[i] = 1.0; // 100% 고정
+        grayBetweenByIndex[i] = true;
+      } else {
+        final dist = (l != null) ? (i - l) : (r! - i);
+        grayOpacityByIndex[i] = stepOpacity(dist);
+        grayBetweenByIndex[i] = false;
+      }
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 간단 모드일 때 셀 크기와 간격 축소
+        final cellSpacing = 2.0;
+        final containerPadding = 2.0;
+
+        // 오버플로우 방지: Container padding을 고려하여 계산
+        final availableWidth = constraints.maxWidth - (containerPadding * 2);
+        final totalSpacing = (_columns - 1) * cellSpacing;
+        final baseCellSize = (availableWidth - totalSpacing) / _columns;
+        final cellSize = baseCellSize;
+        final radius = 4.0;
+
+        return RepaintBoundary(
+          child: Container(
+            padding: EdgeInsets.all(containerPadding),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: List.generate(rows, (rowIndex) {
+                final isFirstRow = rowIndex == 0;
+                final isLastRow = rowIndex == rows - 1;
+                // 첫 번째 행이 완전히 차지했는지 확인 (회색 셀 포함해서 7개 셀이 모두 있는지)
+                final lastCellIndexInFirstRow = _columns - 1;
+                final isFirstRowFull =
+                    isFirstRow &&
+                    (lastCellIndexInFirstRow < renderWeeks.length);
+                // 마지막 행이 완전히 차지했는지 확인 (회색 셀 포함해서 7개 셀이 모두 있는지)
+                final lastCellIndexInRow = (rowIndex + 1) * _columns - 1;
+                final isLastRowFull =
+                    isLastRow && (lastCellIndexInRow < renderWeeks.length);
+
+                return Padding(
+                  padding: EdgeInsets.only(bottom: cellSpacing),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: List.generate(_columns, (colIndex) {
+                      final index = rowIndex * _columns + colIndex;
+                      final isLastColumn = colIndex == _columns - 1;
+
+                      if (index >= renderWeeks.length) {
+                        // 빈 셀도 다른 행과 정렬 맞추기 위해 padding 적용
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            right: isLastColumn ? 0 : cellSpacing,
+                          ),
+                          child: SizedBox(width: cellSize),
+                        );
+                      }
+
+                      final weekNumber = renderWeeks[index];
+                      final data = byWeek[weekNumber];
+
+                      final isBeforeSignup =
+                          widget.year == (widget.signupAt?.year) &&
+                          weekNumber < startWeek;
+                      final isFuturePreview =
+                          (weekNumber > weeksInYear) ||
+                          (todayWeek != null && weekNumber > todayWeek);
+
+                      final isSelectable =
+                          !isBeforeSignup &&
+                          (weekNumber <= weeksInYear) &&
+                          (todayWeek == null
+                              ? true
+                              : weekNumber <= todayWeek); // 미래 미리보기는 선택 불가
+
+                      final isSelected =
+                          isSelectable && widget.selectedWeek == weekNumber;
+
+                      // 마지막 열은 right padding 제거하여 오버플로우 방지
+                      return Padding(
+                        key: ValueKey('week-${widget.year}-$weekNumber'),
+                        padding: EdgeInsets.only(
+                          right: isLastColumn ? 0 : cellSpacing,
+                        ),
+                        child: _buildCell(
+                          weekNumber: weekNumber,
+                          data: data,
+                          size: cellSize,
+                          radius: radius,
+                          isSelected: isSelected,
+                          isBeforeSignup: isBeforeSignup,
+                          isFuturePreview: isFuturePreview,
+                          isSelectable: isSelectable,
+                          todayWeek: todayWeek,
+                          maxPostCount: maxPostCount,
+                          grayOpacity:
+                              (() {
+                                // 일괄적인 규칙만 적용: 보라 사이 100%, 바깥쪽 80/60/40/20/10/0
+                                return grayOpacityByIndex[index].clamp(
+                                  0.0,
+                                  1.0,
+                                );
+                              })(),
+                          isFirstRow: isFirstRow,
+                          isLastRow: isLastRow,
+                          isFirstColumn: colIndex == 0,
+                          isLastColumn: isLastColumn,
+                          isFirstRowFull: isFirstRowFull,
+                          isLastRowFull: isLastRowFull,
+                          isLoading: widget.isLoading,
+                        ),
+                      );
+                    }),
+                  ),
+                );
+              }),
+            ),
+          ),
+        );
+      },
+    );
   }
 
-  @override
-  void dispose() {
-    _gridAnimationController.dispose();
-    _selectionAnimationController.dispose();
-    super.dispose();
+  Widget _buildCell({
+    required int weekNumber,
+    required WeeklyContributionData? data,
+    required double size,
+    required double radius,
+    required bool isSelected,
+    required bool isBeforeSignup,
+    required bool isFuturePreview,
+    required bool isSelectable,
+    required int? todayWeek,
+    required int maxPostCount,
+    required double grayOpacity,
+    required bool isFirstRow,
+    required bool isLastRow,
+    required bool isFirstColumn,
+    required bool isLastColumn,
+    required bool isFirstRowFull,
+    required bool isLastRowFull,
+    required bool isLoading,
+  }) {
+    // 로딩 중일 때는 모든 셀을 회색으로 표시
+    final fillColor =
+        isLoading
+            ? _getLoadingBaseColor()
+            : _cellFillColor(
+              weekNumber: weekNumber,
+              data: data,
+              isBeforeSignup: isBeforeSignup,
+              isFuturePreview: isFuturePreview,
+              todayWeek: todayWeek,
+              maxPostCount: maxPostCount,
+              grayOpacity: grayOpacity,
+            );
+
+    return Builder(
+      builder: (cellContext) {
+        // borderRadius를 먼저 계산
+        final cornerRadius = 10.0;
+        BorderRadius? borderRadius;
+        if (isFirstRow && isFirstColumn) {
+          borderRadius = BorderRadius.only(
+            topLeft: Radius.circular(cornerRadius),
+            topRight: Radius.circular(radius),
+            bottomLeft: Radius.circular(radius),
+            bottomRight: Radius.circular(radius),
+          );
+        } else if (isFirstRow && isLastColumn && isFirstRowFull) {
+          borderRadius = BorderRadius.only(
+            topLeft: Radius.circular(radius),
+            topRight: Radius.circular(cornerRadius),
+            bottomLeft: Radius.circular(radius),
+            bottomRight: Radius.circular(radius),
+          );
+        } else if (isLastRow && isFirstColumn) {
+          borderRadius = BorderRadius.only(
+            topLeft: Radius.circular(radius),
+            topRight: Radius.circular(radius),
+            bottomLeft: Radius.circular(cornerRadius),
+            bottomRight: Radius.circular(radius),
+          );
+        } else if (isLastRow && isLastColumn && isLastRowFull) {
+          borderRadius = BorderRadius.only(
+            topLeft: Radius.circular(radius),
+            topRight: Radius.circular(radius),
+            bottomLeft: Radius.circular(radius),
+            bottomRight: Radius.circular(cornerRadius),
+          );
+        } else {
+          borderRadius = BorderRadius.circular(radius);
+        }
+
+        final scheme = Theme.of(cellContext).colorScheme;
+        final primary = scheme.primary;
+        final isTodayWeek = todayWeek != null && weekNumber == todayWeek;
+
+        // "선택/롱프레스 시 fillColor가 차는 UX"는 제거하고,
+        // 잉크 물결(리플)만 보이도록 한다. (선택/오늘은 테두리로만 표현)
+        Border? border;
+        if (isTodayWeek) {
+          border = Border.all(color: primary.withOpacity(0.6), width: 2);
+        } else if (isSelected) {
+          border = Border.all(color: primary.withOpacity(0.45), width: 1.6);
+        }
+
+        // 월 텍스트 표시 여부 확인 (4주마다 = 4칸에 한번)
+        // - ISO 주차에서 weekStart는 12월 말일 수 있으므로 "목요일(anchor)" 기준으로 월/연도 판단
+        // - 현재 연도(1-12월)만 표시
+        // - 같은 월이 연속으로 찍히면(4주 간격) 중복 제거
+        String? monthText;
+        if (weekNumber >= 1 &&
+            weekNumber <= WeekUtils.getWeeksInYear(widget.year) &&
+            (weekNumber - 1) % 4 == 0) {
+          final weekStart = WeekUtils.getWeekStartDate(widget.year, weekNumber);
+          final anchor = weekStart.add(const Duration(days: 3)); // Thu
+
+          if (anchor.year == widget.year) {
+            final month = anchor.month;
+
+            if (weekNumber > 4) {
+              final prevCycleWeek = weekNumber - 4;
+              final prevStart = WeekUtils.getWeekStartDate(
+                widget.year,
+                prevCycleWeek,
+              );
+              final prevAnchor = prevStart.add(const Duration(days: 3));
+
+              // 같은 월이면 표시하지 않음 (이전 cycle도 현재연도일 때만 비교)
+              if (prevAnchor.year == widget.year && prevAnchor.month == month) {
+                monthText = null;
+              } else {
+                monthText = '$month';
+              }
+            } else {
+              monthText = '$month';
+            }
+          }
+        }
+
+        // 로딩 중일 때는 쉬머 효과 적용
+        final cellContent = Ink(
+          width: size,
+          height: size * 0.9,
+          decoration: BoxDecoration(
+            color: fillColor,
+            borderRadius: borderRadius,
+            border: isLoading ? null : border,
+          ),
+          child: Stack(
+            children: [
+              // 🎯 롱프레스 프리뷰는 "Start/Move/End"로 안정적으로 처리한다.
+              // - Start: showBlurOverlay (weekNumber>0)
+              // - Move: updateBlurPosition
+              // - End/Cancel: weekNumber==0 으로 종료 신호 전송
+              if (!isLoading)
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onLongPressStart:
+                        isSelectable
+                            ? (details) {
+                              final renderObject =
+                                  cellContext.findRenderObject();
+                              final box =
+                                  renderObject is RenderBox
+                                      ? renderObject
+                                      : null;
+                              final cellCenter = box?.localToGlobal(
+                                Offset(
+                                  (box.size.width) / 2,
+                                  (box.size.height) / 2,
+                                ),
+                              );
+
+                              widget.onLongPress?.call(
+                                widget.year,
+                                weekNumber,
+                                details.globalPosition,
+                                cellCenter,
+                              );
+                            }
+                            : null,
+                    onLongPressMoveUpdate:
+                        isSelectable
+                            ? (details) {
+                              // position은 null이 되면 프리뷰가 화면 중앙으로 튈 수 있어서
+                              // 항상 globalPosition을 유지한다.
+                              widget.onLongPress?.call(
+                                widget.year,
+                                weekNumber,
+                                details.globalPosition,
+                                null,
+                              );
+                            }
+                            : null,
+                    onLongPressEnd:
+                        isSelectable
+                            ? (_) {
+                              widget.onLongPress?.call(
+                                widget.year,
+                                0,
+                                null,
+                                null,
+                              );
+                            }
+                            : null,
+                    onLongPressCancel:
+                        isSelectable
+                            ? () {
+                              widget.onLongPress?.call(
+                                widget.year,
+                                0,
+                                null,
+                                null,
+                              );
+                            }
+                            : null,
+                    child: InkWell(
+                      // 셀 전체에 리플이 꽉 차도록
+                      customBorder: RoundedRectangleBorder(
+                        borderRadius: borderRadius,
+                      ),
+                      splashColor: primary.withOpacity(0.22),
+                      highlightColor: primary.withOpacity(0.10),
+                      onTap:
+                          isSelectable
+                              ? () {
+                                widget.onWeekSelected?.call(
+                                  widget.year,
+                                  weekNumber,
+                                );
+                              }
+                              : null,
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                ),
+              // 월 텍스트 표시 (로딩 중일 때는 표시하지 않음)
+              if (monthText != null && !isLoading)
+                Center(
+                  child: Text(
+                    monthText,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      // 배경이 보라색(포스트 있음)이면 흰색, 회색이면 검정색
+                      // opacity도 배경과 동일하게 적용
+                      color:
+                          (data?.postCount ?? 0) > 0
+                              ? Colors.white
+                              : const Color.fromARGB(
+                                255,
+                                94,
+                                94,
+                                94,
+                              ).withOpacity(grayOpacity),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+
+        // 로딩 중일 때는 쉬머 효과로 감싸기
+        if (isLoading) {
+          final baseColor = _getLoadingBaseColor();
+          return Shimmer.fromColors(
+            baseColor: baseColor,
+            highlightColor: baseColor.withOpacity(0.3),
+            period: const Duration(milliseconds: 1500),
+            child: Material(
+              color: Colors.transparent,
+              child: MouseRegion(cursor: MouseCursor.defer, child: cellContent),
+            ),
+          );
+        }
+
+        return Material(
+          color: Colors.transparent,
+          child: MouseRegion(
+            cursor: isSelectable ? SystemMouseCursors.click : MouseCursor.defer,
+            child: cellContent,
+          ),
+        );
+      },
+    );
+  }
+
+  /// 로딩 중일 때 사용할 기본 회색 색상
+  Color _getLoadingBaseColor() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return isDark
+        ? const Color(0xFF2A2A2A)
+        : const Color.fromARGB(255, 237, 237, 240);
   }
 
   /// 기여도 데이터 가져오기 (외부에서 제공되면 사용, 없으면 빈 리스트 반환)
@@ -133,357 +594,104 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid>
     );
   }
 
-  /// 활동도에 따른 색상 계산
-  Color _getCellColor(WeeklyContributionData data, bool isSelected) {
-    if (isSelected) {
-      return Theme.of(context).colorScheme.primary;
-    }
+  DateTime get _asOf => widget.asOf ?? DateTime.now();
 
-    // 연도 초반 주차 (1-12주차)에 색상 적용
-    final isEarlyYear = data.weekNumber <= 12;
-
-    if (!isEarlyYear) {
-      // 연도 초반이 아닌 경우: 어두운 회색
-      return Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF2A2A2A)
-          : const Color(0xFFE5E5E5);
-    }
-
-    // 연도 초반: 주차 번호에 따라 primary 색상의 opacity 조절 (1주차가 가장 밝음)
-    // 1주차부터 12주차까지 점진적으로 어두워짐
-    final intensity = 1.0 - ((data.weekNumber - 1) / 12.0).clamp(0.0, 1.0);
-    final primaryColor = Theme.of(context).colorScheme.primary;
-
-    // primary 색상과 어두운 배경색을 lerp
-    final darkColor =
-        Theme.of(context).brightness == Brightness.dark
-            ? const Color(0xFF2A2A2A)
-            : const Color(0xFFE5E5E5);
-
-    return Color.lerp(darkColor, primaryColor, intensity)!;
+  /// 선택 연도에서 "시작 주"를 결정한다.
+  /// - 가입연도면 가입 주차부터
+  /// - 그 외 연도면 1주차부터
+  int _getStartWeek() {
+    final signupAt = widget.signupAt;
+    if (signupAt == null) return 1;
+    if (signupAt.year != widget.year) return 1;
+    return WeekUtils.getWeekNumber(signupAt);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final contributions = _getContributions();
+  /// 선택 연도에서 "오늘 주차"(현재연도일 때만 의미)를 반환한다.
+  int? _getTodayWeekIfCurrentYear() {
+    if (_asOf.year != widget.year) return null;
+    return WeekUtils.getWeekNumber(_asOf);
+  }
 
-    return FadeTransition(
-      opacity: _gridFadeAnimation,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 그리드
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: _buildGrid(contributions),
-          ),
+  /// 가입 주차가 포함된 "행(=row)"부터 시작해,
+  /// - 현재 연도면: 오늘이 속한 행 + 아래 1행까지
+  /// - 과거 연도면: 해당 연도 끝까지
+  /// - 최소 2행 보장
+  ({int firstWeek, int lastWeek, int startWeek, int? todayWeek})
+  _getRenderRange(int weeksInYear) {
+    final startWeek = _getStartWeek().clamp(1, weeksInYear);
+    final todayWeek = _getTodayWeekIfCurrentYear();
 
-          if (!widget.isCompact) const SizedBox(height: 12),
+    // startWeek가 속한 행 계산
+    final startRow = (startWeek - 1) ~/ _columns;
+    final firstWeekInRow = startRow * _columns + 1;
+    // 가입일이 속한 행의 첫 번째 셀부터 시작 (행 전체를 보여줌)
+    final firstWeek = firstWeekInRow;
 
-          // 하단: 선택된 주차 정보 (간단 모드일 때는 숨김)
-          if (widget.selectedWeek != null && !widget.isCompact)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _buildSelectedWeekInfo(widget.selectedWeek!),
-            ),
-        ],
-      ),
+    final totalRows = (weeksInYear / _columns).ceil();
+    final lastRowIndex = totalRows - 1;
+
+    int targetLastRow;
+    if (todayWeek == null) {
+      // 과거(또는 미래) 연도: 전체 표시
+      targetLastRow = lastRowIndex;
+    } else {
+      // 현재 연도: 오늘 주가 속한 행 + 아래 1행
+      final todayRow = (todayWeek - 1) ~/ _columns;
+      targetLastRow = math.min(lastRowIndex, todayRow + 1);
+    }
+
+    // 최소 2행 보장: startRow부터 최소 2행은 보여줘야 함
+    // targetLastRow가 startRow + 1보다 작으면 startRow + 1로 확장
+    if (targetLastRow < startRow + 1) {
+      targetLastRow = math.min(lastRowIndex, startRow + 1);
+    }
+
+    // 마지막 행의 마지막 주차 계산
+    final lastWeekInRow = (targetLastRow + 1) * _columns;
+    final lastWeek = math.min(weeksInYear, lastWeekInRow);
+
+    return (
+      firstWeek: firstWeek,
+      lastWeek: lastWeek,
+      startWeek: startWeek,
+      todayWeek: todayWeek,
     );
   }
 
-  Widget _buildGrid(List<WeeklyContributionData> contributions) {
-    // 그리드를 7열로 배치 (주 7일)
-    const columns = 7;
-    final rows = (contributions.length / columns).ceil();
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // 간단 모드일 때 셀 크기와 간격 축소
-        final cellSpacing = widget.isCompact ? 1.0 : 2.0;
-        // 오버플로우 방지: 마지막 열의 right padding을 고려하여 계산
-        final availableWidth = constraints.maxWidth;
-        final totalSpacing = (columns - 1) * cellSpacing;
-        final baseCellSize = (availableWidth - totalSpacing) / columns;
-        final cellSize = widget.isCompact ? baseCellSize * 0.6 : baseCellSize;
-
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: List.generate(rows, (rowIndex) {
-            return Padding(
-              padding: EdgeInsets.only(bottom: cellSpacing),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: List.generate(columns, (colIndex) {
-                  final weekIndex = rowIndex * columns + colIndex;
-                  if (weekIndex >= contributions.length) {
-                    return SizedBox(width: cellSize);
-                  }
-
-                  final data = contributions[weekIndex];
-                  final isSelected = widget.selectedWeek == data.weekNumber;
-                  final isHovered = _hoveredWeek == data.weekNumber;
-
-                  // 마지막 열은 right padding 제거하여 오버플로우 방지
-                  final isLastColumn = colIndex == columns - 1;
-                  return Padding(
-                    key: ValueKey('week-${data.year}-${data.weekNumber}'),
-                    padding: EdgeInsets.only(
-                      right: isLastColumn ? 0 : cellSpacing,
-                    ),
-                    child: _buildCell(
-                      data: data,
-                      size: cellSize,
-                      isSelected: isSelected,
-                      isHovered: isHovered,
-                    ),
-                  );
-                }),
-              ),
-            );
-          }),
-        );
-      },
-    );
-  }
-
-  Widget _buildCell({
-    required WeeklyContributionData data,
-    required double size,
-    required bool isSelected,
-    required bool isHovered,
+  Color _cellFillColor({
+    required int weekNumber,
+    required WeeklyContributionData? data,
+    required bool isBeforeSignup,
+    required bool isFuturePreview,
+    required int? todayWeek,
+    required int maxPostCount,
+    required double grayOpacity,
   }) {
-    final cellColor = _getCellColor(data, isSelected);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final base =
+        isDark
+            ? const Color(0xFF2A2A2A)
+            : const Color.fromARGB(255, 237, 237, 240);
 
-    // 길게 누르기 상태 추적
-    final isLongPressed = _longPressedWeek == data.weekNumber;
+    final postCount = data?.postCount ?? 0;
 
-    // 셀 위치 추적을 위한 GlobalKey
-    final cellKey = GlobalKey();
+    // 🎯 포스트가 있는 주차: #7680FF 색상 사용
+    if (postCount > 0) {
+      // #7680FF = RGB(118, 128, 255)
+      const purpleColor = Color(0xFF7680FF);
 
-    return GestureDetector(
-      onLongPressStart: (details) {
-        // 롱프레스 시작: 탭 취소
-        setState(() {
-          _longPressedWeek = data.weekNumber;
-          _pendingTapWeek = null; // 탭 취소
-        });
+      // 3개 이상: 100%, 2개: 70%, 1개: 40%
+      final opacity =
+          postCount >= 3
+              ? 1.0
+              : postCount >= 2
+              ? 0.7
+              : 0.4;
 
-        // 셀의 중심 위치 계산 (다음 프레임에서 실행하여 렌더링 완료 후 계산)
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          final RenderBox? renderBox =
-              cellKey.currentContext?.findRenderObject() as RenderBox?;
-          final cellCenter =
-              renderBox != null
-                  ? renderBox.localToGlobal(
-                    Offset(renderBox.size.width / 2, renderBox.size.height / 2),
-                  )
-                  : details.globalPosition;
+      return purpleColor.withOpacity(opacity);
+    }
 
-          widget.onLongPress?.call(
-            data.year,
-            data.weekNumber,
-            details.globalPosition,
-            cellCenter, // 셀의 중심 위치 전달
-          );
-        });
-      },
-      onLongPressMoveUpdate: (details) {
-        // 손가락 움직임에 따라 위치만 업데이트 (셀 중심은 재계산하지 않음)
-        widget.onLongPress?.call(
-          data.year,
-          data.weekNumber,
-          details.globalPosition,
-          null, // 셀 중심은 처음만 계산
-        );
-      },
-      onLongPressEnd: (details) {
-        // 길게 누르기 종료
-        setState(() {
-          _longPressedWeek = null;
-        });
-        widget.onLongPress?.call(data.year, 0, null, null); // 0은 종료를 의미
-      },
-      onLongPressCancel: () {
-        // 길게 누르기 취소
-        setState(() {
-          _longPressedWeek = null;
-        });
-        widget.onLongPress?.call(data.year, 0, null, null);
-      },
-      onTapDown: (_) {
-        debugPrint(
-          '[WeeklyGrid] onTapDown: ${data.year}년 ${data.weekNumber}주차',
-        );
-        if (_hoveredWeek != data.weekNumber) {
-          setState(() {
-            _hoveredWeek = data.weekNumber;
-          });
-        }
-        // 탭 대기 상태로 설정
-        setState(() {
-          _pendingTapWeek = data.weekNumber;
-        });
-        debugPrint(
-          '[WeeklyGrid] _pendingTapWeek 설정: $_pendingTapWeek, _longPressedWeek: $_longPressedWeek',
-        );
-      },
-      onTapUp: (_) {
-        debugPrint(
-          '[WeeklyGrid] onTapUp: ${data.year}년 ${data.weekNumber}주차, _pendingTapWeek=$_pendingTapWeek, _longPressedWeek=$_longPressedWeek',
-        );
-        // 탭이 완료되었고 롱프레스가 시작되지 않았으면 즉시 실행
-        if (_pendingTapWeek == data.weekNumber &&
-            _longPressedWeek != data.weekNumber) {
-          debugPrint(
-            '[WeeklyGrid] onWeekSelected 호출: ${data.year}년 ${data.weekNumber}주차',
-          );
-          widget.onWeekSelected?.call(data.year, data.weekNumber);
-        } else {
-          debugPrint('[WeeklyGrid] onWeekSelected 호출 안 함: 조건 불일치');
-        }
-
-        setState(() {
-          _pendingTapWeek = null;
-        });
-
-        if (_hoveredWeek != null) {
-          setState(() {
-            _hoveredWeek = null;
-          });
-        }
-      },
-      onTapCancel: () {
-        // 탭이 취소되면 대기 상태 해제
-        setState(() {
-          _pendingTapWeek = null;
-        });
-
-        if (_hoveredWeek != null) {
-          setState(() {
-            _hoveredWeek = null;
-          });
-        }
-      },
-      child: MouseRegion(
-        onEnter: (_) {
-          if (_hoveredWeek != data.weekNumber) {
-            setState(() {
-              _hoveredWeek = data.weekNumber;
-            });
-          }
-        },
-        onExit: (_) {
-          if (_hoveredWeek != null) {
-            setState(() {
-              _hoveredWeek = null;
-            });
-          }
-        },
-        child: AnimatedBuilder(
-          animation: _selectionAnimationController,
-          builder: (context, child) {
-            return Container(
-              key: cellKey,
-              width: size,
-              height: size * 0.85, // 세로 길이를 15% 줄임
-              decoration: BoxDecoration(
-                color:
-                    isLongPressed
-                        ? Theme.of(context).colorScheme.primary
-                        : cellColor,
-                borderRadius: BorderRadius.circular(7),
-                border:
-                    isSelected
-                        ? Border.all(
-                          color: Theme.of(context).colorScheme.primary,
-                          width: 2,
-                        )
-                        : null,
-                boxShadow:
-                    isSelected
-                        ? [
-                          BoxShadow(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.primary.withOpacity(
-                              0.4 * _selectionGlowAnimation.value,
-                            ),
-                            blurRadius: 8,
-                            spreadRadius: 2,
-                          ),
-                        ]
-                        : null,
-              ),
-              child:
-                  isHovered && !isSelected
-                      ? Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(7),
-                          border: Border.all(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.primary.withOpacity(0.5),
-                            width: 1.5,
-                          ),
-                        ),
-                      )
-                      : null,
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSelectedWeekInfo(int weekNumber) {
-    final weekRange = WeekUtils.getWeekDateRange(widget.year, weekNumber);
-    final startDate = weekRange.start;
-    final endDate = weekRange.end;
-
-    return AnimatedOpacity(
-      opacity: widget.selectedWeek != null ? 1.0 : 0.0,
-      duration: const Duration(milliseconds: 200),
-      child: Row(
-        children: [
-          // 주차 번호
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.play_circle_filled,
-                  size: 16,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  '$weekNumber',
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          // 날짜 범위
-          Text(
-            '${startDate.month}/${startDate.day} - ${endDate.month}/${endDate.day}',
-            style: GoogleFonts.notoSansKr(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-            ),
-          ),
-        ],
-      ),
-    );
+    // 🎯 빈 셀: 회색 (현재처럼 유지)
+    return base.withOpacity(grayOpacity);
   }
 }
