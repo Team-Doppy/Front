@@ -52,7 +52,6 @@ class Feed {
                 id: postData.id,
                 thumbnailImageUrl: postData.thumbnailImageUrl,
                 title: postData.title,
-                summary: postData.summary,
                 author: postData.author,
                 authorId: postData.authorId,
                 authorProfileImageUrl: profileImageFromUser,

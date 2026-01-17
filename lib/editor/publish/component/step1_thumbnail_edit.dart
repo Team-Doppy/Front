@@ -11,6 +11,7 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/editor/utils/video_upload_utils.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:http/http.dart' as http;
@@ -18,14 +19,32 @@ import 'package:doppy/editor/publish/component/thumbnail_edit_bottom_sheet.dart'
 import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 
+/// 🎯 2줄 제한 TextInputFormatter
+class _TwoLineTextInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    final lines = text.split('\n');
+
+    // 🎯 2줄을 넘어가면 입력 차단
+    if (lines.length > 2) {
+      // 기존 값 유지 (입력 무시)
+      return oldValue;
+    }
+
+    return newValue;
+  }
+}
+
 /// Step 1: 썸네일 & 글 편집 컴포넌트
 class Step1ThumbnailEdit extends StatefulWidget {
   final String sessionKey;
   final double cardRadius;
   final TextEditingController titleController;
-  final TextEditingController excerptController;
   final FocusNode titleFocusNode;
-  final FocusNode excerptFocusNode;
   final String exportedThumbnailImageUrl;
   final bool editMode;
   final bool isUploadingThumb;
@@ -48,9 +67,7 @@ class Step1ThumbnailEdit extends StatefulWidget {
     required this.sessionKey,
     required this.cardRadius,
     required this.titleController,
-    required this.excerptController,
     required this.titleFocusNode,
-    required this.excerptFocusNode,
     required this.exportedThumbnailImageUrl,
     required this.editMode,
     required this.isUploadingThumb,
@@ -151,10 +168,8 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   @override
   void initState() {
     super.initState();
-    _hasTextFocus =
-        widget.titleFocusNode.hasFocus || widget.excerptFocusNode.hasFocus;
+    _hasTextFocus = widget.titleFocusNode.hasFocus;
     widget.titleFocusNode.addListener(_onTextFocusChanged);
-    widget.excerptFocusNode.addListener(_onTextFocusChanged);
 
     _attachPosterListener(widget.videoController);
 
@@ -232,7 +247,6 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   @override
   void dispose() {
     widget.titleFocusNode.removeListener(_onTextFocusChanged);
-    widget.excerptFocusNode.removeListener(_onTextFocusChanged);
 
     _detachPosterListener();
 
@@ -341,8 +355,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   }
 
   void _onTextFocusChanged() {
-    final hasFocus =
-        widget.titleFocusNode.hasFocus || widget.excerptFocusNode.hasFocus;
+    final hasFocus = widget.titleFocusNode.hasFocus;
     if (_hasTextFocus == hasFocus) return;
     setState(() => _hasTextFocus = hasFocus);
 
@@ -409,9 +422,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                     final thumbOpacity = ui.lerpDouble(1.0, 0.85, t)!;
                     final gapThumbText = ui.lerpDouble(20, 14, t)!;
                     final textTopPad = ui.lerpDouble(30, 22, t)!;
-                    final titleExcerptGap = ui.lerpDouble(12, 10, t)!;
-                    // ✅ 키보드 dismiss 시 "bottomSpace 점프" 방지:
-                    // viewInsets.bottom은 키보드 애니메이션과 함께 연속적으로 변한다.
+
                     final keyboardInset =
                         MediaQuery.viewInsetsOf(context).bottom;
                     final keyboardT = (keyboardInset / 320.0).clamp(0.0, 1.0);
@@ -436,11 +447,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
                           padding: EdgeInsets.fromLTRB(30, textTopPad, 30, 16),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              _buildTitleField(),
-                              SizedBox(height: titleExcerptGap),
-                              _buildExcerptField(),
-                            ],
+                            children: [_buildTitleField()],
                           ),
                         ),
                         SizedBox(height: bottomSpace),
@@ -466,7 +473,6 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             // 🎯 이미지 탭 시 즉시 포커스 해제하여 편집 모드 촉발 방지
             // 텍스트 필드 포커스 노드 직접 해제
             widget.titleFocusNode.unfocus();
-            widget.excerptFocusNode.unfocus();
             FocusScope.of(context).unfocus();
             widget.onEditModeChanged(false);
           },
@@ -474,7 +480,6 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             // 🎯 이미지 탭 완료 시 갤러리 피커 열기
             // 텍스트 필드 포커스 노드 직접 해제
             widget.titleFocusNode.unfocus();
-            widget.excerptFocusNode.unfocus();
             FocusScope.of(context).unfocus();
             widget.onEditModeChanged(false);
             _openGalleryPicker();
@@ -916,6 +921,10 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
               maxLines: 2,
               minLines: 1,
               scrollPhysics: const NeverScrollableScrollPhysics(),
+              inputFormatters: [
+                // 🎯 2줄 제한: 최대 2줄까지만 입력 허용
+                _TwoLineTextInputFormatter(),
+              ],
               decoration: InputDecoration(
                 hintText: AppLocalizations.of(
                   context,
@@ -934,64 +943,6 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildExcerptField() {
-    // 🎯 로딩 중일 때는 쉬머 표시
-    if (widget.isLoading) {
-      return Center(
-        child: Column(
-          children: [
-            ShimmerBox(
-              width: MediaQuery.of(context).size.width * 0.8,
-              height: 18,
-            ),
-            const SizedBox(height: 8),
-            ShimmerBox(
-              width: MediaQuery.of(context).size.width * 0.75,
-              height: 18,
-            ),
-            const SizedBox(height: 8),
-            ShimmerBox(
-              width: MediaQuery.of(context).size.width * 0.7,
-              height: 18,
-            ),
-          ],
-        ),
-      );
-    }
-
-    // ✅ 항상 onSurface 색상 사용
-    final textColor = Theme.of(context).colorScheme.onSurface;
-
-    return TextField(
-      controller: widget.excerptController,
-      focusNode: widget.excerptFocusNode,
-      textAlign: TextAlign.center,
-      style: TextStyle(
-        color: textColor,
-        fontSize: 15,
-        fontWeight: FontWeight.w400,
-        height: 1.8,
-        letterSpacing: -0.1,
-      ),
-      cursorColor: Theme.of(context).colorScheme.primary,
-      maxLines: 4,
-      minLines: 2,
-      keyboardType: TextInputType.multiline,
-      scrollPhysics: const NeverScrollableScrollPhysics(),
-      decoration: InputDecoration(
-        hintText: AppLocalizations.of(context).t('content_input_placeholder'),
-        hintStyle: TextStyle(color: textColor.withOpacity(0.3)),
-        border: InputBorder.none,
-        isCollapsed: true,
-        contentPadding: EdgeInsets.zero,
-      ),
-      onTap: () {
-        widget.onEditModeChanged(true);
-        _syncThumbnailAnimation(shouldHide: true);
-      },
     );
   }
 
@@ -1561,7 +1512,7 @@ class _EmptyImagePlaceholder extends StatelessWidget {
               AppLocalizations.of(context).t('tap_to_select_thumbnail'),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface,
-                fontSize: 15,
+                fontSize: 18,
               ),
             ),
           ],

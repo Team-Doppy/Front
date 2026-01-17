@@ -178,8 +178,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       _filteredPosts.addAll(
         _posts.where((post) {
           final title = post.title.toLowerCase();
-          final summary = post.summary.toLowerCase();
-          return title.contains(query) || summary.contains(query);
+          return title.contains(query);
         }).toList(),
       );
     }

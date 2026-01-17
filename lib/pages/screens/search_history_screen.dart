@@ -77,7 +77,6 @@ class _SearchExploreScreenState extends State<SearchExploreScreen> {
               id: item.id,
               thumbnailImageUrl: item.imageUrl ?? '',
               title: item.title ?? '',
-              summary: item.summary ?? item.parsedContent ?? '',
               author: item.author ?? item.username ?? '',
               authorProfileImageUrl: item.profileImageUrl ?? '',
               content: item.content ?? '',

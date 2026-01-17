@@ -16,7 +16,8 @@ import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/data/models/system_category_keys.dart';
-import 'package:doppy/pages/components/access_level_sheet.dart';
+import 'package:doppy/pages/components/access_level_sheet.dart'
+    show AccessLevelSheet, AccessLevelSelectMode;
 
 /// 수직 카드 뷰 카테고리 섹션
 class VerticalCategorySection extends StatefulWidget {
@@ -1336,7 +1337,7 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
       context,
       postId: post.id,
       currentAccessLevel: currentAccessLevel,
-      isBatchMode: false,
+      mode: AccessLevelSelectMode.serverUpdate, // 🎯 서버 변경 모드
       onChanged: (String accessLevel) async {
         // 🎯 공개범위 변경 후 피드 업데이트
         provider.updatePostMetadata(post.id, accessLevel: accessLevel);

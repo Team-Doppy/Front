@@ -11,7 +11,6 @@ import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
 import 'package:super_editor/super_editor.dart';
@@ -953,35 +952,6 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                               }
                             }
 
-                            // 🎯 노드 레벨 댓글 정보 확인 (이미지 로우 전체)
-                            bool hasComments = false;
-                            try {
-                              final node = doc?.getNodeById(widget.nodeId);
-                              if (node is ImageRowNode) {
-                                final meta = node.metadata;
-                                // 노드 레벨 hasComments 확인
-                                hasComments = meta['hasComments'] == true;
-
-                                // 노드 레벨 정보가 없으면 각 이미지별 정보 확인
-                                if (!hasComments) {
-                                  final commentInfo =
-                                      meta['imageCommentInfo']
-                                          as Map<String, dynamic>?;
-                                  if (commentInfo != null) {
-                                    // 하나라도 댓글이 있으면 표시
-                                    hasComments = commentInfo.values.any((
-                                      imgInfo,
-                                    ) {
-                                      if (imgInfo is Map) {
-                                        return imgInfo['hasComments'] == true;
-                                      }
-                                      return false;
-                                    });
-                                  }
-                                }
-                              }
-                            } catch (_) {}
-
                             return Stack(
                               children: [
                                 Row(
@@ -1139,47 +1109,6 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                                     }),
                                   ],
                                 ),
-                                // 🎯 이미지 로우 전체 상단 끝에 댓글 배지 하나만 표시
-                                if (hasComments)
-                                  Positioned(
-                                    top: 4,
-                                    right: 5,
-                                    child: IgnorePointer(
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 6,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withOpacity(1),
-                                          borderRadius: BorderRadius.circular(
-                                            20,
-                                          ),
-                                          border: Border.all(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .surface
-                                                .withOpacity(0.1),
-                                            width: 1,
-                                          ),
-                                        ),
-                                        child: SvgPicture.asset(
-                                          'assets/icons/comment.svg',
-                                          width: 12,
-                                          height: 12,
-                                          colorFilter: ColorFilter.mode(
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.surface,
-                                            BlendMode.srcIn,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
 
                                 // 🎯 업로드 중 로딩 스피너
                                 if (isUploading)

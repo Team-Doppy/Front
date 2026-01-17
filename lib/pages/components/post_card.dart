@@ -1,5 +1,4 @@
 import 'package:doppy/data/models/user_model.dart';
-import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -50,7 +49,6 @@ class PostCard extends StatefulWidget {
 class _PostCardState extends State<PostCard>
     with AutomaticKeepAliveClientMixin {
   final LikeService _likeService = LikeService();
-  final VideoMuteService _muteService = VideoMuteService();
   VideoPlayerController? _videoController;
   bool _isVideo = false;
   String? _cachedVideoUrl;
@@ -63,7 +61,6 @@ class _PostCardState extends State<PostCard>
   void initState() {
     super.initState();
     _likeService.addListener(_onLikeServiceChanged);
-    _muteService.addListener(_onMuteServiceChanged);
 
     // 🎯 서버에서 받은 초기 좋아요 상태를 LikeService에 설정
     // (LikeService에 값이 없을 때만, post_list에서 이미 설정했을 수도 있음)
@@ -91,7 +88,6 @@ class _PostCardState extends State<PostCard>
   @override
   void dispose() {
     _likeService.removeListener(_onLikeServiceChanged);
-    _muteService.removeListener(_onMuteServiceChanged);
 
     // ✅ 캐시 컨트롤러는 위젯이 사라져도 살아있을 수 있으므로,
     // isVisible과 무관하게 "재생 중이면" 일시정지하여 소리/리소스 누수를 방지한다.
@@ -103,12 +99,19 @@ class _PostCardState extends State<PostCard>
       } catch (_) {}
     }
 
-    // 캐시된 서버 비디오는 참조 해제
-    if (_cachedVideoUrl != null) {
-      VideoCacheService().releaseController(
-        _cachedVideoUrl!,
-        namespace: 'home',
-      );
+    // 🎯 표준 방식: 컨트롤러 dispose
+    if (_videoController != null) {
+      try {
+        _videoController!.removeListener(_onVideoInitialized);
+        if (_videoController!.value.isInitialized) {
+          _videoController!.pause();
+        }
+        _videoController!.dispose();
+      } catch (e) {
+        debugPrint('[PostCard] 컨트롤러 dispose 오류: $e');
+      }
+      _videoController = null;
+      _cachedVideoUrl = null;
     }
 
     super.dispose();
@@ -133,30 +136,14 @@ class _PostCardState extends State<PostCard>
     }
   }
 
-  // 볼륨 적용을 안정화하기 위한 보정: 즉시/마이크로태스크/지연 재적용
+  // 🎯 표준 방식: 볼륨은 항상 1.0 (소리 항상 재생)
   void _applyVolumeKick() {
     if (_videoController == null) return;
-    final double vol = _muteService.isFeedMuted ? 0.0 : 1.0;
-    _videoController!.setVolume(vol);
-    Future.microtask(() => _videoController?.setVolume(vol));
+    _videoController!.setVolume(1.0);
+    Future.microtask(() => _videoController?.setVolume(1.0));
     Future.delayed(const Duration(milliseconds: 20), () {
-      _videoController?.setVolume(vol);
+      _videoController?.setVolume(1.0);
     });
-  }
-
-  void _onMuteServiceChanged() {
-    // 피드 음소거 상태가 변경되면 비디오 볼륨 조정
-    if (_videoController != null &&
-        _isVideo &&
-        _videoController!.value.isInitialized) {
-      final newVolume = _muteService.isFeedMuted ? 0.0 : 1.0;
-      _videoController!.setVolume(newVolume);
-      debugPrint(
-        '[PostCard] 음소거 상태 변경: ${_muteService.isFeedMuted ? "음소거" : "소리 켜짐"} (isVisible: ${widget.isVisible}, isPlaying: ${_videoController!.value.isPlaying})',
-      );
-      // 아이콘 업데이트를 위해 필요
-      if (mounted) setState(() {});
-    }
   }
 
   void _checkIfVideo() {
@@ -171,41 +158,49 @@ class _PostCardState extends State<PostCard>
     if (_isVideo && widget.thumbnailImageUrl.isNotEmpty) {
       _cachedVideoUrl = widget.thumbnailImageUrl;
 
-      // 캐시 서비스에서 컨트롤러 가져오기
-      _videoController = VideoCacheService().getOrCreateController(
-        _cachedVideoUrl!,
-        namespace: 'home',
+      // 🎯 표준 방식: 직접 컨트롤러 생성
+      _videoController = VideoPlayerController.networkUrl(
+        Uri.parse(_cachedVideoUrl!),
+        httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
       );
 
-      // 컨트롤러를 받았으므로 UI 갱신 시도 (Shimmer → 콘텐츠 전환)
+      // 리스너 추가
+      _videoController!.addListener(_onVideoInitialized);
 
-      // 이미 초기화된 경우 바로 setState, 아니면 리스너 등록
-      if (_videoController!.value.isInitialized) {
-        debugPrint('[PostCard] 캐시된 비디오 즉시 표시: $_cachedVideoUrl');
-        // 캐시된 컨트롤러의 볼륨 설정 (피드 음소거 상태 사용)
-        final newVolume = _muteService.isFeedMuted ? 0.0 : 1.0;
-        debugPrint(
-          '[PostCard] 볼륨 설정: $newVolume (isFeedMuted: ${_muteService.isFeedMuted}, isVisible: ${widget.isVisible})',
-        );
-        _videoController!.setVolume(newVolume);
-        // 현재 보이는 카드만 재생
-        if (widget.isVisible) {
-          _videoController!.play();
-          // 재생 직후에도 한 번 더 볼륨 적용 (라우팅 복귀 타이밍 보정)
-          _applyVolumeKick();
-          debugPrint('[PostCard] 비디오 재생 시작');
-        } else {
-          _videoController!.pause();
-          debugPrint('[PostCard] 비디오 일시정지');
-        }
-        // 캐시된 경우에는 setState 호출하여 즉시 UI 업데이트
-        if (mounted) setState(() {});
-      } else {
-        debugPrint('[PostCard] 비디오 초기화 대기 중: $_cachedVideoUrl');
-        _videoController!.addListener(_onVideoInitialized);
-        // 초기화 중이어도 쉬머는 표시하지 않음 (검은 화면 + 로딩)
-        if (mounted) setState(() {});
-      }
+      // 초기화 시작
+      _videoController!
+          .initialize()
+          .then((_) {
+            if (!mounted || _videoController == null) return;
+
+            try {
+              // 볼륨 설정 (피드 음소거 상태 사용)
+              final newVolume = 1.0; // 🎯 항상 소리 재생
+              _videoController!.setVolume(newVolume);
+
+              // 현재 보이는 카드만 재생
+              if (widget.isVisible) {
+                _videoController!.play();
+                _applyVolumeKick();
+              } else {
+                _videoController!.pause();
+              }
+
+              if (mounted) setState(() {});
+            } catch (e) {
+              debugPrint('[PostCard] 초기화 후 설정 오류: $e');
+            }
+          })
+          .catchError((e) {
+            debugPrint('[PostCard] 초기화 실패: $e');
+            if (mounted) setState(() {});
+          });
+
+      if (mounted) setState(() {});
     }
   }
 
@@ -251,18 +246,23 @@ class _PostCardState extends State<PostCard>
         debugPrint('[PostCard] 같은 비디오 URL - 컨트롤러 유지');
         // 볼륨만 재설정
         if (_videoController != null && _videoController!.value.isInitialized) {
-          final newVolume = _muteService.isFeedMuted ? 0.0 : 1.0;
+          final newVolume = 1.0; // 🎯 항상 소리 재생
           _videoController!.setVolume(newVolume);
           debugPrint('[PostCard] 볼륨 재설정: $newVolume');
         }
         // 이후 로직 계속 진행 (isVisible 체크)
       } else {
         // URL이 다르면 기존 컨트롤러 해제하고 재생성
-        if (_cachedVideoUrl != null) {
-          VideoCacheService().releaseController(
-            _cachedVideoUrl!,
-            namespace: 'home',
-          );
+        if (_videoController != null) {
+          try {
+            _videoController!.removeListener(_onVideoInitialized);
+            if (_videoController!.value.isInitialized) {
+              _videoController!.pause();
+            }
+            _videoController!.dispose();
+          } catch (e) {
+            debugPrint('[PostCard] 컨트롤러 dispose 오류: $e');
+          }
           _videoController = null;
           _cachedVideoUrl = null;
         }
@@ -283,7 +283,7 @@ class _PostCardState extends State<PostCard>
         _videoController != null &&
         _isVideo) {
       // 볼륨을 다시 설정 (뮤트 상태가 변경되었을 수 있음)
-      final currentVolume = _muteService.isFeedMuted ? 0.0 : 1.0;
+      final currentVolume = 1.0; // 🎯 항상 소리 재생
       _videoController!.setVolume(currentVolume);
       debugPrint('[PostCard] isVisible 변경 - 볼륨 재설정: $currentVolume');
 
@@ -303,9 +303,9 @@ class _PostCardState extends State<PostCard>
     if (_videoController?.value.isInitialized ?? false) {
       _videoController?.removeListener(_onVideoInitialized);
       // 초기화 완료 시 피드 음소거 상태 적용
-      final newVolume = _muteService.isFeedMuted ? 0.0 : 1.0;
+      final newVolume = 1.0; // 🎯 항상 소리 재생
       debugPrint(
-        '[PostCard] 초기화 완료 - 볼륨 설정: $newVolume (isFeedMuted: ${_muteService.isFeedMuted}, isVisible: ${widget.isVisible})',
+        '[PostCard] 초기화 완료 - 볼륨 설정: $newVolume (isVisible: ${widget.isVisible})',
       );
       _videoController?.setVolume(newVolume);
       // 현재 보이는 카드만 재생, 아니면 명시적으로 정지
@@ -325,7 +325,7 @@ class _PostCardState extends State<PostCard>
   void _toggleMute() {
     if (_videoController == null || !_isVideo) return;
     // 피드 음소거 상태 토글
-    _muteService.toggleFeedMute();
+    // 🎯 표준 방식: 개별 뮤트 기능 제거 (소리 항상 재생)
   }
 
   Widget _buildImage() {
@@ -430,9 +430,7 @@ class _PostCardState extends State<PostCard>
                         shape: BoxShape.circle,
                       ),
                       child: Icon(
-                        _muteService.isFeedMuted
-                            ? Icons.volume_off_rounded
-                            : Icons.volume_up_rounded,
+                        Icons.volume_up_rounded, // 🎯 항상 소리 재생
                         color: Colors.white,
                         size: 14,
                       ),

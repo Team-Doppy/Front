@@ -10,7 +10,6 @@ import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/editor/component/clip_component.dart' show ClipNode;
-import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
@@ -1272,8 +1271,8 @@ class PostReaderService {
     }
   }
 
-  // ===== 영상 프리로드 컨트롤러 캐시 (레거시 지원용) =====
-  // 🎯 VideoCacheService로 통합되었으나, 레거시 코드 호환성을 위해 유지
+  // ===== 영상 프리로드 컨트롤러 캐시 =====
+  // 🎯 표준 방식: 간단한 맵으로 관리 (각 위젯이 자체 컨트롤러를 관리하므로 프리로드는 선택적)
   static final Map<String, VideoPlayerController> _preloadedControllers = {};
   static final Map<String, DateTime> _preloadTimestamps = {}; // 생성 시간 추적
 
@@ -1297,164 +1296,77 @@ class PostReaderService {
   }
 
   /// 프리로드된 컨트롤러를 전달하고 캐시에서 제거한다 (소유권 이전)
-  /// 🎯 VideoCacheService로 통합 (레거시 지원)
+  /// 🎯 표준 방식: 간단한 캐시에서 반환
   static VideoPlayerController? takePreloadedController(String url) {
-    // 🎯 VideoCacheService에서 먼저 확인
-    final videoCache = VideoCacheService();
-    if (videoCache.hasController(url, namespace: 'editor')) {
-      final controller = videoCache.getOrCreateController(
-        url,
-        namespace: 'editor',
-      );
-      // 참조 카운트는 유지 (다른 곳에서 사용 중일 수 있음)
-      debugPrint('[PostReaderService] VideoCacheService에서 컨트롤러 반환: $url');
-      return controller;
-    }
-
-    // 🎯 레거시 캐시에서 마이그레이션
     _preloadTimestamps.remove(url);
     final controller = _preloadedControllers.remove(url);
     if (controller != null) {
-      // VideoCacheService에 등록
-      try {
-        videoCache.getOrCreateController(url, namespace: 'editor');
-        debugPrint('[PostReaderService] 레거시 캐시에서 VideoCacheService로 이동: $url');
-      } catch (e) {
-        debugPrint('[PostReaderService] VideoCacheService 등록 실패: $url - $e');
-      }
+      debugPrint('[PostReaderService] 프리로드 컨트롤러 반환: $url');
     }
     return controller;
   }
 
   /// 프리로드된 컨트롤러를 가져오기만 함 (캐시에 유지)
-  /// 🎯 VideoCacheService로 통합 (레거시 지원)
+  /// 🎯 표준 방식: 간단한 캐시에서 반환
   static VideoPlayerController? getPreloadedController(String url) {
-    // 🎯 VideoCacheService에서 먼저 확인
-    final videoCache = VideoCacheService();
-    if (videoCache.hasController(url, namespace: 'editor')) {
-      return videoCache.getOrCreateController(url, namespace: 'editor');
-    }
-
-    // 🎯 레거시 캐시 확인
     return _preloadedControllers[url];
   }
 
   /// 남아있는 프리로드 컨트롤러 정리
-  /// 🎯 VideoCacheService로 통합 (레거시 지원)
+  /// 🎯 표준 방식: 모든 컨트롤러 dispose
   static void disposeAllPreloaded() {
-    // 🎯 레거시 캐시 정리
     for (final c in _preloadedControllers.values) {
       try {
+        if (c.value.isInitialized) {
+          c.pause();
+        }
         c.dispose();
       } catch (_) {}
     }
     _preloadedControllers.clear();
     _preloadTimestamps.clear();
-
-    // 🎯 VideoCacheService는 전역 싱글톤이므로 여기서 dispose하지 않음
-    // (다른 곳에서 사용 중일 수 있음)
-    debugPrint('[PostReaderService] 레거시 프리로드 컨트롤러 정리 완료');
+    debugPrint('[PostReaderService] 프리로드 컨트롤러 정리 완료');
   }
 
-  // 🎯 제거됨: _disposeOldestControllers
-  // VideoCacheService가 LRU 정책으로 자동 관리하므로 불필요
-
   /// 단일 비디오를 프리로드한다 (에디터에서 플레이스홀더 교체 시 사용)
-  /// 🎯 VideoCacheService로 통합 (중복 캐시 시스템 제거)
+  /// 🎯 표준 방식: 간단한 캐시에 저장 (선택적 기능)
   static Future<void> preloadVideo(String url) async {
     if (url.isEmpty) return;
 
-    // 🎯 VideoCacheService 사용 (namespace: 'editor')
-    final videoCache = VideoCacheService();
-
     // 이미 프리로드된 경우 스킵
-    if (videoCache.hasController(url, namespace: 'editor')) {
-      if (videoCache.isInitialized(url, namespace: 'editor')) {
-        debugPrint(
-          '[PostReaderService] 이미 프리로드된 비디오 (VideoCacheService): $url',
-        );
+    if (_preloadedControllers.containsKey(url)) {
+      final controller = _preloadedControllers[url];
+      if (controller != null && controller.value.isInitialized) {
+        debugPrint('[PostReaderService] 이미 프리로드된 비디오: $url');
         _notifyClipPreloaded(url);
         return;
-      }
-    }
-
-    // 🎯 레거시 캐시에서 마이그레이션
-    if (_preloadedControllers.containsKey(url)) {
-      final controller = _preloadedControllers.remove(url);
-      _preloadTimestamps.remove(url);
-      if (controller != null) {
-        try {
-          if (controller.value.isInitialized) {
-            // VideoCacheService에 등록 (참조 카운트 증가)
-            videoCache.getOrCreateController(url, namespace: 'editor');
-            debugPrint(
-              '[PostReaderService] ✅ 레거시 캐시에서 VideoCacheService로 이동: $url',
-            );
-            _notifyClipPreloaded(url);
-            return;
-          }
-        } catch (e) {
-          debugPrint('[PostReaderService] ⚠️ 레거시 캐시 컨트롤러 무효화: $url - $e');
-        }
-        // dispose 레거시 컨트롤러
-        try {
-          controller.dispose();
-        } catch (_) {}
       }
     }
 
     try {
-      debugPrint(
-        '[PostReaderService] 🚀 비디오 프리로드 시작 (VideoCacheService): $url',
+      debugPrint('[PostReaderService] 🚀 비디오 프리로드 시작: $url');
+
+      // 🎯 표준 방식: 직접 컨트롤러 생성
+      final controller = VideoPlayerController.networkUrl(
+        Uri.parse(url),
+        httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
       );
-      final controller = videoCache.getOrCreateController(
-        url,
-        namespace: 'editor',
-      );
 
-      // 이미 초기화된 경우 스킵
-      if (controller.value.isInitialized) {
-        debugPrint('[PostReaderService] ✅ 비디오 프리로드 완료 (이미 초기화됨): $url');
-        _notifyClipPreloaded(url);
-        return;
-      }
+      // 초기화 시작
+      await controller.initialize();
 
-      // 🎯 VideoCacheService가 이미 initialize()를 시작했을 수 있으므로
-      // 초기화 완료를 대기
-      int maxWaitMs = 10000;
-      int waitedMs = 0;
-      const checkInterval = Duration(milliseconds: 100);
+      // 캐시에 저장
+      _preloadedControllers[url] = controller;
+      _preloadTimestamps[url] = DateTime.now();
 
-      while (!controller.value.isInitialized && waitedMs < maxWaitMs) {
-        await Future.delayed(checkInterval);
-        waitedMs += checkInterval.inMilliseconds;
-
-        // 🎯 dispose 체크: 컨트롤러 유효성 확인
-        try {
-          if (controller.value.hasError) {
-            throw Exception('비디오 초기화 실패: ${controller.value.errorDescription}');
-          }
-        } catch (e) {
-          debugPrint('[PostReaderService] ⚠️ 컨트롤러 오류 감지: $e');
-          break;
-        }
-      }
-
-      if (controller.value.isInitialized) {
-        _notifyClipPreloaded(url);
-        debugPrint(
-          '[PostReaderService] ✅ 비디오 프리로드 완료 (VideoCacheService): $url',
-        );
-      } else if (waitedMs >= maxWaitMs) {
-        debugPrint('[PostReaderService] ⚠️ 비디오 프리로드 타임아웃: $url');
-        throw TimeoutException('비디오 초기화 타임아웃', const Duration(seconds: 10));
-      } else {
-        throw Exception('비디오 초기화 실패');
-      }
+      _notifyClipPreloaded(url);
+      debugPrint('[PostReaderService] ✅ 비디오 프리로드 완료: $url');
     } catch (e) {
-      debugPrint(
-        '[PostReaderService] ❌ 비디오 프리로드 실패 (VideoCacheService): $url - $e',
-      );
+      debugPrint('[PostReaderService] ❌ 비디오 프리로드 실패: $url - $e');
       rethrow;
     }
   }
@@ -1468,99 +1380,38 @@ class PostReaderService {
       return;
     }
 
-    // 🎯 VideoCacheService에서 이미 프리로드된 경우 스킵
-    final videoCache = VideoCacheService();
-    if (videoCache.hasController(url, namespace: 'reader')) {
-      if (videoCache.isInitialized(url, namespace: 'reader')) {
-        debugPrint(
-          '[PostReaderService] ✅ 이미 프리로드된 비디오 (VideoCacheService): $url',
-        );
-        return;
-      }
-    }
-
-    // PostReaderService 캐시도 확인
+    // 이미 프리로드된 경우 스킵
     if (_preloadedControllers.containsKey(url)) {
-      final controller = _preloadedControllers.remove(url);
-      _preloadTimestamps.remove(url);
-      if (controller != null) {
-        try {
-          if (controller.value.isInitialized) {
-            // VideoCacheService에 등록 (참조 카운트 증가)
-            videoCache.getOrCreateController(url, namespace: 'reader');
-            debugPrint(
-              '[PostReaderService] ✅ 캐시에서 VideoCacheService로 이동: $url',
-            );
-            return;
-          }
-        } catch (e) {
-          debugPrint('[PostReaderService] ⚠️ 캐시 컨트롤러 무효화: $url - $e');
-        }
+      final controller = _preloadedControllers[url];
+      if (controller != null && controller.value.isInitialized) {
+        debugPrint('[PostReaderService] ✅ 이미 프리로드된 비디오: $url');
+        return;
       }
     }
 
-    // 🎯 VideoCacheService를 통해 컨트롤러 생성 및 초기화
+    // 🎯 표준 방식: 직접 컨트롤러 생성 및 초기화
     try {
-      debugPrint(
-        '[PostReaderService] 🚀 비디오 프리로드 시작 (VideoCacheService): $url',
+      debugPrint('[PostReaderService] 🚀 비디오 프리로드 시작: $url');
+
+      final controller = VideoPlayerController.networkUrl(
+        Uri.parse(url),
+        httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
       );
 
-      final controller = videoCache.getOrCreateController(
-        url,
-        namespace: 'reader',
-      );
+      // 초기화 시작
+      await controller.initialize();
 
-      // 이미 초기화된 경우 스킵
-      if (controller.value.isInitialized) {
-        debugPrint('[PostReaderService] ✅ 비디오 프리로드 완료 (이미 초기화됨): $url');
-        return;
-      }
+      // 캐시에 저장
+      _preloadedControllers[url] = controller;
+      _preloadTimestamps[url] = DateTime.now();
 
-      // 🎯 VideoCacheService가 이미 initialize()를 시작했을 수 있으므로
-      // 초기화 완료를 대기하는 헬퍼 사용
-      final stopwatch = Stopwatch()..start();
-
-      // 초기화 완료 대기 (최대 10초)
-      int maxWaitMs = 10000;
-      int waitedMs = 0;
-      const checkInterval = Duration(milliseconds: 100);
-
-      while (!controller.value.isInitialized && waitedMs < maxWaitMs) {
-        await Future.delayed(checkInterval);
-        waitedMs += checkInterval.inMilliseconds;
-
-        // 🎯 dispose 체크: 컨트롤러 유효성 확인
-        try {
-          if (controller.value.hasError) {
-            throw Exception('비디오 초기화 실패: ${controller.value.errorDescription}');
-          }
-        } catch (e) {
-          debugPrint('[PostReaderService] ⚠️ 컨트롤러 오류 감지: $e');
-          break;
-        }
-      }
-
-      stopwatch.stop();
-
-      // 🎯 초기화 완료 확인
-      try {
-        if (controller.value.isInitialized) {
-          debugPrint(
-            '[PostReaderService] ✅ 비디오 프리로드 완료 (VideoCacheService): $url '
-            '(${stopwatch.elapsedMilliseconds}ms, ${controller.value.size.width}x${controller.value.size.height})',
-          );
-        } else if (waitedMs >= maxWaitMs) {
-          debugPrint('[PostReaderService] ⚠️ 비디오 프리로드 타임아웃: $url');
-        } else {
-          debugPrint('[PostReaderService] ⚠️ 비디오 프리로드 실패: $url');
-        }
-      } catch (_) {
-        // best-effort
-      }
+      debugPrint('[PostReaderService] ✅ 비디오 프리로드 완료: $url');
     } catch (e, stackTrace) {
-      debugPrint(
-        '[PostReaderService] ❌ 비디오 프리로드 실패 (VideoCacheService): $url - $e',
-      );
+      debugPrint('[PostReaderService] ❌ 비디오 프리로드 실패: $url - $e');
       debugPrint('[PostReaderService] 스택: $stackTrace');
       // 에러를 다시 던지지 않음 (다른 비디오 프리로드에 영향 없도록)
     }

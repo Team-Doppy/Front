@@ -2475,7 +2475,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       saturation: state.saturation,
       luminance: state.luminance,
       exposure: state.exposure,
-      sharpness: state.sharpness,
       temperature: state.temperature,
     );
   }
@@ -2953,7 +2952,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           ..saturation = state.saturation
           ..luminance = state.luminance
           ..exposure = state.exposure
-          ..sharpness = state.sharpness
           ..temperature = state.temperature
           ..blur = state.blur;
 
@@ -2967,7 +2965,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           state.saturation = newState.saturation;
           state.luminance = newState.luminance;
           state.exposure = newState.exposure;
-          state.sharpness = newState.sharpness;
           state.temperature = newState.temperature;
           state.blur = newState.blur;
         });

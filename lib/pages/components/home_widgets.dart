@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:doppy/utils/text_bold_utils.dart';
 
 @immutable
 class HomeTextChunk {
@@ -101,78 +102,119 @@ class HomeTypography {
   }
 }
 
-class HomeSectionHeader extends StatelessWidget {
-  final List<HomeTextChunk>? line1;
-  final List<HomeTextChunk> line2;
+/// ✅ 공통 레이아웃 헤더 (서브타이틀 + 타이틀)
+/// - 서브타이틀: LocaleTypography, w300, 24font
+/// - 타이틀: LocaleTypography, w900, 32font
+class HomeLayoutHeader extends StatelessWidget {
+  final String? subtitle;
+  final String title;
   final EdgeInsets padding;
-  final double line1FontSize;
-  final double line2FontSize;
 
-  const HomeSectionHeader({
+  const HomeLayoutHeader({
     super.key,
-    required this.line2,
-    this.line1,
+    this.subtitle,
+    required this.title,
     this.padding = const EdgeInsets.symmetric(horizontal: 20),
-    this.line1FontSize = 20,
-    this.line2FontSize = 28,
   });
 
   @override
   Widget build(BuildContext context) {
     final onSurface = Theme.of(context).colorScheme.onSurface;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final shadow = Shadow(
-      offset: const Offset(0, 0.8),
-      blurRadius: 0,
-      color: onSurface.withOpacity(isDark ? 0.25 : 0.12),
-    );
 
     return Padding(
       padding: padding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (line1 != null) ...[
-            HomeRichText(
-              chunks: line1!,
-              baseStyle: HomeTypography.notoBase(
-                color: onSurface.withOpacity(0.75),
-                fontSize: line1FontSize,
+          if (subtitle != null && subtitle!.isNotEmpty) ...[
+            Text(
+              subtitle!,
+              style: LocaleTypography.style(
+                context: context,
+                fontSize: 24,
                 fontWeight: FontWeight.w300,
-                letterSpacing: -0.8,
-                height: 1.2,
-              ),
-              boldStyle: HomeTypography.notoBold(
                 color: onSurface.withOpacity(0.75),
-                fontSize: line1FontSize,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -1.2,
-                height: 1.2,
-                shadows: [shadow],
               ),
-              maxLines: 1,
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 4),
           ],
-          HomeRichText(
-            chunks: line2,
-            baseStyle: HomeTypography.notoBase(
+          Text(
+            title,
+            style: LocaleTypography.style(
+              context: context,
+              fontSize: 32,
+              fontWeight: FontWeight.w900,
               color: onSurface,
-              fontSize: line2FontSize,
-              fontWeight: FontWeight.w300,
-              letterSpacing: -1.0,
-              height: 1.2,
             ),
-            boldStyle: HomeTypography.notoBold(
-              color: onSurface,
-              fontSize: line2FontSize,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -1.4,
-              height: 1.2,
-              shadows: [shadow],
-            ),
-            maxLines: 1,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// ✅ 빈 상태 레이아웃
+class HomeEmptyLayout extends StatelessWidget {
+  final String? message;
+  final String? actionText;
+  final VoidCallback? onActionTap;
+  final EdgeInsets padding;
+
+  const HomeEmptyLayout({
+    super.key,
+    this.message,
+    this.actionText,
+    this.onActionTap,
+    this.padding = const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceVariant,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (message != null)
+            Expanded(
+              child: Text(
+                message!,
+                style: LocaleTypography.style(
+                  context: context,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w300,
+                  color: onSurface.withOpacity(0.75),
+                ),
+              ),
+            ),
+          if (actionText != null && onActionTap != null) ...[
+            const SizedBox(width: 12),
+            GestureDetector(
+              onTap: onActionTap,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    actionText!,
+                    style: LocaleTypography.style(
+                      context: context,
+                      fontSize: 32,
+                      fontWeight: FontWeight.w900,
+                      color: onSurface,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.arrow_forward_ios, size: 18, color: onSurface),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -334,19 +376,20 @@ class HomeImageCard extends StatelessWidget {
   }
 }
 
+// =============================================================================
+// ✅ 레이아웃 데이터 모델
+// =============================================================================
+
+/// Layout2 (리스트 뷰)용 카드 데이터
 @immutable
-class Section1CardData {
+class Layout2CardData {
   final ImageProvider image;
   final List<HomeTextChunk>? title;
   final VoidCallback? onTap;
-
-  /// 서브텍스트 (카드 하단에 표시될 추가 설명)
   final String? subtitle;
-
-  /// 포스트 ID (클릭 시 상세 페이지 이동용)
   final String? postId;
 
-  const Section1CardData({
+  const Layout2CardData({
     required this.image,
     this.title,
     this.onTap,
@@ -355,31 +398,56 @@ class Section1CardData {
   });
 }
 
-class Section1 extends StatelessWidget {
-  final List<HomeTextChunk>? headerLine1;
-  final List<HomeTextChunk> headerLine2;
-  final List<Section1CardData> cards;
+/// Layout1 (가득 채우는 스와이프)용 슬라이드 데이터
+@immutable
+class Layout1SlideData {
+  final ImageProvider image;
+  final String line1;
+  final String line2;
+  final VoidCallback? onTap;
 
-  /// 빈 상태일 때 표시할 메시지 (옵션)
+  const Layout1SlideData({
+    required this.image,
+    required this.line1,
+    required this.line2,
+    this.onTap,
+  });
+}
+
+/// Layout3 (원형 리스트 뷰)용 친구 데이터
+@immutable
+class Layout3FriendData {
+  final ImageProvider avatar;
+  final String name;
+  final VoidCallback? onTap;
+  final bool hasUnreadStory;
+
+  const Layout3FriendData({
+    required this.avatar,
+    required this.name,
+    this.onTap,
+    this.hasUnreadStory = false,
+  });
+}
+
+// =============================================================================
+// ✅ Layout2: 리스트 뷰 (가로 스크롤)
+// =============================================================================
+class Layout2 extends StatelessWidget {
+  final String? subtitle;
+  final String title;
+  final List<Layout2CardData> cards;
   final String? emptyMessage;
-
-  /// 빈 상태일 때 액션 버튼 텍스트 (옵션, 있으면 버튼 표시)
   final String? emptyActionText;
-
-  /// 빈 상태 액션 버튼 클릭 콜백
   final VoidCallback? onEmptyActionTap;
-
-  /// 하단 여백 (섹션 간 간격)
   final double bottomSpacing;
-
-  /// 빈 상태일 때 섹션을 숨길지 여부 (true면 섹션 완전히 숨김)
   final bool hideWhenEmpty;
 
-  const Section1({
+  const Layout2({
     super.key,
-    required this.headerLine2,
+    this.subtitle,
+    required this.title,
     required this.cards,
-    this.headerLine1,
     this.emptyMessage,
     this.emptyActionText,
     this.onEmptyActionTap,
@@ -389,76 +457,24 @@ class Section1 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final onSurface = Theme.of(context).colorScheme.onSurface;
     final w = MediaQuery.of(context).size.width;
-    final cardW = (w - 20 * 2 - 6) / 1.7; // 양옆 패딩 + 카드 간격(6)
+    final cardW = (w - 20 * 2 - 6) / 1.7;
     final cardH = cardW * 1.25;
 
-    // 빈 상태 처리
     if (cards.isEmpty) {
-      // hideWhenEmpty가 true면 섹션 완전히 숨김
       if (hideWhenEmpty) {
         return const SizedBox.shrink();
       }
 
-      // 빈 상태: 헤더만 표시하고 옆에 ">" 버튼 추가
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GestureDetector(
-            onTap: onEmptyActionTap ?? () {},
-            child: Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceVariant,
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child:
-                        emptyMessage != null
-                            ? HomeSectionHeader(
-                              line1: [
-                                HomeTextChunk(emptyMessage!, bold: false),
-                              ],
-                              line2:
-                                  emptyActionText != null
-                                      ? [
-                                        HomeTextChunk(
-                                          emptyActionText!,
-                                          bold: true,
-                                        ),
-                                      ]
-                                      : const [],
-                              padding: EdgeInsets.zero, // Row에서 padding 관리
-                            )
-                            : HomeSectionHeader(
-                              line1: headerLine1,
-                              line2: headerLine2,
-                              padding: EdgeInsets.zero, // Row에서 padding 관리
-                            ),
-                  ),
-                  if (onEmptyActionTap != null) ...[
-                    const SizedBox(width: 12),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 4,
-                      ), // 헤더와 정렬 맞추기
-                      child: GestureDetector(
-                        onTap: onEmptyActionTap,
-                        child: Icon(
-                          Icons.arrow_forward_ios,
-                          size: 18,
-                          color: onSurface.withOpacity(1),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
+          HomeLayoutHeader(subtitle: subtitle, title: title),
+          const SizedBox(height: 12),
+          HomeEmptyLayout(
+            message: emptyMessage,
+            actionText: emptyActionText,
+            onActionTap: onEmptyActionTap,
           ),
           SizedBox(height: bottomSpacing),
         ],
@@ -468,7 +484,7 @@ class Section1 extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        HomeSectionHeader(line1: headerLine1, line2: headerLine2),
+        HomeLayoutHeader(subtitle: subtitle, title: title),
         const SizedBox(height: 12),
         SizedBox(
           height: cardH,
@@ -493,21 +509,6 @@ class Section1 extends StatelessWidget {
       ],
     );
   }
-}
-
-@immutable
-class Section2SlideData {
-  final ImageProvider image;
-  final List<HomeTextChunk> line1;
-  final List<HomeTextChunk> line2;
-  final VoidCallback? onTap;
-
-  const Section2SlideData({
-    required this.image,
-    required this.line1,
-    required this.line2,
-    this.onTap,
-  });
 }
 
 class _HomeDots extends StatelessWidget {
@@ -537,23 +538,24 @@ class _HomeDots extends StatelessWidget {
   }
 }
 
-class Section2 extends StatefulWidget {
-  final List<Section2SlideData> slides;
+// =============================================================================
+// ✅ Layout1: 가득 채우는 스와이프 (PageView)
+// =============================================================================
+class Layout1 extends StatefulWidget {
+  final String? subtitle;
+  final String title;
+  final List<Layout1SlideData> slides;
   final double height;
   final EdgeInsets padding;
   final BorderRadius borderRadius;
-
-  /// 빈 상태일 때 섹션을 숨길지 여부 (true면 null 반환, false면 빈 상태 UI 표시)
   final bool hideWhenEmpty;
-
-  /// 빈 상태일 때 표시할 메시지 (hideWhenEmpty가 false일 때만 사용)
   final String? emptyMessage;
-
-  /// 하단 여백 (섹션 간 간격)
   final double bottomSpacing;
 
-  const Section2({
+  const Layout1({
     super.key,
+    this.subtitle,
+    required this.title,
     required this.slides,
     this.height = 500,
     this.padding = const EdgeInsets.symmetric(horizontal: 0),
@@ -564,10 +566,10 @@ class Section2 extends StatefulWidget {
   });
 
   @override
-  State<Section2> createState() => _Section2State();
+  State<Layout1> createState() => _Layout1State();
 }
 
-class _Section2State extends State<Section2> {
+class _Layout1State extends State<Layout1> {
   late final PageController _controller;
   int _index = 0;
 
@@ -585,35 +587,19 @@ class _Section2State extends State<Section2> {
 
   @override
   Widget build(BuildContext context) {
-    // 빈 상태 처리
     if (widget.slides.isEmpty) {
       if (widget.hideWhenEmpty) {
-        return const SizedBox.shrink(); // 섹션 숨김
+        return const SizedBox.shrink();
       }
 
-      // 빈 상태 UI 표시
-      final onSurface = Theme.of(context).colorScheme.onSurface;
-      return Padding(
-        padding: widget.padding,
-        child: SizedBox(
-          height: widget.height,
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Text(
-                widget.emptyMessage ?? '아직 그룹화된 컨텐츠가 없어요',
-                style: HomeTypography.notoBase(
-                  color: onSurface.withOpacity(0.6),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w400,
-                  letterSpacing: -0.4,
-                  height: 1.4,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-        ),
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          HomeLayoutHeader(subtitle: widget.subtitle, title: widget.title),
+          const SizedBox(height: 12),
+          HomeEmptyLayout(message: widget.emptyMessage),
+          SizedBox(height: widget.bottomSpacing),
+        ],
       );
     }
 
@@ -624,7 +610,10 @@ class _Section2State extends State<Section2> {
     );
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        HomeLayoutHeader(subtitle: widget.subtitle, title: widget.title),
+        const SizedBox(height: 12),
         Padding(
           padding: widget.padding,
           child: SizedBox(
@@ -662,64 +651,41 @@ class _Section2State extends State<Section2> {
                             left: 18,
                             right: 18,
                             top: 18,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _HomeTextBlurScrim(
-                                  borderRadius: BorderRadius.circular(14),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
+                            child: _HomeTextBlurScrim(
+                              borderRadius: BorderRadius.circular(14),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    slide.line1,
+                                    style: LocaleTypography.style(
+                                      context: context,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w300,
+                                      color: Colors.white.withOpacity(0.86),
+                                      shadows: [shadow],
+                                    ),
                                   ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      HomeRichText(
-                                        chunks: slide.line1,
-                                        baseStyle: HomeTypography.notoBase(
-                                          color: Colors.white.withOpacity(0.86),
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w300,
-                                          letterSpacing: -0.6,
-                                          height: 1.15,
-                                          shadows: [shadow],
-                                        ),
-                                        boldStyle: HomeTypography.notoBold(
-                                          color: Colors.white.withOpacity(0.92),
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w800,
-                                          letterSpacing: -0.8,
-                                          height: 1.15,
-                                          shadows: [shadow],
-                                        ),
-                                        maxLines: 1,
-                                      ),
-                                      const SizedBox(height: 2),
-                                      HomeRichText(
-                                        chunks: slide.line2,
-                                        baseStyle: HomeTypography.notoBase(
-                                          color: Colors.white.withOpacity(0.95),
-                                          fontSize: 34,
-                                          fontWeight: FontWeight.w300,
-                                          letterSpacing: -1.2,
-                                          height: 1.12,
-                                          shadows: [shadow],
-                                        ),
-                                        boldStyle: HomeTypography.notoBold(
-                                          color: Colors.white,
-                                          fontSize: 34,
-                                          fontWeight: FontWeight.w900,
-                                          letterSpacing: -1.8,
-                                          height: 1.12,
-                                          shadows: [shadow],
-                                        ),
-                                        maxLines: 2,
-                                      ),
-                                    ],
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    slide.line2,
+                                    style: LocaleTypography.style(
+                                      context: context,
+                                      fontSize: 34,
+                                      fontWeight: FontWeight.w900,
+                                      color: Colors.white,
+                                      shadows: [shadow],
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ],
@@ -751,46 +717,23 @@ class _Section2State extends State<Section2> {
   }
 }
 
-/// Section3는 원형 아바타만 사용 (친구 추천)
-/// 친구 글은 Section1을 재활용
-
-@immutable
-class Section3FriendData {
-  final ImageProvider avatar;
-  final String name;
-  final VoidCallback? onTap;
-
-  /// 읽지 않은 스토리가 있는지 여부 (스토리 테두리 표시용)
-  final bool hasUnreadStory;
-
-  const Section3FriendData({
-    required this.avatar,
-    required this.name,
-    this.onTap,
-    this.hasUnreadStory = false,
-  });
-}
-
-class Section3 extends StatelessWidget {
-  final List<HomeTextChunk> header;
-  final List<Section3FriendData>? friends;
-
-  /// 친구 추가 버튼 클릭 콜백
+// =============================================================================
+// ✅ Layout3: 원형 리스트 뷰 (친구 추천 등)
+// =============================================================================
+class Layout3 extends StatelessWidget {
+  final String? subtitle;
+  final String title;
+  final List<Layout3FriendData> friends;
   final VoidCallback? onAddFriendTap;
-
-  /// 빈 상태일 때 표시할 메시지 (예: "친구추천으로 할거야!")
   final String? emptyMessage;
-
-  /// 하단 여백 (섹션 간 간격)
   final double bottomSpacing;
-
-  /// 빈 상태일 때 섹션을 숨길지 여부 (true면 섹션 완전히 숨김)
   final bool hideWhenEmpty;
 
-  const Section3({
+  const Layout3({
     super.key,
-    required this.header,
-    this.friends,
+    this.subtitle,
+    required this.title,
+    required this.friends,
     this.onAddFriendTap,
     this.emptyMessage,
     this.bottomSpacing = 50,
@@ -802,82 +745,25 @@ class Section3 extends StatelessWidget {
     final onSurface = Theme.of(context).colorScheme.onSurface;
     final primary = Theme.of(context).colorScheme.primary;
 
-    final friendsList = friends ?? [];
-
-    // 빈 상태 처리
-    if (friendsList.isEmpty) {
-      // hideWhenEmpty가 true면 섹션 완전히 숨김
+    if (friends.isEmpty) {
       if (hideWhenEmpty) {
         return const SizedBox.shrink();
       }
 
-      // 회색 원형 2개 표시 (메시지 없이)
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: HomeRichText(
-              chunks: header,
-              baseStyle: HomeTypography.notoBase(
-                color: onSurface,
-                fontSize: 22,
-                fontWeight: FontWeight.w400,
-                letterSpacing: -0.8,
-                height: 1.2,
-              ),
-              boldStyle: HomeTypography.notoBold(
-                color: onSurface,
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -1.1,
-                height: 1.2,
-              ),
-              maxLines: 1,
-            ),
-          ),
+          HomeLayoutHeader(subtitle: subtitle, title: title),
           const SizedBox(height: 24),
-          SizedBox(
-            height: 250,
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              scrollDirection: Axis.horizontal,
-              children: [
-                // 회색 원형 2개 표시
-                for (int i = 0; i < 2; i++) ...[
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 150,
-                        height: 150,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: onSurface.withOpacity(0.15),
-                            width: 1.2,
-                          ),
-                          color: onSurface.withOpacity(0.05),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (i < 1) const SizedBox(width: 18), // 첫 번째와 두 번째 사이 간격
-                ],
-              ],
-            ),
-          ),
+          HomeEmptyLayout(message: emptyMessage),
           SizedBox(height: bottomSpacing),
         ],
       );
     }
 
-    // 친구 리스트 + 친구 추가 버튼
     final allItems = <Widget>[];
-    for (int i = 0; i < friendsList.length; i++) {
-      final f = friendsList[i];
-
-      // 스토리 테두리 (읽지 않은 스토리가 있으면 primary 색상, 없으면 회색)
+    for (int i = 0; i < friends.length; i++) {
+      final f = friends[i];
       final borderColor =
           f.hasUnreadStory ? primary : onSurface.withOpacity(0.15);
       final borderWidth = f.hasUnreadStory ? 3.0 : 2.0;
@@ -917,12 +803,11 @@ class Section3 extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: HomeTypography.notoBold(
-                color: onSurface.withOpacity(0.8),
+              style: LocaleTypography.style(
+                context: context,
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
-                letterSpacing: -0.4,
-                height: 1.1,
+                color: onSurface.withOpacity(0.8),
               ),
             ),
           ),
@@ -930,12 +815,11 @@ class Section3 extends StatelessWidget {
       );
 
       allItems.add(friendItem);
-      if (i < friendsList.length - 1 || onAddFriendTap != null) {
+      if (i < friends.length - 1 || onAddFriendTap != null) {
         allItems.add(const SizedBox(width: 18));
       }
     }
 
-    // 친구 추가 버튼 (항상 마지막에)
     if (onAddFriendTap != null) {
       final addButton = Column(
         mainAxisSize: MainAxisSize.min,
@@ -974,12 +858,11 @@ class Section3 extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: HomeTypography.notoBold(
-                color: onSurface.withOpacity(0.6),
+              style: LocaleTypography.style(
+                context: context,
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
-                letterSpacing: -0.4,
-                height: 1.1,
+                color: onSurface.withOpacity(0.6),
               ),
             ),
           ),
@@ -991,27 +874,7 @@ class Section3 extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: HomeRichText(
-            chunks: header,
-            baseStyle: HomeTypography.notoBase(
-              color: onSurface,
-              fontSize: 22,
-              fontWeight: FontWeight.w400,
-              letterSpacing: -0.8,
-              height: 1.2,
-            ),
-            boldStyle: HomeTypography.notoBold(
-              color: onSurface,
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -1.1,
-              height: 1.2,
-            ),
-            maxLines: 1,
-          ),
-        ),
+        HomeLayoutHeader(subtitle: subtitle, title: title),
         const SizedBox(height: 24),
         SizedBox(
           height: 250,
@@ -1027,20 +890,46 @@ class Section3 extends StatelessWidget {
   }
 }
 
-/// 호출부에서는 일단 `HomeWidgets.section1/2/3`로만 써도 되게 “템플릿 엔트리” 제공.
-class HomeWidgets {
-  static Widget section1({
-    List<HomeTextChunk>? headerLine1,
-    required List<HomeTextChunk> headerLine2,
-    required List<Section1CardData> cards,
+// =============================================================================
+// ✅ 레이아웃 호출부 (하드코딩 없이 레이아웃만 부르면 됨)
+// =============================================================================
+class HomeLayouts {
+  /// Layout1: 가득 채우는 스와이프 (PageView)
+  static Widget layout1({
+    String? subtitle,
+    required String title,
+    required List<Layout1SlideData> slides,
+    double height = 500,
+    EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 0),
+    BorderRadius borderRadius = const BorderRadius.all(Radius.circular(0)),
+    bool hideWhenEmpty = true,
+    String? emptyMessage,
+    double bottomSpacing = 100,
+  }) => Layout1(
+    subtitle: subtitle,
+    title: title,
+    slides: slides,
+    height: height,
+    padding: padding,
+    borderRadius: borderRadius,
+    hideWhenEmpty: hideWhenEmpty,
+    emptyMessage: emptyMessage,
+    bottomSpacing: bottomSpacing,
+  );
+
+  /// Layout2: 리스트 뷰 (가로 스크롤)
+  static Widget layout2({
+    String? subtitle,
+    required String title,
+    required List<Layout2CardData> cards,
     String? emptyMessage,
     String? emptyActionText,
     VoidCallback? onEmptyActionTap,
     double bottomSpacing = 100,
     bool hideWhenEmpty = false,
-  }) => Section1(
-    headerLine1: headerLine1,
-    headerLine2: headerLine2,
+  }) => Layout2(
+    subtitle: subtitle,
+    title: title,
     cards: cards,
     emptyMessage: emptyMessage,
     emptyActionText: emptyActionText,
@@ -1049,28 +938,18 @@ class HomeWidgets {
     hideWhenEmpty: hideWhenEmpty,
   );
 
-  static Widget section2({
-    required List<Section2SlideData> slides,
-    bool hideWhenEmpty = true,
-    String? emptyMessage,
-    double bottomSpacing = 100,
-  }) => Section2(
-    slides: slides,
-    hideWhenEmpty: hideWhenEmpty,
-    emptyMessage: emptyMessage,
-    bottomSpacing: bottomSpacing,
-  );
-
-  /// Section3: 원형 아바타 (친구 추천)
-  static Widget section3({
-    required List<HomeTextChunk> header,
-    required List<Section3FriendData> friends,
+  /// Layout3: 원형 리스트 뷰 (친구 추천 등)
+  static Widget layout3({
+    String? subtitle,
+    required String title,
+    required List<Layout3FriendData> friends,
     VoidCallback? onAddFriendTap,
     String? emptyMessage,
     double bottomSpacing = 50,
     bool hideWhenEmpty = false,
-  }) => Section3(
-    header: header,
+  }) => Layout3(
+    subtitle: subtitle,
+    title: title,
     friends: friends,
     onAddFriendTap: onAddFriendTap,
     emptyMessage: emptyMessage,

@@ -2,7 +2,6 @@ import 'dart:ui';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/main.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
@@ -24,7 +23,6 @@ import 'package:image/image.dart' as img;
 class SharePostOverlay extends StatefulWidget {
   final String postId;
   final String title;
-  final String summary; // 🎯 excerpt → summary로 변경
   final String authorUsername;
   final String? authorProfileImageUrl; // 🎯 작성자 프로필 이미지
   final String? thumbnailUrl;
@@ -37,7 +35,6 @@ class SharePostOverlay extends StatefulWidget {
     super.key,
     required this.postId,
     required this.title,
-    required this.summary, // 🎯 summary 사용
     required this.authorUsername,
     this.authorProfileImageUrl,
     this.thumbnailUrl,
@@ -75,7 +72,6 @@ class SharePostOverlay extends StatefulWidget {
           return SharePostOverlay(
             postId: postId,
             title: title,
-            summary: summary, // 🎯 summary 전달
             authorUsername: authorUsername,
             authorProfileImageUrl: authorProfileImageUrl, // 🎯 전달
             thumbnailUrl: thumbnailUrl,
@@ -1178,30 +1174,48 @@ class _ShareOverlayVideoThumbnailState
 
   void _init() {
     try {
-      // ✅ feed(ImageView/CardView)와 컨트롤러/네트워크 로딩을 최대한 공유하기 위해 동일 namespace 사용
-      _controller = VideoCacheService().getOrCreateController(
-        widget.url,
-        namespace: 'profile',
+      // 🎯 표준 방식: 직접 컨트롤러 생성
+      _controller = VideoPlayerController.networkUrl(
+        Uri.parse(widget.url),
+        httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
       );
-      if (_controller!.value.isInitialized && !_controller!.value.hasError) {
-        _controller!.setVolume(0);
-        _controller!.setLooping(true);
-        _controller!.play();
-        if (mounted) setState(() {});
-      } else {
-        if (!_listening) {
-          _listening = true;
-          _controller!.addListener(_onTick);
-        }
-        // 너무 오래 걸리면 포기
-        Future.delayed(const Duration(seconds: 12), () {
-          if (!mounted) return;
-          if (_controller == null) return;
-          if (!_controller!.value.isInitialized) {
-            setState(() => _gaveUp = true);
-          }
-        });
+
+      if (!_listening) {
+        _listening = true;
+        _controller!.addListener(_onTick);
       }
+
+      // 초기화 시작
+      _controller!
+          .initialize()
+          .then((_) {
+            if (!mounted || _controller == null) return;
+            if (_controller!.value.hasError) {
+              if (mounted) setState(() => _gaveUp = true);
+              return;
+            }
+            _controller!.setVolume(0);
+            _controller!.setLooping(true);
+            _controller!.play();
+            if (mounted) setState(() {});
+          })
+          .catchError((e) {
+            debugPrint('[SharePostOverlay] 초기화 실패: $e');
+            if (mounted) setState(() => _gaveUp = true);
+          });
+
+      // 너무 오래 걸리면 포기
+      Future.delayed(const Duration(seconds: 12), () {
+        if (!mounted) return;
+        if (_controller == null) return;
+        if (!_controller!.value.isInitialized) {
+          setState(() => _gaveUp = true);
+        }
+      });
     } catch (_) {
       setState(() => _gaveUp = true);
     }
@@ -1230,8 +1244,13 @@ class _ShareOverlayVideoThumbnailState
     if (_controller != null) {
       try {
         _controller!.removeListener(_onTick);
-      } catch (_) {}
-      VideoCacheService().releaseController(widget.url, namespace: 'profile');
+        if (_controller!.value.isInitialized) {
+          _controller!.pause();
+        }
+        _controller!.dispose();
+      } catch (e) {
+        debugPrint('[SharePostOverlay] dispose 오류: $e');
+      }
     }
     _controller = null;
     _listening = false;

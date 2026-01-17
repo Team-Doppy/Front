@@ -2,13 +2,11 @@ import 'dart:typed_data';
 import 'dart:io';
 import 'dart:async';
 
-import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/utils/config.dart';
 import 'package:doppy/editor/utils/node_type_checker.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/svg.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
@@ -54,27 +52,19 @@ class VideoPlayerControllerProxy {
   void Function()? restartVideo;
   bool Function()? hasPlayedOnce;
   void Function()? pause;
+  VideoPlayerController? controller; // ✅ 실제 컨트롤러 저장
 }
 
 /// 모든 비디오 플레이어 정리
 void cleanupAllVideoPlayers() {
   debugPrint('[ClipComponent] 모든 비디오 플레이어 정리 시작');
 
-  // 🎯 1단계: 모든 비디오 일시정지 및 리스너 제거 (setState 방지)
+  // 🎯 모든 비디오 일시정지 및 리스너 제거 (setState 방지)
   for (final entry in videoPlayerControllers.entries) {
     final controller = entry.value;
     controller.pause?.call();
   }
   videoPlayerControllers.clear();
-
-  // 🎯 2단계: VideoCacheService를 통해 모든 컨트롤러 일시정지
-  try {
-    VideoCacheService().pauseAllInNamespace('editor');
-    VideoCacheService().pauseAllInNamespace('reader');
-    debugPrint('[ClipComponent] VideoCacheService를 통한 컨트롤러 일시정지 완료');
-  } catch (e) {
-    debugPrint('[ClipComponent] VideoCacheService 일시정지 오류: $e');
-  }
 
   debugPrint('[ClipComponent] 모든 비디오 플레이어 정리 완료');
 }
@@ -91,28 +81,11 @@ void pauseAllVideosExcept(String keepKey) {
 }
 
 /// 모든 비디오를 mute시킨다 (발행 전 Step1으로 이동할 때 사용)
-/// ✅ VideoMuteService를 사용하여 뮤트 버튼과 연동
+/// 🎯 개별 뮤트 정책: 각 비디오는 개별적으로 제어되므로 이 함수는 사용하지 않음
+/// (표준 방식: 각 위젯이 자체 컨트롤러를 관리)
 void muteAllVideos() {
   debugPrint('[ClipComponent] 🔇 muteAllVideos 호출됨 - 모든 비디오 음소거');
-
-  // ✅ VideoMuteService를 사용하여 mute 상태 설정 (뮤트 버튼과 연동)
-  final muteService = VideoMuteService();
-  if (!muteService.isReaderMuted) {
-    muteService.setReaderMuted(true);
-    debugPrint('[ClipComponent] 🔇 VideoMuteService를 통해 모든 비디오 mute 설정');
-  } else {
-    debugPrint('[ClipComponent] 🔇 이미 mute 상태입니다');
-  }
-
-  // ✅ VideoCacheService를 통해 에디터/리더 네임스페이스의 모든 비디오 mute
-  try {
-    VideoCacheService().setVolumeForNamespace('editor', 0.0);
-    VideoCacheService().setVolumeForNamespace('reader', 0.0);
-    debugPrint('[ClipComponent] 🔇 VideoCacheService를 통한 mute 완료');
-  } catch (e) {
-    debugPrint('[ClipComponent] 🚨 VideoCacheService mute 오류: $e');
-  }
-
+  // 🎯 표준 방식: 각 위젯이 자체 컨트롤러를 관리하므로 별도 처리 불필요
   debugPrint('[ClipComponent] 🔇 muteAllVideos 완료');
 }
 
@@ -530,14 +503,11 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
       );
     }
 
-    // 댓글 배지 표시 여부 및 패딩 모드 확인 (디버그용)
-    bool hasCommentsFlag = false;
     String? currentPaddingMode;
     try {
       final node = doc?.getNodeById(widget.nodeId);
       if (node is ClipNode) {
         final meta = node.metadata;
-        hasCommentsFlag = meta['hasComments'] == true;
         currentPaddingMode = meta['padding'] as String? ?? 'center';
         debugPrint(
           '[ClipComponent] build 호출: nodeId=${widget.nodeId}, paddingMode=$currentPaddingMode, metadata=$meta',
@@ -702,40 +672,7 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                       child: Stack(
                         children: [
                           video,
-                          if (hasCommentsFlag)
-                            Positioned(
-                              top: 4,
-                              right: 5,
-                              child: IgnorePointer(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(1),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.surface.withOpacity(0.1),
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: SvgPicture.asset(
-                                    'assets/icons/comment.svg',
-                                    width: 12,
-                                    height: 12,
-                                    colorFilter: ColorFilter.mode(
-                                      Theme.of(context).colorScheme.surface,
-                                      BlendMode.srcIn,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+
                           // 🎯 업로드 중 오버레이는 _VideoPlayerWidget 내부에서 처리
                           if (isSelectionHighlighted)
                             Positioned.fill(
@@ -1130,9 +1067,22 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
   Widget _buildVideoContent(BuildContext context) {
     // 🎯 싱글 이미지와 동일: 부모 constraints를 따름 (스타일시트가 패딩을 자동으로 적용)
 
+    // 🎯 업로드 중 상태 확인
+    bool isUploading = false;
+    if (widget.isEditing) {
+      try {
+        isUploading = context.select<UploadService, bool>(
+          (service) => service.hasActiveUploadForRef(widget.nodeId),
+        );
+      } catch (e) {
+        debugPrint('[ClipComponent] UploadService 확인 실패: $e');
+      }
+    }
+
     // ✅ 압축 중에는 원본 영상 컨트롤러를 만들지 않고 썸네일+로딩만 노출 (검정 화면 방지)
     if (_isCompressing(context)) {
       final aspect = _getAspectRatio();
+      final isCompressingNow = _isCompressing(context);
       return AspectRatio(
         aspectRatio: aspect,
         child: Stack(
@@ -1143,19 +1093,37 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
               thumbnailPath: widget.thumbnailPath,
               isDarkMode: widget.isDarkMode,
             ),
-            Container(
-              color: Colors.black.withOpacity(0.25),
-              child: const Center(
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 4,
-                    color: Colors.white,
+            // 🎯 압축 중이거나 업로드 중일 때 로딩 표시
+            if (isCompressingNow || isUploading)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withOpacity(0.4),
+                  child: Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 4,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
+            // 🎯 썸네일만 있을 때도 재생 버튼 UI 표시 (더미)
+            if (!isCompressingNow && !isUploading)
+              Positioned(
+                bottom: 8,
+                right: 8,
+                child: Container(
+                  padding: EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.6),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.play_arrow, color: Colors.white, size: 16),
+                ),
+              ),
           ],
         ),
       );
@@ -1165,12 +1133,49 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     //    "처리 완료 전"에는 로컬 비디오를 띄우지 않는다 (원본 깜빡임 방지)
     if (_shouldShowThumbnailInsteadOfLocal()) {
       final aspect = _getAspectRatio();
+      final isCompressingNow = _isCompressing(context);
       return AspectRatio(
         aspectRatio: aspect,
-        child: _VideoPlayerWidget.buildThumbnailFallback(
-          context: context,
-          thumbnailPath: widget.thumbnailPath,
-          isDarkMode: widget.isDarkMode,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _VideoPlayerWidget.buildThumbnailFallback(
+              context: context,
+              thumbnailPath: widget.thumbnailPath,
+              isDarkMode: widget.isDarkMode,
+            ),
+            // 🎯 압축 중이거나 업로드 중일 때 로딩 표시
+            if (isCompressingNow || isUploading)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withOpacity(0.4),
+                  child: Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 4,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            // 🎯 썸네일만 있을 때도 재생 버튼 UI 표시 (더미)
+            if (!isCompressingNow && !isUploading)
+              Positioned(
+                bottom: 8,
+                right: 8,
+                child: Container(
+                  padding: EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.6),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.play_arrow, color: Colors.white, size: 16),
+                ),
+              ),
+          ],
         ),
       );
     }
@@ -1197,12 +1202,49 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
     // ✅ url이 비어있는 동안에는 로컬 비디오를 띄우지 않고 썸네일을 유지한다
     if (_hasThumbnail()) {
       final aspect = _getAspectRatio();
+      final isCompressingNow = _isCompressing(context);
       return AspectRatio(
         aspectRatio: aspect,
-        child: _VideoPlayerWidget.buildThumbnailFallback(
-          context: context,
-          thumbnailPath: widget.thumbnailPath,
-          isDarkMode: widget.isDarkMode,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _VideoPlayerWidget.buildThumbnailFallback(
+              context: context,
+              thumbnailPath: widget.thumbnailPath,
+              isDarkMode: widget.isDarkMode,
+            ),
+            // 🎯 압축 중이거나 업로드 중일 때 로딩 표시
+            if (isCompressingNow || isUploading)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withOpacity(0.4),
+                  child: Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 4,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            // 🎯 썸네일만 있을 때도 재생 버튼 UI 표시 (더미)
+            if (!isCompressingNow && !isUploading)
+              Positioned(
+                bottom: 8,
+                right: 8,
+                child: Container(
+                  padding: EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.6),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.play_arrow, color: Colors.white, size: 16),
+                ),
+              ),
+          ],
         ),
       );
     }
@@ -1517,7 +1559,9 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
   bool _isPlaying = false;
   bool _isPausedByUser = false; // 사용자가 일시정지한 경우
   bool _isDisposed = false; // 🎯 dispose 플래그
-  final VideoMuteService _muteService = VideoMuteService();
+  bool _isMuted = false; // 🎯 개별 뮤트 상태 (중앙 서비스 사용 안 함)
+  UploadService? _uploadService; // 🎯 업로드 서비스 참조
+  bool _previousUploadingState = false; // 🎯 이전 업로드 상태 추적
   double? _metadataAspectRatio; // metadata에서 가져온 비율 (캐싱)
   bool _didRunPostInitSetup =
       false; // ✅ 컨트롤러 초기화 완료 후 1회만 실행할 작업들(볼륨/메타/썸네일/오토플레이)
@@ -1574,52 +1618,22 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       _loadMetadataAspectRatio();
     });
 
-    // 음소거 서비스 리스너 등록
-    _muteService.addListener(_onMuteServiceChanged);
+    // 🎯 업로드 서비스 리스너 등록 (업로드 완료 감지용)
+    if (widget.isEditing) {
+      try {
+        _uploadService = Provider.of<UploadService>(context, listen: false);
+        _uploadService?.addListener(_onUploadServiceChanged);
+        _previousUploadingState =
+            _uploadService?.hasActiveUploadForRef(widget.nodeId) ?? false;
+      } catch (e) {
+        debugPrint('[ClipComponent] UploadService 접근 실패: $e');
+      }
+    }
 
     // 항상 프록시 등록(외부 제어용)
     _registerVideoPlayerController();
 
-    // 🎯 VideoCacheService에서 캐시된 컨트롤러 확인
-    final namespace = widget.isEditing ? 'editor' : 'reader';
-    final cacheKey =
-        widget.localPath.isNotEmpty ? widget.localPath : widget.url;
-
-    try {
-      final videoCache = VideoCacheService();
-      if (videoCache.hasController(
-        widget.url,
-        localPath: widget.localPath,
-        namespace: namespace,
-      )) {
-        final cachedController = videoCache.getOrCreateController(
-          widget.url,
-          localPath: widget.localPath,
-          namespace: namespace,
-        );
-        if (cachedController.value.isInitialized) {
-          _controller = cachedController;
-          _isInitialized = true;
-          _isReadyToPlay = true;
-          // ✅ 중복 리스너 방지: 재사용 시에도 항상 재부착
-          try {
-            _controller!.removeListener(_onVideoStatusChanged);
-          } catch (_) {}
-          _controller!.addListener(_onVideoStatusChanged);
-          _didRunPostInitSetup = true;
-          _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
-          debugPrint('[ClipComponent] VideoCacheService에서 컨트롤러 재사용: $cacheKey');
-          if (mounted) {
-            setState(() {});
-          }
-          return;
-        }
-      }
-    } catch (e) {
-      debugPrint('[ClipComponent] VideoCacheService 컨트롤러 확인 실패: $e');
-    }
-
-    // 캐시된 컨트롤러가 없으면 초기화
+    // 🎯 표준 방식: 직접 컨트롤러 초기화
     _initializeVideo();
   }
 
@@ -1629,6 +1643,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     proxy.restartVideo = restartVideo;
     proxy.hasPlayedOnce = () => _hasPlayedOnce;
     proxy.pause = _pauseVideo;
+    // ✅ 실제 컨트롤러는 _initializeVideo에서 설정됨
 
     final key = _proxyKey();
     videoPlayerControllers[key] = proxy;
@@ -1636,53 +1651,54 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     debugPrint('[VideoPlayer] 컨트롤러 등록됨: $key');
   }
 
+  void _updateVideoPlayerControllerProxy() {
+    // ✅ 컨트롤러 초기화 후 프록시 업데이트
+    final key = _proxyKey();
+    final proxy = videoPlayerControllers[key];
+    if (proxy != null && _controller != null) {
+      proxy.controller = _controller;
+      debugPrint('[VideoPlayer] 프록시에 실제 컨트롤러 저장됨: $key');
+    }
+  }
+
   @override
   void dispose() {
     // 🎯 dispose 플래그 설정 (리스너가 setState 호출 방지)
     _isDisposed = true;
 
-    // 음소거 서비스 리스너 제거
-    _muteService.removeListener(_onMuteServiceChanged);
+    // 🎯 업로드 서비스 리스너 제거
+    if (_uploadService != null) {
+      try {
+        _uploadService!.removeListener(_onUploadServiceChanged);
+      } catch (e) {
+        debugPrint('[ClipComponent] UploadService 리스너 제거 오류: $e');
+      }
+      _uploadService = null;
+    }
 
     // 컨트롤러 해제
     final key = _proxyKey();
     videoPlayerControllers.remove(key);
 
-    // 리스너 제거 (dispose 전에 먼저 제거하여 콜백 방지)
+    // 리스너 제거 및 컨트롤러 dispose (표준 방식)
     if (_controller != null) {
       try {
         _controller!.removeListener(_onVideoStatusChanged);
       } catch (e) {
         debugPrint('[ClipComponent] 리스너 제거 오류: $e');
       }
-    }
 
-    // 🎯 VideoCacheService에서 참조 해제 (모든 모드에서)
-    final namespace = widget.isEditing ? 'editor' : 'reader';
-    if (_controller != null) {
-      // 먼저 일시정지
+      // 🎯 표준 방식: 컨트롤러 dispose
       try {
         if (_controller!.value.isInitialized) {
           _controller!.pause();
         }
+        _controller!.dispose();
+        debugPrint('[ClipComponent] 컨트롤러 dispose 완료');
       } catch (e) {
-        debugPrint('[ClipComponent] pause 오류 (dispose됨): $e');
+        debugPrint('[ClipComponent] 컨트롤러 dispose 오류: $e');
       }
-
-      // 🎯 VideoCacheService에서 참조 해제
-      // VideoCacheService 컨트롤러는 dispose하지 않고 참조만 해제
-      try {
-        VideoCacheService().releaseController(
-          widget.url,
-          localPath: widget.localPath,
-          namespace: namespace,
-        );
-        debugPrint(
-          '[ClipComponent] VideoCacheService에서 참조 해제: ${widget.localPath.isNotEmpty ? widget.localPath : widget.url}',
-        );
-      } catch (e) {
-        debugPrint('[ClipComponent] VideoCacheService 참조 해제 오류: $e');
-      }
+      _controller = null;
     }
 
     super.dispose();
@@ -1712,40 +1728,9 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     }
 
     // 소스가 동일하면 컨트롤러 재사용 (드래그앤드롭 시 깜빡임 방지)
+    // 🎯 표준 방식: 컨트롤러가 없으면 초기화
     if (oldKey == newKey && _controller == null && !_isInitialized) {
-      // 🎯 VideoCacheService에서 컨트롤러 찾기
-      final namespace = widget.isEditing ? 'editor' : 'reader';
-      try {
-        final videoCache = VideoCacheService();
-        if (videoCache.hasController(
-          widget.url,
-          localPath: widget.localPath,
-          namespace: namespace,
-        )) {
-          final cachedController = videoCache.getOrCreateController(
-            widget.url,
-            localPath: widget.localPath,
-            namespace: namespace,
-          );
-          if (cachedController.value.isInitialized) {
-            _controller = cachedController;
-            _isInitialized = true;
-            _isReadyToPlay = true;
-            _controller!.addListener(_onVideoStatusChanged);
-            _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
-            debugPrint(
-              '[ClipComponent] didUpdateWidget에서 VideoCacheService 컨트롤러 재사용: $newKey',
-            );
-            if (mounted) {
-              setState(() {});
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint(
-          '[ClipComponent] didUpdateWidget: VideoCacheService 컨트롤러 확인 실패: $e',
-        );
-      }
+      _initializeVideo();
     }
 
     // 지연 초기화: 가시성 변화로 재생이 필요해졌는데 컨트롤러가 없으면 초기화
@@ -1781,50 +1766,44 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
         '[VideoPlayer] 초기화 시작: URL=${widget.url}, Local=${widget.localPath}',
       );
 
-      // 🎯 VideoCacheService에서 컨트롤러 가져오기
-      final namespace = widget.isEditing ? 'editor' : 'reader';
-      final cacheKey =
-          widget.localPath.isNotEmpty ? widget.localPath : widget.url;
-      final videoCache = VideoCacheService();
-
-      final controller = videoCache.getOrCreateController(
-        widget.url,
-        localPath: widget.localPath,
-        namespace: namespace,
-      );
-
-      final isPreloaded = controller.value.isInitialized;
-      if (isPreloaded) {
-        debugPrint('[ClipComponent] ✅ VideoCacheService에서 컨트롤러 재사용: $cacheKey');
-      } else {
-        debugPrint(
-          '[ClipComponent] 🔄 VideoCacheService에서 새 컨트롤러 생성: $cacheKey',
+      // 🎯 표준 방식: 직접 컨트롤러 생성
+      final VideoPlayerController controller;
+      if (widget.localPath.isNotEmpty) {
+        controller = VideoPlayerController.file(
+          File(widget.localPath),
+          videoPlayerOptions: VideoPlayerOptions(
+            mixWithOthers: false,
+            allowBackgroundPlayback: false,
+          ),
         );
+        debugPrint('[ClipComponent] 로컬 비디오 컨트롤러 생성: ${widget.localPath}');
+      } else if (widget.url.isNotEmpty) {
+        controller = VideoPlayerController.networkUrl(
+          Uri.parse(widget.url),
+          httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+          videoPlayerOptions: VideoPlayerOptions(
+            mixWithOthers: false,
+            allowBackgroundPlayback: false,
+          ),
+        );
+        debugPrint('[ClipComponent] 네트워크 비디오 컨트롤러 생성: ${widget.url}');
+      } else {
+        debugPrint('[ClipComponent] ⚠️ URL과 localPath가 모두 비어있음');
+        return;
       }
 
       // 🎯 위젯이 dispose되었는지 다시 확인
       if (!mounted) {
-        // 🎯 VideoCacheService 컨트롤러는 dispose하지 않고 참조만 해제
         try {
-          videoCache.releaseController(
-            widget.url,
-            localPath: widget.localPath,
-            namespace: namespace,
-          );
-        } catch (e) {
-          debugPrint('[ClipComponent] 참조 해제 오류: $e');
-        }
-        debugPrint('[ClipComponent] 초기화 취소: 컨트롤러 생성 후 dispose됨 - $cacheKey');
+          controller.dispose();
+        } catch (_) {}
+        debugPrint('[ClipComponent] 초기화 취소: 컨트롤러 생성 후 dispose됨');
         return;
       }
 
       _controller = controller;
 
-      // ✅ 중요: VideoCacheService가 controller.initialize()를 비동기로 이미 돌린다.
-      // 여기서 다시 initialize()를 호출하면 iOS에서 "Future already completed" 레이스가 날 수 있음.
-      //
-      // 따라서 컨트롤러 리스너를 "즉시" 붙이고, 초기화 완료/버퍼링/에러 상태 변화는
-      // _onVideoStatusChanged에서 감지하여 _isInitialized/_isReadyToPlay를 갱신한다.
+      // 리스너 추가
       if (mounted && _controller != null) {
         try {
           _controller!.removeListener(_onVideoStatusChanged);
@@ -1836,29 +1815,31 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
         }
       }
 
-      // ✅ 현재 시점의 상태를 반영(초기화는 아직 안 끝났을 수 있음)
-      if (mounted && _controller != null) {
+      // 초기화 시작
+      await _controller!.initialize();
+
+      // 🎯 위젯이 dispose되었는지 다시 확인
+      if (!mounted) {
         try {
-          final isInit = _controller!.value.isInitialized;
-          setState(() {
-            _isInitialized = isInit;
-            // "재생 가능"은 최소 초기화 완료 기준으로 판단 (버퍼링은 별도 UI에서 표시)
-            _isReadyToPlay = isInit;
-          });
+          _controller!.dispose();
         } catch (_) {}
+        _controller = null;
+        return;
       }
 
-      // ✅ 프리로드 히트라면(이미 init), 후속 작업을 바로 1회 실행
-      if (isPreloaded &&
-          mounted &&
-          _controller != null &&
-          !_didRunPostInitSetup) {
+      // ✅ 프록시에 실제 컨트롤러 저장
+      _updateVideoPlayerControllerProxy();
+
+      // 초기화 완료 후 설정
+      if (mounted && _controller != null && !_didRunPostInitSetup) {
         _didRunPostInitSetup = true;
-        // 볼륨 설정(best-effort)
+
+        // 볼륨 설정 - 항상 소리 재생
         try {
-          await _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
+          await _controller!.setVolume(1.0);
         } catch (_) {}
-        // 편집 모드에서 aspectRatio 저장(best-effort)
+
+        // 편집 모드에서 aspectRatio 저장
         if (widget.isEditing) {
           try {
             final s = _controller!.value.size;
@@ -1867,39 +1848,45 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
             }
           } catch (_) {}
         }
-        // 썸네일 생성(best-effort, 비동기)
-        // ✅ 리더 모드에서는 원격 비디오 썸네일 생성이 iOS(AVFoundation)에서 간헐적으로 실패하며
-        // 로그 스팸/비용만 유발할 수 있다. (드래그 오버레이 재사용 목적은 편집 모드에 한정)
+
+        // 썸네일 생성 (편집 모드에서만)
+        final cacheKey =
+            widget.localPath.isNotEmpty ? widget.localPath : widget.url;
         if (mounted &&
             widget.isEditing &&
             widget.localPath.isEmpty &&
+            widget.url.isNotEmpty &&
             !videoThumbnailCache.containsKey(cacheKey)) {
           _generateThumbnailForCache(cacheKey);
         }
-        // 가시성 조건이면 자동 재생
-        if (widget.shouldAutoPlay && !_isPlaying && !_hasPlayedOnce) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _maybeAutoPlay(reason: 'init.preloaded');
+      }
+
+      // 상태 업데이트
+      if (mounted && _controller != null) {
+        try {
+          final isInit = _controller!.value.isInitialized;
+          setState(() {
+            _isInitialized = isInit;
+            _isReadyToPlay = isInit;
           });
-        }
+
+          // 가시성 조건이면 자동 재생
+          if (widget.shouldAutoPlay && !_isPlaying && !_hasPlayedOnce) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _maybeAutoPlay(reason: 'init.completed');
+            });
+          }
+        } catch (_) {}
       }
     } catch (e, stackTrace) {
       debugPrint('[ClipComponent] 초기화 오류: ${widget.url} - $e');
       debugPrint('[ClipComponent] 스택 트레이스: $stackTrace');
-      if (!mounted) return;
 
-      // 🎯 오류 발생 시 VideoCacheService에서 참조 해제 (dispose하지 않음)
+      // 오류 발생 시 컨트롤러 정리
       if (_controller != null) {
-        final namespace = widget.isEditing ? 'editor' : 'reader';
         try {
-          VideoCacheService().releaseController(
-            widget.url,
-            localPath: widget.localPath,
-            namespace: namespace,
-          );
-        } catch (releaseError) {
-          debugPrint('[ClipComponent] 참조 해제 오류: $releaseError');
-        }
+          _controller!.dispose();
+        } catch (_) {}
         _controller = null;
       }
 
@@ -1996,9 +1983,9 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       // ✅ init이 이제 막 완료된 경우: 후속 작업(볼륨/메타/썸네일/오토플레이) 1회 수행
       if (isInitNow && !_didRunPostInitSetup) {
         _didRunPostInitSetup = true;
-        // 볼륨(best-effort)
+        // 볼륨(best-effort) - 항상 소리 재생
         try {
-          _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
+          _controller!.setVolume(1.0);
         } catch (_) {}
         // aspectRatio 저장(best-effort, 편집 모드)
         if (widget.isEditing) {
@@ -2128,39 +2115,57 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     }
   }
 
-  void _onMuteServiceChanged() {
+  /// 🎯 재생/정지 토글 (개별 제어)
+  void _togglePlayPause() {
+    if (_controller == null || !_isInitialized) return;
+
+    if (_isPlaying) {
+      _pauseVideo();
+    } else {
+      _playVideo();
+    }
+  }
+
+  /// 🎯 업로드 서비스 변경 감지 (업로드 완료 시 즉시 setState 호출)
+  void _onUploadServiceChanged() {
     // 🎯 dispose되었거나 mounted가 아니면 리스너 제거
-    if (_isDisposed || !mounted) {
-      _muteService.removeListener(_onMuteServiceChanged);
+    if (_isDisposed || !mounted || _uploadService == null) {
+      if (_uploadService != null) {
+        try {
+          _uploadService!.removeListener(_onUploadServiceChanged);
+        } catch (_) {}
+      }
       return;
     }
 
-    // 리더 음소거 상태가 변경되면 비디오 볼륨 조정
-    if (_controller != null && _isInitialized) {
-      try {
-        // 🎯 dispose 확인
-        if (_isDisposed) {
-          _muteService.removeListener(_onMuteServiceChanged);
-          return;
-        }
-        _controller!.setVolume(_muteService.isReaderMuted ? 0.0 : 1.0);
-        // 🎯 setState 전에 다시 한 번 확인
-        if (!_isDisposed && mounted) {
-          setState(() {});
-        }
-      } catch (e) {
-        debugPrint('[ClipComponent] _onMuteServiceChanged 오류: $e');
-        // dispose된 컨트롤러 접근 시 리스너 제거
-        _muteService.removeListener(_onMuteServiceChanged);
+    // 🎯 업로드 상태 확인
+    final isUploadingNow = _uploadService!.hasActiveUploadForRef(widget.nodeId);
+
+    // 🎯 업로드 완료 감지: 이전에는 업로드 중이었는데 지금은 완료됨
+    if (_previousUploadingState && !isUploadingNow) {
+      debugPrint('[ClipComponent] ✅ 업로드 완료 감지: nodeId=${widget.nodeId}');
+      // 🎯 업로드 완료 시 즉시 setState 호출
+      if (!_isDisposed && mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!_isDisposed && mounted) {
+            setState(() {});
+          }
+        });
       }
     }
+
+    // 이전 상태 업데이트
+    _previousUploadingState = isUploadingNow;
   }
 
   // 외부에서 호출하기 위한 public 메서드들
   void toggleMute() {
-    if (_controller == null) return;
-    // 리더 음소거 상태 토글
-    _muteService.toggleReaderMute();
+    if (_controller == null || !_isInitialized) return;
+    // 🎯 개별 뮤트 토글 (중앙 서비스 사용 안 함)
+    setState(() {
+      _isMuted = !_isMuted;
+    });
+    _controller!.setVolume(_isMuted ? 0.0 : 1.0);
   }
 
   void restartVideo() {
@@ -2397,6 +2402,9 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     // 편집 모드: 여러 조건 체크
     if (widget.isUploading || widget.isProcessing) return true;
 
+    // 🎯 컨트롤러가 아직 초기화되지 않았으면 스피너 표시 (영상 재생까지 텀)
+    if (_controller == null || !_isInitialized) return true;
+
     final isBuffering = _controller?.value.isBuffering ?? false;
     final isPlayingNow = _controller?.value.isPlaying ?? _isPlaying;
 
@@ -2513,27 +2521,24 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
         // 🎯 업로드/압축/버퍼링 오버레이 (로딩 스피너)
         if (shouldShowSpinner)
           Positioned.fill(
-            child: Container(
-              color: Colors.black.withOpacity(0.4),
-              child: Center(
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 4,
-                    color: Colors.white.withOpacity(1),
-                  ),
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 4,
+                  color: Colors.white.withOpacity(1),
                 ),
               ),
             ),
           ),
-        // 음소거 버튼 (업로드 중이 아닐 때만 표시)
+        // 재생/정지 버튼 (업로드 중이 아닐 때만 표시)
         if (!shouldShowSpinner)
           Positioned(
             bottom: 8,
             right: 8,
             child: GestureDetector(
-              onTap: toggleMute,
+              onTap: _togglePlayPause,
               child: Container(
                 padding: EdgeInsets.all(8),
                 decoration: BoxDecoration(
@@ -2541,9 +2546,7 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  _muteService.isReaderMuted
-                      ? Icons.volume_off
-                      : Icons.volume_up,
+                  _isPlaying ? Icons.pause : Icons.play_arrow,
                   color: Colors.white,
                   size: 16,
                 ),

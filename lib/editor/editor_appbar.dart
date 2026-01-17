@@ -2,12 +2,11 @@ import 'dart:ui';
 import 'dart:async';
 
 import 'package:doppy/editor/publish/post_export_screen.dart';
-import 'package:doppy/editor/publish/post_exporter.dart';
+import 'package:doppy/editor/publish/service/post_publish_service.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/clip_component.dart' show muteAllVideos;
-import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
@@ -16,33 +15,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:convert';
-import 'package:doppy/data/services/blog_service.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/postwrite_screen.dart' show PostWriteMode;
 import 'package:doppy/pages/screens/splash_screen.dart';
 
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
-  final VoidCallback? onSave;
+  final VoidCallback? onNext; // 🎯 다음 버튼 콜백 (PostExportScreen으로 이동)
   final String currentVisibility; // 'public', 'private'
-  // 그룹 기능 제거로 인해 currentGroupIds, onVisibilityChanged 제거
-  final Function(String title, String summary)?
-  onTitleSummaryChanged; // 제목/요약 변경 콜백
-  final VoidCallback? onCategoryChanged; // 카테고리 변경 콜백
-  final Function(String url, String? id)?
-  onThumbnailChanged; // 썸네일 변경 콜백 (URL과 ID 전달)
   final String? postId; // 서버에서 데이터 가져오기용
   final bool isSaving; // 저장 중 상태
   final bool isAutoSaving; // 자동 저장 중 상태
   final ValueNotifier<bool>? videoUploadIndicatorNotifier; // 영상 업로드 인디케이터 상태
-  final VoidCallback? onEditThumbnail; // 썸네일 편집 화면 열기 콜백
-  final String? initialTitle; // 썸네일 편집 화면 초기 제목
-  final String? initialSummary; // 썸네일 편집 화면 초기 요약
-  final String? initialThumbnailUrl; // 썸네일 편집 화면 초기 썸네일 URL
   final String? sessionKey; // 썸네일 편집 화면용 sessionKey
-  final String? currentTitle; // 현재 제목 (변경 감지용)
-  final String? currentSummary; // 현재 요약 (변경 감지용)
-  final String? currentThumbnailUrl; // 현재 썸네일 URL (변경 감지용)
   final Map<String, dynamic>?
   originalExportedData; // 원본 exported 데이터 (문서 변경 감지용)
   final StickerService? stickerService; // 스티커 서비스 (문서 변경 감지용)
@@ -50,24 +35,13 @@ class EditModeAppBar extends StatefulWidget {
   const EditModeAppBar({
     super.key,
     required this.editorService,
-    this.onSave,
+    this.onNext,
     required this.currentVisibility,
-    // 그룹 기능 제거로 인해 currentGroupIds, onVisibilityChanged 제거
-    this.onTitleSummaryChanged,
     this.postId,
     this.isSaving = false,
     this.isAutoSaving = false,
-    this.onCategoryChanged,
-    this.onThumbnailChanged,
     this.videoUploadIndicatorNotifier,
-    this.onEditThumbnail,
-    this.initialTitle,
-    this.initialSummary,
-    this.initialThumbnailUrl,
     this.sessionKey,
-    this.currentTitle,
-    this.currentSummary,
-    this.currentThumbnailUrl,
     this.originalExportedData,
     this.stickerService,
   });
@@ -77,80 +51,10 @@ class EditModeAppBar extends StatefulWidget {
 }
 
 class _EditModeAppBarState extends State<EditModeAppBar> {
-  String? _thumbnailUrl;
-  bool _isLoading = false;
-
-  String? _originalTitle; // 원본 제목 (서버에서 처음 로드한 값)
-  String? _originalSummary; // 원본 요약 (서버에서 처음 로드한 값)
-  String? _originalThumbnailUrl; // 원본 썸네일 URL (서버에서 처음 로드한 값)
-  String? _originalVisibility; // 원본 공개범위 (서버에서 처음 로드한 값)
-  // 그룹 기능 제거로 인해 _originalGroupIds 제거
-  // 🎯 카테고리는 로컬 기반이므로 editor_appbar에서는 관리하지 않음
-
   @override
   void initState() {
     super.initState();
-    debugPrint('[EditModeAppBar] 썸네일 초기화: $_thumbnailUrl');
-
-    // 수정 모드 진입 시 썸네일만 로드
-    if (widget.postId != null) {
-      _loadThumbnail();
-    } else {
-      // postId가 없으면 initial 값들을 원본으로 사용
-      _originalTitle = widget.initialTitle;
-      _originalSummary = widget.initialSummary;
-      _originalThumbnailUrl = widget.initialThumbnailUrl;
-    }
-  }
-
-  /// 수정 모드 진입 시 썸네일, 제목, 요약 로드
-  Future<void> _loadThumbnail() async {
-    if (_isLoading) return;
-
-    setState(() => _isLoading = true);
-
-    try {
-      final metadata = await BlogService().getPostMetadata(widget.postId!);
-
-      if (!mounted) return;
-
-      setState(() {
-        _thumbnailUrl = metadata['thumbnailImageUrl'] as String?;
-        _isLoading = false;
-      });
-
-      // 🎯 제목과 요약도 함께 로드하여 초기화 (수정 완료 버튼 검증용)
-      final title = metadata['title'] as String? ?? '';
-      final summary = metadata['summary'] as String? ?? '';
-
-      // 원본 값 저장 (서버에서 처음 로드한 값)
-      if (mounted) {
-        setState(() {
-          // 원본 값이 아직 설정되지 않았을 때만 저장 (최초 1회만)
-          _originalTitle ??= title;
-          _originalSummary ??= summary;
-          _originalThumbnailUrl ??= _thumbnailUrl;
-
-          // 🎯 공개범위 원본 값 저장 (카테고리는 로컬 기반이므로 서버에서 가져오지 않음)
-          final accessLevel = metadata['accessLevel'] as String?;
-          _originalVisibility ??= accessLevel;
-          // 그룹 기능 제거로 인해 _originalGroupIds 제거
-        });
-      }
-
-      widget.onTitleSummaryChanged?.call(title, summary);
-
-      debugPrint('[EditModeAppBar] 썸네일 로드 완료: $_thumbnailUrl');
-      debugPrint('[EditModeAppBar] 제목 로드 완료: $title');
-      debugPrint('[EditModeAppBar] 요약 로드 완료: $summary');
-    } catch (e) {
-      debugPrint('[EditModeAppBar] 썸네일 로드 실패: $e');
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
+    // 🎯 수정 모드: PostExportScreen에서 모든 메타데이터를 관리하므로 여기서는 로드 불필요
   }
 
   @override
@@ -171,6 +75,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
               width: MediaQuery.of(context).size.width,
               child: Row(
                 children: [
+                  SizedBox(width: 4),
                   // 뒤로가기 버튼
                   IconButton(
                     onPressed: () async {
@@ -271,28 +176,8 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
 
                       return Row(
                         children: [
-                          // 썸네일 수정 버튼
-                          if (widget.onEditThumbnail != null)
-                            GestureDetector(
-                              onTap: widget.onEditThumbnail,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(),
-                                child: Icon(
-                                  Icons.more_horiz_rounded,
-                                  size: 20,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.6),
-                                ),
-                              ),
-                            ),
-                          // 수정 완료 버튼 / 로딩 표시
                           GestureDetector(
-                            onTap: widget.isSaving ? null : widget.onSave,
+                            onTap: widget.isSaving ? null : widget.onNext,
                             child: Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 6,
@@ -326,7 +211,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                                           children: [
                                             const SizedBox(width: 4),
                                             Text(
-                                              context.tr('modify_complete'),
+                                              context.tr('next'),
                                               style: TextStyle(
                                                 fontSize: 16,
                                                 fontWeight: FontWeight.w600,
@@ -362,10 +247,9 @@ class EditorAppBar extends StatelessWidget {
   final VoidCallback? onLoadDraft;
   final String? currentDraftId; // 현재 임시저장 ID
   final ValueNotifier<bool>? videoUploadIndicatorNotifier; // 영상 업로드 인디케이터 상태
-  final void Function(String title, String summary, String thumbnailUrl)?
+  final void Function(String title, String thumbnailUrl)?
   onExportMetadataChanged; // ✅ 다음(썸네일 편집)에서 편집한 메타데이터 전달
   final String? initialTitleForExport; // ✅ 다음(썸네일 편집) 프리필용
-  final String? initialSummaryForExport; // ✅ 다음(썸네일 편집) 프리필용
   final String? initialThumbnailUrlForExport; // ✅ 다음(썸네일 편집) 프리필용
   final PostWriteMode? mode; // ✅ 온보딩 모드 여부
 
@@ -379,7 +263,6 @@ class EditorAppBar extends StatelessWidget {
     this.videoUploadIndicatorNotifier,
     this.onExportMetadataChanged,
     this.initialTitleForExport,
-    this.initialSummaryForExport,
     this.initialThumbnailUrlForExport,
     this.mode,
   });
@@ -447,11 +330,6 @@ class EditorAppBar extends StatelessWidget {
     // currentDraftId가 있으면 사용, 없으면 안전장치로 생성 (일반적으로는 이미 생성되어 있음)
     final sessionKey = currentDraftId ?? 'draft_temp';
 
-    // 검증 통과 시 다음 화면으로 이동
-    // ✅ Step1으로 이동할 때 모든 비디오를 mute (dispose는 하지 않음)
-    // 뮤트 전 상태를 저장하여 돌아올 때 복원
-    final muteService = VideoMuteService();
-    final wasMutedBeforeStep1 = muteService.isReaderMuted;
     muteAllVideos();
     NodeComponentService().selectNode(null);
 
@@ -483,10 +361,9 @@ class EditorAppBar extends StatelessWidget {
     try {
       final Map<String, dynamic> map = jsonDecode(json) as Map<String, dynamic>;
       final t = (initialTitleForExport ?? '').trim();
-      final s = (initialSummaryForExport ?? '').trim();
       final th = (initialThumbnailUrlForExport ?? '').trim();
       if (t.isNotEmpty) map['title'] = t;
-      if (s.isNotEmpty) map['summary'] = s;
+      // 🎯 summary 필드 제거됨
       if (th.isNotEmpty) map['thumbnailImageUrl'] = th;
       json = jsonEncode(map);
     } catch (_) {
@@ -505,34 +382,14 @@ class EditorAppBar extends StatelessWidget {
       ),
     );
 
-    // 🎯 Step1에서 돌아올 때 뮤트 상태 복원
-    final restoreMuteService = VideoMuteService();
-    // 원래 뮤트 상태로 복원
-    restoreMuteService.setReaderMuted(wasMutedBeforeStep1);
-    // VideoCacheService의 볼륨도 복원 (VideoMuteService 상태에 맞춰)
-    try {
-      VideoCacheService().setVolumeForNamespace(
-        'editor',
-        wasMutedBeforeStep1 ? 0.0 : 1.0,
-      );
-      VideoCacheService().setVolumeForNamespace(
-        'reader',
-        wasMutedBeforeStep1 ? 0.0 : 1.0,
-      );
-      debugPrint(
-        '[EditorAppBar] 뮤트 상태 복원: ${wasMutedBeforeStep1 ? "음소거" : "소리 켜짐"}',
-      );
-    } catch (e) {
-      debugPrint('[EditorAppBar] 뮤트 상태 복원 실패: $e');
-    }
+    // 🎯 표준 방식: 각 위젯이 자체 컨트롤러를 관리하므로 별도 처리 불필요
 
     // ✅ 썸네일 편집 화면에서 돌아오며 메타데이터를 전달받으면 상위로 전달
     if (result is Map) {
       final thumbnailUrl = (result['thumbnailImageUrl'] ?? '').toString();
       final title = (result['title'] ?? '').toString();
-      final summary = (result['summary'] ?? '').toString();
-      if (thumbnailUrl.isNotEmpty || title.isNotEmpty || summary.isNotEmpty) {
-        onExportMetadataChanged?.call(title, summary, thumbnailUrl);
+      if (thumbnailUrl.isNotEmpty || title.isNotEmpty) {
+        onExportMetadataChanged?.call(title, thumbnailUrl);
       }
     }
   }
@@ -558,6 +415,7 @@ class EditorAppBar extends StatelessWidget {
                   // 왼쪽 버튼들 (뒤로가기 + 언두/리두)
                   Row(
                     children: [
+                      SizedBox(width: 4),
                       // 뒤로가기 버튼
                       IconButton(
                         onPressed: () async {

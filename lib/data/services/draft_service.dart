@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:doppy/editor/publish/service/post_publish_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:doppy/editor/service/editor_service.dart';
@@ -11,7 +12,6 @@ import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/app_image_node.dart';
 import 'package:doppy/editor/component/divider_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
-import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:super_editor/super_editor.dart';
 // NOTE: 편집 화면은 CachedNetworkImage로 디스크/메모리 캐시를 처리하므로
 // 드래프트 로드 시점의 precacheImage(NetworkImage)는 제거됨 (메모리 eviction/깜빡임 유발).
@@ -21,7 +21,7 @@ import 'package:flutter/foundation.dart';
 class DraftData {
   final String id;
   final String title;
-  final String summary; // 🎯 요약/본문 미리보기
+
   final String content; // JSON 문자열
   final String thumbnailUrl;
   final String? videoFilePath; // 영상 원본 파일 경로
@@ -33,7 +33,7 @@ class DraftData {
   DraftData({
     required this.id,
     required this.title,
-    this.summary = '', // 🎯 기본값 빈 문자열
+
     required this.content,
     required this.thumbnailUrl,
     this.videoFilePath,
@@ -47,7 +47,7 @@ class DraftData {
     return {
       'id': id,
       'title': title,
-      'summary': summary, // 🎯 요약 추가
+      // 🎯 summary 필드 제거됨
       'content': content,
       'thumbnailUrl': thumbnailUrl,
       if (videoFilePath != null) 'videoFilePath': videoFilePath,
@@ -79,7 +79,7 @@ class DraftData {
     return DraftData(
       id: json['id'] ?? '',
       title: json['title'] ?? '',
-      summary: json['summary'] ?? '', // 🎯 요약 추가 (기본값 빈 문자열)
+      // 🎯 summary 필드 제거됨
       content: json['content'] ?? '',
       thumbnailUrl: json['thumbnailUrl'] ?? '',
       videoFilePath: json['videoFilePath'] as String?,
@@ -103,7 +103,7 @@ class DraftService {
     required EditorService editorService,
     required StickerService stickerService,
     required String title,
-    String summary = '', // 🎯 요약 추가
+    // 🎯 summary 필드 제거됨
     required String thumbnailUrl,
     String? videoFilePath,
     String? videoThumbnailPath,
@@ -150,7 +150,7 @@ class DraftService {
       final draftData = DraftData(
         id: draftId,
         title: effectiveTitle,
-        summary: summary, // 🎯 요약 저장
+        // 🎯 summary 필드 제거됨
         content: json.encode(finalPayload), // 최종 페이로드 기준 저장
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
@@ -193,7 +193,7 @@ class DraftService {
     required StickerService stickerService,
     required String draftId,
     required String title,
-    String summary = '',
+    // 🎯 summary 필드 제거됨
     required String thumbnailUrl,
     String? videoFilePath,
     String? videoThumbnailPath,
@@ -232,7 +232,7 @@ class DraftService {
       final draftData = DraftData(
         id: draftId,
         title: effectiveTitle,
-        summary: summary,
+        // 🎯 summary 필드 제거됨
         content: json.encode(finalPayload),
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
@@ -791,8 +791,6 @@ class DraftService {
           });
         }
       }
-      // 🎯 로컬 경로는 VideoCacheService에서 자동 처리되므로 별도 프리로드 불필요
-      // (ClipComponent에서 로컬 경로로 컨트롤러 생성 시 자동 초기화됨)
     }
   }
 }

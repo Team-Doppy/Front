@@ -4,16 +4,16 @@ import 'package:flutter/material.dart';
 /// Index 1 background: 별명 입력 화면
 class Index1Background extends StatefulWidget {
   final TextEditingController nicknameController;
-  final FocusNode focusNode;
   final Future<void> Function()? onNicknameSubmitted;
   final String submittedNickname; // ✅ 제출된 별명 (변화 감지용)
+  final ValueChanged<bool>? onShouldHideIndicator; // ✅ 인디케이터 숨김 여부 콜백
 
   const Index1Background({
     super.key,
     required this.nicknameController,
-    required this.focusNode,
     this.onNicknameSubmitted,
     this.submittedNickname = '',
+    this.onShouldHideIndicator,
   });
 
   @override
@@ -22,6 +22,7 @@ class Index1Background extends StatefulWidget {
 
 class _Index1BackgroundState extends State<Index1Background> {
   bool _isLoading = false;
+  bool? _lastShouldHideIndicator;
 
   Future<void> _handleSubmit() async {
     final nickname = widget.nicknameController.text.trim();
@@ -65,7 +66,7 @@ class _Index1BackgroundState extends State<Index1Background> {
                       children: [
                         // 안내 텍스트
                         Text(
-                          '친구들이 이 별명으로 나를 찾아요',
+                          '내 별명',
                           style: TextStyle(
                             color: AppColors.darkSurfaceVariant,
                             fontSize: 20,
@@ -79,7 +80,6 @@ class _Index1BackgroundState extends State<Index1Background> {
                         // 별명 입력 필드
                         TextField(
                           controller: widget.nicknameController,
-                          focusNode: widget.focusNode,
                           enabled: !_isLoading,
                           cursorColor: AppColors.darkSurface,
                           textAlign: TextAlign.center,
@@ -90,8 +90,7 @@ class _Index1BackgroundState extends State<Index1Background> {
                           ),
                           textInputAction: TextInputAction.done,
                           decoration: InputDecoration(
-                            hintText:
-                                widget.focusNode.hasFocus ? '' : '탭해서 별명 입력하기!',
+                            hintText: '탭해서 별명 입력하기!',
                             hintStyle: TextStyle(
                               color: AppColors.darkSurfaceVariant.withOpacity(
                                 0.5,
@@ -143,6 +142,16 @@ class _Index1BackgroundState extends State<Index1Background> {
                     // ✅ 텍스트가 있고, 이전 제출된 별명과 다를 때만 표시
                     final hasChanged =
                         hasText && currentText != widget.submittedNickname;
+
+                    // ✅ 키보드/완료버튼 상태 변화 시에만 인디케이터 숨김 여부 전달 (콜백/포스트프레임 남발 방지)
+                    final currentHasKeyboard =
+                        MediaQuery.of(context).viewInsets.bottom > 0;
+                    final shouldHide = currentHasKeyboard || hasChanged;
+                    if (_lastShouldHideIndicator != shouldHide) {
+                      _lastShouldHideIndicator = shouldHide;
+                      widget.onShouldHideIndicator?.call(shouldHide);
+                    }
+
                     return AnimatedOpacity(
                       opacity: hasChanged ? 1.0 : 0.0,
                       duration: const Duration(milliseconds: 200),
@@ -178,13 +187,15 @@ class _Index1BackgroundState extends State<Index1Background> {
                                             ),
                                       ),
                                     )
-                                    : const Text(
+                                    : hasChanged
+                                    ? const Text(
                                       '완료',
                                       style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w600,
                                       ),
-                                    ),
+                                    )
+                                    : const Text(''),
                           ),
                         ),
                       ),

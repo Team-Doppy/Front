@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'package:doppy/editor/publish/service/post_publish_service.dart';
 import 'package:uuid/uuid.dart';
 import 'package:doppy/editor/editor_appbar.dart';
 import 'package:doppy/editor/component/clip_component.dart'
@@ -40,18 +42,15 @@ import 'package:provider/provider.dart';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/overlay/draft_list_overlay.dart';
 import 'package:doppy/editor/overlay/resume_writing_bottom_sheet.dart';
-import 'package:doppy/editor/overlay/thumbnail_edit_overlay.dart';
 import 'package:doppy/editor/overlay/empty_editor_state.dart';
-import 'package:doppy/editor/publish/post_exporter.dart';
-import 'package:doppy/utils/mentioned_usernames_extractor.dart';
 import 'package:doppy/utils/time_utils.dart';
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
-import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/utils/access_level_parser.dart';
 import 'package:doppy/providers/theme_provider.dart';
-import 'package:doppy/pages/components/retry_cancel_bottom_sheet.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/data/models/system_category_keys.dart';
+import 'package:doppy/editor/publish/post_export_screen.dart';
 
 // 그룹 기능 제거로 인해 VisibilityOption enum 제거 - SystemCategoryKeys 사용
 
@@ -141,38 +140,30 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   String _editVisibility = SystemCategoryKeys.public;
   // 그룹 기능 제거로 인해 _editGroupIds 제거
 
-  // 서버에 적용된 제목 (썸네일 오버레이에서 변경 시 업데이트)
-  String? _serverAppliedTitle;
-  // 서버에 적용된 요약 (썸네일 오버레이에서 변경 시 업데이트)
-  String? _serverAppliedSummary;
-  // 서버에 적용된 썸네일 URL (썸네일 오버레이에서 변경 시 업데이트)
-  String? _serverAppliedThumbnailUrl;
+  // 🎯 제거됨: PostExportScreen에서 직접 처리
 
   // 저장 중 상태
   bool _isSaving = false;
   bool _isAutoSaving = false; // 자동 저장 중 상태
   Timer? _autoSaveTimer; // 자동 저장 타이머
   bool _didExplicitDraftSave = false; // ✅ "명시적 임시저장" 완료 여부 (autoDraft는 제외)
-  bool _shouldRefreshMyFeed = false; // 수정사항 발생 시 한 번만 새로고침
-  bool _categoryChanged = false; // 카테고리 변경 여부
+  // 🎯 제거됨: PostExportScreen에서 직접 처리
   bool _didPromptResumeWriting = false; // ✅ 최초 진입 시 "이어 작성" 바텀시트 1회만
 
   // ✅ 다음(썸네일 편집)에서 편집한 메타데이터를 임시저장에 반영하기 위한 오버라이드
   String? _draftTitleOverride;
-  String? _draftSummaryOverride;
+  // 🎯 summary 필드 제거됨
   String? _draftThumbnailOverride;
 
   /// 🎯 메타데이터 복원 헬퍼 (중복 제거)
   void _restoreDraftMetadata({
     required String? title,
-    required String? summary,
     required String? thumbnailUrl,
   }) {
     setState(() {
       _draftTitleOverride =
           (title?.trim().isNotEmpty ?? false) ? title!.trim() : null;
-      _draftSummaryOverride =
-          (summary?.trim().isNotEmpty ?? false) ? summary!.trim() : null;
+      // 🎯 summary 필드 제거됨
       _draftThumbnailOverride =
           (thumbnailUrl?.trim().isNotEmpty ?? false)
               ? thumbnailUrl!.trim()
@@ -186,10 +177,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         (_draftTitleOverride?.trim().isNotEmpty ?? false)
             ? _draftTitleOverride!.trim()
             : '';
-    final summary =
-        (_draftSummaryOverride?.trim().isNotEmpty ?? false)
-            ? _draftSummaryOverride!.trim()
-            : '';
+    // 🎯 summary 필드 제거됨
     String thumbnailUrl =
         (_draftThumbnailOverride?.trim().isNotEmpty ?? false)
             ? _draftThumbnailOverride!.trim()
@@ -200,7 +188,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         thumbnailUrl = firstImageUrl;
       }
     }
-    return {'title': title, 'summary': summary, 'thumbnailUrl': thumbnailUrl};
+    return {'title': title, 'thumbnailUrl': thumbnailUrl};
   }
 
   bool _isSavingAutoDraft = false; // ✅ 메타데이터 변경 등으로 연속 저장 시 중복 방지
@@ -239,7 +227,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // ✅ 정책: 제목은 "임시저장/Step1 입력"이 아니면 본문에서 추출하지 않는다.
       final metadata = _extractDraftMetadata();
       final title = metadata['title']!;
-      final summary = metadata['summary']!;
       final thumbnailUrl = metadata['thumbnailUrl']!;
 
       await draftService.saveAutoDraft(
@@ -247,7 +234,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         stickerService: stickerService,
         draftId: currentDraftId!,
         title: title.trim(), // 🎯 빈 문자열이면 ''로 저장, 제목이 있으면 유지
-        summary: summary,
+        // 🎯 summary 필드 제거됨
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
@@ -630,7 +617,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
     if (!mounted) return;
     debugPrint(
-      '[PostwriteScreen][EXIT] _cleanupAndExit: isEditingMode=${widget.isEditingMode} shouldRefreshMyFeed=$_shouldRefreshMyFeed categoryChanged=$_categoryChanged serverAppliedTitle=$_serverAppliedTitle serverAppliedSummary=$_serverAppliedSummary serverAppliedThumbnail=$_serverAppliedThumbnailUrl',
+      '[PostwriteScreen][EXIT] _cleanupAndExit: isEditingMode=${widget.isEditingMode}',
     );
 
     // ✅ 온보딩 모드일 때는 'back'을 반환하여 index 3으로 돌아가도록
@@ -639,27 +626,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       return;
     }
 
-    // ✅ 편집 모드에서 "메타데이터만 변경"된 경우에도 PostReader에 즉시 반영할 수 있도록 pop 결과를 제공
-    if (widget.isEditingMode &&
-        (_shouldRefreshMyFeed || _categoryChanged) &&
-        widget.postId != null) {
-      final base = Map<String, dynamic>.from(widget.exportedDataForEdit ?? {});
-      if (_serverAppliedTitle != null) base['title'] = _serverAppliedTitle;
-      if (_serverAppliedSummary != null)
-        base['summary'] = _serverAppliedSummary;
-      if (_serverAppliedThumbnailUrl != null) {
-        base['thumbnailImageUrl'] = _serverAppliedThumbnailUrl;
-      }
-      debugPrint(
-        '[PostwriteScreen][EXIT] pop(metadataOnly): postId=${widget.postId} title=${base['title']} summary=${base['summary']} thumbnail=${base['thumbnailImageUrl']}',
-      );
-      Navigator.of(context).pop(<String, dynamic>{
-        'didEdit': true,
-        'postId': widget.postId,
-        'exported': base,
-      });
-      return;
-    }
+    // 🎯 제거됨: PostExportScreen에서 직접 처리
 
     Navigator.of(context).pop();
   }
@@ -862,7 +829,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 자동저장은 복구 목적이므로, 빈 제목이면 ''로 저장한다 (제목이 있으면 유지).
       final metadata = _extractDraftMetadata();
       final title = metadata['title']!;
-      final summary = metadata['summary']!;
       final thumbnailUrl = metadata['thumbnailUrl']!;
 
       // 🎯 UUID 기반 draftId 사용 (제목 기반 제거)
@@ -889,7 +855,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         stickerService: stickerService,
         draftId: currentDraftId!,
         title: title,
-        summary: summary,
+        // 🎯 summary 필드 제거됨
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
@@ -953,55 +919,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     _keyboardVisibleNotifier.dispose();
     _isEmptyNotifier.dispose();
 
-    // 🎯 카테고리 변경 시 피드 프로바이더 캐시 초기화 + 새로고침
-    if (_categoryChanged) {
-      Future.delayed(const Duration(milliseconds: 300), () {
-        try {
-          final feed = MyProfileFeedProvider();
-          feed.invalidateCache();
-          feed.refresh().catchError((_) {});
-          debugPrint('[PostwriteScreen] 카테고리 변경 후 피드 프로바이더 캐시 초기화 + 새로고침 완료');
-        } catch (e) {
-          debugPrint('[PostwriteScreen] 카테고리 변경 후 피드 새로고침 실패: $e');
-        }
-      });
-    }
-    // 🎯 수정 도중 변경이 있었다면 내 피드 선택적 업데이트 (전체 새로고침 생략)
-    else if (_shouldRefreshMyFeed && widget.postId != null) {
-      // 비디오 컨트롤러 정리가 완전히 완료될 때까지 약간 지연
-      Future.delayed(const Duration(milliseconds: 300), () {
-        try {
-          final feed = MyProfileFeedProvider(); // 싱글톤 직접 접근
-          final postId = widget.postId!;
-
-          // 변경된 메타데이터만 선택적 업데이트
-          feed.updatePostMetadata(
-            postId,
-            thumbnailImageUrl: _serverAppliedThumbnailUrl,
-            title: _serverAppliedTitle,
-            summary: _serverAppliedSummary,
-          );
-          debugPrint('[PostwriteScreen] 프로필 피드 선택적 업데이트 완료 (썸네일/제목/요약 변경)');
-        } catch (e) {
-          debugPrint('[PostwriteScreen] 프로필 피드 선택적 업데이트 실패: $e');
-          // 실패 시 fallback으로 전체 새로고침
-          try {
-            final feed = MyProfileFeedProvider();
-            feed.invalidateCache();
-            feed.refresh().catchError((_) {});
-          } catch (_) {}
-        }
-      });
-    } else if (_shouldRefreshMyFeed && widget.postId == null) {
-      // 새 포스트 생성 시에는 전체 새로고침 필요 (포스트 ID가 없음)
-      Future.delayed(const Duration(milliseconds: 300), () {
-        try {
-          final feed = MyProfileFeedProvider();
-          feed.invalidateCache();
-          feed.refresh().catchError((_) {});
-        } catch (_) {}
-      });
-    }
+    // 🎯 제거됨: PostExportScreen에서 직접 처리
     super.dispose();
   }
 
@@ -1053,10 +971,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             setState(() {
               currentDraftId = autoDraft.id; // ✅ 자동저장 UUID 유지
             });
-            // ✅ Step1 메타데이터도 함께 복원 (제목/요약/썸네일)
+            // ✅ Step1 메타데이터도 함께 복원 (제목/썸네일)
             _restoreDraftMetadata(
               title: autoDraft.title,
-              summary: autoDraft.summary,
               thumbnailUrl: autoDraft.thumbnailUrl,
             );
             // (빈 상태는 build()에서 derived state로 동기화하므로 별도 토글 불필요)
@@ -1140,11 +1057,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
             editorService: editorService,
             stickerService: stickerService,
           );
-          final bool hasMetadataChanges =
-              _shouldRefreshMyFeed || _categoryChanged;
-
           debugPrint(
-            '[PostwriteScreen][WILL_POP] editMode: hasContentChanges=$hasChanges hasMetadataChanges=$hasMetadataChanges shouldRefreshMyFeed=$_shouldRefreshMyFeed categoryChanged=$_categoryChanged',
+            '[PostwriteScreen][WILL_POP] editMode: hasContentChanges=$hasChanges',
           );
 
           // 변경사항이 없으면 바로 나가기
@@ -1303,45 +1217,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                   widget.isEditingMode
                       ? EditModeAppBar(
                         editorService: editorService,
-                        onSave: _saveEditedPost,
+                        onNext: _openPostExportScreenForEdit,
                         currentVisibility: _editVisibility,
-                        // 그룹 기능 제거로 인해 currentGroupIds 제거
                         postId: widget.postId,
                         isSaving: _isSaving,
                         isAutoSaving: _isAutoSaving,
                         videoUploadIndicatorNotifier:
                             _videoUploadIndicatorNotifier,
-                        // 그룹 기능 제거로 인해 onVisibilityChanged 제거
-                        onTitleSummaryChanged: (title, summary) {
-                          setState(() {
-                            _serverAppliedTitle = title;
-                            _serverAppliedSummary = summary;
-                          });
-                          debugPrint(
-                            '[PostwriteScreen] 제목/요약 업데이트 및 서버 적용: title=$title, summary=$summary',
-                          );
-                          _shouldRefreshMyFeed = true;
-                        },
-                        onCategoryChanged: () {
-                          _categoryChanged = true;
-                        },
-                        onThumbnailChanged: (url, id) {
-                          debugPrint(
-                            '[PostwriteScreen] onThumbnailChanged 콜백 받음: url=$url, id=$id',
-                          );
-                          setState(() {
-                            _serverAppliedThumbnailUrl = url;
-                          });
-                          _shouldRefreshMyFeed = true;
-                        },
-                        onEditThumbnail: _openThumbnailEditOverlay,
-                        initialTitle: _serverAppliedTitle,
-                        initialSummary: _serverAppliedSummary,
-                        initialThumbnailUrl: _serverAppliedThumbnailUrl,
                         sessionKey: currentDraftId ?? 'draft_temp',
-                        currentTitle: _serverAppliedTitle,
-                        currentSummary: _serverAppliedSummary,
-                        currentThumbnailUrl: _serverAppliedThumbnailUrl,
                         originalExportedData: widget.exportedDataForEdit,
                         stickerService: stickerService,
                       )
@@ -1354,19 +1237,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                         videoUploadIndicatorNotifier:
                             _videoUploadIndicatorNotifier,
                         initialTitleForExport: _draftTitleOverride,
-                        initialSummaryForExport: _draftSummaryOverride,
                         initialThumbnailUrlForExport: _draftThumbnailOverride,
                         mode: widget.mode, // ✅ 온보딩 모드 전달
-                        onExportMetadataChanged: (
-                          title,
-                          summary,
-                          thumbnailUrl,
-                        ) {
+                        onExportMetadataChanged: (title, thumbnailUrl) {
                           setState(() {
                             _draftTitleOverride =
                                 title.trim().isEmpty ? null : title.trim();
-                            _draftSummaryOverride =
-                                summary.trim().isEmpty ? null : summary.trim();
+                            // 🎯 summary 필드 제거됨
                             _draftThumbnailOverride =
                                 thumbnailUrl.trim().isEmpty
                                     ? null
@@ -1893,6 +1770,138 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
   }
 
+  /// 🎯 수정 모드: PostExportScreen 열기
+  Future<void> _openPostExportScreenForEdit() async {
+    if (widget.postId == null) return;
+
+    try {
+      // 업로드/압축 중인 미디어가 있으면 차단
+      if (editorService.hasUnuploadedMedia()) {
+        if (kDebugMode) {
+          final activeTasks = editorService
+              .debugDumpBusyMediaForCurrentDocument(
+                kinds: {
+                  UploadKind.editorImage,
+                  UploadKind.video,
+                  UploadKind.drawing,
+                },
+              );
+          debugPrint(
+            '[PostwriteScreen] ⚠️ 업로드/압축 진행 중 - 다음 화면 진입 차단\n$activeTasks',
+          );
+        }
+        ErrorHandler.showError(context, context.tr('please_wait_for_upload'));
+        return;
+      }
+
+      // 현재 문서 상태를 export
+      final exported = PostExporter.exportToMap(
+        editorService: editorService,
+        stickerService: stickerService,
+        forPublishing: true,
+        allowPartialUpload: false,
+        textStylingService: textStylingService,
+      );
+
+      // 서버에서 카테고리 ID와 공개범위 가져오기
+      final metadata = await BlogService().getPostMetadata(widget.postId!);
+      debugPrint('[PostwriteScreen] getPostMetadata 결과: $metadata');
+
+      // 🎯 categoryId는 metadata에 없을 수 있으므로 피드 프로바이더에서 찾기
+      int? categoryId;
+
+      // 1. metadata에서 직접 가져오기
+      if (metadata.containsKey('categoryId')) {
+        categoryId = metadata['categoryId'] as int?;
+      } else if (metadata.containsKey('category')) {
+        // category 객체에서 id 추출
+        final category = metadata['category'];
+        if (category is Map) {
+          categoryId = category['id'] as int?;
+        }
+      }
+
+      // 2. metadata에 없으면 피드 프로바이더에서 찾기
+      if (categoryId == null) {
+        try {
+          final feedProvider = MyProfileFeedProvider();
+          // 포스트가 속한 카테고리 찾기
+          for (final categoryIdStr in feedProvider.postsByCategory.keys) {
+            final posts = feedProvider.postsByCategory[categoryIdStr] ?? [];
+            if (posts.any((p) => '${p['id']}' == widget.postId)) {
+              categoryId = int.tryParse(categoryIdStr);
+              debugPrint('[PostwriteScreen] 피드에서 카테고리 ID 찾음: $categoryId');
+              break;
+            }
+          }
+        } catch (e) {
+          debugPrint('[PostwriteScreen] 피드에서 카테고리 찾기 실패: $e');
+        }
+      }
+
+      // 3. 여전히 없으면 기본값 0 사용
+      categoryId ??= 0;
+      debugPrint('[PostwriteScreen] 최종 categoryId: $categoryId');
+
+      final accessLevel =
+          AccessLevelParser.parseAccessLevelString(metadata['accessLevel']) ??
+          SystemCategoryKeys.public;
+
+      // 제목과 썸네일 설정 (서버에서 가져온 값 사용)
+      final title = metadata['title'] as String? ?? '';
+      final thumbnailUrl = metadata['thumbnailImageUrl'] as String? ?? '';
+
+      if (title.isNotEmpty) {
+        exported['title'] = title;
+      }
+      if (thumbnailUrl.isNotEmpty) {
+        exported['thumbnailImageUrl'] = thumbnailUrl;
+      }
+
+      final json = jsonEncode(exported);
+
+      if (!mounted) return;
+
+      // PostExportScreen 열기
+      final result = await Navigator.of(context).push(
+        PageRouteBuilder(
+          opaque: false,
+          barrierDismissible: true,
+          pageBuilder:
+              (_, __, ___) => PostExportScreen(
+                exported: json,
+                sessionKey: currentDraftId ?? 'draft_temp',
+                isEditMode: true,
+                postId: widget.postId,
+                initialCategoryId: categoryId,
+                initialAccessLevel: accessLevel,
+              ),
+          transitionDuration: const Duration(milliseconds: 200),
+          reverseTransitionDuration: const Duration(milliseconds: 200),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+        ),
+      );
+
+      if (!mounted) return;
+
+      // 결과 처리
+      if (result is Map) {
+        final didEdit = result['didEdit'] as bool? ?? false;
+        if (didEdit) {
+          // 수정 완료 후 PostReader로 결과 전달
+          Navigator.of(context).pop(result);
+        }
+      }
+    } catch (e) {
+      debugPrint('[PostwriteScreen] PostExportScreen 열기 실패: $e');
+      if (mounted) {
+        ErrorHandler.showError(context, '다음 화면을 열 수 없습니다: $e');
+      }
+    }
+  }
+
   /// 문서에서 첫 번째 이미지 URL 찾기
   String? _findFirstImageUrl() {
     try {
@@ -1924,53 +1933,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       debugPrint('[PostwriteScreen] 이미지 찾기 실패: $e');
     }
     return null;
-  }
-
-  /// 썸네일 편집 화면 열기 (수정 모드 전용)
-  Future<void> _openThumbnailEditOverlay() async {
-    if (widget.postId == null) return;
-
-    // 🎯 build phase 완료 후 Navigator.push 호출 (OverlayPortalController 에러 방지)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      Navigator.of(context).push(
-        PageRouteBuilder(
-          pageBuilder:
-              (context, animation, secondaryAnimation) => ThumbnailEditOverlay(
-                postId: widget.postId!,
-                sessionKey: currentDraftId ?? 'draft_temp',
-                initialTitle: _serverAppliedTitle,
-                initialSummary: _serverAppliedSummary,
-                initialThumbnailUrl: _serverAppliedThumbnailUrl,
-                onThumbnailChanged: (url) {
-                  setState(() {
-                    _serverAppliedThumbnailUrl = url;
-                  });
-                  _shouldRefreshMyFeed = true;
-                },
-                onMetadataChanged: (title, summary) {
-                  setState(() {
-                    _serverAppliedTitle = title;
-                    _serverAppliedSummary = summary;
-                  });
-                  debugPrint(
-                    '[PostwriteScreen] 썸네일 편집 화면에서 제목/요약 업데이트: title=$title, summary=$summary',
-                  );
-                  _shouldRefreshMyFeed = true;
-                },
-              ),
-          transitionDuration: const Duration(milliseconds: 200),
-          reverseTransitionDuration: const Duration(milliseconds: 200),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-          opaque: false,
-          // 🎯 배경 반투명 오버레이 제거
-          barrierColor: Colors.transparent,
-        ),
-      );
-    });
   }
 
   /// 수동 임시저장 (새 버전 생성)
@@ -2051,7 +2013,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // - 없으면 기존 정책대로 문서에서 추출/자동 설정
       final metadata = _extractDraftMetadata();
       final title = metadata['title']!;
-      final summary = metadata['summary']!;
       final thumbnailUrl = metadata['thumbnailUrl']!;
 
       // 🎯 UUID 기반 draftId 사용 (제목 기반 제거)
@@ -2085,7 +2046,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         editorService: editorService,
         stickerService: stickerService,
         title: title,
-        summary: summary,
+        // 🎯 summary 필드 제거됨
         thumbnailUrl: thumbnailUrl,
         videoFilePath: videoFilePath,
         videoThumbnailPath: videoThumbnailPath,
@@ -2119,326 +2080,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
   }
 
-  /// 수정된 포스트 저장 (편집 모드 전용)
-  Future<void> _saveEditedPost() async {
-    debugPrint('[PostwriteScreen] ===== 수정 완료 버튼 클릭 =====');
-
-    // 이미 저장 중이면 무시
-    if (_isSaving) return;
-
-    // 업로드/압축 중인 미디어가 있으면 차단
-    if (editorService.hasUnuploadedMedia()) {
-      // 🎯 상세한 디버그 정보 출력 (kDebugMode에서만 실행)
-      if (kDebugMode) {
-        final activeTasks = editorService.debugDumpBusyMediaForCurrentDocument(
-          kinds: {UploadKind.editorImage, UploadKind.video, UploadKind.drawing},
-        );
-        debugPrint('[PostwriteScreen] ⚠️ 업로드/압축 진행 중 - 수정 완료 차단\n$activeTasks');
-      }
-      await DialogUtils.showInfoDialog(
-        context,
-        title: context.tr('wait_for_media_upload'),
-        message: context.tr('media_still_uploading'),
-      );
-      return;
-    }
-
-    // 변경사항 확인
-    // 제목은 썸네일 편집 화면에서 입력하므로 원본 데이터 그대로 사용
-    final originalForComparison = widget.exportedDataForEdit!;
-
-    final hasChanges = ContentChangeDetector.hasContentChanged(
-      originalExported: originalForComparison,
-      editorService: editorService,
-      stickerService: stickerService,
-    );
-
-    if (!hasChanges) {
-      final bool hasMetadataChanges = _shouldRefreshMyFeed || _categoryChanged;
-      debugPrint(
-        '[PostwriteScreen][SAVE_EDIT] noContentChanges: hasMetadataChanges=$hasMetadataChanges shouldRefreshMyFeed=$_shouldRefreshMyFeed categoryChanged=$_categoryChanged',
-      );
-      // ✅ 메타데이터만 변경된 경우: result를 담아서 나가기
-      if (hasMetadataChanges) {
-        await _cleanupAndExit();
-        return;
-      }
-      // 변경사항이 없으면 조용히 나가기
-      Navigator.of(context).pop();
-      return;
-    }
-
-    // 3. 저장 중 상태로 변경
-    setState(() => _isSaving = true);
-
-    try {
-      // 4. 현재 문서 상태를 export
-      final exported = PostExporter.exportToMap(
-        editorService: editorService,
-        stickerService: stickerService,
-        forPublishing: true, // 🚀 임시저장도 네트워크 이미지로 변환 (로드 속도 향상)
-        allowPartialUpload: true, // 🚀 임시저장 시 업로드 미완료 이미지 허용 (로컬 경로로 저장)
-        textStylingService: textStylingService,
-      );
-
-      // 5. content 추출
-      final content = exported['content'] as Map<String, dynamic>?;
-      if (content == null) {
-        throw Exception('본문 데이터를 추출할 수 없습니다.');
-      }
-
-      // 6. 사용된 이미지/비디오 URL 수집
-      final usedImageUrls = _collectUsedMediaUrls(exported);
-      // 6-1. mentionedUsernames 수집 (멘션 메타 노드 우선)
-      final mentionedUsernames = MentionedUsernamesExtractor.extractFromContent(
-        content,
-      );
-
-      debugPrint('[PostwriteScreen] Export 완료');
-      debugPrint('  - 사용된 미디어: ${usedImageUrls.length}개');
-      debugPrint('  - 멘션: ${mentionedUsernames.length}명');
-
-      // 7. 제목은 썸네일 편집 화면에서 입력하므로 여기서는 저장하지 않음
-
-      // 8. 서버에 본문 업데이트 요청 (제목은 썸네일 편집 화면에서 별도로 저장)
-      await BlogService().updatePostContent(
-        postId: int.parse(widget.postId!),
-        content: content,
-        title: null, // 제목은 썸네일 편집 화면에서 입력
-        usedImageUrls: usedImageUrls,
-        mentionedUsernames: mentionedUsernames,
-      );
-
-      // 🎯 서버 업데이트 성공 후에만 실행
-      debugPrint('[PostwriteScreen] ✅ 본문 수정 완료');
-
-      // 10. 안정화 시간 (0.5초) 후 완료
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      if (mounted) {
-        setState(() => _isSaving = false);
-        _shouldRefreshMyFeed = true;
-
-        // 🎯 스티커 및 드로잉 데이터 정리
-        try {
-          stickerService.resetSession();
-          debugPrint('[PostwriteScreen] 드로잉 캔버스 정리 완료');
-        } catch (_) {}
-
-        // 🎯 서버 업데이트 완료 후 pop (서버에서 최신 데이터 받아오도록)
-        debugPrint('[PostwriteScreen] ✅ 수정 완료 - 로컬 exported 기반으로 즉시 반영');
-        // ✅ PostExporter.exportToMap에는 title이 비어있을 수 있다(제목은 썸네일 오버레이에서 관리).
-        // PostReader에서 merge 시 빈 title이 기존 title을 덮어쓰는 문제를 막기 위해,
-        // pop payload에 "서버 적용된(title/summary/thumbnail)" 값을 강제로 포함한다.
-        final exportedForPop = <String, dynamic>{
-          ...Map<String, dynamic>.from(widget.exportedDataForEdit ?? const {}),
-          ...Map<String, dynamic>.from(exported),
-        };
-        if ((_serverAppliedTitle ?? '').trim().isNotEmpty) {
-          exportedForPop['title'] = _serverAppliedTitle!.trim();
-        }
-        if ((_serverAppliedSummary ?? '').trim().isNotEmpty) {
-          exportedForPop['summary'] = _serverAppliedSummary!.trim();
-        }
-        if ((_serverAppliedThumbnailUrl ?? '').trim().isNotEmpty) {
-          exportedForPop['thumbnailImageUrl'] =
-              _serverAppliedThumbnailUrl!.trim();
-        }
-        debugPrint(
-          '[PostwriteScreen][POP] exportedForPop.title=${exportedForPop['title']} (serverAppliedTitle=$_serverAppliedTitle) exported.title=${exported['title']}',
-        );
-        Navigator.of(context).pop(<String, dynamic>{
-          'didEdit': true,
-          'postId': widget.postId,
-          // ✅ 서버 재조회 없이, 방금 export한 로컬 데이터로 PostReader를 갱신한다.
-          'exported': exportedForPop,
-          'content': content,
-        });
-      }
-    } catch (e) {
-      debugPrint('[PostwriteScreen] ❌ 본문 수정 실패: $e');
-
-      // 저장 중 상태 해제
-      if (mounted) {
-        setState(() => _isSaving = false);
-        // 🎯 실패 UX: 스낵바 대신 재시도/취소/임시저장 바텀시트
-        final action = await RetryCancelBottomSheet.show(
-          context,
-          title: context.tr('edit_failed_title'),
-          error: e,
-          showSaveDraft: true,
-        );
-        if (!mounted) return;
-        if (action == RetryCancelAction.retry) {
-          await _saveEditedPost();
-        } else if (action == RetryCancelAction.saveDraft) {
-          await _saveDraftFromEditFailure();
-        }
-      }
-    } finally {}
-  }
-
-  /// 수정 실패 시 임시저장
-  Future<void> _saveDraftFromEditFailure() async {
-    try {
-      debugPrint('[PostwriteScreen] 수정 실패 → 임시저장 시작');
-
-      // 1. 메타데이터 추출 (서버에 적용된 값 우선)
-      String title = _serverAppliedTitle ?? '';
-      String summary = _serverAppliedSummary ?? '';
-      String thumbnailUrl = _serverAppliedThumbnailUrl ?? '';
-
-      // 제목/요약이 없으면 빈 문자열로 처리 (임시저장은 제목 필수이므로)
-      if (title.trim().isEmpty) {
-        title = context.tr('no_title');
-      }
-      if (summary.trim().isEmpty) {
-        summary = '';
-      }
-      if (thumbnailUrl.trim().isEmpty) {
-        // 첫 이미지 찾기
-        final firstImageUrl = _findFirstImageUrl();
-        if (firstImageUrl != null && firstImageUrl.isNotEmpty) {
-          thumbnailUrl = firstImageUrl;
-        }
-      }
-
-      // 3. draftId 생성 (편집 모드에서는 새 임시저장)
-      const uuid = Uuid();
-      final draftId = 'draft_${uuid.v4()}';
-
-      // 4. 영상 파일 경로 (편집 모드에서는 일반적으로 없음)
-      final sessionKey = draftId;
-      final videoFilePath = nodeComponentService.getTempVideoFilePath(
-        sessionKey,
-      );
-      final videoThumbnailPath = nodeComponentService.getTempVideoThumbnailPath(
-        sessionKey,
-      );
-
-      // 5. 임시저장
-      await draftService.saveDraft(
-        editorService: editorService,
-        stickerService: stickerService,
-        title: title,
-        summary: summary,
-        thumbnailUrl: thumbnailUrl,
-        videoFilePath: videoFilePath,
-        videoThumbnailPath: videoThumbnailPath,
-        visibility: _editVisibility,
-        existingDraftId: draftId,
-        textStylingService: textStylingService,
-      );
-
-      if (mounted) {
-        ErrorHandler.showInfo(context, context.tr('draft_saved'));
-        debugPrint('[PostwriteScreen] ✅ 수정 실패 → 임시저장 완료');
-      }
-    } catch (e) {
-      debugPrint('[PostwriteScreen] ❌ 수정 실패 → 임시저장 실패: $e');
-      if (mounted) {
-        ErrorHandler.showError(context, context.tr('draft_save_failed'));
-      }
-    }
-  }
-
-  /// 사용된 이미지/비디오 URL 수집
-  /// PostExporter와 동일한 로직 사용
-  List<String> _collectUsedMediaUrls(Map<String, dynamic> exported) {
-    final Set<String> usedUrls = <String>{};
-
-    try {
-      // content의 nodes에서 이미지/비디오 URL 수집
-      final dynamic content = exported['content'];
-      final List<dynamic> nodes =
-          (content is Map)
-              ? List<dynamic>.from(content['nodes'] as List? ?? const [])
-              : const [];
-
-      debugPrint('[PostwriteScreen] URL 수집 시작 (노드 개수: ${nodes.length})');
-
-      for (int i = 0; i < nodes.length; i++) {
-        final n = nodes[i];
-        if (n is! Map) continue;
-
-        final String type = (n['type'] ?? '').toString();
-        debugPrint('  - 노드[$i] 타입: $type');
-
-        if (type == 'image') {
-          // data.url 또는 url 필드에서 추출
-          final data = n['data'] as Map<String, dynamic>?;
-          final String url = (data?['url'] ?? n['url'] ?? '').toString();
-          if (url.isNotEmpty) {
-            usedUrls.add(url);
-            debugPrint('    → 이미지 URL 추가: $url');
-          }
-        } else if (type == 'imageRow') {
-          // urls 필드에서 추출
-          final List<dynamic> urls = List<dynamic>.from(n['urls'] ?? const []);
-          for (final u in urls) {
-            final String url = u.toString();
-            if (url.isNotEmpty) {
-              usedUrls.add(url);
-              debugPrint('    → 이미지행 URL 추가: $url');
-            }
-          }
-        } else if (type == 'video' || type == 'clip') {
-          // data.url에서 추출 (비디오도 usedImageUrls에 포함!)
-          final data = n['data'] as Map<String, dynamic>?;
-          final String url = (data?['url'] ?? '').toString();
-          if (url.isNotEmpty) {
-            usedUrls.add(url);
-            debugPrint('    → 비디오 URL 추가: $url');
-          }
-        }
-      }
-
-      // 🎯 스티커에서 이미지 URL 수집 (PNG 드로잉 포함)
-      // 🎯 스티커는 exported['content']['stickers']에 있음 (exported['stickers']가 아님!)
-      final contentStickers =
-          (content is Map ? (content['stickers'] as List?) : null) ?? const [];
-      debugPrint('  - 스티커 개수: ${contentStickers.length}');
-      for (final sticker in contentStickers) {
-        if (sticker is! Map) continue;
-        final stickerType = (sticker['type'] ?? '').toString();
-        if (stickerType == 'image') {
-          final stickerContent = sticker['content'];
-          String? url;
-
-          if (stickerContent is Map) {
-            // ✅ URL + 크기 정보 (PNG 드로잉) 또는 레거시 {url: ...}
-            url = (stickerContent['url'] ?? '').toString();
-          } else if (stickerContent is String) {
-            // 레거시: content가 직접 URL 문자열인 경우
-            url = stickerContent;
-          }
-
-          if (url != null && url.isNotEmpty) {
-            // HTTP URL인지 확인 (로컬 파일 경로 제외)
-            if (url.startsWith('http://') || url.startsWith('https://')) {
-              usedUrls.add(url);
-              debugPrint('    → 스티커 URL 추가: $url');
-            } else {
-              debugPrint('    → 스티커 URL이 HTTP가 아님 (로컬 파일?): $url');
-            }
-          } else {
-            debugPrint('    → 스티커 URL이 비어있음: content=$stickerContent');
-          }
-        }
-      }
-
-      debugPrint('[PostwriteScreen] ✅ 총 수집된 미디어 URL: ${usedUrls.length}개');
-      if (usedUrls.isNotEmpty) {
-        for (final url in usedUrls) {
-          debugPrint('  - $url');
-        }
-      }
-    } catch (e) {
-      debugPrint('[PostwriteScreen] 미디어 URL 수집 실패: $e');
-    }
-
-    return usedUrls.toList();
-  }
+  // 🎯 제거됨: PostExportScreen에서 직접 처리
 
   /// 임시저장 목록 보기
   Future<void> _showDraftList() async {
@@ -2485,7 +2127,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                     // ✅ Step1 메타데이터도 함께 복원 (제목/요약/썸네일)
                     _restoreDraftMetadata(
                       title: draft.title,
-                      summary: draft.summary,
                       thumbnailUrl: draft.thumbnailUrl,
                     );
 

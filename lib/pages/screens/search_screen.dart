@@ -230,7 +230,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       final currentPost = _searchResults[safeIndex];
       final imageUrl = currentPost.thumbnailImageUrl.trim();
 
-      // 🎯 네트워크 이미지이면 비디오도 포함하여 전달 (비디오는 VideoCacheService로 프리로드)
+      // 🎯 네트워크 이미지이면 비디오도 포함하여 전달
       if (imageUrl.startsWith('http')) {
         return imageUrl;
       }
@@ -245,7 +245,7 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
       final currentPost = searchService.recommendedPosts[safeIndex];
       final imageUrl = currentPost.imageUrl?.trim() ?? '';
 
-      // 🎯 네트워크 이미지이면 비디오도 포함하여 전달 (비디오는 VideoCacheService로 프리로드)
+      // 🎯 네트워크 이미지이면 비디오도 포함하여 전달
       if (imageUrl.startsWith('http')) {
         return imageUrl;
       }
@@ -404,7 +404,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                 id: item.id,
                 thumbnailImageUrl: item.imageUrl ?? '',
                 title: item.title ?? '',
-                summary: item.summary ?? item.parsedContent ?? '',
                 author: item.author ?? item.username ?? '',
                 authorProfileImageUrl: item.profileImageUrl ?? '',
                 content: item.content ?? '',
@@ -632,7 +631,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
           id: post.id,
           thumbnailImageUrl: post.imageUrl ?? '',
           title: post.title ?? '',
-          summary: post.summary ?? post.parsedContent ?? '',
           author: post.author ?? post.username ?? '',
           authorProfileImageUrl: post.profileImageUrl ?? '',
           content: post.content ?? '',
@@ -702,7 +700,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
               id: post.id,
               thumbnailImageUrl: post.imageUrl ?? '',
               title: post.title ?? '',
-              summary: post.summary ?? post.parsedContent ?? '',
               author: post.author ?? post.username ?? '',
               authorProfileImageUrl: post.profileImageUrl ?? '',
               content: post.content ?? '',
@@ -829,7 +826,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                 id: item.id,
                 thumbnailImageUrl: item.imageUrl ?? '',
                 title: item.title ?? '',
-                summary: item.summary ?? item.parsedContent ?? '',
                 author: item.author ?? item.username ?? '',
                 authorProfileImageUrl: item.profileImageUrl ?? '',
                 content: item.content ?? '',
@@ -888,7 +884,6 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
                 id: item.id,
                 thumbnailImageUrl: item.imageUrl ?? '',
                 title: item.title ?? '',
-                summary: item.summary ?? item.parsedContent ?? '',
                 author: item.author ?? item.username ?? '',
                 authorProfileImageUrl: item.profileImageUrl ?? '',
                 content: item.content ?? '',

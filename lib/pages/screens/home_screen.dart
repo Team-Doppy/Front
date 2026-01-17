@@ -7,7 +7,6 @@ import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/services/home_feed_service.dart';
 import 'package:doppy/utils/home_greetings.dart';
 import 'package:doppy/utils/week_utils.dart';
-import 'package:doppy/pages/components/home_widgets.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/material.dart';
@@ -49,6 +48,12 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // 디버그 모드: 샘플 데이터 표시 여부 (빈 데이터 토글용)
   bool _showSampleData = true;
+
+  // ✅ "글 쓰자마자" 홈 인삿말 보상 스왑을 위한 로컬 오버라이드
+  // - 현재 서버/포스트 로딩이 비어있는 상태에서도, 방금 작성한 주차는 즉시 채워진 것으로 처리
+  // - 앱이 종료될 때까지 보상 멘트 유지
+  final Map<int, Map<int, int>> _localWeekPostOverrides = {};
+  bool _justFilledThisWeek = false; // 앱 종료까지 유지
 
   @override
   void initState() {
@@ -159,18 +164,48 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     debugPrint('지금 기록하기 버튼 클릭');
   }
 
-  List<Widget> _buildHomeFeedSectionWidgets() {
+  /// ✅ HomeFeedService에서 모든 데이터를 한 번에 받기
+  HomeScreenData _buildHomeData() {
     // 디버그 빈 데이터 토글에서는 "원래 숨기는 섹션"도 빈 상태 UI를 확인할 수 있도록 허용
     final debugShowEmptyStates = kDebugMode && !_showSampleData;
 
     // 로케일 가져오기
     final l10n = AppLocalizations.of(context);
 
-    // TODO(스플래시/서버 연동): 서버에서 받은 홈피드 데이터를 payload로 변환해서 주입
-    // 지금은 하드코딩 제거 요구사항에 맞춰 빈 payload만 사용 (UI는 빈 처리 규칙대로 동작)
+    // TODO(서버 연동): 서버에서 받은 홈피드 데이터를 payload로 변환해서 주입
+    // ✅ 서버에서 인사말 2줄도 함께 받음 (payload.greetingMessage)
     final payload = const HomeFeedPayload.empty();
 
-    final chunks = _homeFeedService.buildChunks(
+    // 그리드 데이터 생성
+    final contributions =
+        _isTestMode
+            ? (_testContributions ?? const <WeeklyContributionData>[])
+            : _generateContributionsFromPosts();
+
+    // ✅ 이번 주에 없다가 새로 채웠을 때만 로컬 보상 멘트 생성
+    HomeGreetingMessage? localRewardMessage;
+    if (_justFilledThisWeek) {
+      final currentYW = WeekUtils.getCurrentYearAndWeek();
+      final postsThisWeek = contributions
+          .where(
+            (c) =>
+                c.year == currentYW.year &&
+                c.weekNumber == currentYW.weekNumber &&
+                (c.postCount > 0),
+          )
+          .fold<int>(0, (acc, c) => acc + c.postCount);
+
+      if (postsThisWeek > 0) {
+        // 로컬 보상 멘트 생성
+        localRewardMessage = const HomeGreetingMessage(
+          line1: [HomeGreetingChunk('이번 주, 체크 완료')],
+          line2: [HomeGreetingChunk('잘 했어요')],
+        );
+      }
+    }
+
+    // HomeFeedService에서 모든 데이터를 한 번에 받기
+    return _homeFeedService.buildHomeData(
       payload: payload,
       debugShowEmptyStates: debugShowEmptyStates,
       onS1EmptyActionTap: _handleS1EmptyActionTap,
@@ -178,48 +213,27 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // 로케일 문자열 주입
       emptyS1Line1: l10n.t('home_empty_s1_line1'),
       emptyS1Line2Bold: l10n.t('home_empty_s1_line2'),
-      friendRecommendHeader: [
-        HomeTextChunk(l10n.t('home_friend_recommend_header')),
-      ],
+      friendRecommendTitle: l10n.t('home_friend_recommend_header'),
+      // 그리드 데이터
+      contributions: contributions,
+      // ✅ 이번 주 방금 채웠을 때만 로컬 보상 멘트
+      localRewardMessage: localRewardMessage,
     );
+  }
 
+  /// 홈 컨텐츠 청크를 위젯으로 변환
+  List<Widget> _buildContentChunks(List<HomeDataChunk> chunks) {
     return chunks.map((c) {
-      if (c is HomeSection1Chunk) {
-        return HomeWidgets.section1(
-          headerLine1: c.headerLine1,
-          headerLine2: c.headerLine2,
-          cards: c.cards,
-          hideWhenEmpty: c.hideWhenEmpty,
-          emptyMessage: c.emptyMessage,
-          emptyActionText: c.emptyActionText,
-          onEmptyActionTap: c.onEmptyActionTap,
-          bottomSpacing: c.bottomSpacing,
-        );
-      }
-      if (c is HomeSection2Chunk) {
-        return HomeWidgets.section2(
-          slides: c.slides,
-          hideWhenEmpty: c.hideWhenEmpty,
-          bottomSpacing: c.bottomSpacing,
-        );
-      }
-      if (c is HomeSection3Chunk) {
-        return HomeWidgets.section3(
-          header: c.header,
-          friends: c.friends,
-          hideWhenEmpty: c.hideWhenEmpty,
-          onAddFriendTap: c.onAddFriendTap,
-          emptyMessage: c.emptyMessage,
-          bottomSpacing: c.bottomSpacing,
-        );
+      if (c is HomeLayoutChunk) {
+        return c.layout;
       }
       return const SizedBox.shrink();
     }).toList();
   }
 
   Widget _buildGridSection() {
-    // 빈 기여도 데이터 생성 (포스트 로딩 제거됨)
-    final contributions = _generateContributionsFromPosts();
+    // ✅ HomeFeedService에서 모든 데이터를 한 번에 받기
+    final homeData = _buildHomeData();
 
     return SafeArea(
       child: CustomScrollView(
@@ -294,9 +308,18 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ],
           ),
 
-          // 환영 인사
-          SliverToBoxAdapter(child: _buildWelcomeMessage(context)),
-          // 잔디 심기 UI (이번주 친구글)
+          // ✅ 환영 인사 (HomeFeedService에서 받은 데이터)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: _buildTwoLineHomeGreeting(
+                context,
+                homeData.greetingMessage,
+              ),
+            ),
+          ),
+
+          // ✅ 잔디 심기 UI (HomeFeedService에서 받은 데이터)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.only(top: 8, bottom: 8),
@@ -309,7 +332,8 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         : DateTime.now(),
                 selectedWeek: _selectedWeek,
                 onWeekSelected: _handleWeekSelected,
-                contributions: _isTestMode ? _testContributions : contributions,
+                contributions:
+                    _isTestMode ? _testContributions : homeData.contributions,
                 onLongPress:
                     (year, weekNumber, position, cellCenter) =>
                         _handleWeekLongPress(year, weekNumber, position),
@@ -322,9 +346,11 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           // 🧪 디버그 모드: 빈 데이터 토글 버튼
           if (kDebugMode) SliverToBoxAdapter(child: _buildEmptyDataToggle()),
 
-          // ====== 섹션 템플릿: HomeFeedService가 만든 청크를 렌더링 ======
+          // ✅ 홈 컨텐츠 (HomeFeedService에서 받은 청크들)
           SliverToBoxAdapter(
-            child: Column(children: _buildHomeFeedSectionWidgets()),
+            child: Column(
+              children: _buildContentChunks(homeData.contentChunks),
+            ),
           ),
         ],
       ),
@@ -395,69 +421,6 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
-    );
-  }
-
-  /// 환영 인사 메시지 위젯
-  Widget _buildWelcomeMessage(BuildContext context) {
-    final userProvider = context.watch<UserProvider>();
-    final currentUser = userProvider.currentUser;
-
-    // 사용자 이름 결정 (alias가 있으면 alias, 없으면 username)
-    final displayName =
-        currentUser?.alias?.isNotEmpty == true
-            ? currentUser!.alias!
-            : (currentUser?.username ?? '');
-
-    // ✅ 로컬 시간대 사용 (미국/한국 등 사용자 위치에 따라 자동 적용)
-    // DateTime.now()는 디바이스의 현재 로컬 시간대를 반환합니다.
-    final now = DateTime.now();
-    final seedSalt = (currentUser?.username ?? displayName).trim();
-    final safeSeedSalt = seedSalt.isEmpty ? 'anon' : seedSalt;
-
-    // ✅ 홈 텍스트는 "그리드 상태" 기반이므로, 포스트가 없어도 contributions에서 신호를 만든다.
-    final contributionsForSignals =
-        _isTestMode
-            ? (_testContributions ?? const <WeeklyContributionData>[])
-            : _generateContributionsFromPosts();
-    final currentYW = WeekUtils.getCurrentYearAndWeek();
-    final postsThisWeek = contributionsForSignals
-        .where(
-          (c) =>
-              c.year == currentYW.year &&
-              c.weekNumber == currentYW.weekNumber &&
-              (c.postCount > 0),
-        )
-        .fold<int>(0, (acc, c) => acc + c.postCount);
-    final totalPosts = contributionsForSignals.fold<int>(
-      0,
-      (acc, c) => acc + c.postCount,
-    );
-    final weeklyStreak = _computeWeeklyStreakFromContributions(
-      contributionsForSignals,
-      currentYW.year,
-      currentYW.weekNumber,
-    );
-
-    final signals = HomeGreetingSignals(
-      displayName: displayName,
-      // 🎯 현재 User 모델에는 signupAt이 없어서, 테스트 모드에서만 주입
-      signupAt: _isTestMode ? _testSignupAt : null,
-      totalPosts: totalPosts,
-      postsThisWeek: postsThisWeek,
-      // 포스트 원본이 없어서 정확한 "마지막 작성일"은 계산 불가(필요해지면 week->date로 근사 가능)
-      lastPostAt: null,
-      // ✅ streakCount는 "연속 주(weekly streak)"로 사용
-      streakCount: weeklyStreak,
-      now: now, // 로컬 시간대 기준
-      seedSalt: safeSeedSalt,
-    );
-
-    final msg = HomeGreetings.pick(signals);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      child: _buildTwoLineHomeGreeting(context, msg),
     );
   }
 
@@ -548,28 +511,6 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ],
       ),
     );
-  }
-
-  /// contributions 기반으로 "연속 주(weekly streak)" 계산
-  /// - currentYear/currentWeek부터 과거로 거슬러가며, 해당 주에 postCount>0이면 연속 카운트
-  int _computeWeeklyStreakFromContributions(
-    List<WeeklyContributionData> contributions,
-    int currentYear,
-    int currentWeek,
-  ) {
-    final map = <int, int>{};
-    for (final c in contributions) {
-      if (c.postCount <= 0) continue;
-      map[c.weekNumber] = (map[c.weekNumber] ?? 0) + c.postCount;
-    }
-
-    int streak = 0;
-    for (int w = currentWeek; w >= 1; w--) {
-      final has = (map[w] ?? 0) > 0;
-      if (!has) break;
-      streak++;
-    }
-    return streak;
   }
 
   /// 주차 길게 누르기 핸들러
@@ -857,16 +798,30 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     // 모든 주차에 대해 빈 데이터 생성
     for (int week = 1; week <= totalWeeks; week++) {
+      final overrideCount = _localWeekPostOverrides[year]?[week] ?? 0;
       contributions.add(
         WeeklyContributionData(
           year: year,
           weekNumber: week,
-          hasPost: false,
-          postCount: 0,
+          hasPost: overrideCount > 0,
+          postCount: overrideCount,
         ),
       );
     }
 
     return contributions;
+  }
+
+  /// 외부(발행 화면)에서 호출: 방금 게시된 글을 홈 그리드/인삿말에 즉시 반영
+  void notifyPostPublished({DateTime? createdAt}) {
+    final when = (createdAt ?? DateTime.now());
+    final year = _selectedYear ?? when.year;
+    final weekNumber = WeekUtils.getWeekNumber(when);
+
+    setState(() {
+      final byWeek = _localWeekPostOverrides.putIfAbsent(year, () => {});
+      byWeek[weekNumber] = (byWeek[weekNumber] ?? 0) + 1;
+      _justFilledThisWeek = true;
+    });
   }
 }

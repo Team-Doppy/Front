@@ -282,7 +282,7 @@ class LocaleTypography {
   /// 볼드 스타일 (NotoSans 강제)
   ///
   /// 볼드 텍스트는 항상 NotoSans 계열을 사용하여 일관성 보장
-  static TextStyle boldStyle({
+  static TextStyle setStyle({
     required BuildContext context,
     required double fontSize,
     Color? color,

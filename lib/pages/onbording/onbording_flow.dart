@@ -1,6 +1,7 @@
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:doppy/pages/onbording/steps/index0_step.dart';
 import 'package:doppy/pages/onbording/steps/index1_bg.dart';
 import 'package:doppy/pages/onbording/steps/index2_bg.dart';
@@ -23,6 +24,8 @@ class _OnboardingFlowState extends State<OnboardingFlow>
   late AnimationController _snapController;
   late AnimationController _indicatorPulseController; // ✅ 인디케이터 깜빡임 애니메이션
   late Animation<double> _indicatorPulseAnimation;
+  late AnimationController _index0HintController; // ✅ index0 카드 미세 스와이프 힌트
+  late AnimationController _index3HintController; // ✅ index3 카드 미세 스와이프 힌트
   int _currentIndex = 0; // 현재 인덱스 (0~4) - 사이드이펙트(키보드) 용
   bool _isDragging = false; // ✅ 전환(드래그) 중 Index2 애니메이션 pause 제어용
   static const double _stackAlignY = 0.15; // ✅ 카드를 위로 올리기 위해 값 감소
@@ -31,18 +34,22 @@ class _OnboardingFlowState extends State<OnboardingFlow>
   // ✅ 페이드인: 300ms 동안 진행 (전체 480ms 기준)
   static const double _bgFadeInStart = 1.0 - (300.0 / 480.0); // ≈ 0.375
 
-  // ✅ Index1 입력 관련(재생성/포커스 부하 줄이기 위해 상위에서 유지)
+  // ✅ Index1 입력 관련
   late final TextEditingController _index1NicknameController;
-  late final FocusNode _index1FocusNode;
   bool _nicknameSubmitted = false; // ✅ 별명 제출 완료 여부
   String _submittedNickname = ''; // ✅ 제출된 별명 저장 (변화 감지용)
   bool _hasNavigatedToPostWrite = false; // ✅ PostWriteScreen으로 전환 여부
+  bool _isProfileImageUploaded = false; // ✅ 프로필 사진 업로드 완료 여부
+  bool _shouldHideIndicatorInIndex1 =
+      false; // ✅ index1에서 인디케이터 숨김 여부 (키보드/완료 버튼)
+  bool _rebuildScheduled = false;
+  int _autoAdvanceNonce = 0; // ✅ index2 업로드 완료 후 자동 이동 예약 취소/무효화용
+  bool _autoAdvanceInterrupted = false; // ✅ 사용자 인터럽션(탭/스와이프) 여부
 
   @override
   void initState() {
     super.initState();
     _index1NicknameController = TextEditingController();
-    _index1FocusNode = FocusNode();
     _snapController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 480), // 프레지 느낌: 여유롭고 쾌감 있는 전환
@@ -65,12 +72,25 @@ class _OnboardingFlowState extends State<OnboardingFlow>
       ),
     );
 
+    // ✅ index0 카드 "살짝 스와이프" 힌트 애니메이션 (아주 미세하게 반복)
+    _index0HintController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000), // ✅ 1초로 변경
+    );
+
+    // ✅ index3 카드 "살짝 스와이프" 힌트 애니메이션 (아주 미세하게 반복)
+    _index3HintController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000), // ✅ 1초로 변경
+    );
+
     // ✅ 초기 진입 시 0번 인덱스이면 0.5초 지연 후 애니메이션 시작
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _currentIndex == 0) {
         Future.delayed(const Duration(milliseconds: 500), () {
           if (mounted && _currentIndex == 0) {
             _indicatorPulseController.repeat(reverse: true);
+            _index0HintController.repeat(reverse: true);
           }
         });
       }
@@ -104,9 +124,61 @@ class _OnboardingFlowState extends State<OnboardingFlow>
   void dispose() {
     _snapController.dispose();
     _indicatorPulseController.dispose();
+    _index0HintController.dispose();
+    _index3HintController.dispose();
     _index1NicknameController.dispose();
-    _index1FocusNode.dispose();
     super.dispose();
+  }
+
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted) return;
+    // build 중/프레임 중 들어오는 콜백(setState) 충돌 방지: 다음 프레임으로 미룸
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    final shouldDefer =
+        phase != SchedulerPhase.idle &&
+        phase != SchedulerPhase.postFrameCallbacks;
+    if (!shouldDefer) {
+      setState(fn);
+      return;
+    }
+    if (_rebuildScheduled) return;
+    _rebuildScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _rebuildScheduled = false;
+      if (!mounted) return;
+      setState(fn);
+    });
+  }
+
+  void _interruptIndex2AutoAdvance() {
+    // ✅ 사용자 인터럽션이 들어오면, 예약된 자동 이동 취소
+    _autoAdvanceInterrupted = true;
+    _autoAdvanceNonce++;
+  }
+
+  void _scheduleIndex2AutoAdvanceIfNeeded() {
+    // ✅ index2에서 업로드 완료(멋진데요?)가 뜬 후,
+    // 사용자의 인터럽션이 없으면 잠깐 지연 후 다음으로 자동 이동
+    if (_currentIndex != 2) return;
+    if (!_isProfileImageUploaded) return;
+
+    final nonce = ++_autoAdvanceNonce;
+    _autoAdvanceInterrupted = false;
+
+    Future.delayed(const Duration(milliseconds: 2000), () {
+      if (!mounted) return;
+      if (_autoAdvanceNonce != nonce) return;
+      if (_autoAdvanceInterrupted) return;
+      if (_currentIndex != 2) return;
+      if (!_isProfileImageUploaded) return;
+      if (_isDragging || _snapController.isAnimating) return;
+
+      _snapController.animateTo(
+        3.0,
+        curve: Curves.easeOutCubic,
+        duration: const Duration(milliseconds: 480),
+      );
+    });
   }
 
   void _updateCurrentIndex() {
@@ -121,6 +193,28 @@ class _OnboardingFlowState extends State<OnboardingFlow>
       // ✅ 인덱스 1에서 벗어날 때 키보드 즉시 내리기
       if (oldIndex == 1 && newIndex != 1) {
         FocusScope.of(context).unfocus();
+        // ✅ index1에서 임시로 바꾼 텍스트는 유지하지 않고, 마지막으로 "제출된 별명"으로 복원
+        if (_nicknameSubmitted) {
+          final text = _submittedNickname;
+          _index1NicknameController.value = TextEditingValue(
+            text: text,
+            selection: TextSelection.collapsed(offset: text.length),
+          );
+        }
+      }
+
+      // ✅ 다시 index1로 돌아올 때도 항상 "제출된 별명"으로 시작
+      if (newIndex == 1 && _nicknameSubmitted) {
+        final text = _submittedNickname;
+        _index1NicknameController.value = TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(offset: text.length),
+        );
+      }
+
+      // ✅ 업로드가 완료된 상태로 index2에 들어오면 자동 이동 예약
+      if (newIndex == 2 && _isProfileImageUploaded) {
+        _scheduleIndex2AutoAdvanceIfNeeded();
       }
 
       // ✅ 인디케이터 깜빡임 애니메이션 제어
@@ -129,12 +223,28 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         Future.delayed(const Duration(milliseconds: 300), () {
           if (mounted && _currentIndex == 0) {
             _indicatorPulseController.repeat(reverse: true);
+            if (!_isDragging && !_snapController.isAnimating) {
+              _index0HintController.repeat(reverse: true);
+            }
+          }
+        });
+      } else if (newIndex == 3) {
+        // 3번 인덱스 진입: 0.5초 지연 후 애니메이션 시작
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted && _currentIndex == 3) {
+            if (!_isDragging && !_snapController.isAnimating) {
+              _index3HintController.repeat(reverse: true);
+            }
           }
         });
       } else {
         // 다른 인덱스로 이동: 애니메이션 중지
         _indicatorPulseController.stop();
         _indicatorPulseController.reset();
+        _index0HintController.stop();
+        _index0HintController.reset();
+        _index3HintController.stop();
+        _index3HintController.reset();
       }
 
       // ✅ index 4로 전환 시 PostWriteScreen으로 push
@@ -177,17 +287,25 @@ class _OnboardingFlowState extends State<OnboardingFlow>
           }
         });
       }
-
-      // ✅ 인디케이터 리빌드를 위해 setState 호출
-      if (mounted) {
-        setState(() {});
-      }
+      // ✅ AnimatedBuilder가 프레임마다 build하므로 여기서 setState로 강제 리빌드는 하지 않음
     }
   }
 
   void _onPanStart(DragStartDetails d) {
     if (!_isDragging) {
       setState(() => _isDragging = true);
+    }
+    // ✅ index2에서 스와이프 시작은 자동 이동 인터럽트로 간주
+    if (_currentIndex == 2) {
+      _interruptIndex2AutoAdvance();
+    }
+    // ✅ 사용자가 직접 밀기 시작하면 힌트 애니메이션은 즉시 중지
+    if (_currentIndex == 0) {
+      _index0HintController.stop();
+      _index0HintController.reset();
+    } else if (_currentIndex == 3) {
+      _index3HintController.stop();
+      _index3HintController.reset();
     }
     _snapController.stop();
   }
@@ -197,7 +315,9 @@ class _OnboardingFlowState extends State<OnboardingFlow>
 
     // 양방향 스와이프 지원: 왼쪽(음수)은 forward, 오른쪽(양수)은 reverse
     // startX 기반 delta는 누적 적용 시 튀기 쉬워서, 프레임 delta 기반으로 누적
-    final p = (-d.delta.dx / width);
+    // ✅ 스와이프 감도 약간 둔감하게: 0.92 배율 적용
+    const double swipeSensitivity = 0.92;
+    final p = (-d.delta.dx / width) * swipeSensitivity;
 
     // ✅ 별명 입력(index 1)에서는 다음(왼쪽 스와이프)만 막기, 이전(오른쪽 스와이프)은 허용
     if (_currentIndex == 1 && !_nicknameSubmitted) {
@@ -229,11 +349,28 @@ class _OnboardingFlowState extends State<OnboardingFlow>
       0 => Index0Background(name: 'affection_jh'),
       1 => Index1Background(
         nicknameController: _index1NicknameController,
-        focusNode: _index1FocusNode,
         onNicknameSubmitted: () => _handleNicknameSubmit(),
         submittedNickname: _submittedNickname, // ✅ 제출된 별명 전달
+        onShouldHideIndicator: (shouldHide) {
+          if (_shouldHideIndicatorInIndex1 == shouldHide) return;
+          _safeSetState(() {
+            _shouldHideIndicatorInIndex1 = shouldHide;
+          });
+        },
       ),
-      2 => Index2Background(pauseAnimation: pauseIndex2Animation),
+      2 => Index2Background(
+        pauseAnimation: pauseIndex2Animation,
+        onProfileImageUploaded: (isUploaded) {
+          if (_isProfileImageUploaded == isUploaded) return;
+          _safeSetState(() {
+            _isProfileImageUploaded = isUploaded;
+          });
+          // ✅ 업로드 완료 콜백을 index2에서 받으면 자동 이동 예약
+          if (isUploaded) {
+            _scheduleIndex2AutoAdvanceIfNeeded();
+          }
+        },
+      ),
       3 => const Index3Background(),
       4 => const Index4Background(),
       _ => const SizedBox.shrink(),
@@ -357,6 +494,18 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         )
         .whenComplete(() {
           if (!mounted) return;
+          // ✅ index0로 다시 정착했으면 힌트 애니메이션 재개
+          if ((_snapController.value - 0.0).abs() < 0.001 &&
+              _currentIndex == 0 &&
+              !_isDragging) {
+            _index0HintController.repeat(reverse: true);
+          }
+          // ✅ index3로 다시 정착했으면 힌트 애니메이션 재개
+          if ((_snapController.value - 3.0).abs() < 0.001 &&
+              _currentIndex == 3 &&
+              !_isDragging) {
+            _index3HintController.repeat(reverse: true);
+          }
         });
   }
 
@@ -367,385 +516,412 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         onPanStart: _onPanStart,
         onPanUpdate: _onPanUpdate,
         onPanEnd: _onPanEnd,
-        // ✅ 최적화: 애니메이션 프레임 갱신은 AnimatedBuilder가 담당
-        child: AnimatedBuilder(
-          animation: _snapController,
-          builder: (context, _) {
-            final progress = _snapController.value;
-            // 구간별 정규화 진행도(항상 0~1)
-            final t01 = progress.clamp(0.0, 1.0); // 0<->1 카드덱
-            final t12 = (progress - 1.0).clamp(0.0, 1.0); // 1<->2 가로 슬라이드
-            final t23 = (progress - 2.0).clamp(0.0, 1.0); // 2<->3 리버스 카드덱
-            final t34 = (progress - 3.0).clamp(0.0, 1.0); // 3<->4 카드덱
+        onTapDown: (_) {
+          // ✅ index2에서 탭도 인터럽트로 간주(자동 이동 취소)
+          if (_currentIndex == 2) {
+            _interruptIndex2AutoAdvance();
+          }
+        },
+        child: Stack(
+          children: [
+            // ===== Cards: snap + hint 로만 갱신 =====
+            AnimatedBuilder(
+              animation: _snapController,
+              builder: (context, _) {
+                final progress = _snapController.value;
 
-            final inDeck01 = progress < 1.0;
-            final inHorizontalSlide12 = progress >= 1.0 && progress < 2.0;
-            final inDeckStyle23 = progress >= 2.0 && progress < 3.0;
-            final inDeck34 = progress >= 3.0;
+                final baseT01 = progress.clamp(0.0, 1.0);
+                final t01 = baseT01.clamp(0.0, 1.0);
+                final t12 = (progress - 1.0).clamp(0.0, 1.0);
+                final t23 = (progress - 2.0).clamp(0.0, 1.0);
+                final t34 = (progress - 3.0).clamp(0.0, 1.0);
 
-            final showBackOnTop = t01 > 0.55;
-            final showBackOnTop34 = t34 > 0.55;
-            final atIndex3 = (progress - 3.0).abs() < 0.01;
+                final inDeck01 = progress < 1.0;
+                final inHorizontalSlide12 = progress >= 1.0 && progress < 2.0;
+                final inDeckStyle23 = progress >= 2.0 && progress < 3.0;
+                final inDeck34 = progress >= 3.0;
 
-            return Container(
-              // 기본 배경
-              color: AppColors.lightSurfaceVariant.withOpacity(0.95),
-              child: Stack(
-                children: [
-                  // ===== 0 <-> 1 : 카드덱 모드 =====
-                  if (inDeck01) ...[
-                    Align(
-                      alignment: const Alignment(0, _stackAlignY),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          if (!showBackOnTop)
-                            RepaintBoundary(
-                              child: BackCard(
-                                progress: t01,
-                                color: const Color(0xFFFAFAFA),
-                                stackAlignY: _stackAlignY,
-                              ),
-                            ),
-                          IgnorePointer(
-                            ignoring: t01 > 0.995, // 거의 끝까지 카드 유지
-                            child: RepaintBoundary(
-                              child: FrontCard(
-                                progress: t01,
-                                color: const Color(0xFF5B7FFF), // 인덱스 0: 파란색
-                                child: Opacity(
-                                  opacity: ((t01 - 0.5).abs() * 2).clamp(
-                                    0.0,
-                                    1.0,
-                                  ),
-                                  child: const Index0CardContent(),
-                                ),
-                              ),
-                            ),
-                          ),
-                          if (showBackOnTop)
-                            RepaintBoundary(
-                              child: BackCard(
-                                progress: t01,
-                                color: const Color(0xFFFAFAFA),
-                                stackAlignY: _stackAlignY,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
+                final showBackOnTop = t01 > 0.55;
+                final showBackOnTop34 = t34 > 0.55;
+                final atIndex3 = (progress - 3.0).abs() < 0.01;
 
-                  // ===== 1 <-> 2 : 가로 슬라이드 모드 =====
-                  if (inHorizontalSlide12) ...[
-                    Positioned.fill(
-                      child: RepaintBoundary(
-                        child: _HorizontalSlideMode(t: t12),
-                      ),
-                    ),
-                  ],
-
-                  // ===== 2 <-> 3 : 리버스 카드덱 모드(구 1<->2) =====
-                  // ✅ 2 -> 3 : 0 -> 1 로직을 "리버스"로 적용
-                  // - 검정(인덱스2): BackCard를 역재생(풀스크린 -> 덱 카드로 축소/회전/이동)
-                  // - 파랑(인덱스3): FrontCard를 역재생(왼쪽에서 들어오며 항상 앞)
-                  // - 흰(인덱스4): 뒤에 장식으로 고정
-                  if (inDeckStyle23) ...[
-                    Align(
-                      alignment: const Alignment(0, _stackAlignY),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          // 흰색 장식 카드(오른쪽 뒤)
-                          const RepaintBoundary(
-                            child: _StaticDeckCard(
-                              color: Color(0xFFFAFAFA),
-                              rotate: 0.10, // 흰색은 오른쪽으로 기울기
-                              translate: Offset(50, 14),
-                              scale: 0.90,
-                            ),
-                          ),
-
-                          // 검정 카드: BackCard를 역재생 (progress = 1 - t23)
-                          RepaintBoundary(
-                            child: BackCard(
-                              progress: (1.0 - t23).clamp(0.0, 1.0),
-                              stackAlignY: _stackAlignY,
-                              color: AppColors.darkSurface,
-                              // ✅ 이동/회전 방향 반전
-                              // 인덱스3 정지 포즈(검정 왼쪽)와 동일하게 맞춤
-                              restTranslateX: -40,
-                              restTranslateY: 14,
-                              restRotate: -0.15, // 검정은 왼쪽으로 기울기
-                            ),
-                          ),
-
-                          // 파란 카드: FrontCard를 역재생 (progress = 1 - t23) => 왼쪽에서 들어오며 항상 앞
-                          IgnorePointer(
-                            child: RepaintBoundary(
-                              child: FrontCard(
-                                progress: (1.0 - t23).clamp(0.0, 1.0),
-                                color: const Color(0xFF5B7FFF),
-                                // ✅ 이동/회전 방향 반전
-                                slideSign: 1.0,
-                                rotateSign: 1.0,
-                                child: Opacity(
-                                  opacity: ((t23 - 0.5).abs() * 2).clamp(
-                                    0.0,
-                                    1.0,
-                                  ),
-                                  child: const Index3CardContent(),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-
-                  // ===== 3 <-> 4 : 카드덱 모드(구 2<->3) =====
-                  if (inDeck34) ...[
-                    Align(
-                      alignment: const Alignment(0, _stackAlignY),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          // ✅ 인덱스 3에 "정지"했을 때만 3장(검정/파랑/흰) 동시에 노출
-                          // 드래그로 3->4 구간 진입(=t34 증가)하면 기존 카드덱 애니메이션으로 전환
-                          if (atIndex3) ...[
-                            const RepaintBoundary(
-                              child: _StaticDeckCard(
-                                // 흰(인덱스 4) - 오른쪽
-                                color: Color(0xFFFAFAFA),
-                                rotate: 0.10, // 흰색은 오른쪽으로 기울기
-                                translate: Offset(50, 14),
-                                scale: 0.90,
-                              ),
-                            ),
-                            const RepaintBoundary(
-                              child: _StaticDeckCard(
-                                // 검정(인덱스 2) - 왼쪽
-                                color: AppColors.darkSurface,
-                                rotate: -0.15, // 검정은 왼쪽으로 기울기
-                                translate: Offset(-40, 14),
-                                scale: 0.88,
-                              ),
-                            ),
-
-                            IgnorePointer(
-                              child: RepaintBoundary(
-                                child: FrontCard(
-                                  progress: 0.0,
-                                  color: const Color(0xFF5B7FFF), // 파란(인덱스 3)
-                                  child: Opacity(
-                                    opacity: 1.0, // 인덱스 3 정지 상태에서는 항상 1.0
-                                    child: const Index3CardContent(),
+                return Container(
+                  color: Colors.transparent,
+                  child: Stack(
+                    children: [
+                      if (inDeck01) ...[
+                        Align(
+                          alignment: const Alignment(0, _stackAlignY),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              if (!showBackOnTop)
+                                RepaintBoundary(
+                                  child: BackCard(
+                                    progress: t01,
+                                    color: const Color(0xFFFAFAFA),
+                                    stackAlignY: _stackAlignY,
                                   ),
                                 ),
+                              IgnorePointer(
+                                ignoring: t01 > 0.995,
+                                // ✅ index0에서만: 파란 카드 위젯 자체를 Transform으로 살짝 이동(눈속임)
+                                // progress(t01)는 건드리지 않아서 BG 전환/스냅 로직 영향 없음
+                                child: AnimatedBuilder(
+                                  animation: _index0HintController,
+                                  builder: (context, _) {
+                                    final shouldWiggle =
+                                        _currentIndex == 0 &&
+                                        !_isDragging &&
+                                        !_snapController.isAnimating &&
+                                        progress < 0.02;
+                                    final t =
+                                        shouldWiggle
+                                            ? Curves.easeInOutCubic.transform(
+                                              _index0HintController.value,
+                                            )
+                                            : 0.0;
+                                    // ✅ 더 넓은 운동 범위로 왼쪽으로 살짝 움직였다가 복귀
+                                    final dx = -15.0 * t;
+                                    return Transform.translate(
+                                      offset: Offset(dx, 0),
+                                      child: RepaintBoundary(
+                                        child: FrontCard(
+                                          progress: t01,
+                                          color: const Color(0xFF5B7FFF),
+                                          child: Opacity(
+                                            opacity: ((t01 - 0.5).abs() * 2)
+                                                .clamp(0.0, 1.0),
+                                            child: const Index0CardContent(),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
                               ),
-                            ),
-                          ] else ...[
-                            if (!showBackOnTop34)
+                              if (showBackOnTop)
+                                RepaintBoundary(
+                                  child: BackCard(
+                                    progress: t01,
+                                    color: const Color(0xFFFAFAFA),
+                                    stackAlignY: _stackAlignY,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      if (inHorizontalSlide12) ...[
+                        Positioned.fill(
+                          child: RepaintBoundary(
+                            child: _HorizontalSlideMode(t: t12),
+                          ),
+                        ),
+                      ],
+
+                      if (inDeckStyle23) ...[
+                        Align(
+                          alignment: const Alignment(0, _stackAlignY),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              const RepaintBoundary(
+                                child: _StaticDeckCard(
+                                  color: Color(0xFFFAFAFA),
+                                  rotate: 0.10,
+                                  translate: Offset(50, 14),
+                                  scale: 0.90,
+                                ),
+                              ),
                               RepaintBoundary(
                                 child: BackCard(
-                                  progress: t34,
+                                  progress: (1.0 - t23).clamp(0.0, 1.0),
                                   stackAlignY: _stackAlignY,
-                                  color: const Color(
-                                    0xFFFAFAFA,
-                                  ), // 인덱스 4: 흰색(확대되어 화면 덮음)
-                                ),
-                              ),
-                            // ✅ 검정 카드도 파란 카드와 같이 옆으로 이동하며 사라지게(드래그 구간에서도 계속 렌더)
-                            // 인덱스3 정지 포즈와 동일한 시작 포즈(-40,14 / -0.15 / 0.88)에서 출발해
-                            // FrontCard와 동일한 곡선으로 옆으로 빠지게 만든다.
-                            IgnorePointer(
-                              child: RepaintBoundary(
-                                child: _MovingDeckCard(
-                                  progress: t34,
                                   color: AppColors.darkSurface,
-                                  baseTranslate: const Offset(-40, 14),
-                                  baseRotate: -0.15,
-                                  baseScale: 0.88,
+                                  restTranslateX: -40,
+                                  restTranslateY: 14,
+                                  restRotate: -0.15,
                                 ),
                               ),
-                            ),
-                            IgnorePointer(
-                              ignoring: t34 > 0.995, // 거의 끝까지 카드 유지
-                              child: RepaintBoundary(
-                                child: FrontCard(
-                                  progress: t34,
-                                  color: const Color(
-                                    0xFF5B7FFF,
-                                  ), // 인덱스 3: 파란색(사라지는 카드)
-                                  child: Opacity(
-                                    opacity: ((t34 - 0.5).abs() * 2).clamp(
-                                      0.0,
-                                      1.0,
+                              IgnorePointer(
+                                child: RepaintBoundary(
+                                  child: FrontCard(
+                                    progress: (1.0 - t23).clamp(0.0, 1.0),
+                                    color: const Color(0xFF5B7FFF),
+                                    slideSign: 1.0,
+                                    rotateSign: 1.0,
+                                    child: Opacity(
+                                      opacity: ((t23 - 0.5).abs() * 2).clamp(
+                                        0.0,
+                                        1.0,
+                                      ),
+                                      child: const Index3CardContent(),
                                     ),
-                                    child: const Index3CardContent(),
                                   ),
                                 ),
                               ),
-                            ),
-                            if (showBackOnTop34)
-                              RepaintBoundary(
-                                child: BackCard(
-                                  progress: t34,
-                                  stackAlignY: _stackAlignY,
-                                  color: const Color(0xFFFAFAFA),
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      if (inDeck34) ...[
+                        Align(
+                          alignment: const Alignment(0, _stackAlignY),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              if (atIndex3) ...[
+                                const RepaintBoundary(
+                                  child: _StaticDeckCard(
+                                    color: Color(0xFFFAFAFA),
+                                    rotate: 0.10,
+                                    translate: Offset(50, 14),
+                                    scale: 0.90,
+                                  ),
                                 ),
-                              ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ], // ===== Background (index 기반) =====
-                  Positioned.fill(
-                    // ✅ BG 전환: 나갈 때는 일찍 페이드아웃, 들어올 때는 전환 막판에 페이드인
-                    child: Builder(
-                      builder: (context) {
-                        // ✅ 실제 progress 기반으로 from 계산 (일관된 페이드아웃 보장)
-                        final from = progress.floor().clamp(0, _totalSteps - 1);
-                        final delta = progress - from.toDouble();
-                        final t = delta.abs().clamp(0.0, 1.0);
-
-                        // 정착 상태면 단일 BG만 렌더
-                        if (t < 0.001) {
-                          return RepaintBoundary(child: _buildBg(from));
-                        }
-
-                        // 방향 기반 다음 BG(1칸) 선택
-                        final to = (from + (delta >= 0 ? 1 : -1)).clamp(
-                          0,
-                          _totalSteps - 1,
-                        );
-
-                        final outOpacity = _bgOutOpacity(t);
-                        final inOpacity = _bgInOpacity(t);
-
-                        return Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            RepaintBoundary(
-                              child: Opacity(
-                                opacity: outOpacity,
-                                child: _buildBg(from),
-                              ),
-                            ),
-                            // 들어오는 BG는 막판에만 등장
-                            if (inOpacity > 0.0)
-                              RepaintBoundary(
-                                child: Opacity(
-                                  opacity: inOpacity,
-                                  child: _buildBg(to),
+                                const RepaintBoundary(
+                                  child: _StaticDeckCard(
+                                    color: AppColors.darkSurface,
+                                    rotate: -0.15,
+                                    translate: Offset(-40, 14),
+                                    scale: 0.88,
+                                  ),
                                 ),
-                              ),
-                          ],
-                        );
-                      },
-                    ),
+                                IgnorePointer(
+                                  // ✅ index3에서도: 파란 카드 위젯 자체를 Transform으로 살짝 이동(눈속임)
+                                  child: AnimatedBuilder(
+                                    animation: _index3HintController,
+                                    builder: (context, _) {
+                                      final shouldWiggle =
+                                          _currentIndex == 3 &&
+                                          !_isDragging &&
+                                          !_snapController.isAnimating &&
+                                          (progress - 3.0).abs() < 0.01;
+                                      final t =
+                                          shouldWiggle
+                                              ? Curves.easeInOutCubic.transform(
+                                                _index3HintController.value,
+                                              )
+                                              : 0.0;
+                                      // ✅ 더 넓은 운동 범위로 왼쪽으로 살짝 움직였다가 복귀
+                                      final dx = -15.0 * t;
+                                      return Transform.translate(
+                                        offset: Offset(dx, 0),
+                                        child: RepaintBoundary(
+                                          child: FrontCard(
+                                            progress: 0.0,
+                                            color: const Color(0xFF5B7FFF),
+                                            child: Opacity(
+                                              opacity: 1.0,
+                                              child: const Index3CardContent(),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ] else ...[
+                                if (!showBackOnTop34)
+                                  RepaintBoundary(
+                                    child: BackCard(
+                                      progress: t34,
+                                      stackAlignY: _stackAlignY,
+                                      color: const Color(0xFFFAFAFA),
+                                    ),
+                                  ),
+                                IgnorePointer(
+                                  child: RepaintBoundary(
+                                    child: _MovingDeckCard(
+                                      progress: t34,
+                                      color: AppColors.darkSurface,
+                                      baseTranslate: const Offset(-40, 14),
+                                      baseRotate: -0.15,
+                                      baseScale: 0.88,
+                                    ),
+                                  ),
+                                ),
+                                IgnorePointer(
+                                  ignoring: t34 > 0.995,
+                                  child: RepaintBoundary(
+                                    child: FrontCard(
+                                      progress: t34,
+                                      color: const Color(0xFF5B7FFF),
+                                      child: Opacity(
+                                        opacity: ((t34 - 0.5).abs() * 2).clamp(
+                                          0.0,
+                                          1.0,
+                                        ),
+                                        child: const Index3CardContent(),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (showBackOnTop34)
+                                  RepaintBoundary(
+                                    child: BackCard(
+                                      progress: t34,
+                                      stackAlignY: _stackAlignY,
+                                      color: const Color(0xFFFAFAFA),
+                                    ),
+                                  ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
+                );
+              },
+            ),
 
-                  // ✅ 페이지 인디케이터 (하단 중앙, Stack 최상위 레이어)
-                  // 별명 입력(index 1)에서는 항상 숨김
-                  if (_currentIndex != 1 && _currentIndex != 2)
-                    Positioned(
-                      bottom: 40,
-                      left: 0,
-                      right: 0,
-                      child: SafeArea(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: List.generate(_totalSteps, (index) {
-                            final isActive = (_currentIndex == index);
-                            // ✅ 0번 인덱스일 때 2번째 닷(index 1)에 깜빡임 애니메이션
-                            final shouldPulse =
-                                _currentIndex == 0 && index == 1;
+            // ===== Background: snapController로만 갱신 (힌트 애니메이션으로 BG/텍스트필드 리빌드 방지) =====
+            // ✅ BG는 카드 위에 있어야 실제 입력 UI(index1 등)가 가려지지 않음
+            Positioned.fill(
+              child: AnimatedBuilder(
+                animation: _snapController,
+                builder: (context, _) {
+                  final progress = _snapController.value;
+                  final from = progress.floor().clamp(0, _totalSteps - 1);
+                  final delta = progress - from.toDouble();
+                  final t = delta.abs().clamp(0.0, 1.0);
 
-                            return AnimatedBuilder(
-                              animation: _indicatorPulseAnimation,
-                              builder: (context, child) {
-                                // ✅ 펄스 시 파란색 0.5 opacity와 회색 0.4 opacity 사이를 부드럽게 전환
-                                if (shouldPulse) {
-                                  // 애니메이션 값에 따라 부드럽게 색상 전환
-                                  // 0.0 -> 회색 0.4, 1.0 -> 파란색 0.5
-                                  final t = _indicatorPulseAnimation.value;
+                  if (t < 0.001) {
+                    return RepaintBoundary(
+                      child: KeyedSubtree(
+                        key: ValueKey('bg-$from'),
+                        child: _buildBg(from),
+                      ),
+                    );
+                  }
 
-                                  // 회색과 파란색의 RGB 값을 보간
-                                  final grayColor = const Color.fromARGB(
-                                    255,
-                                    70,
-                                    70,
-                                    70,
-                                  );
-                                  final blueColor = const Color(0xFF5B7FFF);
+                  final to = (from + (delta >= 0 ? 1 : -1)).clamp(
+                    0,
+                    _totalSteps - 1,
+                  );
 
-                                  final r =
-                                      (grayColor.red +
-                                              (blueColor.red - grayColor.red) *
-                                                  t)
-                                          .round();
-                                  final g =
-                                      (grayColor.green +
-                                              (blueColor.green -
-                                                      grayColor.green) *
-                                                  t)
-                                          .round();
-                                  final b =
-                                      (grayColor.blue +
-                                              (blueColor.blue -
-                                                      grayColor.blue) *
-                                                  t)
-                                          .round();
+                  final outOpacity = _bgOutOpacity(t);
+                  final inOpacity = _bgInOpacity(t);
 
-                                  // opacity도 보간: 0.4 -> 0.8 (더 강한 펄스)
-                                  final opacity = 0.4 + (0.7 - 0.4) * t;
-
-                                  return Container(
-                                    margin: const EdgeInsets.symmetric(
-                                      horizontal: 3,
-                                    ),
-                                    width: 10,
-                                    height: 10,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Color.fromRGBO(r, g, b, opacity),
-                                    ),
-                                  );
-                                }
-
-                                return Container(
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 3,
-                                  ),
-                                  width: 10,
-                                  height: 10,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color:
-                                        isActive
-                                            ? const Color(
-                                              0xFF5B7FFF,
-                                            ) // 파란색 (활성)
-                                            : const Color.fromARGB(
-                                              255,
-                                              70,
-                                              70,
-                                              70,
-                                            ).withOpacity(0.4), // 회색 (비활성)
-                                  ),
-                                );
-                              },
-                            );
-                          }),
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      RepaintBoundary(
+                        child: Opacity(
+                          opacity: outOpacity,
+                          child: KeyedSubtree(
+                            key: ValueKey('bg-$from'),
+                            child: _buildBg(from),
+                          ),
                         ),
                       ),
-                    ),
-                ],
+                      if (inOpacity > 0.0)
+                        RepaintBoundary(
+                          child: Opacity(
+                            opacity: inOpacity,
+                            child: KeyedSubtree(
+                              key: ValueKey('bg-$to'),
+                              child: _buildBg(to),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
-            );
-          },
+            ),
+
+            // ===== Indicator: snapController로만 갱신 =====
+            AnimatedBuilder(
+              animation: _snapController,
+              builder: (context, _) {
+                // ✅ index2는 기본적으로 숨김이지만, 프로필 업로드가 완료되면 표시
+                if (_currentIndex == 2 && !_isProfileImageUploaded) {
+                  return const SizedBox.shrink();
+                }
+                if (_currentIndex == 1 &&
+                    (!_nicknameSubmitted || _shouldHideIndicatorInIndex1)) {
+                  return const SizedBox.shrink();
+                }
+                return Positioned(
+                  bottom: 40,
+                  left: 0,
+                  right: 0,
+                  child: SafeArea(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(_totalSteps, (index) {
+                        // ✅ 현재 인덱스에 해당하는 닷만 활성화
+                        final isActive = _currentIndex == index;
+                        final shouldPulse = _currentIndex == 0 && index == 1;
+                        return AnimatedBuilder(
+                          animation: _indicatorPulseAnimation,
+                          builder: (context, child) {
+                            if (shouldPulse) {
+                              final t = _indicatorPulseAnimation.value;
+                              final grayColor = const Color.fromARGB(
+                                255,
+                                70,
+                                70,
+                                70,
+                              );
+                              final blueColor = const Color(0xFF5B7FFF);
+                              final r =
+                                  (grayColor.red +
+                                          (blueColor.red - grayColor.red) * t)
+                                      .round();
+                              final g =
+                                  (grayColor.green +
+                                          (blueColor.green - grayColor.green) *
+                                              t)
+                                      .round();
+                              final b =
+                                  (grayColor.blue +
+                                          (blueColor.blue - grayColor.blue) * t)
+                                      .round();
+                              final opacity = 0.4 + (0.7 - 0.4) * t;
+                              return Container(
+                                margin: const EdgeInsets.symmetric(
+                                  horizontal: 3,
+                                ),
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Color.fromRGBO(r, g, b, opacity),
+                                ),
+                              );
+                            }
+                            return Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 3),
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color:
+                                    isActive
+                                        ? const Color(0xFF5B7FFF)
+                                        : const Color.fromARGB(
+                                          255,
+                                          70,
+                                          70,
+                                          70,
+                                        ).withOpacity(0.4),
+                              ),
+                            );
+                          },
+                        );
+                      }),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
         ),
       ),
     );
@@ -816,7 +992,7 @@ class FrontCard extends StatelessWidget {
           height: cardHeight,
           decoration: BoxDecoration(
             color: color,
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(32),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.20),
@@ -829,7 +1005,7 @@ class FrontCard extends StatelessWidget {
               child == null
                   ? null
                   : ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(32),
                     child: child!,
                   ),
         ),
@@ -903,7 +1079,7 @@ class BackCard extends StatelessWidget {
 
     // 닉네임 UI는 거의 끝까지 숨기고, 마지막에만 나타나게 (카드가 거의 끝까지 유지되도록)
     final contentOpacity = ((eased - 0.75) / 0.25).clamp(0.0, 1.0);
-    final radius = 24.0 * (1.0 - eased); // 확대될수록 모서리 0에 수렴
+    final radius = 32.0 * (1.0 - eased); // 확대될수록 모서리 0에 수렴
 
     return Transform.translate(
       offset: Offset(translateX, translateY),
@@ -976,7 +1152,7 @@ class _StaticDeckCard extends StatelessWidget {
             height: cardHeight,
             decoration: BoxDecoration(
               color: color,
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(32),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.18),
@@ -1038,7 +1214,7 @@ class _MovingDeckCard extends StatelessWidget {
             height: cardHeight,
             decoration: BoxDecoration(
               color: color,
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(32),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.20),

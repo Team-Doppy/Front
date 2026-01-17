@@ -9,7 +9,6 @@ enum AdjustmentType {
   saturation('채도', Icons.palette),
   luminance('휘도', Icons.wb_sunny),
   exposure('노출', Icons.exposure),
-  sharpness('선명도', Icons.blur_off),
   temperature('색온도', Icons.thermostat),
   blur('블러', Icons.blur_on);
 
@@ -25,7 +24,6 @@ class AdjustmentState {
   double saturation = 0.0; // -100 ~ 100
   double luminance = 0.0; // -100 ~ 100
   double exposure = 0.0; // -100 ~ 100
-  double sharpness = 0.0; // 0 ~ 100
   double temperature = 0.0; // -100 ~ 100 (차갑게 ~ 따뜻하게)
   double blur = 0.0; // 0 ~ 100
 
@@ -41,8 +39,6 @@ class AdjustmentState {
         return luminance;
       case AdjustmentType.exposure:
         return exposure;
-      case AdjustmentType.sharpness:
-        return sharpness;
       case AdjustmentType.temperature:
         return temperature;
       case AdjustmentType.blur:
@@ -70,9 +66,6 @@ class AdjustmentState {
       case AdjustmentType.exposure:
         exposure = v;
         break;
-      case AdjustmentType.sharpness:
-        sharpness = v;
-        break;
       case AdjustmentType.temperature:
         temperature = v;
         break;
@@ -88,7 +81,6 @@ class AdjustmentState {
     double? saturation,
     double? luminance,
     double? exposure,
-    double? sharpness,
     double? temperature,
     double? blur,
   }) {
@@ -98,7 +90,6 @@ class AdjustmentState {
       ..saturation = saturation ?? this.saturation
       ..luminance = luminance ?? this.luminance
       ..exposure = exposure ?? this.exposure
-      ..sharpness = sharpness ?? this.sharpness
       ..temperature = temperature ?? this.temperature
       ..blur = blur ?? this.blur;
   }
@@ -115,7 +106,6 @@ class AdjustmentUtils {
   /// [saturation]: -100 ~ 100 (채도)
   /// [luminance]: -100 ~ 100 (휘도)
   /// [exposure]: -100 ~ 100 (노출)
-  /// [sharpness]: 0 ~ 100 (선명도)
   /// [temperature]: -100 ~ 100 (색온도, 차갑게 ~ 따뜻하게)
   ///
   /// 모든 값이 0이면 null 반환 (변경 없음)
@@ -125,7 +115,6 @@ class AdjustmentUtils {
     required double saturation,
     double luminance = 0.0,
     double exposure = 0.0,
-    double sharpness = 0.0,
     double temperature = 0.0,
   }) {
     if (brightness == 0.0 &&
@@ -133,7 +122,6 @@ class AdjustmentUtils {
         saturation == 0.0 &&
         luminance == 0.0 &&
         exposure == 0.0 &&
-        sharpness == 0.0 &&
         temperature == 0.0) {
       return null;
     }
@@ -273,40 +261,7 @@ class AdjustmentUtils {
               : exposureMatrix;
     }
 
-    // 5. 선명도 (sharpness)
-    if (sharpness != 0.0) {
-      // sharpness는 0 ~ 100 범위를 -1.0 ~ 1.0으로 변환
-      final sharpnessValue = (sharpness / 100.0) * 2.0 - 1.0;
-      final factor = 1.0 + sharpnessValue * 2.0;
-      final sharpnessMatrix = [
-        factor,
-        0.0,
-        0.0,
-        0.0,
-        -(factor - 1.0) * 128.0,
-        0.0,
-        factor,
-        0.0,
-        0.0,
-        -(factor - 1.0) * 128.0,
-        0.0,
-        0.0,
-        factor,
-        0.0,
-        -(factor - 1.0) * 128.0,
-        0.0,
-        0.0,
-        0.0,
-        1.0,
-        0.0,
-      ];
-      resultMatrix =
-          resultMatrix != null
-              ? _multiplyMatrices(resultMatrix, sharpnessMatrix)
-              : sharpnessMatrix;
-    }
-
-    // 6. 색온도 (temperature)
+    // 5. 색온도 (temperature)
     if (temperature != 0.0) {
       // temperature는 -100 ~ 100 범위를 -1.0 ~ 1.0으로 변환
       final tempValue = temperature / 100.0;
@@ -340,7 +295,7 @@ class AdjustmentUtils {
               : temperatureMatrix;
     }
 
-    // 7. 휘도 (luminance)
+    // 6. 휘도 (luminance)
     if (luminance != 0.0) {
       // luminance는 -100 ~ 100 범위를 -1.0 ~ 1.0으로 변환
       final lumValue = luminance / 100.0;
@@ -603,10 +558,7 @@ class AdjustmentEditorBottomSheetState
   /// 슬라이더 조절 화면
   Widget _buildSliderView(Color fgColor, AdjustmentType type) {
     final value = widget.state.getValue(type);
-    final min =
-        (type == AdjustmentType.sharpness || type == AdjustmentType.blur)
-            ? 0.0
-            : -100.0;
+    final min = (type == AdjustmentType.blur) ? 0.0 : -100.0;
     final max = 100.0;
 
     return _AdjustmentRulerSlider(

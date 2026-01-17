@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
 import 'package:doppy/data/models/post_data.dart';
-import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -70,13 +69,18 @@ class _ImageViewState extends State<ImageView> {
   }
 
   void _releaseVideoController() {
-    if (_currentVideoUrl != null) {
-      VideoCacheService().releaseController(
-        _currentVideoUrl!,
-        namespace: 'profile',
-      );
-      _currentVideoUrl = null;
+    if (_videoController != null) {
+      try {
+        _videoController!.removeListener(_onVideoStateChanged);
+        if (_videoController!.value.isInitialized) {
+          _videoController!.pause();
+        }
+        _videoController!.dispose();
+      } catch (e) {
+        debugPrint('[ImageView] 컨트롤러 dispose 오류: $e');
+      }
       _videoController = null;
+      _currentVideoUrl = null;
     }
   }
 
@@ -153,12 +157,10 @@ class _ImageViewState extends State<ImageView> {
         'elapsedMs=${DateTime.now().difference(_firstAttemptAt!).inMilliseconds} '
         'url=$_currentVideoUrl',
       );
-      // refCount 누수 방지: 재시도 전 현재 참조를 해제하고 다시 획득
-      VideoCacheService().releaseController(
-        _currentVideoUrl!,
-        namespace: 'profile',
-      );
       _videoController?.removeListener(_onVideoStateChanged);
+      try {
+        _videoController?.dispose();
+      } catch (_) {}
       _videoController = null;
       _videoGaveUp = false;
       _attemptInit(resetAttemptWindow: false);
@@ -197,45 +199,52 @@ class _ImageViewState extends State<ImageView> {
       );
 
       try {
-        _videoController = VideoCacheService().getOrCreateController(
-          _currentVideoUrl!,
-          namespace: 'profile',
+        // 🎯 표준 방식: 직접 컨트롤러 생성
+        _videoController = VideoPlayerController.networkUrl(
+          Uri.parse(_currentVideoUrl!),
+          httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+          videoPlayerOptions: VideoPlayerOptions(
+            mixWithOthers: false,
+            allowBackgroundPlayback: false,
+          ),
         );
         debugPrint(
-          '[ImageView] controller acquired $_logKey '
-          'url=$_currentVideoUrl '
-          'isInit=${_videoController?.value.isInitialized} '
-          'hasError=${_videoController?.value.hasError}',
+          '[ImageView] controller created $_logKey url=$_currentVideoUrl',
         );
 
-        if (_videoController != null) {
-          // 이미 초기화된 경우 바로 재생
-          if (_videoController!.value.isInitialized) {
-            if (mounted) {
+        // 리스너 추가
+        _videoController!.addListener(_onVideoStateChanged);
+
+        // 초기화 시작
+        _videoController!
+            .initialize()
+            .then((_) {
+              if (!mounted) return;
+              if (_videoController == null) return;
+
               try {
                 _videoController!.setVolume(0);
                 _videoController!.setLooping(true);
                 _videoController!.play();
-                debugPrint(
-                  '[ImageView] play (already initialized) $_logKey url=$_currentVideoUrl',
-                );
-                setState(() {});
+                if (mounted) {
+                  setState(() {});
+                }
               } catch (e) {
-                debugPrint(
-                  '[ImageView] play error (already initialized) $_logKey url=$_currentVideoUrl err=$e',
-                );
+                debugPrint('[ImageView] 초기화 후 설정 오류: $e');
               }
-            }
-          } else {
-            // 초기화 대기 중 - 리스너 추가
-            _videoController!.addListener(_onVideoStateChanged);
-            // 초기화가 이미 진행 중일 수 있으므로 한 번 확인
-            if (_videoController!.value.isInitialized) {
-              _onVideoStateChanged();
-            }
-            _scheduleTimeoutIfNeeded();
-          }
-        }
+            })
+            .catchError((e) {
+              debugPrint('[ImageView] 초기화 실패: $e');
+              if (mounted) {
+                setState(() {
+                  _videoController = null;
+                  _currentVideoUrl = null;
+                  _isVideo = false;
+                });
+              }
+            });
+
+        _scheduleTimeoutIfNeeded();
       } catch (e) {
         debugPrint(
           '[ImageView] controller create error $_logKey url=$_currentVideoUrl err=$e',
@@ -362,19 +371,13 @@ class _ImageViewState extends State<ImageView> {
 
   @override
   Widget build(BuildContext context) {
-    // 취소/해제 레이스로 캐시 컨트롤러가 사라졌다면 한 번만 안전 재획득
+    // 🎯 표준 방식: 컨트롤러가 없으면 재초기화 시도
     if (_isVideo && _currentVideoUrl != null && _videoController == null) {
-      try {
-        final cache = VideoCacheService();
-        if (cache.hasController(_currentVideoUrl!, namespace: 'profile')) {
-          _videoController = cache.getOrCreateController(
-            _currentVideoUrl!,
-            namespace: 'profile',
-          );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _currentVideoUrl != null && _videoController == null) {
+          _attemptInit(resetAttemptWindow: false);
         }
-      } catch (e) {
-        debugPrint('[ImageView] build에서 컨트롤러 재획득 오류: $e');
-      }
+      });
     }
     final theme = Theme.of(context);
     return widget.post.id == 'padding'

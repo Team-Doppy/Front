@@ -9,7 +9,6 @@ class PostData {
   final String id;
   final String thumbnailImageUrl;
   final String title;
-  final String summary;
   final String author;
   final int? authorId;
   final String authorProfileImageUrl;
@@ -71,7 +70,6 @@ class PostData {
     required this.id,
     required this.thumbnailImageUrl,
     required this.title,
-    required this.summary,
     required this.author,
     this.authorId,
     required this.authorProfileImageUrl,
@@ -132,7 +130,7 @@ class PostData {
       authorId: authorId,
       authorProfileImageUrl: data['authorProfileImageUrl'] ?? '',
       content: content,
-      summary: data['summary'] ?? '',
+
       accessLevel: accessLevel,
       // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
       createdAt: data['createdAt'] ?? DateTime.now().toUtc().toIso8601String(),
@@ -210,7 +208,7 @@ class PostData {
       authorId: authorId,
       authorProfileImageUrl: data['authorProfileImageUrl'] ?? '',
       content: content,
-      summary: data['summary'] ?? '',
+
       accessLevel: accessLevel,
       // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
       createdAt: data['createdAt'] ?? DateTime.now().toUtc().toIso8601String(),
@@ -239,7 +237,7 @@ class PostData {
     return {
       'id': id,
       'title': title,
-      'summary': summary,
+
       'author': author,
       'authorProfileImageUrl': authorProfileImageUrl,
       'content': content,
@@ -256,8 +254,6 @@ class PostData {
   /// content JSON을 파싱해서 실제 텍스트 내용만 추출
   String get parsedContent {
     try {
-      if (summary.isNotEmpty) return summary;
-
       if (content.isEmpty) return '';
 
       // 이미 계산된 값이 있으면 그대로 사용
@@ -312,7 +308,7 @@ class PostData {
       'id': id,
       'thumbnailImageUrl': thumbnailImageUrl,
       'title': title,
-      'summary': summary,
+
       'author': author,
       'authorId': authorId,
       'authorProfileImageUrl': authorProfileImageUrl,
@@ -339,7 +335,7 @@ class PostData {
       id: data['id']?.toString() ?? '',
       thumbnailImageUrl: data['thumbnailImageUrl']?.toString() ?? '',
       title: data['title']?.toString() ?? '',
-      summary: data['summary']?.toString() ?? '',
+
       author: data['author']?.toString() ?? '',
       authorId:
           (data['authorId'] is int)
@@ -395,7 +391,7 @@ class PostData {
         'id': id,
         'thumbnailImageUrl': thumbnailImageUrl,
         'title': title,
-        'summary': summary, // 🎯 summary 추가
+        // 🎯 summary 필드 제거됨
         'author': author,
         'authorId': authorId,
         'authorProfileImageUrl': authorProfileImageUrl,
@@ -415,7 +411,7 @@ class PostData {
         'id': id,
         'thumbnailImageUrl': thumbnailImageUrl,
         'title': title,
-        'summary': summary, // 🎯 summary 추가
+        // 🎯 summary 필드 제거됨
         'author': author,
         'authorId': authorId,
         'authorProfileImageUrl': authorProfileImageUrl,

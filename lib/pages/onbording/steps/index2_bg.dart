@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:doppy/pages/screens/profile_image_view_screen.dart';
+import 'package:doppy/pages/screens/onbording_mode_profile_view.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -13,7 +13,12 @@ import 'package:flutter/cupertino.dart';
 /// Index 2 background (임시 구조)
 class Index2Background extends StatefulWidget {
   final bool pauseAnimation; // ✅ 전환(드래그/스냅) 중 반복 애니메이션 일시정지
-  const Index2Background({super.key, this.pauseAnimation = false});
+  final ValueChanged<bool>? onProfileImageUploaded; // ✅ 프로필 사진 업로드 완료 상태 콜백
+  const Index2Background({
+    super.key,
+    this.pauseAnimation = false,
+    this.onProfileImageUploaded,
+  });
 
   @override
   State<Index2Background> createState() => _Index2BackgroundState();
@@ -134,6 +139,8 @@ class _Index2BackgroundState extends State<Index2Background>
               _isUploadingProfileImage = false;
               _isUploadComplete = true; // ✅ 업로드 완료 표시
             });
+            // ✅ 프로필 사진 업로드 완료 상태 콜백 호출
+            widget.onProfileImageUploaded?.call(true);
           }
         } else if (activeTask.state == UploadState.failed ||
             activeTask.state == UploadState.cancelled) {
@@ -148,6 +155,8 @@ class _Index2BackgroundState extends State<Index2Background>
               _isUploadingProfileImage = false;
               _isUploadComplete = false;
             });
+            // ✅ 프로필 사진 업로드 실패 상태 콜백 호출
+            widget.onProfileImageUploaded?.call(_croppedProfileFile != null);
           }
         }
       };
@@ -164,6 +173,10 @@ class _Index2BackgroundState extends State<Index2Background>
 
     if (mounted) {
       setState(() {});
+      // ✅ 프로필 사진 업로드 완료 상태 콜백 호출 (복원 시)
+      widget.onProfileImageUploaded?.call(
+        _isUploadComplete || _croppedProfileFile != null,
+      );
     }
   }
 
@@ -196,8 +209,21 @@ class _Index2BackgroundState extends State<Index2Background>
   Future<void> _openProfileImageView() async {
     if (_isUploadingProfileImage) return;
 
+    void handleCroppedProfileFile(File file) {
+      if (!mounted) return;
+      // 저장 완료: 바운싱 중지 + 미리보기 교체
+      _animationController.stop();
+      setState(() {
+        _croppedProfileFile = file;
+      });
+      // ✅ 프로필 사진 선택 상태 콜백 호출
+      widget.onProfileImageUploaded?.call(true);
+      // 업로드 시작 (백그라운드)
+      _startProfileUpload(file);
+    }
+
     // 1. 먼저 이미지 피커를 띄움 (다크 테마로 강제)
-    final pickerResult = await Navigator.push<MediaPickerResult>(
+    await Navigator.push<void>(
       context,
       PageRouteBuilder(
         pageBuilder:
@@ -210,6 +236,20 @@ class _Index2BackgroundState extends State<Index2Background>
                 onMediaSelected: (file) {
                   // 단일 선택이므로 바로 처리
                 },
+                // ✅ "추가" 누르면 pop 없이 바로 onboarding ProfileImageView로 전환 (bg2 플래시 방지)
+                onSubmitOverride: (pickerContext, result) async {
+                  if (result.files.isEmpty) return null;
+                  final selectedImageFile = result.files.first;
+                  return Theme(
+                    data: AppTheme.darkTheme,
+                    child: OnbordingModeProfileImageViewScreen(
+                      profileImageUrl: null,
+                      username: '',
+                      onGallerySelected: handleCroppedProfileFile,
+                      initialImageFile: selectedImageFile, // ✅ 선택된 이미지 파일 전달
+                    ),
+                  );
+                },
               ),
             ),
         transitionDuration: const Duration(milliseconds: 200),
@@ -221,54 +261,6 @@ class _Index2BackgroundState extends State<Index2Background>
         fullscreenDialog: true,
       ),
     );
-
-    if (!mounted || pickerResult == null || pickerResult.files.isEmpty) {
-      return; // 취소하거나 선택하지 않은 경우
-    }
-
-    final selectedImageFile = pickerResult.files.first;
-
-    // 2. 선택한 이미지와 함께 프로필 뷰 스크린으로 이동
-    File? pickedCroppedFile;
-
-    await Navigator.push(
-      context,
-      PageRouteBuilder(
-        pageBuilder:
-            (context, animation, secondaryAnimation) => ProfileImageViewScreen(
-              profileImageUrl: null,
-              username: '',
-              mode: ProfileImageMode.onboarding,
-              // 선택한 이미지 파일을 초기 파일로 전달
-              initialImageFile: selectedImageFile,
-              onShareProfile: () {},
-              onCopyProfileLink: () {},
-              onGallerySelected: (file) {
-                // ProfileImageViewScreen에서 "완료" 시 전달되는 원형 크롭 파일
-                pickedCroppedFile = file;
-              },
-              onSetDefaultImage: () {},
-              isOwnProfile: true,
-            ),
-        transitionDuration: const Duration(milliseconds: 250),
-        reverseTransitionDuration: const Duration(milliseconds: 150),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-        fullscreenDialog: true,
-      ),
-    );
-
-    if (!mounted || pickedCroppedFile == null) return;
-
-    // 저장 완료: 바운싱 중지 + 미리보기 교체
-    _animationController.stop();
-    setState(() {
-      _croppedProfileFile = pickedCroppedFile;
-    });
-
-    // 업로드 시작 (백그라운드)
-    await _startProfileUpload(pickedCroppedFile!);
   }
 
   Future<void> _startProfileUpload(File croppedFile) async {
@@ -309,6 +301,8 @@ class _Index2BackgroundState extends State<Index2Background>
               _isUploadingProfileImage = false;
               _isUploadComplete = true; // ✅ 업로드 완료 표시
             });
+            // ✅ 프로필 사진 업로드 완료 상태 콜백 호출
+            widget.onProfileImageUploaded?.call(true);
           }
         } else if (task.state == UploadState.failed ||
             task.state == UploadState.cancelled) {
@@ -323,6 +317,8 @@ class _Index2BackgroundState extends State<Index2Background>
               _isUploadingProfileImage = false;
               _isUploadComplete = false;
             });
+            // ✅ 프로필 사진 업로드 실패 상태 콜백 호출
+            widget.onProfileImageUploaded?.call(_croppedProfileFile != null);
           }
         }
       };
@@ -369,7 +365,7 @@ class _Index2BackgroundState extends State<Index2Background>
                               letterSpacing: -0.5,
                             ),
                           ),
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 32),
 
                           AnimatedBuilder(
                             animation: _scaleAnimation,
@@ -435,7 +431,7 @@ class _Index2BackgroundState extends State<Index2Background>
                             },
                           ),
 
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 65),
                         ],
                       ),
                     ),

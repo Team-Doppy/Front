@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
-import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 
 /// 썸네일 비디오 플레이어
@@ -48,28 +47,31 @@ class _ThumbnailVideoPlayerState extends State<ThumbnailVideoPlayer>
     try {
       debugPrint('[ThumbnailVideoPlayer] 초기화 시작: ${widget.videoUrl}');
 
-      // 🎯 VideoCacheService에서 컨트롤러 가져오기 (프리로드)
-      _controller = VideoCacheService().getOrCreateController(
-        widget.videoUrl,
-        namespace: 'search_trending',
+      // 🎯 표준 방식: 직접 컨트롤러 생성
+      _controller = VideoPlayerController.networkUrl(
+        Uri.parse(widget.videoUrl),
+        httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
       );
 
-      // 이미 초기화된 경우
-      if (_controller!.value.isInitialized) {
-        debugPrint('[ThumbnailVideoPlayer] 초기화 완료 (캐시에서)');
-        if (mounted) {
-          setState(() {
-            _isInitialized = true;
-          });
-          // 🎯 음소거 및 자동 재생
-          await _controller!.setVolume(0.0);
-          await _controller!.setLooping(true);
-          await _controller!.play();
-          debugPrint('[ThumbnailVideoPlayer] 재생 시작');
-        }
-      } else {
-        // 초기화 대기
-        _controller!.addListener(_onVideoInitialized);
+      // 리스너 추가
+      _controller!.addListener(_onVideoInitialized);
+
+      // 초기화 시작
+      await _controller!.initialize();
+
+      if (mounted && _controller != null) {
+        setState(() {
+          _isInitialized = true;
+        });
+        // 🎯 음소거 및 자동 재생
+        await _controller!.setVolume(0.0);
+        await _controller!.setLooping(true);
+        await _controller!.play();
+        debugPrint('[ThumbnailVideoPlayer] 재생 시작');
       }
     } catch (e) {
       debugPrint('[ThumbnailVideoPlayer] error: $e');
@@ -100,10 +102,14 @@ class _ThumbnailVideoPlayerState extends State<ThumbnailVideoPlayer>
   void _disposeVideo() {
     _controller?.removeListener(_onVideoInitialized);
     if (_controller != null) {
-      VideoCacheService().releaseController(
-        widget.videoUrl,
-        namespace: 'search_trending',
-      );
+      try {
+        if (_controller!.value.isInitialized) {
+          _controller!.pause();
+        }
+        _controller!.dispose();
+      } catch (e) {
+        debugPrint('[ThumbnailVideoPlayer] dispose 오류: $e');
+      }
       _controller = null;
     }
   }
@@ -195,25 +201,36 @@ class _SearchBackgroundVideoWidgetState
   }
 
   void _initializeVideo() {
-    // 🎯 VideoCacheService에서 컨트롤러 가져오기 (프리로드)
-    _videoController = VideoCacheService().getOrCreateController(
-      widget.videoUrl,
-      namespace: 'search_background',
+    // 🎯 표준 방식: 직접 컨트롤러 생성
+    _videoController = VideoPlayerController.networkUrl(
+      Uri.parse(widget.videoUrl),
+      httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+      videoPlayerOptions: VideoPlayerOptions(
+        mixWithOthers: false,
+        allowBackgroundPlayback: false,
+      ),
     );
 
-    // 이미 초기화된 경우
-    if (_videoController!.value.isInitialized) {
-      setState(() {
-        _isInitialized = true;
-      });
-      // 첫 프레임에서 멈춤 (배경으로 사용)
-      _videoController!.seekTo(Duration.zero);
-      _videoController!.pause();
-      _videoController!.setVolume(0);
-    } else {
-      // 초기화 대기
-      _videoController!.addListener(_onVideoInitialized);
-    }
+    // 리스너 추가
+    _videoController!.addListener(_onVideoInitialized);
+
+    // 초기화 시작
+    _videoController!
+        .initialize()
+        .then((_) {
+          if (mounted && _videoController != null) {
+            setState(() {
+              _isInitialized = true;
+            });
+            // 첫 프레임에서 멈춤 (배경으로 사용)
+            _videoController!.seekTo(Duration.zero);
+            _videoController!.pause();
+            _videoController!.setVolume(0);
+          }
+        })
+        .catchError((e) {
+          debugPrint('[SearchBackgroundVideoWidget] 초기화 실패: $e');
+        });
   }
 
   void _onVideoInitialized() {
@@ -234,10 +251,14 @@ class _SearchBackgroundVideoWidgetState
   void _disposeVideo() {
     _videoController?.removeListener(_onVideoInitialized);
     if (_videoController != null) {
-      VideoCacheService().releaseController(
-        widget.videoUrl,
-        namespace: 'search_background',
-      );
+      try {
+        if (_videoController!.value.isInitialized) {
+          _videoController!.pause();
+        }
+        _videoController!.dispose();
+      } catch (e) {
+        debugPrint('[SearchBackgroundVideoWidget] dispose 오류: $e');
+      }
       _videoController = null;
     }
   }

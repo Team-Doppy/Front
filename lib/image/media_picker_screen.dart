@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/image/simple_image_editor_screen.dart';
 import 'package:doppy/image/simple_video_editor_screen.dart';
@@ -11,7 +10,6 @@ import 'package:doppy/image/group_image_layout_selector.dart';
 import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/editor/component/clip_component.dart';
-import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -26,6 +24,14 @@ class MediaPickerScreen extends StatefulWidget {
   final bool enableToggle; // 토글 가능 여부
   // ✅ "팝(pop) 전에" 상위 화면(에디터 등)에서 노드 삽입/프리캐시 같은 작업을 수행할 수 있도록 훅 제공
   final Future<void> Function(MediaPickerResult result)? onBeforePop;
+  // ✅ "추가/다음" 버튼을 눌렀을 때, pop 대신 다른 플로우로 전환해야 하는 케이스(온보딩 등)용 훅
+  // - 제공되면 기본 pop-with-result 동작을 하지 않고,
+  //   반환된 위젯으로 picker 라우트를 pushReplacement(무전환) 한다. (bg 플래시/페이드아웃 방지)
+  final Future<Widget?> Function(
+    BuildContext pickerContext,
+    MediaPickerResult result,
+  )?
+  onSubmitOverride;
   // ✅ onBeforePop 이후, 짧은 여유 시간(디코드/캐시/프레임 안정화)을 주기 위한 딜레이
   final Duration beforePopDelay;
 
@@ -37,6 +43,7 @@ class MediaPickerScreen extends StatefulWidget {
     this.maxSelectionCount = 1,
     this.enableToggle = true,
     this.onBeforePop,
+    this.onSubmitOverride,
     this.beforePopDelay = const Duration(milliseconds: 180),
   });
 
@@ -103,7 +110,6 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   final ScrollController _scrollController = ScrollController();
   bool _isSubmitting = false;
   bool _isClosing = false; // ✅ pop/close 중복 방지 (업로드/노드삽입 완료 전 닫힘 방지용)
-  bool? _wasMutedBeforePicker; // 🎯 미디어피커 열기 전 뮤트 상태 저장
 
   /// ✅ pop 전에 반드시 호출: 노드 추가/리플레이스(업로드 포함)가 끝났을 때만 true 반환
   Future<bool> _runBeforePop(MediaPickerResult result) async {
@@ -183,10 +189,6 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     // 🎯 스크롤 리스너 추가 (페이지네이션)
     _scrollController.addListener(_onScroll);
 
-    // 🎯 미디어피커가 열릴 때 에디터의 모든 ClipComponent 비디오를 뮤트
-    // 뮤트 전 상태를 저장하여 닫힐 때 복원
-    final muteService = VideoMuteService();
-    _wasMutedBeforePicker = muteService.isReaderMuted;
     muteAllVideos();
 
     // ✅ 첫 프레임(전환 애니메이션)을 먼저 확보한 뒤 권한/앨범/첫 페이지를 로드한다.
@@ -206,29 +208,6 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
-
-    // 🎯 미디어피커가 닫힐 때 뮤트 상태 복원
-    if (_wasMutedBeforePicker != null) {
-      final muteService = VideoMuteService();
-      // 원래 뮤트 상태로 복원
-      muteService.setReaderMuted(_wasMutedBeforePicker!);
-      // VideoCacheService의 볼륨도 복원 (VideoMuteService 상태에 맞춰)
-      try {
-        VideoCacheService().setVolumeForNamespace(
-          'editor',
-          _wasMutedBeforePicker! ? 0.0 : 1.0,
-        );
-        VideoCacheService().setVolumeForNamespace(
-          'reader',
-          _wasMutedBeforePicker! ? 0.0 : 1.0,
-        );
-        debugPrint(
-          '[MediaPicker] 뮤트 상태 복원: ${_wasMutedBeforePicker! ? "음소거" : "소리 켜짐"}',
-        );
-      } catch (e) {
-        debugPrint('[MediaPicker] 뮤트 상태 복원 실패: $e');
-      }
-    }
 
     // 🎯 AssetEntity 리스트와 캐시 정리 (PHCachingImageManager 메모리 문제 방지)
     _media.clear();
@@ -479,7 +458,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         }
       }
 
-      // ★ 2) 단일 이미지 모드 + 토글 불가 (영상처럼 동작)
+      // ★ 2) 단일 이미지 모드 + 토글 불가 (프로필 이미지 선택 모드: 다시 탭하면 해제)
       final isSingleNoToggle =
           _mediaType == MediaType.image &&
           _maxSelectionCount == 1 &&
@@ -488,7 +467,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       if (isSingleNoToggle) {
         final alreadySelected = _selectedMediaIds.contains(asset.id);
         if (alreadySelected) {
-          // 다시 탭해도 해제 안함
+          // 다시 탭하면 해제 (다중 선택 모드처럼)
+          _selectedMediaIds.clear();
+          _selectedAssetById.clear();
           return;
         } else {
           // 다른 이미지를 선택하면 교체
@@ -713,6 +694,10 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   }
 
   Future<void> _handleImageEdit(List<AssetEntity> selectedAssets) async {
+    // ✅ 중복 클릭 방지
+    if (_isSubmitting) return;
+    _isSubmitting = true;
+
     // ✅ selectedAssets는 이미 선택 순서대로 정렬되어 있음
     try {
       // 선택된 이미지들을 Uint8List로 변환
@@ -899,16 +884,26 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
           message: '이미지를 불러올 수 없습니다.',
         );
       }
+    } finally {
+      // ✅ 에러 발생 시 재시도 가능하도록 플래그 해제
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
     }
   }
 
   /// 🎯 비디오 편집 처리 (편집 → 트림 플로우)
   Future<void> _handleVideoEdit(List<AssetEntity> selectedAssets) async {
+    // ✅ 중복 클릭 방지
+    if (_isSubmitting) return;
     if (selectedAssets.isEmpty ||
         selectedAssets.first.type != AssetType.video) {
       return;
     }
 
+    _isSubmitting = true;
     try {
       final asset = selectedAssets.first;
       final File? file = await asset.originFile;
@@ -1010,13 +1005,23 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
           message: '비디오를 불러올 수 없습니다.',
         );
       }
+    } finally {
+      // ✅ 에러 발생 시 재시도 가능하도록 플래그 해제
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
     }
   }
 
   Future<void> _handleGroupImage(List<AssetEntity> selectedAssets) async {
-    try {
-      if (selectedAssets.isEmpty || !mounted) return;
+    // ✅ 중복 클릭 방지
+    if (_isSubmitting) return;
+    if (selectedAssets.isEmpty || !mounted) return;
 
+    _isSubmitting = true;
+    try {
       debugPrint('그룹이미지: ${selectedAssets.length}개 이미지');
 
       // 🎯 레이아웃 선택 화면을 모달 바텀시트로 표시 (AssetEntity만 사용)
@@ -1119,6 +1124,13 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
           message: AppLocalizations.of(context).t('cannot_load_image'),
         );
       }
+    } finally {
+      // ✅ 에러 발생 시 재시도 가능하도록 플래그 해제
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
     }
   }
 
@@ -1181,13 +1193,36 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
           // 이미지는 바로 반환
           widget.onMediaSelected(file);
-          await _popWithResult(
-            MediaPickerResult(
-              files: [file],
-              // ✅ 실제 선택된 타입은 파일 기준으로 고정
-              selectedMediaType: MediaType.image,
-            ),
+          final result = MediaPickerResult(
+            files: [file],
+            // ✅ 실제 선택된 타입은 파일 기준으로 고정
+            selectedMediaType: MediaType.image,
           );
+
+          // ✅ 온보딩 등: pop 대신 외부에서 네비게이션 처리
+          if (widget.onSubmitOverride != null) {
+            if (_isClosing) return;
+            _isClosing = true;
+            final next = await widget.onSubmitOverride!(context, result);
+            if (!mounted) return;
+            if (next == null) {
+              _isClosing = false;
+              return;
+            }
+            // ✅ 페이드아웃/전환 없이 바로 교체
+            await Navigator.of(context).pushReplacement(
+              PageRouteBuilder(
+                pageBuilder: (context, animation, secondaryAnimation) => next,
+                transitionDuration: Duration.zero,
+                reverseTransitionDuration: Duration.zero,
+                transitionsBuilder:
+                    (context, animation, secondaryAnimation, child) => child,
+              ),
+            );
+            return;
+          }
+
+          await _popWithResult(result);
         }
       } else {
         // 여러 개 선택 가능한 경우 - 모든 파일 반환
@@ -1205,9 +1240,35 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
             widget.onMediaSelected(file);
           }
           // 🎯 실제로 선택된 미디어 타입과 함께 반환
-          await _popWithResult(
-            MediaPickerResult(files: files, selectedMediaType: _mediaType),
+          final result = MediaPickerResult(
+            files: files,
+            selectedMediaType: _mediaType,
           );
+
+          // ✅ 온보딩 등: pop 대신 외부에서 네비게이션 처리
+          if (widget.onSubmitOverride != null) {
+            if (_isClosing) return;
+            _isClosing = true;
+            final next = await widget.onSubmitOverride!(context, result);
+            if (!mounted) return;
+            if (next == null) {
+              _isClosing = false;
+              return;
+            }
+            // ✅ 페이드아웃/전환 없이 바로 교체
+            await Navigator.of(context).pushReplacement(
+              PageRouteBuilder(
+                pageBuilder: (context, animation, secondaryAnimation) => next,
+                transitionDuration: Duration.zero,
+                reverseTransitionDuration: Duration.zero,
+                transitionsBuilder:
+                    (context, animation, secondaryAnimation, child) => child,
+              ),
+            );
+            return;
+          }
+
+          await _popWithResult(result);
         }
       }
     } catch (e) {
@@ -1373,9 +1434,8 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
     return Container(
       decoration: BoxDecoration(color: colorScheme.surface),
-      padding: EdgeInsets.only(bottom: 0, top: 12, left: 16, right: 16),
+      padding: EdgeInsets.symmetric(horizontal: 20),
       child: SafeArea(
-        top: false,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
@@ -1386,13 +1446,22 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                   child: CupertinoButton(
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     color: Colors.transparent,
-                    onPressed: () => _handleGroupImage(selectedAssets),
-                    child: Text(
-                      AppLocalizations.of(context).t('group_image'),
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.onSurface,
+                    onPressed:
+                        _isSubmitting
+                            ? null
+                            : () => _handleGroupImage(selectedAssets),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        AppLocalizations.of(context).t('group_image'),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color:
+                              _isSubmitting
+                                  ? colorScheme.onSurface.withOpacity(0.5)
+                                  : colorScheme.onSurface,
+                        ),
                       ),
                     ),
                   ),
@@ -1403,22 +1472,34 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                   height: 24,
                 ),
               ],
-              // ✅ 이미지 편집: 이미지가 하나 이상 선택되었을 때 항상 표시
-              Expanded(
-                child: CupertinoButton(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  color: Colors.transparent,
-                  onPressed: () => _handleImageEdit(selectedAssets),
-                  child: Text(
-                    AppLocalizations.of(context).t('edit_image'),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: colorScheme.onSurface,
+              // ✅ 이미지 편집: 프로필 이미지 선택 모드가 아닐 때만 표시
+              // 프로필 이미지 선택 모드: maxSelectionCount == 1 && enableToggle == false
+              if (!(_maxSelectionCount == 1 && !widget.enableToggle)) ...[
+                Expanded(
+                  child: CupertinoButton(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    color: Colors.transparent,
+                    onPressed:
+                        _isSubmitting
+                            ? null
+                            : () => _handleImageEdit(selectedAssets),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        AppLocalizations.of(context).t('edit_image'),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color:
+                              _isSubmitting
+                                  ? colorScheme.onSurface.withOpacity(0.5)
+                                  : colorScheme.onSurface,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ],
             // ✅ 비디오 1개 선택 시: 비디오 편집 버튼 표시
             if (isVideo && _maxSelectionCount == 1) ...[
@@ -1426,13 +1507,22 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                 child: CupertinoButton(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   color: Colors.transparent,
-                  onPressed: () => _handleVideoEdit(selectedAssets),
-                  child: Text(
-                    AppLocalizations.of(context).t('edit_video'),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: colorScheme.onSurface,
+                  onPressed:
+                      _isSubmitting
+                          ? null
+                          : () => _handleVideoEdit(selectedAssets),
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      AppLocalizations.of(context).t('edit_video'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color:
+                            _isSubmitting
+                                ? colorScheme.onSurface.withOpacity(0.5)
+                                : colorScheme.onSurface,
+                      ),
                     ),
                   ),
                 ),

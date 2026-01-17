@@ -533,7 +533,6 @@ class VideoViewer extends StatelessWidget {
       saturation: spec.saturation,
       luminance: spec.luminance,
       exposure: spec.exposure,
-      sharpness: spec.sharpness,
       temperature: spec.temperature,
     );
 

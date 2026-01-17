@@ -27,7 +27,8 @@ import 'package:doppy/data/models/user_model.dart';
 import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/data/services/like_service.dart';
-import 'package:doppy/pages/components/access_level_sheet.dart';
+import 'package:doppy/pages/components/access_level_sheet.dart'
+    show AccessLevelSheet, AccessLevelSelectMode;
 import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/pages/components/comment_bottom_sheet.dart';
 import 'package:doppy/pages/components/comment_preview_section.dart';
@@ -56,8 +57,6 @@ import 'package:doppy/editor/component/clip_component.dart'
         videoPlayerControllers,
         videoPlayerProxyKey,
         ClipComponentBuilder;
-import 'package:doppy/data/services/video_cache_service.dart';
-import 'package:video_player/video_player.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/post_reader_service.dart';
@@ -149,6 +148,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   bool _isVideoViewer = false;
   String? _currentImageUrl;
   List<String> _allImageUrls = [];
+  String? _videoUrl; // ✅ 비디오 URL (컨트롤러 찾기용)
+  String? _videoLocalPath; // ✅ 비디오 로컬 경로 (컨트롤러 찾기용)
   late final AnimationController _imageViewerCtrl;
   late final Animation<double> _imageViewerFade;
 
@@ -196,26 +197,18 @@ class _PostReaderScreenState extends State<PostReaderScreen>
         return;
       }
 
-      // 2) 액션이 없으면 전체화면으로 열기 (프리로드 보장)
+      // 2) 액션이 없으면 전체화면으로 열기
       if (clipNode.url.isNotEmpty) {
-        // 🎯 VideoCacheService에서 컨트롤러 가져오기
-        final videoCache = VideoCacheService();
-        VideoPlayerController? controller;
-        if (videoCache.hasController(clipNode.url, namespace: 'reader')) {
-          controller = videoCache.getOrCreateController(
-            clipNode.url,
-            namespace: 'reader',
-          );
-        }
-        debugPrint(
-          '[PostReaderScreen] ✅ 풀스크린 뷰어 열기: ${clipNode.url} (컨트롤러: ${controller != null ? "있음" : "없음"})',
-        );
+        // 🎯 표준 방식: preloadedController는 null (각 위젯이 자체 관리)
+        debugPrint('[PostReaderScreen] ✅ 풀스크린 뷰어 열기: ${clipNode.url}');
 
         setState(() {
           _previousAppBarState = _showAppBar; // 🎯 현재 상태 저장
           _currentImageUrl = clipNode.url;
           _allImageUrls = [clipNode.url];
           _isVideoViewer = true;
+          _videoUrl = clipNode.url; // ✅ 비디오 URL 저장
+          _videoLocalPath = clipNode.localPath; // ✅ 비디오 로컬 경로 저장
           _showImageViewer = true;
           _showAppBar = false; // 하단 바 숨김
           _bottomBarAnimationDuration = 50; // 빠르게 숨김
@@ -485,6 +478,8 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       setState(() {
         _showImageViewer = false;
         _currentImageUrl = null;
+        _videoUrl = null; // ✅ 비디오 URL 초기화
+        _videoLocalPath = null; // ✅ 비디오 로컬 경로 초기화
         _showAppBar = _previousAppBarState; // 🎯 이전 상태로 복원
         _bottomBarAnimationDuration =
             _previousAppBarState ? 0 : 300; // 🎯 열려있었으면 즉시(0), 닫혀있었으면 일반 속도
@@ -648,7 +643,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       context,
       postId: postId,
       currentAccessLevel: currentAccessLevelStr,
-
+      mode: AccessLevelSelectMode.serverUpdate, // 🎯 서버 변경 모드
       onChanged: (String accessLevel) async {
         // 🎯 공개범위 변경 후 상태 업데이트 (낙관적 업데이트)
         if (mounted) {
@@ -1172,16 +1167,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // "캐시가 날아간 느낌" + pop 타이밍 레이스로 에러가 터질 수 있다.
     // 따라서 화면 종료 시점에는 reader 전용 컨트롤러만 정리한다.
 
-    // 🎯 reader 모드에서 생성한 모든 비디오 컨트롤러 정지 및 dispose
-    // 🎯 VideoCacheService를 통해 reader 네임스페이스의 모든 컨트롤러 일시정지
-    try {
-      VideoCacheService().pauseAllInNamespace('reader');
-      debugPrint(
-        '[PostReaderScreen] VideoCacheService를 통한 reader 컨트롤러 일시정지 완료',
-      );
-    } catch (e) {
-      debugPrint('[PostReaderScreen] VideoCacheService 일시정지 오류: $e');
-    }
+    // 🎯 표준 방식: 각 위젯이 자체 컨트롤러를 관리하므로 별도 처리 불필요
 
     // 화면 종료 시 스포일러 세션 상태 초기화 (프레임 잠금 중 알림 방지)
     try {
@@ -1980,8 +1966,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                             );
                           },
                         ),
-                        // (좋아요/조회자 목록은 Navigator.push로 분리됨)
-                        // 전체화면 이미지/영상 뷰어 (페이드 애니메이션)
+
                         if (_showImageViewer && _currentImageUrl != null)
                           Positioned.fill(
                             child: FadeTransition(
@@ -1989,7 +1974,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                               child: FullscreenMediaViewer(
                                 imageUrl: _currentImageUrl!,
                                 allImageUrls: _allImageUrls,
-
                                 initialIndex:
                                     _currentImageUrl != null &&
                                             _allImageUrls.isNotEmpty
@@ -1998,22 +1982,11 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                         )
                                         : 0,
                                 isVideo: _isVideoViewer,
-                                preloadedController:
-                                    _isVideoViewer && _currentImageUrl != null
-                                        ? (VideoCacheService().hasController(
-                                              _currentImageUrl!,
-                                              namespace: 'reader',
-                                            )
-                                            ? VideoCacheService()
-                                                .getOrCreateController(
-                                                  _currentImageUrl!,
-                                                  namespace: 'reader',
-                                                )
-                                            : null)
-                                        : null, // 🎯 VideoCacheService에서 컨트롤러 가져오기
-                                // ✅ imageProvider 제거: FullscreenMediaViewer 내부에서 EditorImageProvider 사용
                                 imageProvider: null,
                                 onClose: _closeImageViewer,
+                                videoUrl: _videoUrl, // ✅ 비디오 URL 전달
+                                videoLocalPath:
+                                    _videoLocalPath, // ✅ 비디오 로컬 경로 전달
                                 postTitle: () {
                                   final title =
                                       (_currentExportedData?['title'] ??
@@ -2039,20 +2012,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                   );
                                   return url;
                                 }(),
-                                commentCount: () {
-                                  final count =
-                                      widget.exported['commentCount'] as int?;
-                                  debugPrint(
-                                    '[PostReader] commentCount: $count',
-                                  );
-                                  debugPrint(
-                                    '[PostReader] exported keys: ${widget.exported.keys.toList()}',
-                                  );
-                                  return count;
-                                }(),
-                                // 🎯 좋아요 기능 추가
-                                postId: widget.exported['id']?.toString(),
-                                likeService: _likeService,
                               ),
                             ),
                           ),

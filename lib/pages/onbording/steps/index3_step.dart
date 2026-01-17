@@ -1,4 +1,5 @@
 import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/utils/text_bold_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -15,22 +16,13 @@ class Index3CardContent extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
-            '사진 몇 장, 한 줄이면 충분해요',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w400,
-              letterSpacing: -0.5,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
             '넘겨서 바로 기록',
-            style: GoogleFonts.roboto(
-              color: Colors.white,
+            style: LocaleTypography.setStyle(
+              context: context,
               fontSize: 36,
-              fontWeight: FontWeight.bold,
-              letterSpacing: -0.5,
+              color: AppColors.darkTextPrimary.withOpacity(0.9),
+              fontWeight: FontWeight.w900,
+              height: 1.4,
             ),
           ),
         ],
@@ -51,18 +43,34 @@ class Index3Background extends StatelessWidget {
         child: Container(
           padding: EdgeInsets.all(24),
           color: Colors.transparent,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const SizedBox(height: 20),
-              Text(
-                '이번 주는 다시 오지 않습니다.',
-                style: GoogleFonts.roboto(
-                  color: AppColors.lightTextPrimary,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -1,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const SizedBox(height: 30),
+                  Text(
+                    '지나가면',
+                    style: LocaleTypography.setStyle(
+                      context: context,
+                      fontSize: 30,
+                      color: AppColors.darkSurfaceVariant.withOpacity(0.9),
+                      fontWeight: FontWeight.w300,
+                      height: 1.4,
+                    ),
+                  ),
+                  Text(
+                    '다시 오지 않습니다',
+                    style: LocaleTypography.setStyle(
+                      context: context,
+                      fontSize: 30,
+                      color: AppColors.darkSurfaceVariant.withOpacity(0.9),
+                      fontWeight: FontWeight.w300,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

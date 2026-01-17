@@ -8,18 +8,27 @@ import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 
+/// 공개범위 선택 시트 모드
+enum AccessLevelSelectMode {
+  /// 서버 변경 모드: 실제로 서버에 공개범위를 변경
+  serverUpdate,
+
+  /// 지정 모드: 선택만 하고 onChanged로 반환 (서버 변경 없음)
+  selectionOnly,
+}
+
 // 상태 관리 헬퍼 클래스
 class _AccessLevelStateHelper {
   String currentAccessLevel = SystemCategoryKeys.public;
   bool initialized = false;
   bool isLoading = false; // 🎯 로딩 상태
-  bool isBatchMode = false; // 🎯 배치 모드 플래그
+  AccessLevelSelectMode mode = AccessLevelSelectMode.selectionOnly; // 🎯 모드 추가
 
   void reset() {
     currentAccessLevel = SystemCategoryKeys.public;
     initialized = false;
     isLoading = false;
-    isBatchMode = false;
+    mode = AccessLevelSelectMode.selectionOnly;
   }
 }
 
@@ -28,19 +37,20 @@ class AccessLevelSheet {
   static final _StateHelper = _AccessLevelStateHelper();
 
   /// 공개범위 변경 바텀시트 표시
-  /// isBatchMode가 true이면 API 호출 없이 선택만 (onChanged만 호출)
   static void show(
     BuildContext context, {
-    required String postId, // 🎯 필수: 포스트 ID (배치 모드일 때도 전달)
+    required String postId, // 🎯 필수: 포스트 ID
     required String currentAccessLevel,
     required Function(String accessLevel) onChanged,
-    bool isBatchMode = false, // 🎯 배치 모드: true이면 API 호출 없이 onChanged만 호출
+    AccessLevelSelectMode mode =
+        AccessLevelSelectMode.selectionOnly, // 🎯 모드 추가
   }) async {
     debugPrint(
-      '[AccessLevelSheet] show 호출 - postId: $postId, currentAccessLevel: $currentAccessLevel, isBatchMode: $isBatchMode',
+      '[AccessLevelSheet] show 호출 - postId: $postId, currentAccessLevel: $currentAccessLevel, mode: $mode',
     );
     // 스크롤 플래그 제거 (그룹 기능 제거로 인해 불필요)
     _StateHelper.reset(); // 상태 초기화
+    _StateHelper.mode = mode; // 🎯 모드 설정
     final parentContext = context; // 부모 context 저장
 
     await showModalBottomSheet(
@@ -62,115 +72,77 @@ class AccessLevelSheet {
             // 현재 accessLevel 가져오기
             final String activeAccessLevel = _StateHelper.currentAccessLevel;
 
-            // 🎯 isBatchMode를 StateHelper에 저장 (내부 메서드에서 사용)
-            _StateHelper.isBatchMode = isBatchMode;
-
-            return Stack(
-              children: [
-                // 배경 영역 (바깥 부분) - 탭하면 닫힘
-                Positioned.fill(
-                  child: GestureDetector(
-                    onTap: () {
-                      Navigator.of(context).pop();
-                    },
-                    child: Container(color: Colors.transparent),
+            return ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Container(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.9,
                   ),
-                ),
-                // 바텀시트 컨텐츠
-                DraggableScrollableSheet(
-                  initialChildSize: 0.6,
-                  minChildSize: 0.4,
-                  maxChildSize: 0.9,
-                  builder: (context, scrollController) {
-                    return GestureDetector(
-                      onTap: () {
-                        // 바텀시트 내부를 탭해도 닫히지 않도록 이벤트 소비
-                      },
-                      child: ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(24),
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surface.withOpacity(0.95),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
+                    border: Border.all(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surface.withOpacity(0.6),
+                      width: 0.5,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 핸들 바
+                      Container(
+                        margin: const EdgeInsets.only(top: 12, bottom: 8),
+                        width: 38,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.withOpacity(0.8),
+                          borderRadius: BorderRadius.circular(2),
                         ),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.surface.withOpacity(0.95),
-                              borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(24),
-                              ),
-                              border: Border.all(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surface.withOpacity(0.6),
-                                width: 0.5,
-                              ),
-                            ),
-                            child: Column(
-                              children: [
-                                // 핸들 바
-                                Container(
-                                  margin: const EdgeInsets.only(
-                                    top: 12,
-                                    bottom: 8,
-                                  ),
-                                  width: 38,
-                                  height: 4,
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey.withOpacity(0.8),
-                                    borderRadius: BorderRadius.circular(2),
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
+                      ),
+                      const SizedBox(height: 16),
 
-                                // 공개범위 리스트
-                                Expanded(
-                                  child: RawScrollbar(
-                                    controller: scrollController,
-                                    thumbColor: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.3),
-                                    radius: const Radius.circular(20),
-                                    thickness: 4,
-                                    thumbVisibility: false,
-                                    child: SingleChildScrollView(
-                                      controller: scrollController,
-                                      child: _buildAccessLevelContent(
-                                        bottomSheetContext,
-                                        parentContext,
-                                        activeAccessLevel,
-                                        onChanged,
-                                        setModalState,
-                                        scrollController,
-                                        postId,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-
-                                // 🎯 완료 버튼
-                                _buildDoneButton(
-                                  bottomSheetContext,
-                                  parentContext,
-                                  activeAccessLevel,
-                                  currentAccessLevel,
-                                  postId,
-                                  onChanged,
-                                  setModalState,
-                                  () {
-                                    // 성공 콜백 (필요 시 추가 로직 구현)
-                                  },
-                                ),
-                              ],
-                            ),
+                      // 공개범위 리스트
+                      Flexible(
+                        child: SingleChildScrollView(
+                          child: _buildAccessLevelContent(
+                            bottomSheetContext,
+                            parentContext,
+                            activeAccessLevel,
+                            onChanged,
+                            setModalState,
+                            null, // scrollController 제거
+                            postId,
                           ),
                         ),
                       ),
-                    );
-                  },
+
+                      // 🎯 완료 버튼
+                      _buildDoneButton(
+                        bottomSheetContext,
+                        parentContext,
+                        activeAccessLevel,
+                        currentAccessLevel,
+                        postId,
+                        onChanged,
+                        setModalState,
+                        () {
+                          // 성공 콜백 (필요 시 추가 로직 구현)
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-              ],
+              ),
             );
           },
         );
@@ -247,7 +219,7 @@ class AccessLevelSheet {
     String currentAccessLevel,
     Function(String accessLevel) onChanged,
     StateSetter setModalState,
-    ScrollController scrollController,
+    ScrollController? scrollController, // nullable로 변경
     String postId, // 🎯 필수: 포스트 ID
     // 그룹 기능 제거로 인해 onGroupChanged 제거
   ) {
@@ -258,48 +230,65 @@ class AccessLevelSheet {
     final isPrivate = accessLevelUpper == SystemCategoryKeys.private;
     final isFriends = accessLevelUpper == SystemCategoryKeys.friends;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // 전체공개
-        _buildAccessLevelItem(
-          title: bottomSheetContext.tr('public_access'),
-          isSelected: isPublic,
-          context: bottomSheetContext,
-          onTap: () {
-            setModalState(() {
-              _StateHelper.currentAccessLevel = SystemCategoryKeys.public;
-            });
-          },
-        ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Text(
+              bottomSheetContext.tr('select_access_level'),
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: Theme.of(bottomSheetContext).colorScheme.onSurface,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
 
-        // 모든 친구
-        _buildAccessLevelItem(
-          title: bottomSheetContext.tr('friends_access'),
-          isSelected: isFriends,
-          context: bottomSheetContext,
-          onTap: () {
-            setModalState(() {
-              _StateHelper.currentAccessLevel = SystemCategoryKeys.friends;
-            });
-          },
-        ),
+          // 전체공개
+          _buildAccessLevelItem(
+            title: bottomSheetContext.tr('public_access'),
+            isSelected: isPublic,
+            context: bottomSheetContext,
+            onTap: () {
+              setModalState(() {
+                _StateHelper.currentAccessLevel = SystemCategoryKeys.public;
+              });
+            },
+          ),
 
-        // 나만보기
-        _buildAccessLevelItem(
-          title: bottomSheetContext.tr('private_access'),
-          isSelected: isPrivate,
-          context: bottomSheetContext,
-          onTap: () {
-            setModalState(() {
-              _StateHelper.currentAccessLevel = SystemCategoryKeys.private;
-            });
-          },
-        ),
+          // 모든 친구
+          _buildAccessLevelItem(
+            title: bottomSheetContext.tr('friends_access'),
+            isSelected: isFriends,
+            context: bottomSheetContext,
+            onTap: () {
+              setModalState(() {
+                _StateHelper.currentAccessLevel = SystemCategoryKeys.friends;
+              });
+            },
+          ),
 
-        // BottomSheet 하단 여백
-        const SizedBox(height: 20),
-      ],
+          // 나만보기
+          _buildAccessLevelItem(
+            title: bottomSheetContext.tr('private_access'),
+            isSelected: isPrivate,
+            context: bottomSheetContext,
+            onTap: () {
+              setModalState(() {
+                _StateHelper.currentAccessLevel = SystemCategoryKeys.private;
+              });
+            },
+          ),
+
+          // BottomSheet 하단 여백
+          const SizedBox(height: 20),
+        ],
+      ),
     );
   }
 
@@ -315,9 +304,11 @@ class AccessLevelSheet {
     VoidCallback onSuccess,
   ) {
     // 🎯 변경 여부 확인
-    final isBatchMode = _StateHelper.isBatchMode;
-    // 🎯 배치 모드에서는 항상 버튼 활성화 (사용자가 명시적으로 변경하기를 눌러야 함)
-    final hasChanged = isBatchMode || activeAccessLevel != originalAccessLevel;
+    final mode = _StateHelper.mode;
+    // 🎯 지정 모드에서는 항상 버튼 활성화 (사용자가 명시적으로 변경하기를 눌러야 함)
+    final hasChanged =
+        mode == AccessLevelSelectMode.selectionOnly ||
+        activeAccessLevel != originalAccessLevel;
 
     return SafeArea(
       top: false,
@@ -331,7 +322,7 @@ class AccessLevelSheet {
             color: Theme.of(
               bottomSheetContext,
             ).colorScheme.onSurface.withOpacity(0.1),
-          ),
+          ), // 제목
           // 🎯 GestureDetector로 변경 (배경 없음, 전체 영역 클릭 가능)
           GestureDetector(
             behavior: HitTestBehavior.opaque, // 🎯 여백 부분도 클릭 가능하도록
@@ -349,20 +340,20 @@ class AccessLevelSheet {
                         // 🎯 변경할 공개범위 결정 (그룹 기능 제거로 인해 GROUPS 제거)
                         final finalAccessLevel = activeAccessLevel;
 
-                        // 🎯 배치 모드 체크 (가장 먼저 확인)
-                        final isBatchMode = _StateHelper.isBatchMode;
+                        // 🎯 모드 체크 (가장 먼저 확인)
+                        final mode = _StateHelper.mode;
                         debugPrint(
-                          '[AccessLevelSheet] 변경하기 버튼 클릭 - isBatchMode: $isBatchMode',
+                          '[AccessLevelSheet] 변경하기 버튼 클릭 - mode: $mode',
                         );
 
-                        if (isBatchMode) {
-                          // 🎯 배치 모드: onChanged만 호출하고 바텀시트 닫기
+                        if (mode == AccessLevelSelectMode.selectionOnly) {
+                          // 🎯 지정 모드: onChanged만 호출하고 바텀시트 닫기
                           onChanged(finalAccessLevel);
                           Navigator.of(bottomSheetContext).pop();
-                          return; // 🎯 배치 모드에서는 여기서 종료
+                          return; // 🎯 지정 모드에서는 여기서 종료
                         }
 
-                        // 🎯 단일 포스트 모드: API 업데이트
+                        // 🎯 서버 변경 모드: API 업데이트
                         final success = await _updateAccessLevel(
                           bottomSheetContext,
                           postId,
@@ -387,8 +378,8 @@ class AccessLevelSheet {
 
                           Navigator.of(bottomSheetContext).pop();
 
-                          // 🎯 배치 모드가 아닌 경우에만 성공 메시지 표시
-                          if (!isBatchMode) {
+                          // 🎯 서버 변경 모드인 경우에만 성공 메시지 표시
+                          if (mode == AccessLevelSelectMode.serverUpdate) {
                             // 🎯 바텀시트가 닫힌 후에 메시지 표시
                             await Future.delayed(
                               const Duration(milliseconds: 300),
@@ -461,9 +452,6 @@ class AccessLevelSheet {
 
   /// 공개범위 업데이트
   /// 성공 시 true, 실패 시 false 반환
-  /// 공개범위 업데이트
-  /// isBatchMode가 true이면 API 호출 없이 onChanged만 호출 (선택만)
-  /// isBatchMode가 false이면 단일 포스트 변경: 배치 엔드포인트를 postIds: [postId]로 호출
   static Future<bool> _updateAccessLevel(
     BuildContext context,
     String postId,
@@ -471,19 +459,19 @@ class AccessLevelSheet {
     Function(String accessLevel) onChanged, {
     VoidCallback? onError,
   }) async {
-    final isBatchMode = _StateHelper.isBatchMode;
+    final mode = _StateHelper.mode;
     debugPrint(
-      '[AccessLevelSheet] _updateAccessLevel 호출 - postId: $postId, accessLevel: $accessLevel, isBatchMode: $isBatchMode',
+      '[AccessLevelSheet] _updateAccessLevel 호출 - postId: $postId, accessLevel: $accessLevel, mode: $mode',
     );
 
-    // 🎯 배치 모드 체크 - API 호출 없이 onChanged만 호출
-    if (isBatchMode) {
-      debugPrint('[AccessLevelSheet] 배치 모드: API 호출 건너뜀, onChanged만 호출');
+    // 🎯 지정 모드 체크 - API 호출 없이 onChanged만 호출
+    if (mode == AccessLevelSelectMode.selectionOnly) {
+      debugPrint('[AccessLevelSheet] 지정 모드: API 호출 건너뜀, onChanged만 호출');
       onChanged(accessLevel);
       return true;
     }
 
-    // 🎯 단일 포스트 변경: 배치 엔드포인트를 postIds: [postId]로 호출
+    // 🎯 서버 변경 모드: 배치 엔드포인트를 postIds: [postId]로 호출
     try {
       final postIdInt = int.tryParse(postId);
       if (postIdInt == null) {

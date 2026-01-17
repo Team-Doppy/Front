@@ -6,22 +6,26 @@ import 'package:doppy/pages/components/share_post_overlay.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:doppy/pages/screens/home_screen.dart';
 import 'package:provider/provider.dart';
-import 'package:doppy/editor/publish/service/post_publish_service.dart';
+import 'package:doppy/editor/publish/service/post_publish_service.dart'
+    show PostPublishService, PostContentUtils, PostExporter;
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/access_level_parser.dart';
 import 'package:doppy/data/models/system_category_keys.dart';
-import 'package:doppy/data/services/video_cache_service.dart';
 import 'package:doppy/editor/publish/component/step1_thumbnail_edit.dart';
-import 'package:doppy/editor/publish/component/step2_audience_selection.dart';
-import 'package:doppy/editor/publish/component/step3_category_selection.dart';
+import 'package:doppy/pages/components/category_select_sheet.dart'
+    show CategorySelectSheet, CategorySelectMode;
+import 'package:doppy/pages/components/access_level_sheet.dart'
+    show AccessLevelSheet, AccessLevelSelectMode;
 import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/image/utils/edit_image_cache_manager.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
-import 'package:doppy/editor/publish/post_exporter.dart';
 import 'package:doppy/editor/component/clip_component.dart'
     show cleanupAllVideoPlayers;
 import 'package:doppy/pages/components/retry_cancel_bottom_sheet.dart';
+import 'package:doppy/data/services/blog_service.dart';
+import 'package:doppy/utils/mentioned_usernames_extractor.dart';
 import 'dart:io';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
@@ -36,9 +40,21 @@ void printLarge(String text, {int chunkSize = 800}) {
 }
 
 class PostExportScreen extends StatefulWidget {
-  const PostExportScreen({super.key, required this.exported, this.sessionKey});
+  const PostExportScreen({
+    super.key,
+    required this.exported,
+    this.sessionKey,
+    this.isEditMode = false,
+    this.postId,
+    this.initialCategoryId,
+    this.initialAccessLevel,
+  });
   final String exported;
   final String? sessionKey; // 블로그/드래프트별 네임스페이스 키
+  final bool isEditMode; // 🎯 수정 모드 여부
+  final String? postId; // 🎯 수정 모드일 때 포스트 ID
+  final int? initialCategoryId; // 🎯 수정 모드일 때 초기 카테고리 ID
+  final String? initialAccessLevel; // 🎯 수정 모드일 때 초기 공개범위
 
   @override
   State<PostExportScreen> createState() => _PostExportScreenState();
@@ -48,36 +64,30 @@ class _PostExportScreenState extends State<PostExportScreen>
     with TickerProviderStateMixin {
   String get _nsKey => widget.sessionKey ?? 'default';
 
-  // 3단계 진행 상태
-  int _currentStep = 0;
-  static const int _totalSteps = 3;
+  // 🎯 Step 2, 3 제거됨 - 이제 bottomNavigationBar에서 직접 선택
 
   // 더미 데이터
   String _exportedThumbnailImageUrl = '';
   String _firstBodyImageUrl = '';
   String _title = '';
-  String _excerpt = '';
   late final TextEditingController _titleController = TextEditingController();
   final FocusNode _titleFocusNode = FocusNode();
-  late final TextEditingController _excerptController = TextEditingController();
-  final FocusNode _excerptFocusNode = FocusNode();
 
   Map<String, dynamic> _exportedBase = <String, dynamic>{};
 
   bool _editMode = false;
 
-  // Step 2: 공개 범위 선택
-  // 그룹 기능 제거로 인해 _selectedAudienceGroupIds 제거
-  bool _audienceSelectAll = false;
-  bool _audiencePrivateOnly = false;
-  bool _audienceFriendsOnly = false;
+  // 공개 범위 선택 (기본값: 전체공개)
+  String _currentAccessLevel = SystemCategoryKeys.public;
 
-  // Step 3: 카테고리 선택
-  int? _selectedCategoryId = 0; // 기본값: 미지정 카테고리 (ID: 0)
+  // 카테고리 선택 (기본값: 미지정 카테고리 ID: 0)
+  int? _selectedCategoryId = 0;
   List<Map<String, dynamic>>? _cachedCategories; // 캐시된 카테고리 목록
-  bool _isLoadingCategories = false; // 카테고리 로딩 상태
-  bool _showCategoryLoading = false; // 1초 후에만 표시할 카테고리 로딩
-  // 그룹 기능 제거로 인해 _showGroupLoading, _isGroupLoadingStarted 제거
+
+  // ✅ 수정 모드: 초기값 저장 (변경 감지용)
+  int? _initialCategoryId;
+  String? _initialAccessLevel;
+  String _initialThumbnailImageUrl = '';
 
   bool _isUploading = false;
   bool _isUploadingThumb = false;
@@ -95,12 +105,12 @@ class _PostExportScreenState extends State<PostExportScreen>
     duration: const Duration(milliseconds: 220),
   );
 
+  // 🎯 dispose()에서 안전하게 사용하기 위해 UploadService 참조 저장
+  UploadService? _uploadService;
+
   @override
   void initState() {
     super.initState();
-    debugPrint('[PostExport] ═══════════════════════════════════════');
-    debugPrint('[PostExport] initState 호출됨 - sessionKey: $_nsKey');
-    debugPrint('[PostExport] ═══════════════════════════════════════');
     _hydrateFromExported(jsonDecode(widget.exported));
     _intro.forward();
 
@@ -108,19 +118,31 @@ class _PostExportScreenState extends State<PostExportScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _uploadService = context.read<UploadService>();
+  }
+
+  @override
   void dispose() {
     try {
       _titleController.dispose();
       _titleFocusNode.dispose();
-      _excerptController.dispose();
-      _excerptFocusNode.dispose();
 
       // 🎯 비디오 컨트롤러 정리 (로컬/서버 구분하여 처리)
       // _disposeVideoController 내부에서 _cachedVideoUrl 여부에 따라 처리
       _disposeVideoController(context: 'dispose');
 
-      // 🎯 업로드 태스크 취소
-      _cancelUploadTasks();
+      // 🎯 업로드 태스크 취소 (비동기로 처리하여 위젯 트리 잠금 방지)
+      // dispose() 중에는 notifyListeners()가 호출되면 위젯 트리가 잠겨있어 에러 발생
+      // 다음 프레임에서 처리하도록 비동기로 실행
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        try {
+          _cancelUploadTasks();
+        } catch (e) {
+          debugPrint('[PostExport] dispose 후 업로드 태스크 취소 오류: $e');
+        }
+      });
     } catch (e) {
       debugPrint('[PostExport] dispose 에러: $e');
     }
@@ -142,7 +164,7 @@ class _PostExportScreenState extends State<PostExportScreen>
     // 🎯 썸네일: exported에서 가져오기 (임시저장 사용 안 함)
     final exportedThumbnailUrl = exported['thumbnailImageUrl'] as String? ?? '';
 
-    // ✅ 본문 첫 이미지 URL (Step1 카드/배경 기본값)
+    // ✅ 본문 첫 미디어 URL (이미지 우선, 없으면 영상) - Step1 카드/배경 기본값
     _firstBodyImageUrl = PostContentUtils.findFirstBodyImageUrl(exported);
 
     assert(() {
@@ -168,8 +190,8 @@ class _PostExportScreenState extends State<PostExportScreen>
       return true;
     }());
 
-    // ✅ 썸네일이 비어있으면 "본문 첫 이미지"를 기본값으로 사용한다.
-    // - 카드 + 배경 이미지가 즉시 보여야 함
+    // ✅ 썸네일이 비어있으면 "본문 첫 미디어(이미지 우선, 없으면 영상)"를 기본값으로 사용한다.
+    // - 카드 + 배경 이미지/영상이 즉시 보여야 함
     // - http(s)만 채택
     _exportedThumbnailImageUrl =
         exportedThumbnailUrl.trim().isNotEmpty
@@ -194,36 +216,44 @@ class _PostExportScreenState extends State<PostExportScreen>
           lowerUrl.contains('/videos/') ||
           lowerUrl.contains('video');
 
-      // 🎯 비디오 URL인 경우: VideoCacheService로 처리 (precache 스킵)
+      // 🎯 비디오 URL인 경우: 표준 방식으로 처리
       if (isVideo) {
         _cachedVideoUrl = thumb;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           try {
-            final videoCache = VideoCacheService();
-            _videoController = videoCache.getOrCreateController(
-              thumb,
-              namespace: 'profile',
+            // 🎯 표준 방식: 직접 컨트롤러 생성
+            _videoController = VideoPlayerController.networkUrl(
+              Uri.parse(thumb),
+              httpHeaders: const {
+                'Accept': 'video/*',
+                'Connection': 'keep-alive',
+              },
+              videoPlayerOptions: VideoPlayerOptions(
+                mixWithOthers: false,
+                allowBackgroundPlayback: false,
+              ),
             );
 
-            // 🎯 dispose 체크: 컨트롤러 유효성 확인
-            try {
-              // 이미 초기화된 경우 바로 재생
-              if (_videoController!.value.isInitialized) {
-                if (mounted) {
-                  _videoController!.play();
-                  _videoController!.setLooping(true);
-                  setState(() {});
-                }
-              } else {
-                // 초기화 대기
-                _videoController!.addListener(_onVideoControllerInitialized);
-              }
-            } catch (e) {
-              debugPrint('[PostExport] 서버 비디오 컨트롤러 접근 오류 (dispose됨): $e');
-              _videoController = null;
-              _cachedVideoUrl = null;
-            }
+            // 리스너 추가
+            _videoController!.addListener(_onVideoControllerInitialized);
+
+            // 초기화 시작
+            _videoController!
+                .initialize()
+                .then((_) {
+                  if (!mounted || _videoController == null) return;
+                  try {
+                    _videoController!.play();
+                    _videoController!.setLooping(true);
+                    if (mounted) setState(() {});
+                  } catch (e) {
+                    debugPrint('[PostExport] 초기화 후 설정 오류: $e');
+                  }
+                })
+                .catchError((e) {
+                  debugPrint('[PostExport] 초기화 실패: $e');
+                });
           } catch (e) {
             debugPrint('[PostExport] 서버 비디오 컨트롤러 생성 오류: $e');
             _videoController = null;
@@ -340,50 +370,42 @@ class _PostExportScreenState extends State<PostExportScreen>
       }
     }
 
-    // 🎯 Summary: exported에 명시된 값이 있으면 그 값을 우선 사용, 없으면 자동 추출
-    final exportedSummary = (exported['summary'] ?? '').toString().trim();
-    if (exportedSummary.isNotEmpty) {
-      _excerpt = exportedSummary;
-      _excerptController.text = _excerpt;
-      debugPrint('[PostExport] ℹ️ exported summary 사용: $_excerpt');
-    } else {
-      final collected = PostContentUtils.collectText(exported);
-      _excerpt = PostContentUtils.extractSummary(
-        collectedText: collected,
-        title: _title,
-        maxLength: 100,
-      );
-      _excerptController.text = _excerpt;
-      debugPrint('[PostExport] ℹ️ 자동 추출 summary 사용: $_excerpt');
-    }
+    // 🎯 summary/excerpt 필드 제거됨 - 이제 node를 직접 검사
 
-    // 공개 범위 초기값 동기화: accessLevel/sharedGroupIds 반영
-    try {
-      // 🎯 공통 파싱 유틸리티 사용
-      final level =
-          AccessLevelParser.parseAccessLevelString(exported['accessLevel']) ??
-          '';
-      // 그룹 기능 제거로 인해 sharedGroupIds 파싱 제거
-
-      // 우선 순위: PRIVATE > PUBLIC > FRIENDS
-      bool selectAll = false;
-      bool privateOnly = false;
-      bool friendsOnly = false;
-
-      if (level == SystemCategoryKeys.private) {
-        privateOnly = true;
-      } else if (level == SystemCategoryKeys.public) {
-        selectAll = true;
-      } else if (level == SystemCategoryKeys.friends) {
-        friendsOnly = true;
+    // 🎯 수정 모드일 때 초기값 설정, 아니면 exported에서 파싱
+    if (widget.isEditMode) {
+      // 수정 모드: 전달받은 초기값 사용 및 저장 (변경 감지용)
+      if (widget.initialCategoryId != null) {
+        _selectedCategoryId = widget.initialCategoryId;
+        _initialCategoryId = widget.initialCategoryId;
       }
-      // 그룹 기능 제거로 인해 GROUPS 처리 제거
+      if (widget.initialAccessLevel != null &&
+          widget.initialAccessLevel!.isNotEmpty) {
+        _currentAccessLevel = widget.initialAccessLevel!;
+        _initialAccessLevel = widget.initialAccessLevel;
+      }
+      // ✅ 초기 썸네일 저장 (변경 감지용)
+      _initialThumbnailImageUrl = _exportedThumbnailImageUrl;
+    } else {
+      // 발행 모드: exported에서 파싱
+      try {
+        // 🎯 공통 파싱 유틸리티 사용
+        final level =
+            AccessLevelParser.parseAccessLevelString(exported['accessLevel']) ??
+            '';
 
-      _audiencePrivateOnly = privateOnly;
-      _audienceSelectAll = selectAll;
-      _audienceFriendsOnly = friendsOnly;
-      // 그룹 기능 제거로 인해 _selectedAudienceGroupIds 초기화 제거
-    } catch (_) {}
+        // 공개범위 초기화
+        if (level == SystemCategoryKeys.private) {
+          _currentAccessLevel = SystemCategoryKeys.private;
+        } else if (level == SystemCategoryKeys.public) {
+          _currentAccessLevel = SystemCategoryKeys.public;
+        } else if (level == SystemCategoryKeys.friends) {
+          _currentAccessLevel = SystemCategoryKeys.friends;
+        } else {
+          _currentAccessLevel = SystemCategoryKeys.public; // 기본값
+        }
+      } catch (_) {}
+    }
     setState(() {});
   }
 
@@ -391,62 +413,20 @@ class _PostExportScreenState extends State<PostExportScreen>
   void _disposeVideoController({String? context}) {
     if (_videoController == null) return;
 
-    // 🎯 VideoCacheService에서 가져온 서버 비디오 컨트롤러는 dispose하지 않음
-    if (_cachedVideoUrl != null) {
-      // 서버 비디오: 리스너만 제거하고 releaseController 호출
-      try {
-        _videoController!.removeListener(_onVideoControllerInitialized);
-      } catch (e) {
-        debugPrint('[PostExport] ${context ?? "dispose"}: 리스너 제거 오류: $e');
-      }
-
-      // VideoCacheService에서 참조 해제
-      try {
-        VideoCacheService().releaseController(
-          _cachedVideoUrl!,
-          namespace: 'profile',
-        );
-        debugPrint(
-          '[PostExport] ${context ?? "dispose"}: 서버 비디오 컨트롤러 참조 해제 완료',
-        );
-      } catch (e) {
-        debugPrint('[PostExport] ${context ?? "dispose"}: 서버 비디오 참조 해제 오류: $e');
-      }
-
-      _videoController = null;
-      return;
-    }
-
-    // 🎯 로컬 비디오 컨트롤러만 dispose
+    // 🎯 표준 방식: 모든 컨트롤러 dispose
     try {
-      // 리스너 제거 (먼저 제거하여 콜백 방지)
       _videoController!.removeListener(_onVideoControllerInitialized);
-    } catch (e) {
-      debugPrint('[PostExport] ${context ?? "dispose"}: 리스너 제거 오류: $e');
-    }
-
-    try {
-      // 일시정지
       if (_videoController!.value.isInitialized) {
         _videoController!.pause();
       }
-    } catch (e) {
-      debugPrint(
-        '[PostExport] ${context ?? "dispose"}: 일시정지 오류 (dispose됨): $e',
-      );
-    }
-
-    try {
-      // dispose
       _videoController!.dispose();
-      debugPrint(
-        '[PostExport] ${context ?? "dispose"}: 로컬 비디오 컨트롤러 dispose 완료',
-      );
+      debugPrint('[PostExport] ${context ?? "dispose"}: 컨트롤러 dispose 완료');
     } catch (e) {
       debugPrint('[PostExport] ${context ?? "dispose"}: 컨트롤러 dispose 오류: $e');
     }
 
     _videoController = null;
+    _cachedVideoUrl = null;
   }
 
   // 🎯 비디오 컨트롤러 초기화 완료 리스너
@@ -511,8 +491,25 @@ class _PostExportScreenState extends State<PostExportScreen>
     Navigator.of(context).pop({
       'thumbnailImageUrl': _exportedThumbnailImageUrl,
       'title': _titleController.text.trim(),
-      'summary': _excerptController.text.trim(),
+      // 🎯 summary 필드 제거됨
     });
+  }
+
+  // 🎯 본문(content)이 있는지 확인하는 헬퍼 함수
+  bool _hasContent() {
+    try {
+      final dynamic content = _exportedBase['content'];
+      if (content is Map) {
+        final List<dynamic> nodes = List<dynamic>.from(
+          content['nodes'] as List? ?? const [],
+        );
+        // 노드가 하나라도 있으면 본문이 있는 것으로 간주
+        return nodes.isNotEmpty;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 
   // 등록 가능 여부 확인 (서버 API 스펙 준수)
@@ -524,23 +521,21 @@ class _PostExportScreenState extends State<PostExportScreen>
 
     // 2. 필수 필드 확인 (편집된 내용 기준)
     final editedTitle = _titleController.text.trim();
-    final editedExcerpt = _excerptController.text.trim();
 
     if (editedTitle.isEmpty) {
       return false;
     }
-    if (editedExcerpt.isEmpty) {
+
+    // 🎯 본문(content)이 있는지 확인
+    if (!_hasContent()) {
       return false;
     }
+
     if (_exportedThumbnailImageUrl.trim().isEmpty) {
       return false;
     }
 
-    // 3. 그룹 공유시 그룹 선택 확인
-    // 그룹 기능 제거로 인해 그룹 검증 제거
-    if (!_audienceSelectAll && !_audiencePrivateOnly && !_audienceFriendsOnly) {
-      return false;
-    }
+    // 3. 공개범위 확인 (항상 선택되어 있음)
 
     // 4. 카테고리 리스트 확인
     // 🎯 카테고리 리스트가 비어있거나 null이면 게시 불가
@@ -562,21 +557,20 @@ class _PostExportScreenState extends State<PostExportScreen>
       return context.tr('image_uploading');
     }
     final editedTitle = _titleController.text.trim();
-    final editedExcerpt = _excerptController.text.trim();
 
     if (editedTitle.isEmpty) {
       return context.tr('title_required');
     }
-    if (editedExcerpt.isEmpty) {
+
+    // 🎯 본문(content)이 있는지 확인
+    if (!_hasContent()) {
       return context.tr('content_required');
     }
+
     if (_exportedThumbnailImageUrl.trim().isEmpty) {
       return context.tr('thumbnail_required');
     }
-    // 그룹 기능 제거로 인해 그룹 검증 제거
-    if (!_audienceSelectAll && !_audiencePrivateOnly && !_audienceFriendsOnly) {
-      return context.tr('audience_required');
-    }
+    // 공개범위는 항상 선택되어 있음
     // 🎯 카테고리 리스트가 비어있으면 에러 메시지
     if (_cachedCategories == null || _cachedCategories!.isEmpty) {
       return context.tr('category_list_load_failed');
@@ -587,52 +581,158 @@ class _PostExportScreenState extends State<PostExportScreen>
     return context.tr('cannot_publish');
   }
 
+  /// 🎯 공통 검증 로직
+  String? _validateInputs() {
+    final finalTitle = _titleController.text.trim();
+
+    if (finalTitle.isEmpty) {
+      return context.tr('title_required');
+    }
+
+    if (!_hasContent()) {
+      return context.tr('content_required');
+    }
+
+    final trimmedThumbnailUrl = _exportedThumbnailImageUrl.trim();
+    if (trimmedThumbnailUrl.isEmpty) {
+      return context.tr('thumbnail_required');
+    }
+
+    final isHttpUrl =
+        trimmedThumbnailUrl.startsWith('http://') ||
+        trimmedThumbnailUrl.startsWith('https://');
+    if (!isHttpUrl) {
+      return context.tr('thumbnail_upload_required');
+    }
+
+    return null; // 검증 통과
+  }
+
+  /// 🎯 수정 모드: 포스트 업데이트
+  Future<void> _updatePost() async {
+    try {
+      // 검증
+      final validationError = _validateInputs();
+      if (validationError != null) {
+        ErrorHandler.showError(context, validationError);
+        return;
+      }
+
+      if (widget.postId == null) {
+        ErrorHandler.showError(context, '포스트 ID가 없습니다.');
+        return;
+      }
+
+      setState(() {
+        _isUploading = true;
+      });
+
+      cleanupAllVideoPlayers();
+
+      final finalTitle = _titleController.text.trim();
+      final content = _exportedBase['content'] as Map<String, dynamic>?;
+      if (content == null) {
+        throw Exception('본문 데이터를 추출할 수 없습니다.');
+      }
+
+      // 사용된 미디어 URL 수집
+      final usedImageUrls = PostExporter.collectUsedMediaUrls(_exportedBase);
+      final mentionedUsernames = MentionedUsernamesExtractor.extractFromContent(
+        content,
+      );
+
+      // ✅ 본문/타이틀 업데이트 (항상 호출 - content는 항상 변경 가능)
+      await BlogService().updatePostContent(
+        postId: int.parse(widget.postId!),
+        content: content,
+        title: finalTitle,
+        usedImageUrls: usedImageUrls,
+        mentionedUsernames: mentionedUsernames,
+      );
+
+      // ✅ 썸네일 업데이트 (변경된 경우만)
+      final currentThumbnail = _exportedThumbnailImageUrl.trim();
+      if (currentThumbnail.isNotEmpty &&
+          currentThumbnail != _initialThumbnailImageUrl) {
+        await BlogService().updatePostThumbnail(
+          postId: int.parse(widget.postId!),
+          thumbnailImageUrl: currentThumbnail,
+        );
+      }
+
+      // ✅ 카테고리 업데이트 (변경된 경우만)
+      if (_selectedCategoryId != null &&
+          _selectedCategoryId != _initialCategoryId) {
+        await BlogService().movePostToCategory(
+          postId: int.parse(widget.postId!),
+          targetCategoryId: _selectedCategoryId!,
+        );
+      }
+
+      // ✅ 공개범위 업데이트 (변경된 경우만)
+      if (_currentAccessLevel != _initialAccessLevel) {
+        await BlogService().updatePostAccessLevel(
+          postId: int.parse(widget.postId!),
+          accessLevel: _currentAccessLevel,
+        );
+      }
+
+      if (!mounted) return;
+
+      // 애니메이션 실행
+      _intro.duration = const Duration(milliseconds: 250);
+      await _intro.reverse();
+      _intro.duration = const Duration(milliseconds: 800);
+
+      if (!mounted) return;
+
+      // 수정 완료 후 결과 반환
+      // 🎯 PostReader에 반영하기 위해 exported 데이터 포함
+      final exportedForPop = Map<String, dynamic>.from(_exportedBase);
+      exportedForPop['title'] = finalTitle;
+      exportedForPop['thumbnailImageUrl'] = _exportedThumbnailImageUrl;
+      exportedForPop['accessLevel'] = _currentAccessLevel;
+
+      Navigator.of(context).pop({
+        'didEdit': true,
+        'postId': widget.postId,
+        'exported': exportedForPop,
+        'content': content,
+        'categoryId': _selectedCategoryId,
+        'accessLevel': _currentAccessLevel,
+      });
+    } catch (e) {
+      debugPrint('Update failed: $e');
+
+      if (!mounted) return;
+
+      final action = await RetryCancelBottomSheet.show(
+        context,
+        title: context.tr('edit_failed_title'),
+        error: e,
+      );
+      if (!mounted) return;
+      if (action == RetryCancelAction.retry) {
+        await _updatePost();
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+        });
+      }
+    }
+  }
+
+  /// 🎯 발행 모드: 새 포스트 발행
   Future<void> _publish() async {
     try {
-      // 최종 편집된 내용으로 검증
-      final finalTitle = _titleController.text.trim();
-      final finalExcerpt = _excerptController.text.trim();
-
-      // 1. 제목 검증 (모든 공개 범위에서 필수)
-      if (finalTitle.isEmpty) {
-        ErrorHandler.showError(context, context.tr('title_required'));
+      // 검증
+      final validationError = _validateInputs();
+      if (validationError != null) {
+        ErrorHandler.showError(context, validationError);
         return;
       }
-
-      // 2. 컨텐츠 검증 (모든 공개 범위에서 필수)
-      if (finalExcerpt.isEmpty) {
-        ErrorHandler.showError(context, context.tr('content_required'));
-        return;
-      }
-
-      // 3. 썸네일 검증 (모든 공개 범위에서 필수)
-      final trimmedThumbnailUrl = _exportedThumbnailImageUrl.trim();
-      if (trimmedThumbnailUrl.isEmpty) {
-        ErrorHandler.showError(context, context.tr('thumbnail_required'));
-        return;
-      }
-      // ✅ 썸네일 URL이 네트워크 경로인지 검증 (로컬 경로 허용 X)
-      final isHttpUrl =
-          trimmedThumbnailUrl.startsWith('http://') ||
-          trimmedThumbnailUrl.startsWith('https://');
-      if (!isHttpUrl) {
-        ErrorHandler.showError(
-          context,
-          context.tr('thumbnail_upload_required'),
-        );
-        return;
-      }
-
-      // 4. 그룹 공유시 그룹 선택 검증 (친구공유는 예외)
-      // 그룹 기능 제거로 인해 그룹 검증 제거
-      if (!_audienceSelectAll &&
-          !_audiencePrivateOnly &&
-          !_audienceFriendsOnly) {
-        ErrorHandler.showError(context, context.tr('audience_required'));
-        return;
-      }
-
-      // 5. 카테고리는 기본값 0(미지정)이 있으므로 검증 불필요
 
       // 모든 검증 통과 후 업로드 시작
       setState(() {
@@ -642,18 +742,18 @@ class _PostExportScreenState extends State<PostExportScreen>
       // ✅ 발행 중일 때 모든 비디오 플레이어 정리 (ClipComponent의 컨트롤러 dispose)
       cleanupAllVideoPlayers();
 
+      final finalTitle = _titleController.text.trim();
+
       // 🎯 포스트 발행 서비스를 통한 최종 JSON 빌드
       final publishService = PostPublishService();
       final Map<String, dynamic> payload = await publishService
           .buildFinalPayload(
             exportedBase: _exportedBase,
             title: finalTitle,
-            excerpt: finalExcerpt,
             thumbnailImageUrl: _exportedThumbnailImageUrl,
-            privateOnly: _audiencePrivateOnly,
-            publicOnly: _audienceSelectAll,
-            friendsOnly: _audienceFriendsOnly,
-            // 그룹 기능 제거로 인해 selectedGroupIds 파라미터 제거
+            privateOnly: _currentAccessLevel == SystemCategoryKeys.private,
+            publicOnly: _currentAccessLevel == SystemCategoryKeys.public,
+            friendsOnly: _currentAccessLevel == SystemCategoryKeys.friends,
             categoryId: _selectedCategoryId,
           );
 
@@ -661,17 +761,8 @@ class _PostExportScreenState extends State<PostExportScreen>
       final String json = const JsonEncoder.withIndent('  ').convert(payload);
       debugPrint('===== FINAL POST JSON (API SPEC COMPLIANT) =====');
       debugPrint('제목: $finalTitle');
-      debugPrint('컨텐츠: $finalExcerpt');
       debugPrint('썸네일: $_exportedThumbnailImageUrl');
-      final scopeLabel =
-          _audienceSelectAll
-              ? SystemCategoryKeys.public
-              : (_audiencePrivateOnly
-                  ? SystemCategoryKeys.private
-                  : (_audienceFriendsOnly
-                      ? SystemCategoryKeys.friends
-                      : SystemCategoryKeys.public));
-      debugPrint('공개 범위: $scopeLabel');
+      debugPrint('공개 범위: $_currentAccessLevel');
       // 그룹 기능 제거로 인해 그룹 디버그 로그 제거
       debugPrint('카테고리 ID: $_selectedCategoryId');
       printLarge(json);
@@ -682,7 +773,7 @@ class _PostExportScreenState extends State<PostExportScreen>
       final uploadResult = await publishService.publishPost(payload: payload);
 
       debugPrint('===== UPLOAD RESULT =====');
-      debugPrint('Upload successful: ${uploadResult}');
+      debugPrint('Upload successful: $uploadResult');
 
       if (!mounted) return;
 
@@ -757,31 +848,13 @@ class _PostExportScreenState extends State<PostExportScreen>
         final feedProvider = context.read<MyProfileFeedProvider>();
         final newPostId = uploadResult['id']?.toString();
 
-        // 🎯 피드 업데이트 전에 VideoCache 재사용 차단
-        // 피드가 업데이트되면서 프로필 화면이 리빌드될 때 CardView/ImageView가
-        // VideoCache 컨트롤러를 재사용하지 못하도록 막아 위젯 트리 변경 중 충돌 방지
-        final videoCache = VideoCacheService();
-        try {
-          videoCache.pauseAll();
-          videoCache.blockReuse();
-          debugPrint('[PostExport] 게시 전 VideoCache 재사용 차단 완료');
-        } catch (e) {
-          debugPrint('[PostExport] VideoCacheService 차단 오류: $e');
-        }
+        // 🎯 표준 방식: 각 위젯이 자체 컨트롤러를 관리하므로 별도 처리 불필요
 
         // 🎯 새 글 발행 후 피드 새로고침
         await feedProvider.refresh().catchError((e) {
           debugPrint('[PostExport] 백그라운드 재로드 실패: $e');
         });
         debugPrint('[PostExport] 백그라운드 재로드 시작');
-
-        // 🎯 피드 업데이트 완료 후 재사용 차단 해제
-        try {
-          videoCache.unblockReuse();
-          debugPrint('[PostExport] VideoCache 재사용 차단 해제 완료');
-        } catch (e) {
-          debugPrint('[PostExport] VideoCacheService 차단 해제 오류: $e');
-        }
 
         // 🎯 새로 발행한 글을 해당 카테고리의 맨 앞에 배치 (서버 동기화 포함)
         // 실패해도 시스템이 뻑나지 않도록 안전하게 처리
@@ -790,32 +863,10 @@ class _PostExportScreenState extends State<PostExportScreen>
           // (서버 응답이 완전히 처리된 후에 이동하기 위해)
           Future.delayed(const Duration(milliseconds: 100), () async {
             try {
-              // 🎯 moveNewPostToFront 전에도 VideoCache 재사용 차단
-              // moveNewPostToFront 내부에서 notifyListeners()가 호출되어
-              // 프로필 화면이 리빌드될 때 위젯 트리 충돌 방지
-              final videoCache = VideoCacheService();
-              try {
-                videoCache.pauseAll();
-                videoCache.blockReuse();
-                debugPrint(
-                  '[PostExport] moveNewPostToFront 전 VideoCache 재사용 차단 완료',
-                );
-              } catch (e) {
-                debugPrint('[PostExport] VideoCacheService 차단 오류: $e');
-              }
+              // 🎯 표준 방식: 각 위젯이 자체 컨트롤러를 관리하므로 별도 처리 불필요
 
               await feedProvider.moveNewPostToFront(newPostId);
               debugPrint('[PostExport] 새 글을 맨 앞에 배치 완료: $newPostId');
-
-              // 🎯 moveNewPostToFront 완료 후 재사용 차단 해제
-              try {
-                videoCache.unblockReuse();
-                debugPrint(
-                  '[PostExport] moveNewPostToFront 후 VideoCache 재사용 차단 해제 완료',
-                );
-              } catch (e) {
-                debugPrint('[PostExport] VideoCacheService 차단 해제 오류: $e');
-              }
             } catch (e, stackTrace) {
               // 에러 발생해도 시스템이 뻑나지 않도록 안전하게 처리
               debugPrint('[PostExport] ⚠️ 새 글 맨 앞 배치 실패 (시스템은 정상 동작): $e');
@@ -886,6 +937,10 @@ class _PostExportScreenState extends State<PostExportScreen>
       // PostExportScreen 제거
       navigator.pop();
 
+      // ✅ 홈 그리드/인삿말 즉시 갱신: "글 쓰자마자 보상 멘트"를 바로 노출
+      // (서버/포스트 로딩이 비어있는 상태에서도 UX 보상 제공)
+      HomeScreenState.globalKey.currentState?.notifyPostPublished();
+
       // 다음 프레임에서 SharePostOverlay를 pushReplacement로 표시 (PostwriteScreen을 대체)
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -894,7 +949,7 @@ class _PostExportScreenState extends State<PostExportScreen>
           context,
           postId: uploadResult['id']?.toString() ?? '',
           title: uploadResult['title']?.toString() ?? '',
-          summary: uploadResult['summary']?.toString() ?? '',
+          summary: '', // 🎯 summary 필드 제거됨
           authorUsername: uploadResult['author']?.toString() ?? '',
           authorProfileImageUrl:
               uploadResult['authorProfileImageUrl']?.toString(),
@@ -936,89 +991,30 @@ class _PostExportScreenState extends State<PostExportScreen>
     );
   }
 
-  /// 업로드 상태 체크 헬퍼
-  bool _hasActiveUploads() {
-    if (!mounted || !context.mounted) return false;
-    try {
-      final upload = context.read<UploadService>();
-      // ✅ publish 화면에서는 "이 세션의 썸네일 업로드"만 가드한다.
-      // 전역 UploadService(_tasks)에는 다른 화면(댓글/에디터 등)의 업로드도 섞일 수 있어 false positive가 난다.
-      return upload.hasActiveUploadForRef('thumb_$_nsKey');
-    } catch (e) {
-      debugPrint('[PostExport] 업로드 상태 체크 오류: $e');
-      return false;
-    }
-  }
-
   /// 업로드 태스크 취소 헬퍼
   void _cancelUploadTasks() {
-    if (!mounted) return;
     try {
-      final upload = context.read<UploadService>();
-      upload.cancelByRef('thumb_$_nsKey');
-      upload.cancelEditorCompressions('publish_$_nsKey');
+      // 🎯 dispose()에서도 안전하게 사용하기 위해 저장된 참조 사용
+      final upload = _uploadService;
+      if (upload != null) {
+        upload.cancelByRef('thumb_$_nsKey');
+        upload.cancelEditorCompressions('publish_$_nsKey');
+      } else if (mounted) {
+        // 🎯 mounted 상태이고 참조가 없으면 context에서 가져오기 (일반적인 경우)
+        try {
+          final uploadFromContext = context.read<UploadService>();
+          uploadFromContext.cancelByRef('thumb_$_nsKey');
+          uploadFromContext.cancelEditorCompressions('publish_$_nsKey');
+        } catch (e) {
+          debugPrint('[PostExport] 업로드 태스크 취소 오류 (context): $e');
+        }
+      }
     } catch (e) {
       debugPrint('[PostExport] 업로드 태스크 취소 오류: $e');
     }
   }
 
-  void _nextStep() {
-    if (_isUploadingThumb || _hasActiveUploads()) return;
-
-    if (_currentStep < _totalSteps - 1) {
-      FocusScope.of(context).unfocus();
-      setState(() {
-        _currentStep++;
-        _editMode = false;
-      });
-    }
-  }
-
-  void _previousStep() {
-    if (_currentStep > 0) {
-      FocusScope.of(context).unfocus();
-      setState(() {
-        _currentStep--;
-        _editMode = false;
-      });
-    }
-  }
-
-  bool _canProceedToNextStep() {
-    switch (_currentStep) {
-      case 0: // Step 1: 썸네일 & 글 편집
-        // 🎯 썸네일, 제목, 요약이 모두 있어야 다음 버튼 활성화
-        final editedTitle = _titleController.text.trim();
-        final editedExcerpt = _excerptController.text.trim();
-        final thumbnailUrl = _exportedThumbnailImageUrl.trim();
-        final isHttpUrl =
-            thumbnailUrl.startsWith('http://') ||
-            thumbnailUrl.startsWith('https://');
-
-        // 🎯 업로드 중이면 비활성화
-        if (_isUploadingThumb || _hasActiveUploads()) {
-          return false;
-        }
-
-        // 🎯 썸네일, 제목, 요약이 모두 있어야 함
-        final hasThumbnail = thumbnailUrl.isNotEmpty && isHttpUrl;
-        final hasTitle = editedTitle.isNotEmpty;
-        final hasExcerpt = editedExcerpt.isNotEmpty;
-
-        return hasThumbnail && hasTitle && hasExcerpt;
-      case 1: // Step 2: 공개 범위
-        // 전체공개, 나만보기, 전체 친구 또는 그룹 중 하나는 선택되어야 함
-        // 그룹 기능 제거로 인해 그룹 검증 제거
-        return _audienceSelectAll ||
-            _audiencePrivateOnly ||
-            _audienceFriendsOnly;
-      case 2: // Step 3: 카테고리
-        // 🎯 카테고리가 실제로 선택되어 있어야 다음 버튼 활성화
-        return _selectedCategoryId != null;
-      default:
-        return false;
-    }
-  }
+  // 🎯 Step 2, 3 제거됨 - 더 이상 step 이동 없음
 
   @override
   Widget build(BuildContext context) {
@@ -1031,12 +1027,7 @@ class _PostExportScreenState extends State<PostExportScreen>
           return false;
         }
 
-        if (_currentStep > 0) {
-          _previousStep();
-          return false;
-        }
-
-        // Step 0에서 뒤로가기 시 부드러운 애니메이션과 함께 닫기
+        // 뒤로가기 시 부드러운 애니메이션과 함께 닫기
         await _closeWithAnimation();
         return false; // WillPopScope가 직접 처리하지 않도록 false 반환
       },
@@ -1050,178 +1041,106 @@ class _PostExportScreenState extends State<PostExportScreen>
               extendBodyBehindAppBar: true,
               appBar: _editMode ? _buildFocusAppBar() : _buildNormalAppBar(),
               body: SafeArea(
-                child: IndexedStack(
-                  index: _currentStep,
-                  children: [
-                    Step1ThumbnailEdit(
-                      sessionKey: _nsKey,
-                      cardRadius: cardRadius,
-                      titleController: _titleController,
-                      excerptController: _excerptController,
-                      titleFocusNode: _titleFocusNode,
-                      excerptFocusNode: _excerptFocusNode,
-                      exportedThumbnailImageUrl: _exportedThumbnailImageUrl,
-                      editMode: _editMode,
-                      isUploadingThumb: _isUploadingThumb,
-                      localThumbnailFile: _localThumbnailFile,
-                      localVideoFile: _localVideoFile,
-                      videoController: _videoController,
-                      controller: _controller,
-                      onThumbnailUrlChanged: (url) {
-                        setState(() {
-                          _exportedThumbnailImageUrl = url;
-                        });
-                      },
-                      onLocalThumbnailChanged: (file) {
-                        setState(() {
-                          _localThumbnailFile = file;
-                        });
-                      },
-                      onLocalVideoChanged: (file) {
-                        setState(() {
-                          _localVideoFile = file;
-                        });
-                      },
-                      onVideoControllerChanged: (controller) {
-                        // 🎯 기존 컨트롤러 안전하게 정리
-                        if (_videoController != null &&
-                            _videoController != controller) {
-                          // 🎯 서버 비디오 컨트롤러인 경우 _cachedVideoUrl 초기화
-                          if (_cachedVideoUrl != null) {
-                            _cachedVideoUrl = null;
-                          }
-                          _disposeVideoController(
-                            context: 'onVideoControllerChanged',
-                          );
-                        }
+                child: Step1ThumbnailEdit(
+                  sessionKey: _nsKey,
+                  cardRadius: cardRadius,
+                  titleController: _titleController,
+                  titleFocusNode: _titleFocusNode,
+                  exportedThumbnailImageUrl: _exportedThumbnailImageUrl,
+                  editMode: _editMode,
+                  isUploadingThumb: _isUploadingThumb,
+                  localThumbnailFile: _localThumbnailFile,
+                  localVideoFile: _localVideoFile,
+                  videoController: _videoController,
+                  controller: _controller,
+                  onThumbnailUrlChanged: (url) {
+                    setState(() {
+                      _exportedThumbnailImageUrl = url;
+                    });
+                  },
+                  onLocalThumbnailChanged: (file) {
+                    setState(() {
+                      _localThumbnailFile = file;
+                    });
+                  },
+                  onLocalVideoChanged: (file) {
+                    setState(() {
+                      _localVideoFile = file;
+                    });
+                  },
+                  onVideoControllerChanged: (controller) {
+                    // 🎯 기존 컨트롤러 안전하게 정리
+                    if (_videoController != null &&
+                        _videoController != controller) {
+                      // 🎯 서버 비디오 컨트롤러인 경우 _cachedVideoUrl 초기화
+                      if (_cachedVideoUrl != null) {
+                        _cachedVideoUrl = null;
+                      }
+                      _disposeVideoController(
+                        context: 'onVideoControllerChanged',
+                      );
+                    }
 
-                        // 🎯 새 컨트롤러 설정 및 리스너 추가
-                        _videoController = controller;
-                        if (controller != null) {
-                          _localVideoFile = null; // Step1에서 새로 생성한 컨트롤러
-                          _cachedVideoUrl = null; // 로컬 비디오이므로 서버 비디오 URL 초기화
+                    // 🎯 새 컨트롤러 설정 및 리스너 추가
+                    _videoController = controller;
+                    if (controller != null) {
+                      _localVideoFile = null; // Step1에서 새로 생성한 컨트롤러
+                      _cachedVideoUrl = null; // 로컬 비디오이므로 서버 비디오 URL 초기화
+                      try {
+                        // 🎯 dispose 체크: 컨트롤러 유효성 확인
+                        if (!controller.value.isInitialized) {
+                          // 🎯 리스너 추가 전 dispose 체크
                           try {
-                            // 🎯 dispose 체크: 컨트롤러 유효성 확인
-                            if (!controller.value.isInitialized) {
-                              // 🎯 리스너 추가 전 dispose 체크
-                              try {
-                                controller.addListener(
-                                  _onVideoControllerInitialized,
-                                );
-                              } catch (e) {
-                                debugPrint(
-                                  '[PostExport] 리스너 추가 오류 (dispose됨): $e',
-                                );
-                                _videoController = null;
-                                return;
-                              }
-                            } else {
-                              // 이미 초기화된 경우 즉시 재생
-                              if (mounted) {
-                                try {
-                                  // 🎯 dispose 체크: 컨트롤러 유효성 재확인
-                                  if (controller.value.isInitialized) {
-                                    controller.play();
-                                    controller.setLooping(true);
-                                  }
-                                } catch (e) {
-                                  debugPrint(
-                                    '[PostExport] 새 컨트롤러 재생 오류 (dispose됨): $e',
-                                  );
-                                }
-                              }
-                            }
-                          } catch (e) {
-                            debugPrint(
-                              '[PostExport] 새 컨트롤러 설정 오류 (dispose됨): $e',
+                            controller.addListener(
+                              _onVideoControllerInitialized,
                             );
+                          } catch (e) {
+                            debugPrint('[PostExport] 리스너 추가 오류 (dispose됨): $e');
+                            _videoController = null;
+                            return;
+                          }
+                        } else {
+                          // 이미 초기화된 경우 즉시 재생
+                          if (mounted) {
+                            try {
+                              // 🎯 dispose 체크: 컨트롤러 유효성 재확인
+                              if (controller.value.isInitialized) {
+                                controller.play();
+                                controller.setLooping(true);
+                              }
+                            } catch (e) {
+                              debugPrint(
+                                '[PostExport] 새 컨트롤러 재생 오류 (dispose됨): $e',
+                              );
+                            }
                           }
                         }
+                      } catch (e) {
+                        debugPrint('[PostExport] 새 컨트롤러 설정 오류 (dispose됨): $e');
+                      }
+                    }
 
-                        if (mounted) {
-                          setState(() {});
-                        }
-                      },
-                      onIsUploadingThumbChanged: (value) {
-                        setState(() {
-                          _isUploadingThumb = value;
-                        });
-                      },
-                      onEditModeChanged: (value) {
-                        setState(() {
-                          _editMode = value;
-                        });
-                      },
-                      // ✅ Step1 내부에서 포커스/애니메이션을 관리한다.
-                      // (중복 리스너로 인한 불필요한 setState 루프 방지)
-                      onEditFocusChange: () {},
-                    ),
-                    Step2AudienceSelection(
-                      audienceSelectAll: _audienceSelectAll,
-                      audiencePrivateOnly: _audiencePrivateOnly,
-                      audienceFriendsOnly: _audienceFriendsOnly,
-                      onAudienceSelectAllChanged: (value) {
-                        setState(() {
-                          _audienceSelectAll = value;
-                          if (value) {
-                            _audiencePrivateOnly = false;
-                            _audienceFriendsOnly = false;
-                          }
-                        });
-                      },
-                      onAudiencePrivateOnlyChanged: (value) {
-                        setState(() {
-                          _audiencePrivateOnly = value;
-                          if (value) {
-                            _audienceSelectAll = false;
-                            _audienceFriendsOnly = false;
-                          }
-                        });
-                      },
-                      onAudienceFriendsOnlyChanged: (value) {
-                        setState(() {
-                          _audienceFriendsOnly = value;
-                          if (value) {
-                            _audienceSelectAll = false;
-                            _audiencePrivateOnly = false;
-                          }
-                        });
-                      },
-                      // 그룹 기능 제거로 인해 그룹 관련 파라미터 제거
-                    ),
-                    Step3CategorySelection(
-                      selectedCategoryId: _selectedCategoryId,
-                      onSelectedCategoryIdChanged: (id) {
-                        if (!_isUploading) {
-                          setState(() {
-                            _selectedCategoryId = id;
-                          });
-                        }
-                      },
-                      cachedCategories: _cachedCategories,
-                      onCachedCategoriesChanged: (categories) {
-                        setState(() {
-                          _cachedCategories = categories;
-                        });
-                      },
-                      isLoadingCategories: _isLoadingCategories,
-                      onIsLoadingCategoriesChanged: (value) {
-                        setState(() {
-                          _isLoadingCategories = value;
-                        });
-                      },
-                      showCategoryLoading: _showCategoryLoading,
-                      onShowCategoryLoadingChanged: (value) {
-                        setState(() {
-                          _showCategoryLoading = value;
-                        });
-                      },
-                      isUploading: _isUploading, // 🎯 발행 중 상태 전달
-                      isActive: _currentStep == 2, // 🎯 step3가 활성화되어 있을 때만 true
-                    ),
-                  ],
+                    if (mounted) {
+                      setState(() {});
+                    }
+                  },
+                  onIsUploadingThumbChanged: (value) {
+                    setState(() {
+                      _isUploadingThumb = value;
+                    });
+                  },
+                  onEditModeChanged: (value) {
+                    setState(() {
+                      _editMode = value;
+                    });
+                  },
+                  // ✅ Step1 내부에서 포커스/애니메이션을 관리한다.
+                  // (중복 리스너로 인한 불필요한 setState 루프 방지)
+                  onEditFocusChange: () {},
                 ),
               ),
+
+              bottomNavigationBar: _buildBottomNavigationBar(),
             ),
 
             // 업로드 중 전체 화면 오버레이 (0.8초 후에만 표시)
@@ -1250,7 +1169,6 @@ class _PostExportScreenState extends State<PostExportScreen>
             onPressed: () {
               // 🎯 수정완료 시 명시적으로 포커스 노드 모두 해제
               _titleFocusNode.unfocus();
-              _excerptFocusNode.unfocus();
               FocusScope.of(context).unfocus();
 
               setState(() {
@@ -1262,7 +1180,6 @@ class _PostExportScreenState extends State<PostExportScreen>
               Future.delayed(const Duration(milliseconds: 100), () {
                 if (mounted) {
                   _titleFocusNode.unfocus();
-                  _excerptFocusNode.unfocus();
                   FocusScope.of(context).unfocus();
                 }
               });
@@ -1283,108 +1200,234 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // 일반 상태의 앱바 (진행바와 다음/업로드 버튼)
   PreferredSizeWidget _buildNormalAppBar() {
-    final textColor = Theme.of(context).colorScheme.onSurface;
+    final textColor = Theme.of(context).colorScheme.onSurface.withOpacity(0.75);
 
     return AppBar(
-      toolbarHeight: 50,
+      toolbarHeight: 56,
       backgroundColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
-      automaticallyImplyLeading: false,
-      leadingWidth: 80, // 이전 버튼이 잘리지 않도록 너비 확장
+
+      // 이전 버튼이 잘리지 않도록 너비 확장
       leading: GestureDetector(
         onTap: () async {
-          if (_currentStep > 0) {
-            _previousStep();
-          } else {
-            // Step 0에서 뒤로가기 시 부드러운 애니메이션
-            await _closeWithAnimation();
-          }
+          // 뒤로가기 시 부드러운 애니메이션
+          await _closeWithAnimation();
         },
-        child: Padding(
-          padding: const EdgeInsets.only(left: 20, top: 16),
-          child: Text(
-            context.tr('previous').length > 4
-                ? context.tr('previous').substring(0, 4)
-                : context.tr('previous'),
-            style: TextStyle(
-              color: textColor.withOpacity(0.9),
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+        child: Icon(
+          Icons.arrow_back_ios_new_rounded,
+          size: 24,
+          color: textColor,
         ),
       ),
 
       actions: [
-        if (_currentStep < _totalSteps - 1)
-          GestureDetector(
-            onTap: _canProceedToNextStep() ? _nextStep : null,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Text(
-                context.tr('next'),
-                style: TextStyle(
-                  color:
-                      _canProceedToNextStep()
-                          ? textColor.withOpacity(1)
-                          : textColor.withOpacity(0.3),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10.0),
-            child: TextButton(
-              onPressed:
-                  _isUploading
-                      ? null
-                      : () async {
-                        final bool canPublish = _canPublish();
-                        if (canPublish) {
-                          await _publish();
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10.0),
+          child: TextButton(
+            onPressed:
+                _isUploading
+                    ? null
+                    : () async {
+                      final bool canPublish = _canPublish();
+                      if (canPublish) {
+                        // 🎯 수정 모드면 업데이트, 발행 모드면 발행
+                        if (widget.isEditMode) {
+                          await _updatePost();
                         } else {
-                          String msg = _getPublishErrorMessage();
-                          ErrorHandler.showError(context, msg);
+                          await _publish();
                         }
-                      },
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                transitionBuilder: (Widget child, Animation<double> animation) {
-                  return FadeTransition(
-                    opacity: animation,
-                    child: ScaleTransition(scale: animation, child: child),
-                  );
-                },
-                child:
-                    _isUploading
-                        ? Container(
-                          key: const ValueKey('loading'),
-                          width: 26,
-                          height: 26,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 4,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Theme.of(context).colorScheme.onSurface,
-                            ),
-                          ),
-                        )
-                        : Text(
-                          context.tr('publish'),
-                          key: const ValueKey('text'),
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.onSurface,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
+                      } else {
+                        String msg = _getPublishErrorMessage();
+                        ErrorHandler.showError(context, msg);
+                      }
+                    },
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              transitionBuilder: (Widget child, Animation<double> animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: ScaleTransition(scale: animation, child: child),
+                );
+              },
+              child:
+                  _isUploading
+                      ? Container(
+                        key: const ValueKey('loading'),
+                        width: 26,
+                        height: 26,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 4,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Theme.of(context).colorScheme.onSurface,
                           ),
                         ),
-              ),
+                      )
+                      : Text(
+                        widget.isEditMode
+                            ? context.tr('modify_complete')
+                            : context.tr('publish'),
+                        key: ValueKey(widget.isEditMode ? 'edit' : 'publish'),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 18,
+                        ),
+                      ),
             ),
           ),
+        ),
       ],
+    );
+  }
+
+  // 🎯 카테고리 이름 가져오기
+  String _getCategoryName(int? categoryId) {
+    if (categoryId == null) return context.tr('default_category');
+    if (categoryId == 0) return context.tr('uncategorized');
+    if (_cachedCategories == null || _cachedCategories!.isEmpty) {
+      // 카테고리 목록이 없으면 로컬에서 가져오기
+      final feedProvider = MyProfileFeedProvider();
+      final categories = feedProvider.categories;
+      for (final category in categories) {
+        if ((category['id'] as int?) == categoryId) {
+          return category['name']?.toString() ?? context.tr('default_category');
+        }
+      }
+      return context.tr('default_category');
+    }
+    for (final category in _cachedCategories!) {
+      if ((category['id'] as int?) == categoryId) {
+        return category['name']?.toString() ?? context.tr('default_category');
+      }
+    }
+    return context.tr('default_category');
+  }
+
+  // 🎯 공개범위 이름 가져오기
+  String _getAccessLevelName(String accessLevel) {
+    if (accessLevel == SystemCategoryKeys.private) {
+      return context.tr('private');
+    } else if (accessLevel == SystemCategoryKeys.friends) {
+      return context.tr('friends');
+    } else {
+      return context.tr('public');
+    }
+  }
+
+  // 🎯 하단 네비게이션 바 (카테고리 & 공개범위 선택)
+  Widget _buildBottomNavigationBar() {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface),
+        child: Row(
+          children: [
+            // 카테고리 선택 버튼
+            Expanded(
+              child: _buildSelectionButton(
+                icon: Icons.category_outlined,
+                label: _getCategoryName(_selectedCategoryId),
+                onTap: () async {
+                  // 카테고리 목록 로드
+                  if (_cachedCategories == null) {
+                    try {
+                      final feedProvider = MyProfileFeedProvider();
+                      await feedProvider.refresh();
+                      setState(() {
+                        _cachedCategories = feedProvider.categories;
+                      });
+                    } catch (e) {
+                      debugPrint('[PostExport] 카테고리 로드 실패: $e');
+                    }
+                  }
+
+                  // 카테고리 선택 시트 표시 (지정 모드로 호출)
+                  CategorySelectSheet.show(
+                    context,
+                    postId: 'new', // 새 포스트이므로 임시 ID
+                    currentCategoryId: _selectedCategoryId,
+                    mode: CategorySelectMode.selectionOnly, // 🎯 지정 모드
+                    onChanged: (categoryId) {
+                      setState(() {
+                        _selectedCategoryId = categoryId;
+                      });
+                    },
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 12),
+            // 공개범위 선택 버튼
+            Expanded(
+              child: _buildSelectionButton(
+                icon: Icons.lock_outline,
+                label: _getAccessLevelName(_currentAccessLevel),
+                onTap: () async {
+                  // 공개범위 선택 시트 표시 (지정 모드로 호출)
+                  AccessLevelSheet.show(
+                    context,
+                    postId: 'new', // 새 포스트이므로 임시 ID
+                    currentAccessLevel: _currentAccessLevel,
+                    mode: AccessLevelSelectMode.selectionOnly, // 🎯 지정 모드
+                    onChanged: (accessLevel) {
+                      setState(() {
+                        _currentAccessLevel = accessLevel;
+                      });
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 🎯 선택 버튼 위젯
+  Widget _buildSelectionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Icon(
+                Icons.arrow_drop_up,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

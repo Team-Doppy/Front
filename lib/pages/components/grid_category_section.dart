@@ -15,7 +15,8 @@ import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/data/models/system_category_keys.dart';
-import 'package:doppy/pages/components/access_level_sheet.dart';
+import 'package:doppy/pages/components/access_level_sheet.dart'
+    show AccessLevelSheet, AccessLevelSelectMode;
 
 /// 그리드 버전 카테고리 섹션 - 3개씩 여러 줄로 표시
 class GridCategorySection extends StatefulWidget {
@@ -1399,7 +1400,7 @@ class _GridCategorySectionState extends State<GridCategorySection> {
       context,
       postId: post.id,
       currentAccessLevel: currentAccessLevel,
-      isBatchMode: false,
+      mode: AccessLevelSelectMode.serverUpdate, // 🎯 서버 변경 모드
       onChanged: (String accessLevel) async {
         // 🎯 공개범위 변경 후 피드 업데이트
         provider.updatePostMetadata(post.id, accessLevel: accessLevel);

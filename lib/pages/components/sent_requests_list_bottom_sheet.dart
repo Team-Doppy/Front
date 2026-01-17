@@ -40,7 +40,7 @@ class _SentRequestsListBottomSheetState
         final sentRequests = friendProvider.sentRequests;
 
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           decoration: const BoxDecoration(color: Colors.transparent),
           child: Stack(
             children: [
@@ -60,7 +60,7 @@ class _SentRequestsListBottomSheetState
                     ),
                     decoration: BoxDecoration(
                       color: theme.colorScheme.surface,
-                      borderRadius: BorderRadius.circular(30),
+                      borderRadius: BorderRadius.circular(50),
                     ),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,

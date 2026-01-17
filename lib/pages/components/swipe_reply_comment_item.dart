@@ -3,9 +3,6 @@ import 'package:doppy/data/services/comment_service.dart';
 import 'package:doppy/pages/components/comment_item.dart';
 import 'package:flutter/material.dart';
 
-/// ✅ MediaCommentItem 패턴: 아이템이 스와이프 상태를 직접 들고 처리
-/// - 우측(→) 스와이프하면 답글 트리거
-/// - 실제 렌더링은 기존 `CommentItem`을 그대로 사용
 class SwipeReplyCommentItem extends StatefulWidget {
   const SwipeReplyCommentItem({
     super.key,

@@ -3,52 +3,37 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:doppy/image/adjustment_editor.dart';
 import 'package:doppy/image/crop_editor.dart';
-import 'package:doppy/image/media_picker_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
+import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/theme/app_theme.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 /// 프로필 사진 전체 화면
-class ProfileImageViewScreen extends StatefulWidget {
+class OnbordingModeProfileImageViewScreen extends StatefulWidget {
   final String? profileImageUrl;
   final String username;
-  final VoidCallback onShareProfile;
-  final VoidCallback onCopyProfileLink;
   final Function(File) onGallerySelected;
-  final VoidCallback onSetDefaultImage;
-  final bool isOwnProfile;
-  final VoidCallback? onFollowStatusChanged; // 팔로우 상태 변경 시 콜백
-  // 읽기 모드용 프로필 정보
-  final String? alias;
-  final String? selfIntroduction;
-  final List<String>? links;
-  final Map<String, String>? linkTitles;
-  final Map<String, String>? linkThumbnails;
 
-  const ProfileImageViewScreen({
+  // ✅ 온보딩 모드용 초기 이미지 파일
+  final File? initialImageFile;
+
+  const OnbordingModeProfileImageViewScreen({
     Key? key,
     required this.profileImageUrl,
     required this.username,
-    required this.onShareProfile,
-    required this.onCopyProfileLink,
     required this.onGallerySelected,
-    required this.onSetDefaultImage,
-    required this.isOwnProfile,
-    this.onFollowStatusChanged,
-    this.alias,
-    this.selfIntroduction,
-    this.links,
-    this.linkTitles,
-    this.linkThumbnails,
+    this.initialImageFile,
   }) : super(key: key);
 
   @override
-  State<ProfileImageViewScreen> createState() => _ProfileImageViewScreenState();
+  State<OnbordingModeProfileImageViewScreen> createState() =>
+      _OnbordingModeProfileImageViewScreenState();
 }
 
-class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
+class _OnbordingModeProfileImageViewScreenState
+    extends State<OnbordingModeProfileImageViewScreen>
     with TickerProviderStateMixin {
   // 이미지 선택 관련
   File? _selectedImage;
@@ -139,14 +124,17 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
       parent: _imageEditorFadeController,
       curve: Curves.easeInOut,
     );
-    // ✅ 읽기 모드일 때는 프로필 정보를 바로 표시
-    if (!widget.isOwnProfile) {
+    // ✅ 온보딩 모드에서 초기 이미지 파일이 있으면 로드
+    if (widget.initialImageFile != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          _imageEditorFadeController.forward();
+          _loadImageAndCalculateScale(widget.initialImageFile!);
         }
       });
     }
+
+    // ✅ 온보딩 모드: 이미지 피커는 index2_bg.dart에서 먼저 띄우고, 선택한 이미지와 함께 진입
+    // 따라서 여기서는 자동으로 피커를 띄우지 않음
     // ✅ 처음에는 0으로 시작 (이미지 로드 후에만 forward)
     // _imageEditorFadeController.forward(); // 제거: 처음 로드 시 흔들림 방지
   }
@@ -174,7 +162,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
     final bool canSwipeDismiss = _selectedImage == null && !_isAdjustMode;
 
     return Scaffold(
-      backgroundColor: theme.colorScheme.surface,
+      backgroundColor: AppColors.darkSurface,
       body: GestureDetector(
         onVerticalDragStart:
             !canSwipeDismiss
@@ -254,10 +242,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                 return Transform.translate(offset: Offset(0, dy), child: child);
               },
               child: Align(
-                alignment:
-                    widget.isOwnProfile
-                        ? const Alignment(0, -0.25) // 내 프로필: 위로 약간 이동
-                        : const Alignment(0, 0), // 읽기 모드: 중앙
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 200),
                   switchInCurve: Curves.easeInOut,
@@ -330,7 +314,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                               ),
                             ),
                           )
-                          : (_uiImage != null && widget.isOwnProfile)
+                          : (_uiImage != null)
                           ? FadeTransition(
                             key: ValueKey(
                               'fade_editor_$_imageLoadCounter',
@@ -343,30 +327,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
               ),
             ),
 
-            // 상단 뒤로가기 버튼 (바텀시트 올라왔을 때 숨김)
-            if (!_isAdjustMode)
-              SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 20,
-                  ),
-                  child: Align(
-                    alignment: Alignment.topLeft,
-                    child: GestureDetector(
-                      onTap: () => Navigator.pop(context),
-                      child: Container(
-                        child: Icon(
-                          Icons.arrow_back_ios_new,
-                          color: theme.colorScheme.onSurface,
-                          size: 24,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
             // 하단 버튼들
             SafeArea(
               child: Align(
@@ -377,165 +337,51 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                     left: 24.0,
                     right: 24.0,
                   ),
-                  child:
-                      widget.isOwnProfile
-                          ? _selectedImage != null
-                              ? (_isAdjustMode
-                                  ? const SizedBox.shrink()
-                                  : Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      _buildCircleButton(
-                                        context: context,
-                                        icon: Icons.check,
-                                        label: AppLocalizations.of(
-                                          context,
-                                        ).translate('complete'),
-                                        onTap: () async {
-                                          if (_selectedImage != null &&
-                                              _uiImage != null) {
-                                            final croppedFile =
-                                                await _cropImageToCircle();
-                                            if (croppedFile != null &&
-                                                mounted) {
-                                              widget.onGallerySelected(
-                                                croppedFile,
-                                              );
-                                              Navigator.pop(context);
-                                            }
-                                          }
-                                        },
-                                      ),
-                                      const SizedBox(width: 12),
-                                      _buildCircleButton(
-                                        context: context,
-                                        icon: Icons.tune,
-                                        label: AppLocalizations.of(
-                                          context,
-                                        ).translate('adjust'),
-                                        onTap: _enterAdjustMode,
-                                      ),
-                                      const SizedBox(width: 12),
-                                      _buildCircleButton(
-                                        context: context,
-                                        icon: Icons.close,
-                                        label: AppLocalizations.of(
-                                          context,
-                                        ).translate('cancel'),
-                                        onTap: () async {
-                                          // ✅ 부드럽게 페이드 아웃 후 상태 초기화
-                                          await _imageEditorFadeController
-                                              .reverse();
-                                          if (!mounted) return;
-                                          // 이전 이미지 dispose
-                                          _uiImage?.dispose();
-                                          setState(() {
-                                            _selectedImage = null;
-                                            _uiImage = null;
-                                            _imageScale = 1.0;
-                                            _imageOffset = Offset.zero;
-                                            _minScale = 1.0;
-                                            _initialScale = null;
-                                            _initialRotation = null;
-                                            _lastPanPosition = null;
-                                            _isAdjustMode = false;
-                                            _adjustSnapshot = null;
-                                            _brightness = 0.0;
-                                            _contrast = 0.0;
-                                            _saturation = 0.0;
-                                            _warmth = 0.0;
-                                            _luminance = 0.0;
-                                            _exposure = 0.0;
-                                            _blur = 0.0;
-                                          });
-                                          // 다음 이미지 선택을 위해 애니메이션 리셋
-                                          _imageEditorFadeController.reset();
-                                        },
-                                      ),
-                                    ],
-                                  ))
-                              : _isDefaultImageMode
-                              ? // 기본이미지 모드: 확인, 취소 버튼 표시
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  _buildCircleButton(
-                                    context: context,
-                                    icon: Icons.check,
-                                    label: AppLocalizations.of(
-                                      context,
-                                    ).translate('confirm'),
-                                    onTap: () {
-                                      widget.onSetDefaultImage();
-                                      Navigator.pop(context);
-                                    },
-                                  ),
-                                  const SizedBox(width: 24),
-                                  _buildCircleButton(
-                                    context: context,
-                                    icon: Icons.close,
-                                    label: AppLocalizations.of(
-                                      context,
-                                    ).translate('cancel'),
-                                    onTap: () {
-                                      setState(() {
-                                        _isDefaultImageMode = false;
-                                      });
-                                    },
-                                  ),
-                                ],
-                              )
-                              : Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  // 공유하기 버튼
-                                  _buildCircleButton(
-                                    context: context,
-                                    icon: Icons.ios_share,
-                                    label: AppLocalizations.of(
-                                      context,
-                                    ).translate('share'),
-                                    onTap: widget.onShareProfile,
-                                  ),
-
-                                  const SizedBox(width: 24),
-
-                                  // 갤러리선택 버튼
-                                  _buildGalleryButton(
-                                    context: context,
-                                    label: AppLocalizations.of(
-                                      context,
-                                    ).translate('select_from_gallery'),
-                                    onTap: () {
-                                      _showMediaPicker();
-                                    },
-                                  ),
-
-                                  const SizedBox(width: 24),
-
-                                  // 기본이미지 버튼
-                                  _buildCircleButton(
-                                    context: context,
-                                    icon: Icons.person,
-                                    label: AppLocalizations.of(
-                                      context,
-                                    ).translate('change_to_default'),
-                                    onTap: () {
-                                      // 기본이미지 모드로 전환 (확인/취소 버튼 표시)
-                                      setState(() {
-                                        _isDefaultImageMode = true;
-                                        _selectedImage = null;
-                                        _uiImage = null;
-                                        _isAdjustMode = false;
-                                        _adjustSnapshot = null;
-                                      });
-                                    },
-                                  ),
-                                ],
-                              )
-                          : _buildReadModeProfileInfo(
-                            theme,
-                          ), // 읽기 모드: 프로필 정보 표시
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildCircleButton(
+                        context: context,
+                        icon: Icons.check,
+                        label: AppLocalizations.of(
+                          context,
+                        ).translate('complete'),
+                        onTap: () async {
+                          if (_selectedImage != null && _uiImage != null) {
+                            final croppedFile = await _cropImageToCircle();
+                            if (croppedFile != null && mounted) {
+                              widget.onGallerySelected(croppedFile);
+                              Navigator.pop(context);
+                            }
+                          }
+                        },
+                        isOnboarding: true,
+                        isCompleteButton: true,
+                      ),
+                      const SizedBox(width: 12),
+                      _buildCircleButton(
+                        context: context,
+                        icon: Icons.tune,
+                        label: AppLocalizations.of(context).translate('adjust'),
+                        onTap: _enterAdjustMode,
+                        isOnboarding: true,
+                        isCompleteButton: false,
+                      ),
+                      const SizedBox(width: 12),
+                      _buildCircleButton(
+                        context: context,
+                        icon: Icons.close,
+                        label: AppLocalizations.of(context).translate('cancel'),
+                        onTap: () async {
+                          // ✅ 온보딩 모드: 취소 시 바로 돌아가기
+                          Navigator.pop(context);
+                          return;
+                        },
+                        isOnboarding: true,
+                        isCompleteButton: false,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -559,10 +405,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         widget.profileImageUrl!.isNotEmpty;
 
     // UserProfileScreen과 동일한 보더 스타일 적용
-    final borderColor =
-        theme.brightness == Brightness.dark
-            ? Colors.grey.shade500
-            : Colors.grey.shade400;
+    final borderColor = Colors.grey.shade400;
 
     return Material(
       color: Colors.transparent,
@@ -582,156 +425,66 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
     );
   }
 
-  // 🎯 읽기 모드: 프로필 정보 표시
-  Widget _buildReadModeProfileInfo(ThemeData theme) {
-    if (widget.isOwnProfile) return const SizedBox.shrink();
-
-    return FadeTransition(
-      opacity: _imageEditorFadeAnimation,
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 40.0, left: 24.0, right: 24.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              widget.alias ?? widget.username,
-              style: TextStyle(
-                fontSize: 30,
-                fontWeight: FontWeight.w700,
-                color: theme.colorScheme.onSurface,
-              ),
-              textAlign: TextAlign.center,
-            ),
-
-            // 자기소개
-            if (widget.selfIntroduction != null &&
-                widget.selfIntroduction!.isNotEmpty)
-              Text(
-                widget.selfIntroduction!,
-                style: TextStyle(
-                  fontSize: 16,
-                  color: theme.colorScheme.onSurface.withOpacity(0.7),
-                  height: 1.4,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildCircleButton({
     required BuildContext context,
     required IconData icon,
     required String label,
     required VoidCallback onTap,
+    bool isOnboarding = false,
+    bool isCompleteButton = false,
   }) {
     final theme = Theme.of(context);
 
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.onSurface,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: theme.colorScheme.surface, size: 28),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: TextStyle(
-              color: theme.colorScheme.onSurface,
-              fontSize: 13,
-              fontWeight: FontWeight.w400,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    // 온보딩 모드일 때: 완료는 흰색 배경, 조정/취소는 연하게
+    final Color buttonColor;
+    final Color iconColor;
+    final Color textColor;
 
-  Widget _buildGalleryButton({
-    required BuildContext context,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    final theme = Theme.of(context);
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.onSurface,
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: SvgPicture.asset(
-                'assets/icons/editor_gallery.svg',
-                width: 28,
-                height: 28,
-                colorFilter: ColorFilter.mode(
-                  theme.colorScheme.surface,
-                  BlendMode.srcIn,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: TextStyle(
-              color: theme.colorScheme.onSurface,
-              fontSize: 13,
-              fontWeight: FontWeight.w400,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 미디어 피커 표시
-  Future<void> _showMediaPicker() async {
-    final result = await Navigator.push<MediaPickerResult>(
-      context,
-      PageRouteBuilder(
-        pageBuilder:
-            (context, animation, secondaryAnimation) => MediaPickerScreen(
-              initialMediaType: MediaType.image,
-              maxSelectionCount: 1,
-              enableToggle: false, // 영상 토글 비활성화
-              onMediaSelected: (file) {
-                // 단일 선택이므로 바로 처리하지 않음 (Navigator.pop의 result로 처리)
-              },
-            ),
-        transitionDuration: const Duration(milliseconds: 200),
-        reverseTransitionDuration: const Duration(milliseconds: 150),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-        fullscreenDialog: true,
-      ),
-    );
-
-    if (result != null && result.files.isNotEmpty && mounted) {
-      final file = result.files.first;
-      // 이미지 로드
-      _loadImageAndCalculateScale(file);
+    if (isOnboarding) {
+      if (isCompleteButton) {
+        // 완료 버튼: 흰색 배경
+        buttonColor = Colors.white;
+        iconColor = Colors.black;
+        textColor = Colors.white;
+      } else {
+        // 조정/취소 버튼: 연하게
+        buttonColor = theme.colorScheme.onSurface.withOpacity(0.1);
+        iconColor = Colors.white.withOpacity(1);
+        textColor = Colors.white.withOpacity(1);
+      }
+    } else {
+      // 일반 모드: 기존 스타일
+      buttonColor = theme.colorScheme.onSurface;
+      iconColor = theme.colorScheme.surface;
+      textColor = theme.colorScheme.onSurface;
     }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: buttonColor,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: iconColor, size: 28),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _enterAdjustMode() {
@@ -826,6 +579,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
 
   Widget _buildAdjustBottomSheet(ThemeData theme) {
     final l10n = AppLocalizations.of(context);
+    final effectiveTheme = AppTheme.darkTheme;
 
     final state =
         AdjustmentState()
@@ -837,7 +591,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
           ..exposure = _exposure
           ..blur = _blur;
 
-    return Positioned(
+    final sheet = Positioned(
       left: 0,
       right: 0,
       bottom: 0,
@@ -864,10 +618,10 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 12),
             decoration: BoxDecoration(
-              color: theme.colorScheme.surface,
+              color: effectiveTheme.colorScheme.surface,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.12),
+                  color: Colors.black.withOpacity(0.18),
                   blurRadius: 16,
                   offset: const Offset(0, -8),
                 ),
@@ -896,7 +650,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                               ? l10n.translate('back')
                               : l10n.translate('cancel'),
                           style: TextStyle(
-                            color: theme.colorScheme.onSurface,
+                            color: effectiveTheme.colorScheme.onSurface,
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
@@ -937,7 +691,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w700,
-                                          color: theme.colorScheme.onSurface
+                                          color: effectiveTheme
+                                              .colorScheme
+                                              .onSurface
                                               .withOpacity(
                                                 isActive ? 1.0 : 0.8,
                                               ),
@@ -954,7 +710,9 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                                           icon: Icon(
                                             Icons.refresh,
                                             size: 22,
-                                            color: theme.colorScheme.onSurface
+                                            color: effectiveTheme
+                                                .colorScheme
+                                                .onSurface
                                                 .withOpacity(1.0),
                                           ),
                                           onPressed: () {
@@ -978,7 +736,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
                         child: Text(
                           l10n.translate('complete'),
                           style: TextStyle(
-                            color: theme.colorScheme.onSurface,
+                            color: effectiveTheme.colorScheme.onSurface,
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
                           ),
@@ -1017,6 +775,8 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         ),
       ),
     );
+
+    return Theme(data: effectiveTheme, child: sheet);
   }
 
   /// 이미지 로드 및 초기 스케일 계산
@@ -1267,9 +1027,10 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
             image: _uiImage!,
             screenImageRect: screenImageRect,
             cropRect: cropRect,
-            borderColor: theme.colorScheme.onSurface.withOpacity(0.3),
+            borderColor: Colors.white.withOpacity(0.25),
             adjustmentFilter: _buildAdjustmentColorFilter(),
             rotation: _imageRotation,
+            isOnboardingMode: true,
           ),
         ),
       ),
@@ -1446,6 +1207,7 @@ class _UnifiedImagePainter extends CustomPainter {
   final Color borderColor;
   final ColorFilter? adjustmentFilter;
   final double rotation;
+  final bool isOnboardingMode; // ✅ 온보딩 모드 여부
 
   _UnifiedImagePainter({
     required this.image,
@@ -1454,6 +1216,7 @@ class _UnifiedImagePainter extends CustomPainter {
     required this.borderColor,
     this.adjustmentFilter,
     this.rotation = 0.0,
+    this.isOnboardingMode = false,
   });
 
   @override
@@ -1467,68 +1230,84 @@ class _UnifiedImagePainter extends CustomPainter {
 
     final center = cropRect.center;
 
-    // 1. 배경: 원형 영역 밖에 반투명 이미지 그리기
-    // 원형 영역을 제외한 나머지 영역에만 그리기
-    final backgroundPaint =
+    // ✅ 온보딩 모드: 전체 화면에 이미지 그리기 (원형 외부도 보이도록)
+    if (isOnboardingMode) {
+      // 전체 화면에 이미지 그리기 (원형 클립 없음)
+      canvas.save();
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(rotation);
+      canvas.translate(-center.dx, -center.dy);
+      canvas.drawImageRect(
+        image,
+        srcRect,
+        screenImageRect,
         Paint()
-          ..color = Colors.white.withOpacity(0.3)
           ..isAntiAlias = true
           ..filterQuality = FilterQuality.high
-          ..colorFilter = adjustmentFilter;
+          ..colorFilter = adjustmentFilter,
+      );
+      canvas.restore();
 
-    // 원형 영역을 제외한 경로 생성
-    final backgroundPath =
-        Path()
-          ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
-          ..addOval(cropRect)
-          ..fillType = PathFillType.evenOdd;
+      // ✅ 원형 바깥에 검정색 블러 레이어 추가
+      canvas.save();
+      // 원형 영역을 제외한 경로 생성
+      final blurPath =
+          Path()
+            ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
+            ..addOval(cropRect)
+            ..fillType = PathFillType.evenOdd;
+      canvas.clipPath(blurPath);
+      // 블러 효과 적용
+      final blurPaint =
+          Paint()
+            ..color = Colors.black.withOpacity(0.6)
+            ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, 20.0);
+      canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), blurPaint);
+      canvas.restore();
+    } else {
+      // 일반 모드: 원형 영역 밖에 반투명 이미지 그리기
+      final backgroundPaint =
+          Paint()
+            ..color = Colors.white.withOpacity(0.3)
+            ..isAntiAlias = true
+            ..filterQuality = FilterQuality.high
+            ..colorFilter = adjustmentFilter;
 
-    canvas.save();
-    canvas.clipPath(backgroundPath);
-    canvas.save();
-    canvas.translate(center.dx, center.dy);
-    canvas.rotate(rotation);
-    canvas.translate(-center.dx, -center.dy);
-    canvas.drawImageRect(image, srcRect, screenImageRect, backgroundPaint);
-    canvas.restore();
-    canvas.restore();
+      // 원형 영역을 제외한 경로 생성
+      final backgroundPath =
+          Path()
+            ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
+            ..addOval(cropRect)
+            ..fillType = PathFillType.evenOdd;
 
-    // 2. 중앙: 원형 클립된 이미지 그리기
-    canvas.save();
-    // 원형 클립 경로
-    final cropPath = Path()..addOval(cropRect);
-    canvas.clipPath(cropPath);
-    // 원형 영역 내부에 이미지 그리기 (회전 포함)
-    canvas.translate(center.dx, center.dy);
-    canvas.rotate(rotation);
-    canvas.translate(-center.dx, -center.dy);
-    canvas.drawImageRect(
-      image,
-      srcRect,
-      screenImageRect,
-      Paint()
-        ..isAntiAlias = true
-        ..filterQuality = FilterQuality.high
-        ..colorFilter = adjustmentFilter,
-    );
-    canvas.restore();
+      canvas.save();
+      canvas.clipPath(backgroundPath);
+      canvas.save();
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(rotation);
+      canvas.translate(-center.dx, -center.dy);
+      canvas.drawImageRect(image, srcRect, screenImageRect, backgroundPaint);
+      canvas.restore();
+      canvas.restore();
 
-    // ✅ 원형 바깥에 검정색 블러 레이어 추가 (편집 모드)
-    canvas.save();
-    // 원형 영역을 제외한 경로 생성
-    final blurPath =
-        Path()
-          ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
-          ..addOval(cropRect)
-          ..fillType = PathFillType.evenOdd;
-    canvas.clipPath(blurPath);
-    // 블러 효과 적용
-    final blurPaint =
+      // 원형 클립된 이미지 그리기
+      canvas.save();
+      final cropPath = Path()..addOval(cropRect);
+      canvas.clipPath(cropPath);
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(rotation);
+      canvas.translate(-center.dx, -center.dy);
+      canvas.drawImageRect(
+        image,
+        srcRect,
+        screenImageRect,
         Paint()
-          ..color = Colors.black.withOpacity(0.6)
-          ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, 20.0);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), blurPaint);
-    canvas.restore();
+          ..isAntiAlias = true
+          ..filterQuality = FilterQuality.high
+          ..colorFilter = adjustmentFilter,
+      );
+      canvas.restore();
+    }
 
     // 3. 원형 테두리 그리기
     final borderPaint =
@@ -1546,7 +1325,8 @@ class _UnifiedImagePainter extends CustomPainter {
         oldDelegate.image != image ||
         oldDelegate.borderColor != borderColor ||
         oldDelegate.adjustmentFilter != adjustmentFilter ||
-        oldDelegate.rotation != rotation;
+        oldDelegate.rotation != rotation ||
+        oldDelegate.isOnboardingMode != isOnboardingMode;
   }
 }
 
@@ -1569,7 +1349,7 @@ class _AdjustSnapshot {
   final double blur;
 }
 
-extension on _ProfileImageViewScreenState {
+extension on _OnbordingModeProfileImageViewScreenState {
   ColorFilter? _buildAdjustmentColorFilter() {
     final matrix = AdjustmentUtils.getAdjustmentMatrix(
       brightness: _brightness,

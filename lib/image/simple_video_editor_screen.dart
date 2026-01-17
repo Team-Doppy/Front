@@ -1497,9 +1497,28 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
     });
   }
 
-  void _resetCurrentAdjustmentValue() {
-    final type = _adjustmentEditorKey.currentState?.selectedType;
-    if (type == null) return;
+  /// 특정 조정 타입의 현재 값 가져오기
+  double _getAdjustmentValueByType(_VideoEditState state, AdjustmentType type) {
+    switch (type) {
+      case AdjustmentType.brightness:
+        return state.brightness;
+      case AdjustmentType.contrast:
+        return state.contrast;
+      case AdjustmentType.saturation:
+        return state.saturation;
+      case AdjustmentType.luminance:
+        return state.luminance;
+      case AdjustmentType.exposure:
+        return state.exposure;
+      case AdjustmentType.temperature:
+        return state.temperature;
+      case AdjustmentType.blur:
+        return state.blur;
+    }
+  }
+
+  /// 단일 조정 속성 리셋
+  void _resetSingleAdjustment(AdjustmentType type) {
     final state = _getCurrentEditState();
 
     setState(() {
@@ -1518,9 +1537,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
           break;
         case AdjustmentType.exposure:
           state.exposure = 0.0;
-          break;
-        case AdjustmentType.sharpness:
-          state.sharpness = 0.0;
           break;
         case AdjustmentType.temperature:
           state.temperature = 0.0;
@@ -2137,43 +2153,80 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Text(
-                                            _isAdjustmentSliderMode
-                                                ? (_adjustmentEditorKey
-                                                        .currentState
-                                                        ?.selectedType
-                                                        ?.label ??
-                                                    '')
-                                                : l10n.t('adjust'),
-                                            style: TextStyle(
-                                              fontSize: 17,
-                                              fontWeight: FontWeight.w600,
-                                              // 요구사항: 취소~완료 사이 텍스트/아이콘은 opacity 0.7
-                                              color: fgColor.withOpacity(0.7),
-                                            ),
-                                          ),
-                                          // ✅ 요구사항: 상세 조정(슬라이더) 모드일 때만 리프레시 노출
-                                          if (_isAdjustmentSliderMode) ...[
-                                            const SizedBox(width: 8),
-                                            GestureDetector(
-                                              onTap:
-                                                  _resetCurrentAdjustmentValue,
-                                              behavior:
-                                                  HitTestBehavior.translucent,
-                                              child: Padding(
-                                                padding: const EdgeInsets.all(
-                                                  6,
-                                                ),
-                                                child: Icon(
-                                                  Icons.refresh,
-                                                  size: 24,
-                                                  color: fgColor.withOpacity(
-                                                    0.7,
+                                          Builder(
+                                            builder: (context) {
+                                              final selectedType =
+                                                  _adjustmentEditorKey
+                                                      .currentState
+                                                      ?.selectedType;
+
+                                              // ✅ 선택된 속성이 "적용(값 != 0)" 상태면 텍스트 opacity=1 + 리셋 버튼 노출
+                                              final state =
+                                                  _getCurrentEditState();
+
+                                              String label = l10n.t('adjust');
+                                              bool isActive = false;
+                                              AdjustmentType? activeType;
+
+                                              if (_isAdjustmentSliderMode &&
+                                                  selectedType != null) {
+                                                activeType = selectedType;
+                                                label = selectedType.label;
+                                                final v =
+                                                    _getAdjustmentValueByType(
+                                                      state,
+                                                      selectedType,
+                                                    );
+                                                isActive = v.abs() > 0.01;
+                                              }
+
+                                              return Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Text(
+                                                    label,
+                                                    style: TextStyle(
+                                                      fontSize: 17,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color: fgColor
+                                                          .withOpacity(
+                                                            isActive
+                                                                ? 1.0
+                                                                : 0.7,
+                                                          ),
+                                                    ),
                                                   ),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
+                                                  if (isActive) ...[
+                                                    const SizedBox(width: 8),
+                                                    IconButton(
+                                                      padding: EdgeInsets.zero,
+                                                      constraints:
+                                                          const BoxConstraints(
+                                                            minWidth: 28,
+                                                            minHeight: 28,
+                                                          ),
+                                                      icon: Icon(
+                                                        Icons.refresh,
+                                                        size: 22,
+                                                        color: fgColor
+                                                            .withOpacity(1.0),
+                                                      ),
+                                                      onPressed: () {
+                                                        if (activeType ==
+                                                            null) {
+                                                          return;
+                                                        }
+                                                        _resetSingleAdjustment(
+                                                          activeType,
+                                                        );
+                                                      },
+                                                    ),
+                                                  ],
+                                                ],
+                                              );
+                                            },
+                                          ),
                                         ],
                                       ),
                                     ),
@@ -3335,7 +3388,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
       saturation: state.saturation,
       luminance: state.luminance,
       exposure: state.exposure,
-      sharpness: state.sharpness,
       temperature: state.temperature,
     );
   }
@@ -4226,7 +4278,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
           ..saturation = state.saturation
           ..luminance = state.luminance
           ..exposure = state.exposure
-          ..sharpness = state.sharpness
           ..temperature = state.temperature
           ..blur = state.blur;
 
@@ -4240,7 +4291,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
           state.saturation = newState.saturation;
           state.luminance = newState.luminance;
           state.exposure = newState.exposure;
-          state.sharpness = newState.sharpness;
           state.temperature = newState.temperature;
           state.blur = newState.blur;
         });

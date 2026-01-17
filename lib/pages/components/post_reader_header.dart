@@ -385,6 +385,7 @@ class PostReaderAppBar extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
+                  SizedBox(width: 4),
                   IconButton(
                     onPressed: onBack,
                     icon: Icon(

@@ -36,34 +36,7 @@ class BlogService {
     debugPrint('[BlogService] 로그아웃 - 모든 캐시 초기화 완료');
   }
 
-  /// content(JSON or raw string)에서 최대 5줄 요약을 생성
-  String _buildSummaryFromContent(dynamic content) {
-    try {
-      String raw = '';
-      if (content is Map) {
-        // SuperEditor exported structure: { nodes: [ {text: ...}, ... ] }
-        final nodes = (content['nodes'] as List?) ?? const [];
-        final lines = <String>[];
-        for (final n in nodes) {
-          if (n is Map) {
-            final t = (n['text'] ?? n['label'] ?? '').toString().trim();
-            if (t.isNotEmpty) lines.add(t);
-            if (lines.length >= 5) break;
-          }
-        }
-        raw = lines.join('\n');
-      } else if (content is String) {
-        raw = content;
-      }
-      if (raw.isEmpty) return '';
-      final normalized = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-      final parts =
-          normalized.split('\n').where((e) => e.trim().isNotEmpty).toList();
-      return parts.take(5).join('\n');
-    } catch (_) {
-      return '';
-    }
-  }
+  // 🎯 _buildSummaryFromContent 메서드 제거됨 (summary 필드 제거)
 
   /// 새로운 프로필 피드 API 호출
   Future<Map<String, dynamic>> getProfileFeed(String username) async {
@@ -658,21 +631,19 @@ class BlogService {
     }
   }
 
-  /// 포스트 썸네일, 타이틀, 요약 수정
+  /// 포스트 썸네일, 타이틀 수정
   ///
   /// [postId] - 수정할 포스트 ID
   /// [thumbnailImageUrl] - 새 썸네일 이미지 URL (선택사항)
   /// [title] - 새 제목 (선택사항)
-  /// [summary] - 새 요약 (선택사항)
   ///
   /// 제공된 값만 업데이트되고, null인 값은 변경되지 않습니다.
   Future<void> updatePostThumbnail({
     required int postId,
     String? thumbnailImageUrl,
     String? title,
-    String? summary,
   }) async {
-    debugPrint('[BlogService] 썸네일/타이틀/요약 수정 요청: $postId');
+    debugPrint('[BlogService] 썸네일/타이틀 수정 요청: $postId');
 
     try {
       // 쿼리 파라미터 구성
@@ -688,10 +659,7 @@ class BlogService {
         debugPrint('[BlogService] - 타이틀: $title');
       }
 
-      if (summary != null && summary.isNotEmpty) {
-        queryParams['summary'] = summary;
-        debugPrint('[BlogService] - 요약: $summary');
-      }
+      // 🎯 summary 필드 제거됨
 
       // 변경할 내용이 없으면 에러
       if (queryParams.isEmpty) {
@@ -703,7 +671,7 @@ class BlogService {
         queryParameters: queryParams,
       );
 
-      debugPrint('[BlogService] 썸네일/타이틀/요약 수정 성공: $postId');
+      debugPrint('[BlogService] 썸네일/타이틀 수정 성공: $postId');
     } catch (e) {
       debugPrint('[BlogService] 썸네일/타이틀/요약 수정 실패: $e');
 
@@ -730,7 +698,7 @@ class BlogService {
   /// [title] - 새 제목 (선택사항)
   /// [usedImageUrls] - 사용된 이미지/비디오 URL 목록
   ///
-  /// 참고: summary(요약)는 썸네일 수정 API에서만 변경 가능
+  // 🎯 summary 필드 제거됨
   Future<void> updatePostContent({
     required int postId,
     required Map<String, dynamic> content,
@@ -812,10 +780,7 @@ class BlogService {
       }
     }
 
-    // summary 생성: postData에 이미 있으면 사용, 없으면 content로부터 최대 5줄 추출
-    final String summary =
-        (postData['summary'] as String?)?.trim().toString() ??
-        _buildSummaryFromContent(contentJson);
+    // 🎯 summary 필드 제거됨
 
     final requestBody = <String, dynamic>{
       'title': postData['title'] ?? '',
@@ -823,7 +788,6 @@ class BlogService {
       'thumbnailImageUrl': postData['thumbnailImageUrl'] ?? '',
       'content': contentJson ?? const <String, dynamic>{'nodes': []},
       'accessLevel': accessLevel,
-      'summary': summary,
       'categoryId': postData['categoryId'] ?? 0,
 
       if (postData['usedImageUrls'] != null)
@@ -833,6 +797,9 @@ class BlogService {
           (postData['mentionedUsernames'] is List)
               ? List<String>.from(postData['mentionedUsernames'] as List)
               : <String>[],
+      // 🎯 연도와 주차 정보 (새 포스트 발행 시 포함)
+      if (postData['year'] != null) 'year': postData['year'] as int,
+      if (postData['nthWeek'] != null) 'nthWeek': postData['nthWeek'] as int,
       // 그룹 기능 제거로 인해 GROUPS 처리 제거
     };
 
@@ -901,7 +868,7 @@ class BlogService {
 
   /// 블로그 메타데이터만 조회 (content 제외)
   ///
-  /// title, thumbnailImageUrl, summary, author,
+  /// title, thumbnailImageUrl, author,
   /// accessLevel, viewCount, likeCount, isLiked, createdAt, updatedAt 등의 정보만 반환.
   /// 조회수 증가 안함.
   Future<Map<String, dynamic>> getPostMetadata(String postId) async {
@@ -918,7 +885,7 @@ class BlogService {
         debugPrint('[BlogService] 메타데이터 로드 성공');
         debugPrint('  - 제목: ${data['title']}');
         debugPrint('  - 썸네일: ${data['thumbnailImageUrl']}');
-        debugPrint('  - 요약: ${data['summary']}');
+        // 🎯 summary 필드 제거됨
         return data;
       }
 
@@ -929,78 +896,6 @@ class BlogService {
       if (e is DioException) {
         throw HttpException(
           'get metadata failed ${e.response?.statusCode}: ${e.response?.data}',
-        );
-      }
-      rethrow;
-    }
-  }
-
-  /// 포스트를 업데이트합니다.
-  ///
-  /// [postId] - 업데이트할 포스트의 ID
-  /// [postData] - 업데이트할 포스트 데이터
-  Future<Map<String, dynamic>> updatePost({
-    required String postId,
-    required Map<String, dynamic> postData,
-  }) async {
-    debugPrint('[UpdatePost] updating post $postId');
-
-    // 서버 DTO 규격에 맞게 업데이트 바디 구성
-    // accessLevel은 postData에서 직접 읽기 (visibility 객체 사용 안 함)
-    // 🎯 공통 파싱 유틸리티 사용
-    final accessLevel =
-        AccessLevelParser.parseAccessLevelString(postData['accessLevel']) ??
-        SystemCategoryKeys.public;
-    // 그룹 기능 제거로 인해 sharedGroupIds 파싱 제거
-
-    dynamic contentJson = postData['content'];
-    if (contentJson is String && contentJson.isNotEmpty) {
-      try {
-        contentJson = json.decode(contentJson);
-      } catch (_) {
-        contentJson = <String, dynamic>{'raw': contentJson};
-      }
-    }
-
-    final String summary =
-        (postData['summary'] as String?)?.trim().toString() ??
-        _buildSummaryFromContent(contentJson);
-
-    final requestBody = <String, dynamic>{
-      'title': postData['title'] ?? '',
-      'author': postData['author'] ?? '',
-      'thumbnailImageUrl': postData['thumbnailImageUrl'] ?? '',
-      'content': contentJson ?? const <String, dynamic>{'nodes': []},
-      'accessLevel': accessLevel,
-      'summary': summary,
-      // 그룹 기능 제거로 인해 GROUPS 처리 제거
-    };
-
-    debugPrint('[UpdatePost] ===== 최종 요청 본문 =====');
-    debugPrint('[UpdatePost] accessLevel: $accessLevel');
-    // 그룹 기능 제거로 인해 GROUPS 디버그 로그 제거
-
-    debugPrint('[UpdatePost] request body: ${json.encode(requestBody)}');
-
-    try {
-      final response = await _dio.put(
-        '/api/posts/$postId',
-        data: requestBody,
-        options: Options(
-          sendTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(seconds: 30),
-        ),
-      );
-
-      debugPrint('[UpdatePost] success body=${response.data}');
-      return response.data as Map<String, dynamic>;
-    } catch (e) {
-      if (e is DioException) {
-        debugPrint(
-          '[UpdatePost] error ${e.response?.statusCode} body=${e.response?.data}',
-        );
-        throw HttpException(
-          'post update failed ${e.response?.statusCode}: ${e.response?.data}',
         );
       }
       rethrow;

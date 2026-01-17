@@ -354,20 +354,6 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                 );
               } catch (_) {}
 
-              // 댓글 배지 표시 값 추출
-              bool hasCommentsFlag = false;
-
-              try {
-                final node = doc?.getNodeById(widget.nodeId);
-                if (node is ImageNode) {
-                  final meta =
-                      (node as dynamic).metadata as Map<String, dynamic>?;
-                  if (meta != null) {
-                    hasCommentsFlag = meta['hasComments'] == true;
-                  }
-                }
-              } catch (_) {}
-
               // 해제 직전 → 직후 전환 감지하여 스캐터 실행
               final wasSpoilerBefore = _wasSpoilerVisible;
               // 🎯 초기 렌더링 감지: _wasSpoilerVisible이 false이고 isSpoilerFlag가 true면 초기 상태
@@ -480,42 +466,6 @@ class _SingleImageComponentState extends State<SingleImageComponent>
                       child: Stack(
                         children: [
                           image,
-                          if (hasCommentsFlag)
-                            Positioned(
-                              top: 4,
-                              right: 5,
-                              child: IgnorePointer(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(1),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.surface.withOpacity(0.1),
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: SvgPicture.asset(
-                                    'assets/icons/comment.svg',
-                                    width: 12,
-                                    height: 12,
-                                    colorFilter: ColorFilter.mode(
-                                      Theme.of(context).colorScheme.surface,
-                                      BlendMode.srcIn,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          // ✅ 스포일러 토글(ON/OFF) 시 "블러/오버레이"가 부드럽게 변하도록 애니메이션 처리
-                          // 🎯 초기 렌더링 시 스포일러 깜빡임 방지: 초기 상태일 때는 즉시 표시
                           Positioned.fill(
                             child: IgnorePointer(
                               child: TweenAnimationBuilder<double>(

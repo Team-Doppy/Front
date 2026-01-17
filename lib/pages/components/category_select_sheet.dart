@@ -7,16 +7,27 @@ import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
 
+/// 카테고리 선택 시트 모드
+enum CategorySelectMode {
+  /// 서버 변경 모드: 실제로 서버에 카테고리를 변경
+  serverUpdate,
+
+  /// 지정 모드: 선택만 하고 onChanged로 반환 (서버 변경 없음)
+  selectionOnly,
+}
+
 // 상태 관리 헬퍼 클래스
 class _CategoryStateHelper {
   int? selectedCategoryId;
   bool initialized = false;
   bool isLoading = false;
+  CategorySelectMode mode = CategorySelectMode.selectionOnly; // 🎯 모드 추가
 
   void reset() {
     selectedCategoryId = null;
     initialized = false;
     isLoading = false;
+    mode = CategorySelectMode.selectionOnly;
   }
 }
 
@@ -30,11 +41,13 @@ class CategorySelectSheet {
     required String postId,
     required int? currentCategoryId,
     required Function(int? categoryId) onChanged,
+    CategorySelectMode mode = CategorySelectMode.selectionOnly, // 🎯 모드 추가
   }) async {
     debugPrint(
-      '[CategorySelectSheet] show 호출 - postId: $postId, currentCategoryId: $currentCategoryId',
+      '[CategorySelectSheet] show 호출 - postId: $postId, currentCategoryId: $currentCategoryId, mode: $mode',
     );
     _StateHelper.reset(); // 상태 초기화
+    _StateHelper.mode = mode; // 🎯 모드 설정
     final parentContext = context; // 부모 context 저장
 
     try {
@@ -65,106 +78,71 @@ class CategorySelectSheet {
               final activeCategoryId = _StateHelper.selectedCategoryId ?? 0;
               final originalCategoryId = currentCategoryId ?? 0;
 
-              return Stack(
-                children: [
-                  // 배경 영역 (바깥 부분) - 탭하면 닫힘
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onTap: () {
-                        Navigator.of(context).pop();
-                      },
-                      child: Container(color: Colors.transparent),
+              return ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(context).size.height * 0.9,
                     ),
-                  ),
-                  // 바텀시트 컨텐츠
-                  DraggableScrollableSheet(
-                    initialChildSize: 0.6,
-                    minChildSize: 0.4,
-                    maxChildSize: 0.9,
-                    builder: (context, scrollController) {
-                      return GestureDetector(
-                        onTap: () {
-                          // 바텀시트 내부를 탭해도 닫히지 않도록 이벤트 소비
-                        },
-                        child: ClipRRect(
-                          borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(24),
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surface.withOpacity(0.95),
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(24),
+                      ),
+                      border: Border.all(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surface.withOpacity(0.6),
+                        width: 0.5,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // 핸들 바
+                        Container(
+                          margin: const EdgeInsets.only(top: 12, bottom: 8),
+                          width: 38,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.withOpacity(0.8),
+                            borderRadius: BorderRadius.circular(2),
                           ),
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surface.withOpacity(0.95),
-                                borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(24),
-                                ),
-                                border: Border.all(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.surface.withOpacity(0.6),
-                                  width: 0.5,
-                                ),
-                              ),
-                              child: Column(
-                                children: [
-                                  // 핸들 바
-                                  Container(
-                                    margin: const EdgeInsets.only(
-                                      top: 12,
-                                      bottom: 8,
-                                    ),
-                                    width: 38,
-                                    height: 4,
-                                    decoration: BoxDecoration(
-                                      color: Colors.grey.withOpacity(0.8),
-                                      borderRadius: BorderRadius.circular(2),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
+                        ),
+                        const SizedBox(height: 16),
 
-                                  // 카테고리 리스트
-                                  Expanded(
-                                    child: RawScrollbar(
-                                      controller: scrollController,
-                                      thumbColor: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withOpacity(0.3),
-                                      radius: const Radius.circular(20),
-                                      thickness: 4,
-                                      thumbVisibility: false,
-                                      child: SingleChildScrollView(
-                                        controller: scrollController,
-                                        child: _buildCategoryContent(
-                                          bottomSheetContext,
-                                          activeCategoryId,
-                                          categories,
-                                          setModalState,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-
-                                  // 완료 버튼
-                                  _buildDoneButton(
-                                    bottomSheetContext,
-                                    parentContext,
-                                    activeCategoryId,
-                                    originalCategoryId,
-                                    postId,
-                                    onChanged,
-                                    setModalState,
-                                  ),
-                                ],
-                              ),
+                        // 카테고리 리스트
+                        Flexible(
+                          child: SingleChildScrollView(
+                            child: _buildCategoryContent(
+                              bottomSheetContext,
+                              activeCategoryId,
+                              categories,
+                              setModalState,
                             ),
                           ),
                         ),
-                      );
-                    },
+
+                        // 완료 버튼
+                        _buildDoneButton(
+                          bottomSheetContext,
+                          parentContext,
+                          activeCategoryId,
+                          originalCategoryId,
+                          postId,
+                          onChanged,
+                          setModalState,
+                        ),
+                      ],
+                    ),
                   ),
-                ],
+                ),
               );
             },
           );
@@ -344,7 +322,20 @@ class CategorySelectSheet {
                         final selectedCategoryId =
                             activeCategoryId == 0 ? null : activeCategoryId;
 
-                        // 카테고리 변경 API 호출
+                        // 🎯 모드에 따라 다르게 동작
+                        final mode = _StateHelper.mode;
+                        debugPrint(
+                          '[CategorySelectSheet] 변경하기 버튼 클릭 - mode: $mode',
+                        );
+
+                        if (mode == CategorySelectMode.selectionOnly) {
+                          // 🎯 지정 모드: onChanged만 호출하고 바텀시트 닫기
+                          onChanged(selectedCategoryId);
+                          Navigator.of(bottomSheetContext).pop();
+                          return; // 🎯 지정 모드에서는 여기서 종료
+                        }
+
+                        // 🎯 서버 변경 모드: API 업데이트
                         final blogService = BlogService();
                         await blogService.movePostToCategory(
                           postId: int.parse(postId),

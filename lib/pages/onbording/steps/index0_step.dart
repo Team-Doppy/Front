@@ -11,11 +11,12 @@ class Index0CardContent extends StatelessWidget {
     // TODO(user): replace with real UI
     return Center(
       child: Text(
-        '지금부터 차곡차곡\n쌓아갈게요',
-        style: LocaleTypography.boldStyle(
+        '넘겨서 바로 시작 ',
+        style: LocaleTypography.setStyle(
           context: context,
-          fontSize: 32,
+          fontSize: 36,
           color: Colors.white,
+          letterSpacing: -1.8,
           fontWeight: FontWeight.w900,
         ),
       ),
@@ -35,26 +36,33 @@ class Index0Background extends StatelessWidget {
         child: Container(
           padding: EdgeInsets.all(24),
           color: Colors.transparent,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const SizedBox(height: 20),
-
-              Text(
-                '안 남기면',
-                style: TextStyle(
-                  color: AppColors.darkSurfaceVariant,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              Text(
-                '없어질 순간들',
-                style: TextStyle(
-                  color: AppColors.darkSurfaceVariant,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const SizedBox(height: 30),
+                  Text(
+                    '${name}',
+                    style: LocaleTypography.setStyle(
+                      context: context,
+                      fontSize: 30,
+                      color: AppColors.darkSurfaceVariant.withOpacity(0.9),
+                      fontWeight: FontWeight.w300,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '정말 환영해요!',
+                    style: LocaleTypography.setStyle(
+                      context: context,
+                      fontSize: 30,
+                      color: AppColors.darkSurfaceVariant.withOpacity(0.9),
+                      fontWeight: FontWeight.w300,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

@@ -1,7 +1,6 @@
 /// 포스트 메타데이터 변경 감지 결과
 class PostMetadataChangeResult {
   final bool titleChanged;
-  final bool summaryChanged;
   final bool thumbnailChanged;
   final bool categoryChanged;
   final bool accessLevelChanged;
@@ -9,7 +8,6 @@ class PostMetadataChangeResult {
 
   PostMetadataChangeResult({
     required this.titleChanged,
-    required this.summaryChanged,
     required this.thumbnailChanged,
     required this.categoryChanged,
     required this.accessLevelChanged,
@@ -19,15 +17,13 @@ class PostMetadataChangeResult {
   /// 변경사항이 있는지 확인
   bool get hasChanges =>
       titleChanged ||
-      summaryChanged ||
       thumbnailChanged ||
       categoryChanged ||
       accessLevelChanged ||
       sharedGroupIdsChanged;
 
-  /// 제목/요약/썸네일 변경 여부 (more_horiz 아이콘 색상용)
-  bool get hasMetadataChanges =>
-      titleChanged || summaryChanged || thumbnailChanged;
+  /// 제목/썸네일 변경 여부 (more_horiz 아이콘 색상용)
+  bool get hasMetadataChanges => titleChanged || thumbnailChanged;
 
   /// 공개범위 관련 변경 여부
   bool get hasAccessLevelChanges => accessLevelChanged || sharedGroupIdsChanged;
@@ -47,8 +43,6 @@ bool areGroupIdsEqual(List<int>? list1, List<int>? list2) {
 PostMetadataChangeResult detectPostMetadataChanges({
   required String currentTitle,
   required String originalTitle,
-  required String currentSummary,
-  required String originalSummary,
   required String currentThumbnailUrl,
   required String originalThumbnailUrl,
   int? currentCategoryId,
@@ -59,7 +53,6 @@ PostMetadataChangeResult detectPostMetadataChanges({
   List<int>? originalSharedGroupIds,
 }) {
   final titleChanged = currentTitle.trim() != originalTitle.trim();
-  final summaryChanged = currentSummary.trim() != originalSummary.trim();
   final thumbnailChanged =
       currentThumbnailUrl.trim() != originalThumbnailUrl.trim();
 
@@ -87,7 +80,6 @@ PostMetadataChangeResult detectPostMetadataChanges({
 
   return PostMetadataChangeResult(
     titleChanged: titleChanged,
-    summaryChanged: summaryChanged,
     thumbnailChanged: thumbnailChanged,
     categoryChanged: categoryChanged,
     accessLevelChanged: accessLevelChanged,
