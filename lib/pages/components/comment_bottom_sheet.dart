@@ -15,6 +15,7 @@ import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/image/media_picker_screen.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:doppy/data/services/upload_service.dart';
+import 'package:doppy/utils/mention_parser.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -80,6 +81,12 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
   static const double _kInputSectionEstimatedHeight = 88.0;
   bool _isLoadingMore = false; // 🎯 로드 모어 로딩 중 표시 여부
   bool _pendingNewCommentCheck = false; // ✅ 새 댓글 후처리(postFrame) 프레임당 1회 보장
+  bool _isMentioning = false; // 🎯 멘션 오버레이 표시 여부
+  // ✅ 오버레이 "선택 기반" 멘션은 파싱 없이 그대로 전송하기 위한 버퍼
+  final Set<String> _explicitMentionedUsernames = <String>{};
+  // ✅ 이미지 댓글(업로드 후 전송)용: tempCommentId -> explicit mentions 스냅샷
+  final Map<String, Set<String>> _explicitMentionsByTempId =
+      <String, Set<String>>{};
 
   // 🎯 성능 최적화: 타겟 댓글 캐싱
   final Map<String, Comment?> _targetCommentCache = {};
@@ -390,6 +397,15 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
       _selectedImageFile = null; // 🎯 이미지 파일 초기화
     });
 
+    // ✅ 이번 전송에서 "선택 기반" 멘션만 추려서 스냅샷
+    // - 텍스트에 실제로 존재하는 것만 보냄(스테일 방지)
+    final explicitMentionsForSend =
+        _explicitMentionedUsernames
+            .where((u) => MentionParser.isMentioned(text, u))
+            .toSet();
+    // 다음 입력을 위해 즉시 비움
+    _explicitMentionedUsernames.clear();
+
     // 🎯 이미지가 있으면 서버 요청 없이 로컬 이미지로만 표시 (낙관적 업데이트)
     final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
 
@@ -413,6 +429,11 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
         tempId: tempId,
       );
 
+      // ✅ 이미지 업로드 후 전송 단계에서 사용할 explicit mentions 스냅샷 저장
+      if (explicitMentionsForSend.isNotEmpty) {
+        _explicitMentionsByTempId[tempId] = explicitMentionsForSend;
+      }
+
       // 🎯 백그라운드에서 이미지 업로드 진행
       _uploadImageInBackground(
         imageFile,
@@ -431,6 +452,10 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
         imageUrl: null, // 🎯 단일 이미지 파라미터 사용
         localImagePath: null, // 🎯 단일 이미지 파라미터 사용
         visibleToUsername: finalVisibleToUsername,
+        explicitMentionedUsernames:
+            explicitMentionsForSend.isNotEmpty
+                ? explicitMentionsForSend.toList()
+                : null,
       );
     }
 
@@ -562,6 +587,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
     await _commentService.addCommentWithImageUrl(
       tempCommentId: tempCommentId,
       imageUrl: actualImageUrl,
+      explicitMentionedUsernames:
+          _explicitMentionsByTempId.remove(tempCommentId)?.toList(),
     );
   }
 
@@ -935,6 +962,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
                   ),
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -992,7 +1020,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                               );
                             }
 
-                            if (comments.isEmpty) {
+                            if (comments.isEmpty && !_isMentioning) {
                               return _buildEmptyState(context);
                             }
 
@@ -1267,9 +1295,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
 
   Widget _buildInputSection() {
     return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.background,
-      ),
+      decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface),
       child: SafeArea(
         top: false, // 상단 SafeArea 비활성화
         bottom: true, // ✅ 항상 하단 SafeArea 유지 (키보드 보정은 바깥 AnimatedPadding에서 처리)
@@ -1277,16 +1303,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
           mainAxisSize: MainAxisSize.min,
           children: [
             if (_replyTarget != null || _editingComment != null) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Divider(
-                  height: 0.3, // 🎯 더 얇게 (0.5 -> 0.3)
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onBackground.withOpacity(0.2),
-                ),
-              ),
-              SizedBox(height: 4),
+              SizedBox(height: 6),
               // 답글/편집 대상 표시 (더 얇게)
               Padding(
                 padding: const EdgeInsets.symmetric(
@@ -1382,6 +1399,18 @@ class _CommentBottomSheetState extends State<CommentBottomSheet>
                   _selectedImageFile = null;
                 });
               },
+              onMentionStateChanged: (isMentioning) {
+                setState(() {
+                  _isMentioning = isMentioning;
+                });
+              },
+              onExplicitMentionsChanged: (usernames) {
+                setState(() {
+                  _explicitMentionedUsernames
+                    ..clear()
+                    ..addAll(usernames);
+                });
+              },
             ),
           ],
         ),
@@ -1413,6 +1442,8 @@ class CommentInputSection extends StatefulWidget {
     this.onImageSelected, // 🎯 이미지 선택 콜백
     this.onImageFileSelected, // 🎯 이미지 파일 선택 콜백
     this.onImageRemoved, // 🎯 이미지 제거 콜백
+    this.onMentionStateChanged, // 🎯 멘션 상태 변경 콜백
+    this.onExplicitMentionsChanged, // ✅ 오버레이 선택 기반 멘션 목록 콜백
   });
 
   final TextEditingController commentController;
@@ -1435,6 +1466,8 @@ class CommentInputSection extends StatefulWidget {
   final void Function(String)? onImageSelected; // 🎯 이미지 선택 콜백
   final void Function(File)? onImageFileSelected; // 🎯 이미지 파일 선택 콜백
   final VoidCallback? onImageRemoved; // 🎯 이미지 제거 콜백
+  final void Function(bool)? onMentionStateChanged; // 🎯 멘션 상태 변경 콜백
+  final void Function(List<String>)? onExplicitMentionsChanged;
 
   @override
   State<CommentInputSection> createState() => _CommentInputSectionState();
@@ -1467,6 +1500,7 @@ class _CommentInputSectionState extends State<CommentInputSection> {
   bool _hasText = false; // 🎯 텍스트 입력 여부 (이미지 아이콘 표시용)
   bool _suppressTextListener = false; // 🎯 programmatic text 변경 시 무한 루프 방지
   _TapInsertedMention? _lastTapInsertedMention; // 🎯 유저 셀 탭으로 삽입된 멘션만 “통삭제” 대상
+  final Set<String> _explicitMentions = <String>{}; // ✅ 선택 기반 멘션만 추적
 
   /// 🎯 비밀 메시지 대상 선택 (블로그 작성자만 선택 가능)
   void _showSecretMessageTargetSelector() {
@@ -1595,6 +1629,8 @@ class _CommentInputSectionState extends State<CommentInputSection> {
           }
           _previousText = newText;
           _lastCursorPosition = newCursor;
+          _explicitMentions.remove(m.username);
+          widget.onExplicitMentionsChanged?.call(_explicitMentions.toList());
           _lastTapInsertedMention = null;
           return;
         }
@@ -1628,6 +1664,8 @@ class _CommentInputSectionState extends State<CommentInputSection> {
         if (spaceIndex != -1 || newlineIndex != -1) {
           if (_mentionQuery != null) {
             setState(() => _mentionQuery = null);
+            // 🎯 멘션 상태 변경 콜백 호출
+            widget.onMentionStateChanged?.call(false);
           }
           return;
         }
@@ -1635,10 +1673,16 @@ class _CommentInputSectionState extends State<CommentInputSection> {
         // ✅ 삭제 중일 때도 “직접 타이핑한 멘션”은 기본 동작(한 글자씩 삭제)을 유지한다.
         // (탭으로 삽입된 멘션 통삭제는 위의 `_lastTapInsertedMention` 로직에서만 처리)
 
-        // @ 뒤에 텍스트가 있으면 멘션 오버레이 표시
+        // @ 뒤에 텍스트가 있으면 멘션 오버레이 표시 (@만 입력해도 표시)
         final mentionQuery = afterAt;
         if (_mentionQuery != mentionQuery) {
           setState(() => _mentionQuery = mentionQuery);
+          // 🎯 멘션 상태 변경 콜백 호출 (@만 입력해도 true)
+          widget.onMentionStateChanged?.call(true);
+        } else if (_mentionQuery == null) {
+          // 🎯 @만 입력했을 때도 멘션 상태 활성화
+          setState(() => _mentionQuery = mentionQuery);
+          widget.onMentionStateChanged?.call(true);
         }
         return;
       }
@@ -1647,6 +1691,8 @@ class _CommentInputSectionState extends State<CommentInputSection> {
     // @가 없거나 멘션 범위를 벗어나면 오버레이 닫기
     if (_mentionQuery != null) {
       setState(() => _mentionQuery = null);
+      // 🎯 멘션 상태 변경 콜백 호출
+      widget.onMentionStateChanged?.call(false);
     }
   }
 
@@ -1662,31 +1708,42 @@ class _CommentInputSectionState extends State<CommentInputSection> {
       // @ 위치 찾기
       final lastAtIndex = beforeCursor.lastIndexOf('@');
       if (lastAtIndex != -1) {
-        // @부터 커서 위치까지를 @username으로 교체
+        // 🎯 @부터 커서 위치까지를 @username으로 교체 (전체 username 보장)
+        // 예: @jang 입력 후 jang.jaebim 선택 시 -> @jang.jaebim 으로 교체
         final beforeAt = text.substring(0, lastAtIndex);
+        // 🎯 멘션 오버레이에서 선택한 전체 username을 그대로 사용 (점 포함)
         final token = '@$username ';
         final newText = '$beforeAt$token$afterCursor';
         final newCursorPosition =
             beforeAt.length + username.length + 2; // @username + 공백
 
+        _suppressTextListener = true;
         widget.commentController.value = TextEditingValue(
           text: newText,
           selection: TextSelection.collapsed(offset: newCursorPosition),
         );
+        _suppressTextListener = false;
 
         // ✅ “탭으로 삽입된 멘션” 범위를 기록 (이 멘션만 백스페이스 1회에 통삭제)
+        // 🎯 전체 username을 token에 포함하여 정확한 범위 기록
         _lastTapInsertedMention = _TapInsertedMention(
-          username: username,
-          token: token,
+          username: username, // 전체 username (jang.jaebim)
+          token: token, // @jang.jaebim
           start: beforeAt.length,
           end: beforeAt.length + token.length,
         );
+
+        // ✅ 선택 기반 멘션 목록에 추가 (전송 시 파싱 없이도 정확히 보낼 수 있음)
+        _explicitMentions.add(username);
+        widget.onExplicitMentionsChanged?.call(_explicitMentions.toList());
       }
     }
 
     setState(() {
       _mentionQuery = null;
     });
+    // 🎯 멘션 상태 변경 콜백 호출
+    widget.onMentionStateChanged?.call(false);
   }
 
   /// 🎯 이미지 선택 (업로드는 나중에) - 여러 이미지 지원
@@ -1844,7 +1901,7 @@ class _CommentInputSectionState extends State<CommentInputSection> {
                   style: TextStyle(
                     color: fgColor,
                     fontSize: 16, // 🎯 폰트 크기 감소 (18 -> 16)
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                   ),
 
                   decoration: InputDecoration(
@@ -1869,11 +1926,11 @@ class _CommentInputSectionState extends State<CommentInputSection> {
                     hintStyle: TextStyle(
                       color: fgColor.withOpacity(0.5),
                       fontSize: 16, // 🎯 폰트 크기 감소 (18 -> 16)
-                      fontWeight: FontWeight.w500,
+                      fontWeight: FontWeight.w600,
                     ),
                     contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 12, // 🎯 수직 패딩 감소 (12 -> 8)
+                      horizontal: 16,
+                      vertical: 16, // 🎯 수직 패딩 감소 (12 -> 8)
                     ),
                     isDense: true,
                   ),

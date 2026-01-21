@@ -35,6 +35,7 @@ class ErrorHandler {
         ),
         backgroundColor: Colors.red.shade600,
         behavior: SnackBarBehavior.floating,
+        dismissDirection: DismissDirection.none, // 스와이프로 닫기 비활성화
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         elevation: 12.0, // 🎯 바텀 네비게이션 바 위에 표시되도록 높은 elevation
         duration: duration,
@@ -54,6 +55,8 @@ class ErrorHandler {
     Duration duration = const Duration(seconds: 2),
     Color? bgColor,
     Color? fgColor,
+    SnackBarAction? action,
+    Widget? leading,
   }) {
     if (!context.mounted) return;
 
@@ -67,8 +70,13 @@ class ErrorHandler {
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: Row(
             children: [
-              Icon(Icons.info_outline, color: _fgColor, size: 20),
-              const SizedBox(width: 12),
+              if (leading != null) ...[
+                leading,
+                const SizedBox(width: 12),
+              ] else ...[
+                Icon(Icons.info_outline, color: _fgColor, size: 20),
+                const SizedBox(width: 12),
+              ],
               Expanded(
                 child: Text(
                   message,
@@ -84,9 +92,12 @@ class ErrorHandler {
         ),
         backgroundColor: _bgColor,
         behavior: SnackBarBehavior.floating,
+        dismissDirection:
+            action != null ? DismissDirection.down : DismissDirection.none,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         elevation: 12.0, // 🎯 바텀 네비게이션 바 위에 표시되도록 높은 elevation
         duration: duration,
+        action: action,
         margin: const EdgeInsets.only(
           bottom: 24, // ← 올릴 높이 (px)
           left: 16,

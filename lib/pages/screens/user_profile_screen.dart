@@ -14,7 +14,6 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/services/friend_service.dart';
-import 'package:doppy/data/services/blog_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
@@ -59,12 +58,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   // 프로필 사진 변경 상태
   bool _isUploadingProfileImage = false;
 
-  // 블로그 조르기 로딩 상태
-  bool _isNudging = false;
-  // 블로그 조르기 버튼 숨김 상태 (5분 후 다시 표시)
-  DateTime? _lastNudgeTime;
-  Timer? _nudgeTimer;
-
   static final CategoryDropDown _categoryDropDown = CategoryDropDown();
   static final Feed _feed = Feed();
   final GlobalKey _categoryButtonKey = GlobalKey();
@@ -74,7 +67,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   // 프로필 편집용 TextEditingController
   final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _descriptionController = TextEditingController();
 
   @override
   void initState() {
@@ -157,7 +149,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         final String? targetUsername =
             isOther ? widget.otherUser?.username : null;
 
-        // 타인 프로필일 때 Feed Provider의 username이 다르면 동기화
+        // 🎯 내 프로필일 때는 로드 건너뛰기 (캐시된 데이터만 사용)
+        if (!isOther) {
+          // 내 프로필일 때는 로드를 건너뜀
+          return;
+        }
+
+        // 타인 프로필일 때만 Feed Provider의 username 동기화 및 로드
         if (isOther && targetUsername != null) {
           final otherProvider = _feedProvider as OtherProfileFeedProvider;
           if (otherProvider.username != targetUsername) {
@@ -168,9 +166,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             );
           } else {
             // username이 같으면 캐시 확인 후 로드
-            final bool hasCachedData =
-                _feedProvider.categories.isNotEmpty ||
-                _feedProvider.posts.isNotEmpty;
+            final bool hasCachedData = _feedProvider.posts.isNotEmpty;
             if (!hasCachedData) {
               await _feedProvider.loadInitial(
                 username: targetUsername,
@@ -178,13 +174,19 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               );
             }
           }
-        } else if (!isOther) {
-          // 내 프로필일 때는 캐시 확인 후 로드
-          final bool hasCachedData =
-              _feedProvider.categories.isNotEmpty ||
-              _feedProvider.posts.isNotEmpty;
-          if (!hasCachedData) {
-            await _feedProvider.loadInitial(username: null, force: false);
+
+          // ✅ loadInitial 후 userInfo를 사용해서 viewedUser 설정
+          final userInfo = _feedProvider.userInfo;
+          if (userInfo != null && mounted) {
+            try {
+              final viewedUser = User.fromJson(userInfo);
+              context.read<UserProvider>().setViewedUser(viewedUser);
+              debugPrint(
+                '[UserProfileScreen] viewedUser 설정 완료: ${viewedUser.username}',
+              );
+            } catch (e) {
+              debugPrint('[UserProfileScreen] viewedUser 설정 실패: $e');
+            }
           }
         }
       } catch (_) {}
@@ -201,8 +203,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           final bool missing =
               me == null ||
               (((me.alias ?? '').isEmpty) &&
-                  ((me.profileImageUrl ?? '').isEmpty) &&
-                  ((me.selfIntroduction ?? '').isEmpty));
+                  ((me.profileImageUrl ?? '').isEmpty));
           if (missing) {
             try {
               await context.read<UserProvider>().fetchMyProfile();
@@ -210,9 +211,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           }
         }
         // 자동 데이터 가져오기 시, 이미 내용이 있으면 추가 요청 보내지 않음
-        final bool hasFeedData =
-            _feedProvider.categories.isNotEmpty ||
-            _feedProvider.posts.isNotEmpty;
+        final bool hasFeedData = _feedProvider.posts.isNotEmpty;
         if (!hasFeedData) {
           await _handleRefresh();
         }
@@ -263,6 +262,22 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         username: isOther ? widget.otherUser!.username : null,
         force: true, // 강제로 새로 로드
       );
+
+      // ✅ loadInitial 후 userInfo를 사용해서 viewedUser 설정 (타인 프로필일 때만)
+      if (isOther && mounted) {
+        final userInfo = _feedProvider.userInfo;
+        if (userInfo != null) {
+          try {
+            final viewedUser = User.fromJson(userInfo);
+            context.read<UserProvider>().setViewedUser(viewedUser);
+            debugPrint(
+              '[UserProfileScreen] viewedUser 설정 완료 (refresh): ${viewedUser.username}',
+            );
+          } catch (e) {
+            debugPrint('[UserProfileScreen] viewedUser 설정 실패 (refresh): $e');
+          }
+        }
+      }
     } catch (e) {
       debugPrint('[UserProfileScreen] Refresh error: $e');
     }
@@ -294,30 +309,41 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
     // 스크롤 리스너 제거
     _scrollController.removeListener(_onScroll);
-
-    if (mounted) {
-      try {
-        _feedProvider.clearInMemory();
-      } catch (_) {}
-    }
-
     _scrollController.dispose();
     _nameController.dispose();
-    _descriptionController.dispose();
     _disconnectHandler?.call();
     if (_profileUploadTask != null && _profileTaskListener != null) {
       _profileUploadTask!.removeListener(_profileTaskListener!);
     }
-    _nudgeTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(UserProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // ✅ otherUser가 변경되면 상태를 강제로 업데이트하여 이전 이미지가 남지 않도록
+    if (oldWidget.otherUser?.username != widget.otherUser?.username) {
+      // 위젯 key가 변경되므로 자동으로 재생성됨
+      if (mounted) {
+        setState(() {});
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final userProvider = context.watch<UserProvider>();
 
-    final bool isOther = !_isOwnProfile; // true: 타인 프로필, false: 내 프로필
+    // ✅ build에서도 currentUser가 로드된 후 다시 확인 (initState에서 currentUser가 null일 수 있음)
     final User? me = userProvider.currentUser;
+    final bool isActuallyMeNow =
+        widget.otherUser != null &&
+        me != null &&
+        widget.otherUser!.username == me.username;
+    final bool isOther =
+        widget.otherUser != null &&
+        !isActuallyMeNow; // true: 타인 프로필, false: 내 프로필
+
     final User? other = widget.otherUser;
     final User? viewedUser = isOther ? userProvider.viewedUser : null;
 
@@ -340,12 +366,28 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               username: targetUsername,
               force: true,
             );
+
+            // ✅ loadInitial 후 userInfo를 사용해서 viewedUser 설정
+            if (mounted) {
+              final userInfo = otherProvider.userInfo;
+              if (userInfo != null) {
+                try {
+                  final viewedUser = User.fromJson(userInfo);
+                  context.read<UserProvider>().setViewedUser(viewedUser);
+                  debugPrint(
+                    '[UserProfileScreen] viewedUser 설정 완료 (build): ${viewedUser.username}',
+                  );
+                } catch (e) {
+                  debugPrint(
+                    '[UserProfileScreen] viewedUser 설정 실패 (build): $e',
+                  );
+                }
+              }
+            }
           }
         });
       }
     }
-
-    final double topPadding = MediaQuery.of(context).padding.top;
 
     // 표시할 이미지 URL과 사용자명 결정
     String _displayImageUrl = '';
@@ -353,526 +395,484 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     String? _displayAlias;
 
     if (isOther) {
+      // ✅ 타인 프로필: viewedUser 우선, 없으면 other 사용
+      // other.profileImageUrl이 null이어도 viewedUser가 로드되면 자동으로 업데이트됨
       final displayUser = viewedUser ?? other;
       if (displayUser != null) {
         _displayImageUrl = displayUser.profileImageUrl ?? '';
         _displayUsername = displayUser.username;
         _displayAlias = displayUser.alias;
       }
-    } else if (!isOther && me != null) {
-      _displayImageUrl = me.profileImageUrl ?? '';
-      _displayUsername = me.username;
-      _displayAlias = me.alias;
+    } else {
+      // ✅ 내 프로필: me 사용
+      if (me != null) {
+        _displayImageUrl = me.profileImageUrl ?? '';
+        _displayUsername = me.username;
+        _displayAlias = me.alias;
+      }
     }
 
     // 이 화면 하위 트리에 BaseFeedProvider 타입으로 현재 피드 프로바이더를 주입
     return ChangeNotifierProvider<BaseFeedProvider>.value(
       value: _feedProvider,
-      child: Scaffold(
-        resizeToAvoidBottomInset: false,
-        backgroundColor: Theme.of(context).colorScheme.background,
-        body: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            // 스크롤 가능한 컨텐츠 (Sliver)
-            Positioned.fill(
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _feed.isDraggingCategory,
-                builder: (context, isDraggingCategory, _) {
-                  return TweenAnimationBuilder<double>(
-                    tween: Tween<double>(
-                      begin:
-                          isDraggingCategory
-                              ? 0.7
-                              : 1.0, // 초기값을 end와 동일하게 설정하여 애니메이션 방지
-                      end: isDraggingCategory ? 0.7 : 1.0,
-                    ),
-                    duration: const Duration(milliseconds: 400),
-                    curve: Curves.easeOutCubic,
-                    builder: (context, scale, child) {
-                      return Transform.scale(
-                        scale: scale,
-                        alignment: Alignment.center,
-                        child: child,
-                      );
-                    },
+      child: PopScope(
+        canPop: !widget.isFromBottomTab, // ✅ IndexedStack을 통해 들어온 경우 pop 막기
+        child: Scaffold(
+          resizeToAvoidBottomInset: false,
+          backgroundColor: Theme.of(context).colorScheme.background,
+          body: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              // 스크롤 가능한 컨텐츠 (Sliver)
+              Positioned.fill(
+                child: CustomRefreshIndicator(
+                  top: 80,
+                  onRefresh: _handleRefresh,
+                  onPullProgress: (progress) {
+                    setState(() {
+                      _pullProgress = progress;
+                    });
+                  },
+                  child: RawScrollbar(
+                    controller: _scrollController,
+                    thumbVisibility: false, // 🎯 스크롤할 때만 표시
+                    thumbColor: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.15),
+                    thickness: 4,
+                    radius: Radius.circular(2),
+                    child: CustomScrollView(
+                      clipBehavior: Clip.none,
+                      controller: _scrollController,
+                      physics:
+                          const AlwaysScrollableScrollPhysics(), // 🎯 컨텐츠가 부족해도 스크롤 가능하도록
+                      slivers: [
+                        SliverAppBar(
+                          expandedHeight: 0,
+                          toolbarHeight: 56,
+                          centerTitle: false,
 
-                    child: CustomRefreshIndicator(
-                      top: 80,
-                      onRefresh: _handleRefresh,
-                      onPullProgress: (progress) {
-                        setState(() {
-                          _pullProgress = progress;
-                        });
-                      },
-                      child: RawScrollbar(
-                        controller: _scrollController,
-                        thumbVisibility: false, // 🎯 스크롤할 때만 표시
-                        thumbColor: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.15),
-                        thickness: 4,
-                        radius: Radius.circular(2),
-                        child: CustomScrollView(
-                          clipBehavior: Clip.none,
-                          controller: _scrollController,
-                          slivers: [
-                            SliverAppBar(
-                              expandedHeight: topPadding + 30,
-                              toolbarHeight: 50,
-                              backgroundColor: Colors.transparent,
-                              automaticallyImplyLeading: false,
-                              elevation: 0,
-                              title: Opacity(
-                                opacity: 1.0 - _pullProgress,
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.start,
-                                  children: [
-                                    // 바텀 탭에서 직접 온 경우가 아닐 때만 뒤로가기 버튼 표시
-                                    if (!widget.isFromBottomTab)
-                                      GestureDetector(
-                                        child: Padding(
-                                          padding: const EdgeInsets.only(
-                                            top: 1,
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                Icons
-                                                    .arrow_back_ios_new_rounded,
-                                                size: 24,
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurface
-                                                    .withOpacity(0.75),
-                                              ),
-                                              SizedBox(width: 14),
-                                            ],
-                                          ),
-                                        ),
-
-                                        onTap:
-                                            () => Navigator.of(context).pop(),
+                          leading:
+                              widget.isFromBottomTab
+                                  ? null // ✅ IndexedStack을 통해 들어온 경우 뒤로가기 버튼 숨김
+                                  : Opacity(
+                                    opacity: 1.0 - _pullProgress,
+                                    child: Container(
+                                      margin: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(12),
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.background,
                                       ),
-                                  ],
-                                ),
-                              ),
-
-                              actions: [
-                                Opacity(
-                                  opacity: 1.0 - _pullProgress,
-                                  child: Row(
-                                    children: [
-                                      // 🎯 보낸 요청 아이콘 (내 프로필일 때만 표시)
-                                      if (_isOwnProfile)
-                                        Consumer<FriendProvider>(
-                                          builder: (
-                                            context,
-                                            friendProvider,
-                                            _,
-                                          ) {
-                                            final receivedCount =
-                                                friendProvider
-                                                    .receivedRequests
-                                                    .length;
-                                            return Stack(
-                                              clipBehavior: Clip.none,
-                                              children: [
-                                                if (receivedCount > 0)
-                                                  Positioned(
-                                                    right: 7,
-                                                    top: 9,
-                                                    child: Container(
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                            4,
-                                                          ),
-                                                      decoration: BoxDecoration(
-                                                        color:
-                                                            Theme.of(
-                                                              context,
-                                                            ).colorScheme.error,
-                                                        shape: BoxShape.circle,
-                                                      ),
-                                                      constraints:
-                                                          const BoxConstraints(
-                                                            minWidth: 16,
-                                                            minHeight: 16,
-                                                          ),
-                                                      child: Text(
-                                                        receivedCount > 99
-                                                            ? '99+'
-                                                            : '$receivedCount',
-                                                        style: const TextStyle(
-                                                          color: Colors.white,
-                                                          fontSize: 10,
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                        ),
-                                                        textAlign:
-                                                            TextAlign.center,
-                                                      ),
-                                                    ),
-                                                  ),
-                                              ],
-                                            );
-                                          },
-                                        ),
-                                      if (_isOwnProfile) ...[
-                                        SizedBox(width: 10),
-                                        GestureDetector(
-                                          child: SvgPicture.asset(
-                                            'assets/icons/edit.svg',
-                                            width: 25,
-                                            height: 25,
-                                            colorFilter: ColorFilter.mode(
-                                              Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface
-                                                  .withOpacity(0.85),
-                                              BlendMode.srcIn,
-                                            ),
-                                          ),
-                                          onTap: () {
-                                            me != null
-                                                ? showProfileInfoEditBottomSheet(
-                                                  me,
-                                                )
-                                                : null;
-                                          },
-                                        ),
-                                        SizedBox(width: 18),
-                                        // 설정 버튼
-                                        GestureDetector(
-                                          child: SvgPicture.asset(
-                                            'assets/icons/menu.svg',
-                                            width: 23,
-                                            height: 23,
-                                            colorFilter: ColorFilter.mode(
-                                              Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface
-                                                  .withOpacity(0.85),
-                                              BlendMode.srcIn,
-                                            ),
-                                          ),
-                                          onTap: () {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder: (_) => SettingScreen(),
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                        SizedBox(width: 15),
-                                      ] else ...[
-                                        // 🎯 타인 프로필일 때 메뉴 버튼 (action 바텀시트 열기)
-                                        SizedBox(width: 8),
-                                        GestureDetector(
-                                          child: SvgPicture.asset(
-                                            'assets/icons/menu.svg',
-                                            width: 23,
-                                            height: 23,
-                                            colorFilter: ColorFilter.mode(
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface,
-                                              BlendMode.srcIn,
-                                            ),
-                                          ),
-                                          onTap: () {
-                                            if (other != null) {
-                                              ProfileActionBottomSheet.show(
-                                                context,
-                                                username: other.username,
-                                                alias: other.alias,
-                                                profileImageUrl:
-                                                    other.profileImageUrl,
-                                                onBlockSuccess: () {
-                                                  // 🎯 차단 성공 시 프로필 페이지 닫기
-                                                  if (mounted) {
-                                                    Navigator.of(context).pop();
-                                                  }
-                                                },
-                                                hideViewProfile: true,
-                                              );
-                                            }
-                                          },
-                                        ),
-                                        SizedBox(width: 15),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                            SliverToBoxAdapter(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  // 원형 아바타 (링크 아래에 위치)
-                                  // 🎯 Consumer로 UploadService 감시하여 프로필 이미지 업로드 상태 자동 감지
-                                  Consumer<UploadService>(
-                                    builder: (context, uploadService, _) {
-                                      // 프로필 이미지 업로드 중인 태스크 확인
-                                      final profileUploadTasks =
-                                          uploadService.tasks
-                                              .where(
-                                                (task) =>
-                                                    task.kind ==
-                                                        UploadKind.profile &&
-                                                    (task.state ==
-                                                            UploadState
-                                                                .pending ||
-                                                        task.state ==
-                                                            UploadState
-                                                                .uploading),
-                                              )
-                                              .toList();
-                                      final isUploading =
-                                          profileUploadTasks.isNotEmpty ||
-                                          _isUploadingProfileImage;
-
-                                      // ✅ Hero는 Transform/Progress/Shimmer 등 "동적 요소"와 분리된
-                                      //    정적 아바타만 사용해야 비행 시작 깜빡임/튐이 줄어듭니다.
-                                      final heroAvatar = StaticProfileAvatar(
-                                        imageUrl: _displayImageUrl,
-                                        username: _displayUsername,
-                                        size: 180,
-                                        borderWidth: isUploading ? 0 : 2,
-                                        borderColor: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withOpacity(0.1),
-                                      );
-
-                                      // Hero 애니메이션 적용
-                                      return Stack(
-                                        alignment: Alignment.center,
-                                        clipBehavior: Clip.none,
-                                        children: [
-                                          Hero(
-                                            tag:
-                                                'profile_image_${_displayUsername}',
-                                            createRectTween: (begin, end) {
-                                              // ✅ 직선 경로(나갈 때처럼 자연스럽게)
-                                              return RectTween(
-                                                begin: begin,
-                                                end: end,
-                                              );
-                                            },
-                                            child: Material(
-                                              color: Colors.transparent,
-                                              child: heroAvatar,
-                                            ),
-                                          ),
-                                          // 탭/업로드 인디케이터는 Hero 바깥에서 처리(비행 중 변형 독립)
-                                          if (!isUploading)
-                                            Positioned.fill(
-                                              child: Material(
-                                                color: Colors.transparent,
-                                                child: InkWell(
-                                                  customBorder:
-                                                      const CircleBorder(),
-                                                  onTap:
-                                                      _isOwnProfile
-                                                          ? _changeProfileImage
-                                                          : _viewOtherProfileImage,
-                                                ),
-                                              ),
-                                            ),
-                                          if (isUploading)
-                                            Positioned.fill(
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 3,
-                                                valueColor:
-                                                    AlwaysStoppedAnimation<
-                                                      Color
-                                                    >(
-                                                      Theme.of(
-                                                        context,
-                                                      ).colorScheme.primary,
-                                                    ),
-                                              ),
-                                            ),
-                                          // 🎯 링크 아이콘 (프로필 원형의 우측 하단에 배치)
-                                          if ((isOther &&
-                                                  other?.links != null &&
-                                                  other!.links!.isNotEmpty) ||
-                                              (!isOther &&
-                                                  me?.links != null &&
-                                                  me!.links!.isNotEmpty))
-                                            Positioned(
-                                              right: -5,
-                                              bottom: -5,
-                                              child: GestureDetector(
-                                                onTap: () {
-                                                  final links =
-                                                      isOther
-                                                          ? (other?.links ?? [])
-                                                          : (me?.links ?? []);
-                                                  final linkTitles =
-                                                      isOther
-                                                          ? (other?.linkTitles)
-                                                          : (me?.linkTitles);
-                                                  final linkThumbnails =
-                                                      isOther
-                                                          ? (other
-                                                              ?.linkThumbnails)
-                                                          : (me
-                                                              ?.linkThumbnails);
-                                                  if (links.isNotEmpty) {
-                                                    LinkBottomSheet.show(
-                                                      context,
-                                                      links: links,
-                                                      linkTitles: linkTitles,
-                                                      linkThumbnails:
-                                                          linkThumbnails,
-                                                      otherUser:
-                                                          widget.otherUser,
-                                                    );
-                                                  }
-                                                },
-                                                child: Container(
-                                                  width: 40,
-                                                  height: 40,
-                                                  decoration: BoxDecoration(
-                                                    color:
-                                                        Theme.of(context)
-                                                            .colorScheme
-                                                            .background,
-                                                    shape: BoxShape.circle,
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black
-                                                            .withOpacity(0.1),
-                                                        blurRadius: 4,
-                                                        offset: Offset(0, 2),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  padding: const EdgeInsets.all(
-                                                    8,
-                                                  ),
-                                                  child: SvgPicture.asset(
-                                                    'assets/icons/link.svg',
-                                                    width: 24,
-                                                    height: 24,
-                                                    colorFilter:
-                                                        ColorFilter.mode(
-                                                          Theme.of(context)
-                                                              .colorScheme
-                                                              .onSurface
-                                                              .withOpacity(
-                                                                0.85,
-                                                              ),
-                                                          BlendMode.srcIn,
-                                                        ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      );
-                                    },
-                                  ),
-
-                                  const SizedBox(height: 20),
-                                  GestureDetector(
-                                    onTap: () {
-                                      if (me != null) {
-                                        showProfileInfoEditBottomSheet(me);
-                                      }
-                                    },
-                                    child: Column(
-                                      children: [
-                                        Text(
-                                          _displayAlias ?? _displayUsername,
-                                          style: TextStyle(
-                                            color:
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface,
-                                            fontSize: 26,
-                                            fontWeight: FontWeight.bold,
-                                            height: 1.1,
-                                          ),
-                                        ),
-
-                                        const SizedBox(height: 5),
-                                        Text(
-                                          isOther
-                                              ? ((viewedUser ?? other)
-                                                          ?.selfIntroduction
-                                                          ?.isNotEmpty ==
-                                                      true
-                                                  ? (viewedUser ?? other)!
-                                                      .selfIntroduction!
-                                                  : _displayUsername)
-                                              : (me
-                                                          ?.selfIntroduction
-                                                          ?.isNotEmpty ==
-                                                      true
-                                                  ? me!.selfIntroduction!
-                                                  : ''),
-                                          style: TextStyle(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(4),
+                                        child: IconButton(
+                                          icon: Icon(
+                                            Icons.arrow_back_ios_new_rounded,
+                                            size: 24,
                                             color: Theme.of(context)
                                                 .colorScheme
                                                 .onSurface
-                                                .withOpacity(0.8),
-
-                                            fontSize: 17,
-                                            height: 1.3,
+                                                .withOpacity(0.75),
                                           ),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
+                                          onPressed:
+                                              () => Navigator.of(context).pop(),
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
                                         ),
+                                      ),
+                                    ),
+                                  ),
+                          backgroundColor: Colors.transparent,
+                          automaticallyImplyLeading: false,
+                          elevation: 0,
+                          pinned: false, // ✅ 위로 스크롤하면 사라짐
+                          floating: false, // ✅ 아래로 스크롤하면 나타남
+                          scrolledUnderElevation: 0,
+                          actions: [
+                            SafeArea(
+                              bottom: false,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color:
+                                      Theme.of(context).colorScheme.background,
+                                  borderRadius: BorderRadius.all(
+                                    Radius.circular(12),
+                                  ),
+                                ),
+                                child: Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 16,
+                                  ),
+                                  child: Opacity(
+                                    opacity: 1.0 - _pullProgress,
+                                    child: Row(
+                                      children: [
+                                        // 🎯 보낸 요청 아이콘 (내 프로필일 때만 표시)
+                                        if (_isOwnProfile)
+                                          Consumer<FriendProvider>(
+                                            builder: (
+                                              context,
+                                              friendProvider,
+                                              _,
+                                            ) {
+                                              final receivedCount =
+                                                  friendProvider
+                                                      .receivedRequests
+                                                      .length;
+                                              return Stack(
+                                                clipBehavior: Clip.none,
+                                                children: [
+                                                  if (receivedCount > 0)
+                                                    Positioned(
+                                                      right: 7,
+                                                      top: 9,
+                                                      child: Container(
+                                                        padding:
+                                                            const EdgeInsets.all(
+                                                              4,
+                                                            ),
+                                                        decoration: BoxDecoration(
+                                                          color:
+                                                              Theme.of(context)
+                                                                  .colorScheme
+                                                                  .error,
+                                                          shape:
+                                                              BoxShape.circle,
+                                                        ),
+                                                        constraints:
+                                                            const BoxConstraints(
+                                                              minWidth: 16,
+                                                              minHeight: 16,
+                                                            ),
+                                                        child: Text(
+                                                          receivedCount > 99
+                                                              ? '99+'
+                                                              : '$receivedCount',
+                                                          style:
+                                                              const TextStyle(
+                                                                color:
+                                                                    Colors
+                                                                        .white,
+                                                                fontSize: 10,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                              ),
+                                                          textAlign:
+                                                              TextAlign.center,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                ],
+                                              );
+                                            },
+                                          ),
+                                        if (_isOwnProfile) ...[
+                                          SizedBox(width: 10),
+                                          GestureDetector(
+                                            child: SvgPicture.asset(
+                                              'assets/icons/edit.svg',
+                                              width: 25,
+                                              height: 25,
+                                              colorFilter: ColorFilter.mode(
+                                                Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withOpacity(0.85),
+                                                BlendMode.srcIn,
+                                              ),
+                                            ),
+                                            onTap: () {
+                                              me != null
+                                                  ? showProfileInfoEditBottomSheet(
+                                                    me,
+                                                  )
+                                                  : null;
+                                            },
+                                          ),
+                                          SizedBox(width: 18),
+                                          // 설정 버튼
+                                          GestureDetector(
+                                            child: SvgPicture.asset(
+                                              'assets/icons/menu.svg',
+                                              width: 23,
+                                              height: 23,
+                                              colorFilter: ColorFilter.mode(
+                                                Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withOpacity(0.85),
+                                                BlendMode.srcIn,
+                                              ),
+                                            ),
+                                            onTap: () {
+                                              Navigator.of(context).push(
+                                                MaterialPageRoute(
+                                                  builder:
+                                                      (_) => SettingScreen(),
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                          SizedBox(width: 15),
+                                        ] else ...[
+                                          // 🎯 타인 프로필일 때 메뉴 버튼 (action 바텀시트 열기)
+                                          SizedBox(width: 8),
+                                          GestureDetector(
+                                            child: SvgPicture.asset(
+                                              'assets/icons/menu.svg',
+                                              width: 21,
+                                              height: 21,
+                                              colorFilter: ColorFilter.mode(
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface,
+                                                BlendMode.srcIn,
+                                              ),
+                                            ),
+                                            onTap: () {
+                                              if (other != null) {
+                                                ProfileActionBottomSheet.show(
+                                                  context,
+                                                  username: other.username,
+                                                  alias: other.alias,
+                                                  profileImageUrl:
+                                                      other.profileImageUrl,
+                                                  onBlockSuccess: () {
+                                                    // 🎯 차단 성공 시 프로필 페이지 닫기
+                                                    if (mounted) {
+                                                      Navigator.of(
+                                                        context,
+                                                      ).pop();
+                                                    }
+                                                  },
+                                                  hideViewProfile: true,
+                                                );
+                                              }
+                                            },
+                                          ),
+                                          SizedBox(width: 15),
+                                        ],
                                       ],
                                     ),
                                   ),
-
-                                  // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
-                                  if (isOther) ...[_buildOtherProfileButton()],
-                                  if (_isOwnProfile) ...[
-                                    _buildMyProfileButton(),
-                                  ],
-                                ],
+                                ),
                               ),
-                            ),
-                            // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
-                            _buildFeedModeSwitcher(),
-                            // Feed 내부에 이미 Consumer가 있으므로 중복 제거
-                            _feed.buildFeedContent(
-                              scrollController: _scrollController,
                             ),
                           ],
                         ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
+                        SliverToBoxAdapter(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              SizedBox(height: 20),
+                              // 원형 아바타 (링크 아래에 위치)
+                              // 🎯 Consumer로 UploadService 감시하여 프로필 이미지 업로드 상태 자동 감지
+                              Consumer<UploadService>(
+                                builder: (context, uploadService, _) {
+                                  // 프로필 이미지 업로드 중인 태스크 확인
+                                  final profileUploadTasks =
+                                      uploadService.tasks
+                                          .where(
+                                            (task) =>
+                                                task.kind ==
+                                                    UploadKind.profile &&
+                                                (task.state ==
+                                                        UploadState.pending ||
+                                                    task.state ==
+                                                        UploadState.uploading),
+                                          )
+                                          .toList();
+                                  final isUploading =
+                                      profileUploadTasks.isNotEmpty ||
+                                      _isUploadingProfileImage;
 
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              height: MediaQuery.of(context).padding.top - 10,
-              child: ClipRRect(
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.background.withOpacity(1),
+                                  // ✅ Hero는 Transform/Progress/Shimmer 등 "동적 요소"와 분리된
+                                  //    정적 아바타만 사용해야 비행 시작 깜빡임/튐이 줄어듭니다.
+                                  // ✅ key를 추가하여 otherUser가 변경될 때 위젯을 강제로 재생성
+                                  final heroAvatar = StaticProfileAvatar(
+                                    key: ValueKey(
+                                      'profile_avatar_${_displayUsername}_${_displayImageUrl}',
+                                    ),
+                                    imageUrl: _displayImageUrl,
+                                    username: _displayUsername,
+                                    size: 180,
+                                    borderWidth: isUploading ? 0 : 3,
+                                    borderColor: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.2),
+                                  );
+
+                                  // Hero 애니메이션 적용
+                                  return Stack(
+                                    alignment: Alignment.center,
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Hero(
+                                        tag:
+                                            'profile_image_${_displayUsername}',
+                                        createRectTween: (begin, end) {
+                                          // ✅ 직선 경로(나갈 때처럼 자연스럽게)
+                                          return RectTween(
+                                            begin: begin,
+                                            end: end,
+                                          );
+                                        },
+                                        child: Material(
+                                          color: Colors.transparent,
+                                          child: heroAvatar,
+                                        ),
+                                      ),
+                                      // 탭/업로드 인디케이터는 Hero 바깥에서 처리(비행 중 변형 독립)
+                                      if (!isUploading)
+                                        Positioned.fill(
+                                          child: Material(
+                                            color: Colors.transparent,
+                                            child: InkWell(
+                                              customBorder:
+                                                  const CircleBorder(),
+                                              onTap:
+                                                  _isOwnProfile
+                                                      ? _changeProfileImage
+                                                      : _viewOtherProfileImage,
+                                            ),
+                                          ),
+                                        ),
+                                      if (isUploading)
+                                        Positioned.fill(
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 3,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary,
+                                                ),
+                                          ),
+                                        ),
+                                      // 🎯 링크 아이콘 (프로필 원형의 우측 하단에 배치)
+                                      if ((isOther &&
+                                              other?.links != null &&
+                                              other!.links!.isNotEmpty) ||
+                                          (!isOther &&
+                                              me?.links != null &&
+                                              me!.links!.isNotEmpty))
+                                        Positioned(
+                                          right: 5,
+                                          bottom: 5,
+                                          child: GestureDetector(
+                                            onTap: () {
+                                              final links =
+                                                  isOther
+                                                      ? (other?.links ?? [])
+                                                      : (me?.links ?? []);
+                                              final linkTitles =
+                                                  isOther
+                                                      ? (other?.linkTitles)
+                                                      : (me?.linkTitles);
+                                              final linkThumbnails =
+                                                  isOther
+                                                      ? (other?.linkThumbnails)
+                                                      : (me?.linkThumbnails);
+                                              if (links.isNotEmpty) {
+                                                LinkBottomSheet.show(
+                                                  context,
+                                                  links: links,
+                                                  linkTitles: linkTitles,
+                                                  linkThumbnails:
+                                                      linkThumbnails,
+                                                  otherUser: widget.otherUser,
+                                                );
+                                              }
+                                            },
+                                            child: Container(
+                                              width: 40,
+                                              height: 40,
+                                              decoration: BoxDecoration(
+                                                color:
+                                                    Theme.of(
+                                                      context,
+                                                    ).colorScheme.onSurface,
+                                                shape: BoxShape.circle,
+                                              ),
+                                              padding: const EdgeInsets.all(8),
+                                              child: SvgPicture.asset(
+                                                'assets/icons/link.svg',
+                                                width: 24,
+                                                height: 24,
+                                                colorFilter: ColorFilter.mode(
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.surface,
+                                                  BlendMode.srcIn,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  );
+                                },
+                              ),
+
+                              const SizedBox(height: 20),
+                              GestureDetector(
+                                onTap: () {
+                                  if (me != null) {
+                                    showProfileInfoEditBottomSheet(me);
+                                  }
+                                },
+                                child: Column(
+                                  children: [
+                                    Text(
+                                      _displayAlias ?? _displayUsername,
+                                      style: TextStyle(
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                        fontSize: 26,
+                                        fontWeight: FontWeight.bold,
+                                        height: 1.1,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              // 다른 사용자 프로필일 때만 친구 추가 버튼 표시
+                              if (isOther) ...[_buildOtherProfileButton()],
+                              if (_isOwnProfile) ...[_buildMyProfileButton()],
+                            ],
+                          ),
+                        ),
+                        // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
+                        _buildFeedModeSwitcher(),
+                        // Feed 내부에 이미 Consumer가 있으므로 중복 제거
+                        _feed.buildFeedContent(
+                          scrollController: _scrollController,
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
+              // ✅ 상태바 영역 배경색 (항상 최상단에 표시)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: MediaQuery.of(context).padding.top,
+                child: Container(
+                  color: Theme.of(context).colorScheme.background,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -881,14 +881,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   SliverToBoxAdapter _buildFeedModeSwitcher() {
     return SliverToBoxAdapter(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+        padding: const EdgeInsets.fromLTRB(12, 20, 12, 10),
         child: ValueListenableBuilder<FeedDisplayMode>(
           valueListenable: FeedDisplayModeManager(),
           builder: (context, displayMode, _) {
             return Row(
               mainAxisAlignment: MainAxisAlignment.start,
               children: [
-                _buildCategoryButton(Icons.grid_view_rounded),
+                _isOwnProfile
+                    ? _buildCategoryButton(Icons.grid_view_rounded)
+                    : SizedBox.shrink(),
                 Spacer(),
                 // 그리드 아이콘 → 이미지 전용 모드
                 _buildModeButton(
@@ -945,7 +947,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             context.tr(provider.selectedLabel),
                             style: TextStyle(
                               fontSize: 16,
-                              fontWeight: FontWeight.w300,
+                              fontWeight: FontWeight.w500,
                               color: Theme.of(
                                 context,
                               ).colorScheme.onSurface.withOpacity(1),
@@ -958,7 +960,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             context.tr(provider.selectedLabel),
                             style: TextStyle(
                               fontSize: 16,
-                              fontWeight: FontWeight.w300,
+                              fontWeight: FontWeight.w500,
                               color: Theme.of(
                                 context,
                               ).colorScheme.onSurface.withOpacity(1),
@@ -1048,7 +1050,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   context,
                   username: me.username,
                   profileImageUrl: me.profileImageUrl,
-                  bio: me.selfIntroduction,
+                  bio: null,
                   friendCount: me.friendCount ?? 0,
                 );
               },
@@ -1060,29 +1062,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   // 그룹 기능 제거로 인해 _navigateToManageGroup() 메서드 제거
-
-  /// 조르기 버튼이 표시되어야 하는지 확인 (5분 경과 여부)
-  bool _shouldShowNudgeButton() {
-    if (_lastNudgeTime == null) return true;
-    final now = DateTime.now();
-    final difference = now.difference(_lastNudgeTime!);
-    return difference.inMinutes >= 5;
-  }
-
-  /// 조르기 버튼을 누른 후 타이머 시작
-  void _startNudgeTimer() {
-    _nudgeTimer?.cancel();
-    _lastNudgeTime = DateTime.now();
-
-    // 5분 후 버튼 다시 표시
-    _nudgeTimer = Timer(const Duration(minutes: 5), () {
-      if (mounted) {
-        setState(() {
-          _lastNudgeTime = null;
-        });
-      }
-    });
-  }
 
   Widget _buildOtherProfileButton() {
     return Consumer2<FriendProvider, BaseFeedProvider>(
@@ -1216,10 +1195,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeOut,
               builder: (context, opacity, child) {
-                // 🎯 친구인 경우 두 개의 버튼을 나란히 표시
+                // 🎯 친구인 경우 버튼과 공유 버튼을 나란히 표시
                 final isFriend =
                     friendProvider.friendStatus == FriendRequestStatus.accepted;
-                final showNudgeButton = _shouldShowNudgeButton();
 
                 return Padding(
                   padding: const EdgeInsets.only(
@@ -1234,8 +1212,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         isFriend
                             ? Row(
                               children: [
+                                SizedBox(width: 10),
                                 Expanded(
-                                  flex: showNudgeButton ? 1 : 2,
                                   child: _buildFilledButton(
                                     text: buttonText,
                                     onTap: buttonAction,
@@ -1244,70 +1222,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                     isBlocked: false,
                                   ),
                                 ),
-                                if (showNudgeButton)
-                                  Expanded(
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(left: 6),
-                                      child: _buildFilledButton(
-                                        text: l10n.t('request_blog'),
-                                        onTap: () async {
-                                          // 🎯 블로그 조르기 API 호출
-                                          if (widget.otherUser == null ||
-                                              _isNudging)
-                                            return;
-
-                                          setState(() {
-                                            _isNudging = true;
-                                          });
-
-                                          try {
-                                            final blogService = BlogService();
-                                            await blogService.nudge(
-                                              widget.otherUser!.username,
-                                            );
-
-                                            if (mounted) {
-                                              // 스낵바로 성공 메시지 표시
-                                              ErrorHandler.showInfo(
-                                                context,
-                                                l10n.t('nudge_sent'),
-                                                fgColor: Colors.white,
-                                                bgColor:
-                                                    Theme.of(
-                                                      context,
-                                                    ).colorScheme.primary,
-                                                duration: const Duration(
-                                                  seconds: 2,
-                                                ),
-                                              );
-                                              // 조르기 버튼 숨기기
-                                              _startNudgeTimer();
-                                              setState(() {
-                                                _isNudging = false;
-                                              });
-                                            }
-                                          } catch (e) {
-                                            if (mounted) {
-                                              ErrorHandler.showError(
-                                                context,
-                                                e.toString().replaceAll(
-                                                  'Exception: ',
-                                                  '',
-                                                ),
-                                              );
-                                              setState(() {
-                                                _isNudging = false;
-                                              });
-                                            }
-                                          }
-                                        },
-                                        isLoading: _isNudging,
-                                        isFilled: true,
-                                        isBlocked: false,
-                                      ),
-                                    ),
-                                  ),
-                                // 🎯 공유 버튼은 항상 표시 (조르기 버튼이 있어도)
+                                // 🎯 공유 버튼은 항상 표시
                                 Padding(
                                   padding: const EdgeInsets.only(left: 6),
                                   child: GestureDetector(
@@ -1318,7 +1233,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                         username: widget.otherUser!.username,
                                         profileImageUrl:
                                             widget.otherUser!.profileImageUrl,
-                                        bio: widget.otherUser!.selfIntroduction,
+                                        bio: null,
                                         friendCount:
                                             widget.otherUser!.friendCount ?? 0,
                                       );
@@ -1378,20 +1293,20 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                         username: widget.otherUser!.username,
                                         profileImageUrl:
                                             widget.otherUser!.profileImageUrl,
-                                        bio: widget.otherUser!.selfIntroduction,
+                                        bio: null,
                                         friendCount:
                                             widget.otherUser!.friendCount ?? 0,
                                       );
                                     },
                                     child: Container(
                                       width: 40,
-                                      height: 44,
+                                      height: 50,
                                       decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(8),
+                                        borderRadius: BorderRadius.circular(12),
                                         color: Theme.of(context)
                                             .colorScheme
                                             .onSurface
-                                            .withOpacity(0.1),
+                                            .withOpacity(0.06),
                                       ),
                                       child: Icon(
                                         Icons.ios_share,
@@ -1426,15 +1341,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     return GestureDetector(
       onTap: isLoading ? null : onTap,
       child: Container(
-        height: 44, // 고정 높이로 UI 흔들림 방지
+        height: 50, // 고정 높이로 UI 흔들림 방지
         padding: const EdgeInsets.symmetric(horizontal: 24),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(16),
           color:
               isBlocked
                   ? Colors.transparent
                   : isFilled
-                  ? Theme.of(context).colorScheme.primary.withOpacity(1)
+                  ? Theme.of(context).colorScheme.onSurface.withOpacity(1)
                   : Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
         ),
         child: Center(
@@ -1447,7 +1362,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                       strokeWidth: 2.5,
                       valueColor: AlwaysStoppedAnimation<Color>(
                         isFilled
-                            ? Colors.white
+                            ? Theme.of(context).colorScheme.surface
                             : Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
@@ -1456,12 +1371,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     text,
                     style: TextStyle(
                       color:
-                          isBlocked
-                              ? Theme.of(context)
-                                  .colorScheme
-                                  .error // 🎯 차단된 경우 빨간색 텍스트
-                              : isFilled
-                              ? Colors.white
+                          isFilled
+                              ? Theme.of(context).colorScheme.surface
                               : Theme.of(
                                 context,
                               ).colorScheme.onSurface.withOpacity(0.5),
@@ -1543,7 +1454,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   context,
                   username: user.username,
                   profileImageUrl: user.profileImageUrl,
-                  bio: user.selfIntroduction,
+                  bio: null,
                   friendCount: user.friendCount ?? 0,
                 );
               },
@@ -1598,7 +1509,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               username: viewedUser.username,
               isOwnProfile: false, // 읽기 모드
               alias: viewedUser.alias,
-              selfIntroduction: viewedUser.selfIntroduction,
               links: viewedUser.links,
               linkTitles: viewedUser.linkTitles,
               linkThumbnails: viewedUser.linkThumbnails,
@@ -1607,7 +1517,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   context,
                   username: viewedUser.username,
                   profileImageUrl: viewedUser.profileImageUrl,
-                  bio: viewedUser.selfIntroduction,
+                  bio: null,
                   friendCount: viewedUser.friendCount ?? 0,
                 );
               },
@@ -1650,11 +1560,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   void showProfileInfoEditBottomSheet(User me) {
     // 컨트롤러에 현재 값 설정
     _nameController.text = me.alias ?? '';
-    _descriptionController.text = me.selfIntroduction ?? '';
 
-    debugPrint(
-      '[UserProfile] Bottom sheet 열기 - 이름: "${_nameController.text}", 소개: "${_descriptionController.text}"',
-    );
+    debugPrint('[UserProfile] Bottom sheet 열기 - 이름: "${_nameController.text}"');
 
     showModalBottomSheet(
       context: context,
@@ -1664,12 +1571,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         return ProfileInfoEditBottomSheet(
           user: me,
           nameController: _nameController,
-          descriptionController: _descriptionController,
           onClearProfileImage: _clearProfileImage,
           onImagesSelected: (files) => _handleImageSelected(files.first),
           onSave: ({
             required String alias,
-            required String description,
             List<String>? links, // 🎯 프로필 링크 목록
             Map<String, String>? linkTitles, // 🎯 링크 타이틀 (URL -> 타이틀)
             Map<String, String>?
@@ -1680,26 +1585,20 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
             final success = await userProvider.updateProfileInfo(
               alias: alias,
-              selfIntroduction: description,
               links: links,
               linkTitles: linkTitles,
               linkThumbnails: linkThumbnails,
             );
 
-            if (!success && mounted) {
-              // 실패 메시지 표시
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    '프로필 저장에 실패했습니다',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onError,
-                    ),
-                  ),
-                  backgroundColor: Theme.of(context).colorScheme.error,
-                  duration: Duration(seconds: 2),
-                ),
-              );
+            if (mounted) {
+              final l10n = AppLocalizations.of(context);
+              if (success) {
+                // 성공 메시지 표시
+                ErrorHandler.showInfo(context, l10n.t('profile_updated'));
+              } else {
+                // 실패 메시지 표시
+                ErrorHandler.showError(context, '프로필 저장에 실패했습니다');
+              }
             }
           },
         );

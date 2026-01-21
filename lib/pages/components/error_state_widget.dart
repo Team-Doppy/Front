@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/utils/network_utils.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'custom_refresh_indicator.dart';
 
 /// 에러 상태를 표시하는 공통 위젯
@@ -101,7 +102,7 @@ class _ErrorStateWidgetState extends State<ErrorStateWidget> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        "오프라인 상태",
+                        AppLocalizations.of(context).t('offline_status'),
                         style: TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.w700,
@@ -116,7 +117,9 @@ class _ErrorStateWidgetState extends State<ErrorStateWidget> {
                         children: [
                           const SizedBox(height: 4),
                           Text(
-                            "네트워크 연결을 확인해주세요",
+                            AppLocalizations.of(
+                              context,
+                            ).t('check_network_connection'),
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w500,
@@ -180,7 +183,7 @@ class ErrorStateSliver extends StatelessWidget {
             children: [
               SizedBox(height: 100),
               Text(
-                '오프라인 상태',
+                AppLocalizations.of(context).t('offline_status'),
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
@@ -190,7 +193,7 @@ class ErrorStateSliver extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                '네트워크 연결을 확인해주세요',
+                AppLocalizations.of(context).t('check_network_connection'),
                 style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w500,

@@ -3,6 +3,7 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import '../data/models/user_model.dart';
 import '../data/services/user_service.dart';
 import '../data/services/auth_service.dart';
@@ -13,26 +14,34 @@ class UserProvider with ChangeNotifier {
   // 내 프로필 정보
   User? _currentUser;
   int? _friendCount;
-  String? _selfIntroduction;
 
   // 다른 사용자 프로필 정보
   User? _viewedUser;
-  String? _viewedUserSelfIntroduction;
-
   bool _isLoading = false;
 
   // 🎯 설정 정보 (알림, 마케팅)
   bool? _notificationEnabled;
   bool? _marketingEnabled;
 
+  // ✅ 가입일 (ProfileInfoBundle의 createdAt)
+  DateTime? _createdAt;
+
   User? get currentUser => _currentUser;
   int? get friendCount => _friendCount;
-  String? get selfIntroduction => _selfIntroduction;
   User? get viewedUser => _viewedUser;
-  String? get viewedUserSelfIntroduction => _viewedUserSelfIntroduction;
   bool get isLoading => _isLoading;
   bool? get notificationEnabled => _notificationEnabled;
   bool? get marketingEnabled => _marketingEnabled;
+  DateTime? get createdAt => _createdAt;
+  bool? get onboardingCompleted => _currentUser?.onboardingCompleted;
+
+  /// 서버 플래그 기반 온보딩 완료 상태를 로컬 메모리/캐시에 반영
+  /// (분기 판단은 Splash에서 서버 번들 로드 이후 수행됨)
+  void setOnboardingCompleted(bool value) {
+    final current = _currentUser;
+    if (current == null) return;
+    updateCurrentUser(current.copyWith(onboardingCompleted: value));
+  }
 
   /// 다른 사용자 정보 설정
   void setViewedUser(User user) {
@@ -50,7 +59,6 @@ class UserProvider with ChangeNotifier {
   /// 프로필 정보 업데이트 (API 호출 + 로컬 상태 업데이트)
   Future<bool> updateProfileInfo({
     required String alias,
-    required String selfIntroduction,
     List<String>? links,
     Map<String, String>? linkTitles,
     Map<String, String>? linkThumbnails,
@@ -59,7 +67,6 @@ class UserProvider with ChangeNotifier {
       // API 호출
       await _userService.updateProfileInfo(
         alias: alias,
-        selfIntroduction: selfIntroduction,
         links: links,
         linkTitles: linkTitles,
         linkThumbnails: linkThumbnails,
@@ -70,15 +77,11 @@ class UserProvider with ChangeNotifier {
         // 🎯 빈 배열([])을 전달하면 링크 삭제, null이면 기존 유지
         final updatedUser = _currentUser!.copyWith(
           alias: alias,
-          selfIntroduction: selfIntroduction,
           links: links, // null이면 기존 유지, 빈 배열이면 삭제됨
           linkTitles: linkTitles,
           linkThumbnails: linkThumbnails,
         );
         _currentUser = updatedUser;
-
-        // 별도 selfIntroduction 필드도 업데이트
-        _selfIntroduction = selfIntroduction;
 
         notifyListeners();
       }
@@ -86,19 +89,95 @@ class UserProvider with ChangeNotifier {
       return true;
     } catch (e) {
       debugPrint('[UserProvider] updateProfileInfo failed: $e');
+      debugPrint(
+        '[UserProvider] updateProfileInfo 스택 트레이스: ${StackTrace.current}',
+      );
       return false;
     }
   }
 
-  /// 내 프로필 정보 로드 (단일 엔드포인트 게이트)
+  /// 유저 + 세팅 번들 로드 (GET /api/users/bundle)
+  Future<void> fetchUserBundle({bool throwOnAuthError = false}) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final bundle = await _userService.getUserBundle();
+
+      // User 정보 파싱
+      final userData = bundle;
+      final me = User.fromJson(userData);
+      _currentUser = me;
+      await _persistCurrentUser();
+
+      // 설정 정보 파싱
+      _notificationEnabled = userData['notificationEnabled'] as bool? ?? true;
+      _marketingEnabled = userData['marketingConsent'] as bool? ?? false;
+
+      // ✅ createdAt 파싱 (ProfileInfoBundle에서)
+      // 서버에서 UTC ISO 8601 형식으로 내려옴 (예: "2025-11-07T08:32:25.513108")
+      if (userData['createdAt'] != null) {
+        try {
+          final createdAtString = userData['createdAt'] as String;
+          // DateTime.parse는 UTC 문자열을 UTC DateTime으로 파싱
+          final parsed = DateTime.parse(createdAtString);
+          // UTC로 저장 (나중에 toLocal()로 변환하여 사용)
+          _createdAt = parsed.isUtc ? parsed : parsed.toUtc();
+          debugPrint('[UserProvider] createdAt 파싱 성공: $_createdAt (UTC)');
+        } catch (e) {
+          debugPrint('[UserProvider] createdAt 파싱 실패: $e');
+          _createdAt = null;
+        }
+      } else {
+        _createdAt = null;
+      }
+
+      // 🎯 서버에서 유저 정보를 재로드했을 때 AuthService 캐시도 업데이트
+      if (me.username.isNotEmpty) {
+        try {
+          await AuthService().saveUsername(me.username);
+          debugPrint('[UserProvider] ✅ AuthService 캐시 업데이트: ${me.username}');
+        } catch (e) {
+          debugPrint('[UserProvider] ⚠️ AuthService 캐시 업데이트 실패: $e');
+        }
+      }
+
+      debugPrint(
+        '[UserProvider] 유저 번들 로드 완료: notification=$_notificationEnabled, marketing=$_marketingEnabled',
+      );
+    } catch (e) {
+      debugPrint('[UserProvider] 유저 번들 로드 실패: $e');
+      // 실패 시 기본값 사용
+      _notificationEnabled = true;
+      _marketingEnabled = false;
+
+      // ✅ 부트스트랩에서는 인증 실패를 삼키지 말고 위로 올려서 로그인으로 보내야 한다.
+      if (throwOnAuthError) {
+        final s = e.toString().toLowerCase();
+        final isAuthError =
+            (e is DioException &&
+                (e.response?.statusCode == 401 ||
+                    e.response?.statusCode == 403)) ||
+            s.contains('401') ||
+            s.contains('403') ||
+            s.contains('unauthorized') ||
+            s.contains('인증이 필요');
+        if (isAuthError) {
+          rethrow;
+        }
+      }
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 내 프로필 정보 로드 (단일 엔드포인트 게이트) - 하위 호환성 유지
   Future<void> fetchMyProfile() async {
     _isLoading = true;
     notifyListeners();
     try {
       final me = await _userService.getMyProfile();
       _currentUser = me;
-      // 🎯 User 모델에 이미 selfIntroduction이 포함되어 있으므로 별도 API 호출 불필요
-      _selfIntroduction = me.selfIntroduction;
       await _persistCurrentUser();
 
       // 🎯 서버에서 유저 정보를 재로드했을 때 AuthService 캐시도 업데이트
@@ -129,7 +208,6 @@ class UserProvider with ChangeNotifier {
           role: u.role,
           alias: u.alias,
           profileImageUrl: imageUrl,
-          selfIntroduction: u.selfIntroduction,
           friendCount: u.friendCount,
         );
       }
@@ -142,7 +220,6 @@ class UserProvider with ChangeNotifier {
           role: v.role,
           alias: v.alias,
           profileImageUrl: imageUrl,
-          selfIntroduction: v.selfIntroduction,
           friendCount: v.friendCount,
         );
       }
@@ -168,7 +245,6 @@ class UserProvider with ChangeNotifier {
           role: u.role,
           alias: u.alias,
           profileImageUrl: '',
-          selfIntroduction: u.selfIntroduction,
           friendCount: u.friendCount,
         );
       }
@@ -181,7 +257,6 @@ class UserProvider with ChangeNotifier {
           role: v.role,
           alias: v.alias,
           profileImageUrl: '',
-          selfIntroduction: v.selfIntroduction,
           friendCount: v.friendCount,
         );
       }
@@ -199,6 +274,8 @@ class UserProvider with ChangeNotifier {
 
   /// 🎯 설정 정보 로드 (알림, 마케팅)
   Future<void> loadSettings() async {
+    // TODO: 알림 데이터 호출 주석처리
+    /*
     try {
       final settings = await _userService.getSettings();
       _notificationEnabled = settings['notificationEnabled'] ?? true;
@@ -212,8 +289,12 @@ class UserProvider with ChangeNotifier {
       // 실패 시 기본값 사용
       _notificationEnabled = true;
       _marketingEnabled = false;
-      notifyListeners();
     }
+    */
+    // 기본값 사용
+    _notificationEnabled = true;
+    _marketingEnabled = false;
+    notifyListeners();
   }
 
   /// 🎯 알림 설정 업데이트
@@ -232,12 +313,11 @@ class UserProvider with ChangeNotifier {
   void logout() {
     _currentUser = null;
     _friendCount = null;
-    _selfIntroduction = null;
     _viewedUser = null;
-    _viewedUserSelfIntroduction = null;
     _isLoading = false;
     _notificationEnabled = null;
     _marketingEnabled = null;
+    _createdAt = null;
     _clearPersistedUser();
     notifyListeners();
     debugPrint('[UserProvider] 로그아웃 - 사용자 데이터 초기화 완료');
@@ -248,7 +328,6 @@ class UserProvider with ChangeNotifier {
   static const _kUsername = 'user_username';
   static const _kAlias = 'user_alias';
   static const _kProfileImageUrl = 'user_profileImageUrl';
-  static const _kSelfIntroduction = 'user_selfIntroduction';
   static const _kLinks = 'user_links'; // 🎯 프로필 링크 목록
   static const _kLinkTitles = 'user_linkTitles'; // 🎯 링크 타이틀 맵
   static const _kLinkThumbnails = 'user_linkThumbnails'; // 🎯 링크 썸네일 맵
@@ -262,7 +341,6 @@ class UserProvider with ChangeNotifier {
       await prefs.setString(_kUsername, u.username);
       await prefs.setString(_kAlias, u.alias ?? '');
       await prefs.setString(_kProfileImageUrl, u.profileImageUrl ?? '');
-      await prefs.setString(_kSelfIntroduction, u.selfIntroduction ?? '');
       // 🎯 links 저장 (JSON 문자열로 변환)
       if (u.links != null && u.links!.isNotEmpty) {
         await prefs.setStringList(_kLinks, u.links!);
@@ -348,7 +426,6 @@ class UserProvider with ChangeNotifier {
         role: null,
         alias: prefs.getString(_kAlias),
         profileImageUrl: prefs.getString(_kProfileImageUrl),
-        selfIntroduction: prefs.getString(_kSelfIntroduction),
         links: links,
         linkTitles: linkTitles,
         linkThumbnails: linkThumbnails,
@@ -368,7 +445,6 @@ class UserProvider with ChangeNotifier {
       await prefs.remove(_kUsername);
       await prefs.remove(_kAlias);
       await prefs.remove(_kProfileImageUrl);
-      await prefs.remove(_kSelfIntroduction);
       await prefs.remove(_kLinks); // 🎯 links 삭제
       await prefs.remove(_kLinkTitles); // 🎯 linkTitles 삭제
       await prefs.remove(_kLinkThumbnails); // 🎯 linkThumbnails 삭제

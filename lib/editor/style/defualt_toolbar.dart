@@ -17,6 +17,8 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/providers/locale_provider.dart';
 import 'package:doppy/editor/style/text_attributions.dart';
 import 'package:doppy/editor/style/text_styling_service.dart';
+import 'package:doppy/utils/week_utils.dart';
+import 'package:doppy/pages/screens/date_picker_screen.dart';
 
 // TextStylingService는 lib/editor/style/text_styling_service.dart 로 분리됨
 // (font overlay moved to editor/overlay/font_overlay.dart)
@@ -326,6 +328,9 @@ class DefaultToolbar extends StatefulWidget {
   final String? uploadRefId; // ✅ 드로잉 업로드 등 세션 단위 refId
   // ✅ 미디어 추가 시 빈 상태 오버레이를 숨기기 위한 콜백
   final VoidCallback? onMediaAdded;
+  final int? initialYear; // 초기 연도
+  final int? initialYearOfWeek; // 초기 주차 (1-53)
+  final Function(int year, int yearOfWeek)? onDateChanged; // 날짜 변경 콜백
 
   const DefaultToolbar({
     super.key,
@@ -341,6 +346,9 @@ class DefaultToolbar extends StatefulWidget {
     this.keyboardVisibleNotifier, // 🎯 키보드 상태 주입
     this.uploadRefId,
     this.onMediaAdded,
+    this.initialYear,
+    this.initialYearOfWeek,
+    this.onDateChanged,
   });
 
   @override
@@ -771,6 +779,13 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         // 오른쪽 끝으로 밀어내기 위한 공간
         const Expanded(child: SizedBox()),
 
+        // 달력 아이콘 (initialYear와 initialYearOfWeek가 있을 때만 표시, 키보드가 내려와 있을 때만 표시)
+        if (widget.initialYear != null && widget.initialYearOfWeek != null)
+          _CalendarIcon(
+            keyboardVisibleNotifier: widget.keyboardVisibleNotifier,
+            onTap: () => _showDatePickerBottomSheet(),
+          ),
+
         // 키보드 상태에 따라 변하는 부분만 별도 위젯으로 분리
         // 🎯 키보드 상태를 외부에서 주입받아 MediaQuery 직접 읽기 방지
         _KeyboardDependentButtons(
@@ -781,6 +796,43 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
         ),
         // 더 이상 하단에서 펼치지 않음
       ],
+    );
+  }
+
+  void _showDatePickerBottomSheet() {
+    // 키보드 내리기
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    // ✅ yearOfWeek(1~53) → (month, weekOfMonth)로 변환해서 피커 초기값을 정확히 맞춘다.
+    int? initialMonth;
+    int? initialWeek;
+    if (widget.initialYear != null && widget.initialYearOfWeek != null) {
+      final weekStartDate = WeekUtils.getWeekStartDate(
+        widget.initialYear!,
+        widget.initialYearOfWeek!,
+      );
+      initialMonth = weekStartDate.month;
+      initialWeek = WeekUtils.getWeekOfMonth(weekStartDate);
+    }
+
+    showModalBottomSheet(
+      context: context,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.5,
+      ),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder:
+          (context) => DatePickerScreen(
+            initialYear: widget.initialYear,
+            initialMonth: initialMonth,
+            initialWeek: initialWeek,
+            isEditting: true,
+            onDateSelected: (year, yearOfWeek) {
+              // 날짜 선택 시 콜백 호출하여 PostwriteScreen 상태 업데이트
+              widget.onDateChanged?.call(year, yearOfWeek);
+            },
+          ),
     );
   }
 
@@ -1855,6 +1907,109 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
           ),
         );
       },
+    );
+  }
+}
+
+/// 달력 아이콘 (키보드 상태에 따라 표시/숨김)
+class _CalendarIcon extends StatelessWidget {
+  final ValueNotifier<bool>? keyboardVisibleNotifier;
+  final VoidCallback onTap;
+
+  const _CalendarIcon({
+    required this.keyboardVisibleNotifier,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // 키보드 상태에 따라 달력 아이콘 표시/숨김
+    if (keyboardVisibleNotifier != null) {
+      return ValueListenableBuilder<bool>(
+        valueListenable: keyboardVisibleNotifier!,
+        builder: (context, isKeyboardVisible, _) {
+          if (isKeyboardVisible) {
+            return const SizedBox.shrink();
+          }
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(width: 10),
+              _buildMainSvgIcon(
+                context: context,
+                svgPath: 'assets/icons/calendar.svg',
+                size: 24,
+                isActive: false,
+                iconTopPadding: 2,
+                onTap: onTap,
+              ),
+              const SizedBox(width: 10),
+            ],
+          );
+        },
+      );
+    }
+
+    // fallback: keyboardVisibleNotifier가 없으면 MediaQuery 사용
+    final isKeyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    if (isKeyboardVisible) {
+      return const SizedBox.shrink();
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(width: 10),
+        _buildMainSvgIcon(
+          context: context,
+          svgPath: 'assets/icons/calendar.svg',
+          size: 24,
+          isActive: false,
+          iconTopPadding: 2,
+          onTap: onTap,
+        ),
+        const SizedBox(width: 10),
+      ],
+    );
+  }
+
+  Widget _buildMainSvgIcon({
+    required BuildContext context,
+    required String svgPath,
+    required bool isActive,
+    required VoidCallback onTap,
+    double? size,
+    double iconTopPadding = 0,
+  }) {
+    final Color onSurface = Theme.of(context).colorScheme.onSurface;
+    final Color color = onSurface.withOpacity(0.5);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 36,
+          height: 40,
+          alignment: Alignment.center,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 160),
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder:
+                (child, anim) => FadeTransition(opacity: anim, child: child),
+            child: Padding(
+              key: ValueKey(svgPath),
+              padding: EdgeInsets.only(top: iconTopPadding),
+              child: SvgPicture.asset(
+                svgPath,
+                width: size ?? (isActive ? 28 : 25),
+                height: size ?? (isActive ? 28 : 25),
+                colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

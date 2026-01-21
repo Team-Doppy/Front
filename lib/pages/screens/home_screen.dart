@@ -1,13 +1,12 @@
-import 'package:doppy/data/models/post_data.dart';
-import 'package:doppy/pages/components/week_preview_content.dart';
+import 'package:doppy/pages/components/week_long_press_preview.dart';
 import 'package:doppy/pages/components/weekly_contribution_grid.dart';
-import 'package:doppy/pages/components/weekly_contribution_test_data.dart';
+import 'package:doppy/pages/components/home_widgets.dart';
 import 'package:doppy/pages/screens/week_post_list_screen.dart';
-import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/data/services/home_feed_service.dart';
-import 'package:doppy/utils/home_greetings.dart';
+import 'package:doppy/data/models/weekly_contribution_greeting.dart';
+import 'package:doppy/providers/weekly_contribution_provider.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/utils/week_utils.dart';
-import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -25,8 +24,6 @@ class HomeScreen extends StatefulWidget {
 class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final ScrollController _scrollController = ScrollController();
 
-  final HomeFeedService _homeFeedService = HomeFeedService();
-
   // 🎯 포그라운드 복귀 시 새로고침을 위한 GlobalKey
   static final GlobalKey<HomeScreenState> globalKey =
       GlobalKey<HomeScreenState>();
@@ -40,6 +37,9 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Offset _weekPreviewPosition = Offset.zero;
   int? _weekPreviewWeek;
   int? _weekPreviewYear;
+  bool _isDraggingPreview = false; // 🎯 드래그 중인지 여부
+  late AnimationController _previewAnimationController;
+  late Animation<double> _previewScaleAnimation;
 
   bool _isTestMode = false; // 테스트 모드 활성화 여부
   DateTime? _testSignupAt; // 테스트용 가입일
@@ -47,48 +47,166 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   List<WeeklyContributionData>? _testContributions; // 테스트용 기여도 데이터
 
   // 디버그 모드: 샘플 데이터 표시 여부 (빈 데이터 토글용)
+  // ignore: unused_field
   bool _showSampleData = true;
 
   // ✅ "글 쓰자마자" 홈 인삿말 보상 스왑을 위한 로컬 오버라이드
   // - 현재 서버/포스트 로딩이 비어있는 상태에서도, 방금 작성한 주차는 즉시 채워진 것으로 처리
   // - 앱이 종료될 때까지 보상 멘트 유지
   final Map<int, Map<int, int>> _localWeekPostOverrides = {};
-  bool _justFilledThisWeek = false; // 앱 종료까지 유지
+
+  // ✅ "글 쓰자마자" 그리팅(클라이언트 전용) 컨텍스트
+  PostPublishContext? _postPublishContext;
+  int? _lastPublishedYear;
+  int? _lastPublishedWeek;
+
+  PostPublishContext? _effectivePostPublishContext() {
+    final ctx = _postPublishContext;
+    if (ctx == null) return null;
+
+    // ✅ "방금 쓴 보상 멘트"는 현재 연도/현재 주차에서만 보여준다.
+    final now = DateTime.now();
+    final currentYear = WeekUtils.getCurrentYear();
+    final currentWeek = WeekUtils.getWeekNumber(now);
+    final selectedYear = _selectedYear ?? currentYear;
+
+    if (selectedYear != currentYear) return null;
+    if (_lastPublishedYear != currentYear) return null;
+    if (_lastPublishedWeek != currentWeek) return null;
+    return ctx;
+  }
 
   @override
   void initState() {
     super.initState();
 
+    // 미리보기 애니메이션 컨트롤러 초기화
+    _previewAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _previewScaleAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _previewAnimationController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+
     // 초기 연도 설정
     _selectedYear = WeekUtils.getCurrentYear();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final provider = context.read<WeeklyContributionProvider>();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadProfileSafely();
+      // 선택된 연도가 현재 연도가 아니고, 아직 로드되지 않았으면 로드
+      final currentYear = WeekUtils.getCurrentYear();
+      if (_selectedYear != currentYear) {
+        final contributions = provider.getContributions(_selectedYear!);
+        if (contributions == null) {
+          await provider.loadContributions(_selectedYear!);
+        }
+      }
+      // 현재 연도는 splash_screen에서 이미 로드됨
+
+      // 총 포스트 개수가 아직 설정되지 않았으면 다시 시도
+      if (provider.totalPostCount == 0) {
+        final feedProvider = context.read<MyProfileFeedProvider>();
+        final userInfo = feedProvider.userInfo;
+        if (userInfo != null && userInfo.containsKey('totalPosts')) {
+          final totalPosts = userInfo['totalPosts'] as int?;
+          if (totalPosts != null) {
+            provider.setTotalPostCount(totalPosts);
+          } else {
+            // totalPosts가 null이면 BaseFeedProvider의 totalPostCount 사용
+            final totalPostCount = feedProvider.totalPostCount;
+            if (totalPostCount > 0) {
+              provider.setTotalPostCount(totalPostCount);
+            }
+          }
+        }
+      }
+
+      // 포스트 발행 시 콜백 등록
+      provider.onPostRegister = () async {
+        // 서버에서 최신 총 포스트 개수 동기화
+        try {
+          final feedProvider = context.read<MyProfileFeedProvider>();
+          await feedProvider.refresh();
+          final userInfo = feedProvider.userInfo;
+          if (userInfo != null && userInfo.containsKey('totalPosts')) {
+            final totalPosts = userInfo['totalPosts'] as int?;
+            if (totalPosts != null) {
+              provider.setTotalPostCount(totalPosts);
+            } else {
+              // totalPosts가 null이면 BaseFeedProvider의 totalPostCount 사용
+              final totalPostCount = feedProvider.totalPostCount;
+              if (totalPostCount > 0) {
+                provider.setTotalPostCount(totalPostCount);
+              }
+            }
+          }
+        } catch (e) {
+          // 동기화 실패 시 무시
+        }
+      };
     });
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
+    // ✅ 프리뷰 제거를 먼저 수행 (컨트롤러 dispose 전)
     _removeWeekPreview();
+    _previewAnimationController.dispose();
     super.dispose();
   }
 
   void _removeWeekPreview() {
-    _weekPreviewEntry?.remove();
-    _weekPreviewEntry = null;
-    _weekPreviewWeek = null;
-    _weekPreviewYear = null;
+    // ✅ 컨트롤러가 이미 dispose되었거나 mounted가 아니면 바로 제거
+    if (!mounted || !_previewAnimationController.isAnimating) {
+      _weekPreviewEntry?.remove();
+      _weekPreviewEntry = null;
+      _weekPreviewWeek = null;
+      _weekPreviewYear = null;
+      return;
+    }
+
+    try {
+      _previewAnimationController
+          .reverse()
+          .then((_) {
+            if (mounted) {
+              _weekPreviewEntry?.remove();
+              _weekPreviewEntry = null;
+              _weekPreviewWeek = null;
+              _weekPreviewYear = null;
+            }
+          })
+          .catchError((_) {
+            // reverse 실패 시 바로 제거
+            _weekPreviewEntry?.remove();
+            _weekPreviewEntry = null;
+            _weekPreviewWeek = null;
+            _weekPreviewYear = null;
+          });
+    } catch (e) {
+      // 컨트롤러가 이미 dispose된 경우 바로 제거
+      _weekPreviewEntry?.remove();
+      _weekPreviewEntry = null;
+      _weekPreviewWeek = null;
+      _weekPreviewYear = null;
+    }
   }
 
   void _showOrMoveWeekPreview({
     required int year,
     required int weekNumber,
     required Offset globalPosition,
+    bool isDragging = false, // 🎯 드래그 중인지 여부
   }) {
     _weekPreviewYear = year;
     _weekPreviewWeek = weekNumber;
     _weekPreviewPosition = globalPosition;
+    _isDraggingPreview = isDragging;
 
     if (_weekPreviewEntry == null) {
       final overlay = Overlay.of(context, rootOverlay: true);
@@ -104,9 +222,10 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           const cardW = 250.0;
           const cardH = 200.0;
 
-          // 손가락 근처에 표시(약간 위로)
+          // 손가락 근처에 표시(약간 위로, 아래로 보정)
           double left = _weekPreviewPosition.dx - (cardW / 2);
-          double top = _weekPreviewPosition.dy - cardH - 16;
+          double top =
+              _weekPreviewPosition.dy - cardH + 20; // 16 -> 8로 조정하여 아래로 보정
 
           // 화면 밖으로 나가지 않도록 clamp
           left = left.clamp(12.0, size.width - cardW - 12.0);
@@ -128,10 +247,26 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 left: left,
                 top: top,
                 child: IgnorePointer(
-                  child: WeekPreviewContent(
-                    weekNumber: _weekPreviewWeek ?? weekNumber,
-                    year: _weekPreviewYear ?? year,
-                  ),
+                  child:
+                      _isDraggingPreview
+                          ? WeekLongPressPreview(
+                            key: ValueKey(
+                              'preview-${_weekPreviewYear}-${_weekPreviewWeek}',
+                            ),
+                            weekNumber: _weekPreviewWeek ?? weekNumber,
+                            year: _weekPreviewYear ?? year,
+                          )
+                          : ScaleTransition(
+                            scale: _previewScaleAnimation,
+                            alignment: Alignment.center,
+                            child: WeekLongPressPreview(
+                              key: ValueKey(
+                                'preview-${_weekPreviewYear}-${_weekPreviewWeek}',
+                              ), // 🎯 위젯 교체 시 애니메이션 재시작
+                              weekNumber: _weekPreviewWeek ?? weekNumber,
+                              year: _weekPreviewYear ?? year,
+                            ),
+                          ),
                 ),
               ),
             ],
@@ -139,19 +274,84 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         },
       );
       overlay.insert(_weekPreviewEntry!);
+      // 애니메이션 시작 (드래그 중이 아닐 때만)
+      if (!_isDraggingPreview) {
+        _previewAnimationController.reset();
+        _previewAnimationController.forward();
+      } else {
+        // 드래그 중이면 애니메이션을 완료 상태로 설정 (스케일 1.0)
+        _previewAnimationController.value = 1.0;
+      }
     } else {
+      // 기존 오버레이가 있을 때
+      // 🎯 위치는 항상 업데이트해야 하므로 markNeedsBuild 호출
+      // 단, 같은 주차를 드래그하는 경우에는 위젯 교체 없이 위치만 업데이트
+      final isSameWeek =
+          _weekPreviewWeek == weekNumber && _weekPreviewYear == year;
       _weekPreviewEntry?.markNeedsBuild();
+
+      if (!_isDraggingPreview) {
+        // 드래그 중이 아니면 애니메이션 재시작 (위젯이 변경된 경우)
+        if (!isSameWeek) {
+          _previewAnimationController.reset();
+          _previewAnimationController.forward();
+        }
+      } else {
+        // 드래그 중이면 애니메이션을 완료 상태로 유지 (스케일 1.0)
+        _previewAnimationController.value = 1.0;
+      }
     }
   }
 
-  Future<void> _loadProfileSafely() async {
+  /// 외부(발행 화면)에서 호출: 방금 게시된 글을 홈 그리드/인삿말에 즉시 반영
+  void notifyPostPublished({DateTime? createdAt}) async {
+    final when = (createdAt ?? DateTime.now());
+    final year = _selectedYear ?? when.year;
+    final weekNumber = WeekUtils.getWeekNumber(when);
+
+    // ✅ 발행 직전 상태 기반으로 컨텍스트 결정 (로컬 기반)
+    // - 이미 이번 주에 작성한 적 있으면: alreadyWrittenThisWeek
+    // - 이번 주 첫 기록 + 주말이면: weekendClutch
+    // - 이번 주 첫 기록(평일): firstWrittenThisWeek
+    PostPublishContext nextContext = PostPublishContext.firstWrittenThisWeek;
     try {
-      await context.read<UserProvider>().fetchMyProfile();
-      debugPrint('[HomeScreen] 프로필 로드 성공');
-    } catch (e) {
-      debugPrint('[HomeScreen] 프로필 로드 실패: $e');
-      // 프로필 로드 실패해도 계속 진행 (UI에 영향 없음)
-    }
+      final provider = context.read<WeeklyContributionProvider>();
+      final contributions = provider.getContributions(year);
+      int existingCount = 0;
+      if (contributions != null) {
+        final idx = contributions.indexWhere((c) => c.weekNumber == weekNumber);
+        if (idx != -1) existingCount = contributions[idx].postCount;
+      }
+      final overrideCount = _localWeekPostOverrides[year]?[weekNumber] ?? 0;
+      final totalBefore = existingCount + overrideCount;
+      if (totalBefore > 0) {
+        nextContext = PostPublishContext.alreadyWrittenThisWeek;
+      } else {
+        final isWeekend =
+            when.weekday == DateTime.saturday ||
+            when.weekday == DateTime.sunday;
+        nextContext =
+            isWeekend
+                ? PostPublishContext.weekendClutch
+                : PostPublishContext.firstWrittenThisWeek;
+      }
+    } catch (_) {}
+
+    setState(() {
+      final byWeek = _localWeekPostOverrides.putIfAbsent(year, () => {});
+      byWeek[weekNumber] = (byWeek[weekNumber] ?? 0) + 1;
+      _postPublishContext = nextContext;
+      _lastPublishedYear = year;
+      _lastPublishedWeek = weekNumber;
+    });
+
+    // 프로바이더 상태 갱신 (즉시 로컬 업데이트 + 백그라운드 서버 동기화)
+    final provider = context.read<WeeklyContributionProvider>();
+    await provider.refreshAfterPostPublished(
+      year,
+      weekNumber: weekNumber,
+      optimisticUpdate: true, // 즉시 로컬 업데이트
+    );
   }
 
   @override
@@ -159,82 +359,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return _buildGridSection();
   }
 
-  void _handleS1EmptyActionTap() {
-    // TODO(서버 연동 후): 글 작성 화면으로 이동
-    debugPrint('지금 기록하기 버튼 클릭');
-  }
-
-  /// ✅ HomeFeedService에서 모든 데이터를 한 번에 받기
-  HomeScreenData _buildHomeData() {
-    // 디버그 빈 데이터 토글에서는 "원래 숨기는 섹션"도 빈 상태 UI를 확인할 수 있도록 허용
-    final debugShowEmptyStates = kDebugMode && !_showSampleData;
-
-    // 로케일 가져오기
-    final l10n = AppLocalizations.of(context);
-
-    // TODO(서버 연동): 서버에서 받은 홈피드 데이터를 payload로 변환해서 주입
-    // ✅ 서버에서 인사말 2줄도 함께 받음 (payload.greetingMessage)
-    final payload = const HomeFeedPayload.empty();
-
-    // 그리드 데이터 생성
-    final contributions =
-        _isTestMode
-            ? (_testContributions ?? const <WeeklyContributionData>[])
-            : _generateContributionsFromPosts();
-
-    // ✅ 이번 주에 없다가 새로 채웠을 때만 로컬 보상 멘트 생성
-    HomeGreetingMessage? localRewardMessage;
-    if (_justFilledThisWeek) {
-      final currentYW = WeekUtils.getCurrentYearAndWeek();
-      final postsThisWeek = contributions
-          .where(
-            (c) =>
-                c.year == currentYW.year &&
-                c.weekNumber == currentYW.weekNumber &&
-                (c.postCount > 0),
-          )
-          .fold<int>(0, (acc, c) => acc + c.postCount);
-
-      if (postsThisWeek > 0) {
-        // 로컬 보상 멘트 생성
-        localRewardMessage = const HomeGreetingMessage(
-          line1: [HomeGreetingChunk('이번 주, 체크 완료')],
-          line2: [HomeGreetingChunk('잘 했어요')],
-        );
-      }
-    }
-
-    // HomeFeedService에서 모든 데이터를 한 번에 받기
-    return _homeFeedService.buildHomeData(
-      payload: payload,
-      debugShowEmptyStates: debugShowEmptyStates,
-      onS1EmptyActionTap: _handleS1EmptyActionTap,
-      onAddFriendTap: () => debugPrint('친구 추가 버튼 클릭'),
-      // 로케일 문자열 주입
-      emptyS1Line1: l10n.t('home_empty_s1_line1'),
-      emptyS1Line2Bold: l10n.t('home_empty_s1_line2'),
-      friendRecommendTitle: l10n.t('home_friend_recommend_header'),
-      // 그리드 데이터
-      contributions: contributions,
-      // ✅ 이번 주 방금 채웠을 때만 로컬 보상 멘트
-      localRewardMessage: localRewardMessage,
-    );
-  }
-
-  /// 홈 컨텐츠 청크를 위젯으로 변환
-  List<Widget> _buildContentChunks(List<HomeDataChunk> chunks) {
-    return chunks.map((c) {
-      if (c is HomeLayoutChunk) {
-        return c.layout;
-      }
-      return const SizedBox.shrink();
-    }).toList();
-  }
-
   Widget _buildGridSection() {
-    // ✅ HomeFeedService에서 모든 데이터를 한 번에 받기
-    final homeData = _buildHomeData();
-
     return SafeArea(
       child: CustomScrollView(
         controller: _scrollController,
@@ -308,223 +433,122 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ],
           ),
 
-          // ✅ 환영 인사 (HomeFeedService에서 받은 데이터)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              child: _buildTwoLineHomeGreeting(
-                context,
-                homeData.greetingMessage,
-              ),
-            ),
-          ),
+          // ✅ isLocked에 따라 조건부 UI 표시
+          Consumer<WeeklyContributionProvider>(
+            builder: (context, contributionProvider, _) {
+              final isLocked = contributionProvider.isLocked;
+              // 🎯 전해로 갈 때는 무조건 _selectedYear 사용 (null이 아니면)
+              final currentYear = _selectedYear ?? WeekUtils.getCurrentYear();
+              final contributions = _isTestMode ? _testContributions : null;
 
-          // ✅ 잔디 심기 UI (HomeFeedService에서 받은 데이터)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 8),
-              child: WeeklyContributionGrid(
-                year: _selectedYear ?? WeekUtils.getCurrentYear(),
-                signupAt: _testSignupAt,
-                asOf:
-                    _isTestMode
-                        ? (_testAsOf ?? DateTime.now())
-                        : DateTime.now(),
-                selectedWeek: _selectedWeek,
-                onWeekSelected: _handleWeekSelected,
-                contributions:
-                    _isTestMode ? _testContributions : homeData.contributions,
-                onLongPress:
-                    (year, weekNumber, position, cellCenter) =>
-                        _handleWeekLongPress(year, weekNumber, position),
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(child: SizedBox(height: 50)),
-          if (kDebugMode) SliverToBoxAdapter(child: _buildTestModeButtons()),
-
-          // 🧪 디버그 모드: 빈 데이터 토글 버튼
-          if (kDebugMode) SliverToBoxAdapter(child: _buildEmptyDataToggle()),
-
-          // ✅ 홈 컨텐츠 (HomeFeedService에서 받은 청크들)
-          SliverToBoxAdapter(
-            child: Column(
-              children: _buildContentChunks(homeData.contentChunks),
-            ),
+              if (isLocked) {
+                // 락용 UI
+                return SliverToBoxAdapter(
+                  child: Column(
+                    children: [
+                      // 락용 메인 위젯
+                      LockedHomeWidget(
+                        year: currentYear, // 🎯 _selectedYear가 있으면 전해로 이동
+                        signupAt: _testSignupAt,
+                        asOf:
+                            _isTestMode
+                                ? (_testAsOf ?? DateTime.now())
+                                : DateTime.now(),
+                        selectedWeek: _selectedWeek,
+                        onWeekSelected: _handleWeekSelected,
+                        onWeekLongPress: _handleWeekLongPress,
+                        postPublishContext: _effectivePostPublishContext(),
+                      ),
+                      const SizedBox(height: 50),
+                    ],
+                  ),
+                );
+              } else {
+                // 언락용 UI
+                final actualContributions =
+                    contributions ??
+                    contributionProvider.getContributions(currentYear);
+                return SliverToBoxAdapter(
+                  child: UnlockedHomeWidget(
+                    year: currentYear, // 🎯 _selectedYear가 있으면 전해로 이동
+                    signupAt: _testSignupAt,
+                    asOf:
+                        _isTestMode
+                            ? (_testAsOf ?? DateTime.now())
+                            : DateTime.now(),
+                    selectedWeek: _selectedWeek,
+                    onWeekSelected: _handleWeekSelected,
+                    onWeekLongPress: _handleWeekLongPress,
+                    contributions: actualContributions,
+                    isLoading:
+                        _isTestMode
+                            ? false
+                            : contributionProvider.isLoading(currentYear),
+                    greeting: contributionProvider.getGreeting(currentYear),
+                    postPublishContext: _effectivePostPublishContext(),
+                  ),
+                );
+              }
+            },
           ),
         ],
       ),
     );
   }
 
-  /// 연도 선택 다이얼로그 표시
+  /// 연도 선택 UI 표시
   void _showYearPicker(BuildContext context) {
     if (_selectedYear == null) return;
 
+    final weeklyProvider = context.read<WeeklyContributionProvider>();
+
     final currentYear = WeekUtils.getCurrentYear();
     final selectedYear = _selectedYear ?? currentYear;
+    // 2025년부터 현재 연도까지
+    final startYear = 2025;
     final years = List.generate(
-      5,
-      (index) => currentYear - 2 + index,
-    ); // 현재 연도 기준 ±2년
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            backgroundColor: Theme.of(context).colorScheme.surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            title: Text(
-              '연도 선택',
-              style: GoogleFonts.notoSansKr(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            content: SizedBox(
-              width: double.maxFinite,
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: years.length,
-                itemBuilder: (context, index) {
-                  final year = years[index];
-                  final isSelected = year == selectedYear;
-                  return ListTile(
-                    title: Text(
-                      '$year',
-                      style: GoogleFonts.notoSansKr(
-                        fontSize: 16,
-                        fontWeight:
-                            isSelected ? FontWeight.w700 : FontWeight.w400,
-                        color:
-                            isSelected
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
-                    trailing:
-                        isSelected
-                            ? Icon(
-                              Icons.check,
-                              color: Theme.of(context).colorScheme.primary,
-                            )
-                            : null,
-                    onTap: () {
-                      // 연도 변경 시 주차 선택 초기화하고 콜백 호출
-                      _handleWeekSelected(year, 0);
-                      Navigator.of(context).pop();
-                    },
-                  );
-                },
-              ),
-            ),
-          ),
-    );
-  }
-
-  Widget _buildTwoLineHomeGreeting(
-    BuildContext context,
-    HomeGreetingMessage msg,
-  ) {
-    final color = Theme.of(context).colorScheme.onSurface;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    // ✅ 폰트는 2가지만: 얇은 것(w300) 또는 볼드(w700)
-    // ✅ 행간을 넓게 (1.4)로 여유 있게
-    // ✅ Noto Sans KR은 한글+영어 모두 지원하지만, 영어는 Noto Sans가 더 최적화됨
-    final line1Base = GoogleFonts.notoSansKr(
-      fontSize: 28,
-      fontWeight: FontWeight.w300, // 얇은 것
-      letterSpacing: -1,
-      height: 1.4, // 행간 넓게
-      color: color.withOpacity(0.85),
-    ).copyWith(
-      fontFamilyFallback: ['Noto Sans'], // 영어 폴백
-    );
-    // ✅ 볼드를 더 두껍게: letterSpacing을 더 줄이고, textShadow 추가
-    final line1Bold = GoogleFonts.notoSansKr(
-      fontSize: 28,
-      fontWeight: FontWeight.w900,
-      letterSpacing: -2.5, // 더 가깝게 (두껍게 보이게)
-      height: 1.4,
-      color: color.withOpacity(0.85),
-      shadows: [
-        // 약간의 shadow로 두께감 추가
-        Shadow(
-          offset: const Offset(0, 0.5),
-          blurRadius: 0,
-          color: color.withOpacity(isDark ? 0.3 : 0.15),
-        ),
-      ],
-    ).copyWith(
-      fontFamilyFallback: ['Noto Sans'], // 영어 폴백
+      currentYear - startYear + 1,
+      (index) => startYear + index,
     );
 
-    final line2Base = GoogleFonts.notoSansKr(
-      fontSize: 28,
-      fontWeight: FontWeight.w300, // 얇은 것
-      letterSpacing: -1,
-      height: 1.4, // 행간 넓게
-      color: color,
-    ).copyWith(
-      fontFamilyFallback: ['Noto Sans'], // 영어 폴백
-    );
-    // ✅ 볼드를 더 두껍게: letterSpacing을 더 줄이고, textShadow 추가
-    final line2Bold = GoogleFonts.notoSansKr(
-      fontSize: 28,
-      fontWeight: FontWeight.w700,
-      letterSpacing: -1, // 더 가깝게 (두껍게 보이게)
-      height: 1.4,
-      color: color,
-      shadows: [
-        // 약간의 shadow로 두께감 추가
-        Shadow(
-          offset: const Offset(0, 0.8),
-          blurRadius: 0,
-          color: color.withOpacity(isDark ? 0.3 : 0.15),
-        ),
-      ],
-    ).copyWith(
-      fontFamilyFallback: ['Noto Sans'], // 영어 폴백
-    );
-
-    List<TextSpan> buildSpans(
-      List<HomeGreetingChunk> chunks,
-      TextStyle base,
-      TextStyle bold,
-    ) {
-      return chunks
-          .map((c) => TextSpan(text: c.text, style: c.bold ? bold : base))
-          .toList();
-    }
-
-    return RichText(
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-      text: TextSpan(
-        children: [
-          ...buildSpans(msg.line1, line1Base, line1Bold),
-          const TextSpan(text: '\n'),
-          ...buildSpans(msg.line2, line2Base, line2Bold),
-        ],
-      ),
+    // Provider에 연도 선택 UI 표시 요청
+    weeklyProvider.showYearPicker(
+      selectedYear: selectedYear,
+      years: years,
+      onConfirm: (year) {
+        // 연도 변경 시 주차 선택 초기화하고 콜백 호출
+        _handleWeekSelected(year, 0);
+        weeklyProvider.closeYearPicker();
+      },
     );
   }
 
   /// 주차 길게 누르기 핸들러
-  void _handleWeekLongPress(int year, int weekNumber, Offset? position) {
+  void _handleWeekLongPress(
+    int year,
+    int weekNumber,
+    Offset? position, [
+    Offset? cellCenter,
+  ]) {
     if (weekNumber == 0) {
       _removeWeekPreview();
       return;
     }
 
     if (position == null) return;
+
+    // 🎯 onLongPressMoveUpdate에서 호출된 경우 (드래그 중)
+    // - 기존 오버레이가 있고, 같은 주차를 드래그하는 경우
+    final isDragging =
+        _weekPreviewEntry != null &&
+        _weekPreviewWeek == weekNumber &&
+        _weekPreviewYear == year;
+
     _showOrMoveWeekPreview(
       year: year,
       weekNumber: weekNumber,
       globalPosition: position,
+      isDragging: isDragging,
     );
   }
 
@@ -539,6 +563,9 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _selectedYear = year;
         _selectedWeek = null; // 연도 변경 시 주차 선택 초기화
       });
+      // 연도 변경 시 해당 연도의 기여도 데이터 로드
+      final provider = context.read<WeeklyContributionProvider>();
+      provider.loadContributions(year);
       return;
     }
 
@@ -550,278 +577,54 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _selectedWeek = weekNumber;
     });
 
-    // 포스트 로딩 제거 상태라서 일단 빈 리스트로 전달 (화면 구조만 먼저)
-    final filteredPosts = <PostData>[];
+    // 🎯 오늘 주차이고 포스트가 없는 경우 → PostwriteScreen으로 이동
+    final currentYear = WeekUtils.getCurrentYear();
+    final currentWeek = WeekUtils.getWeekNumber(DateTime.now());
+    final isTodayWeek = year == currentYear && weekNumber == currentWeek;
 
+    if (isTodayWeek) {
+      final provider = context.read<WeeklyContributionProvider>();
+      final contributions = provider.getContributions(year);
+      int postCount = 0;
+      if (contributions != null) {
+        final weekData = contributions.firstWhere(
+          (c) => c.weekNumber == weekNumber,
+          orElse:
+              () => WeeklyContributionData(
+                year: year,
+                weekNumber: weekNumber,
+                hasPost: false,
+                postCount: 0,
+              ),
+        );
+        postCount = weekData.postCount;
+      }
+
+      // 오늘 주차이고 포스트가 없으면 작성 화면으로 이동
+      if (postCount == 0) {
+        debugPrint(
+          '[HomeScreen] 오늘 주차($weekNumber) 빈 셀 클릭 → PostwriteScreen으로 이동',
+        );
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => PostwriteScreen(isEditingMode: false),
+          ),
+        );
+        return;
+      }
+    }
+
+    // ✅ 실제 API 호출은 WeekPostListScreen에서 처리
     Navigator.of(context).push(
       MaterialPageRoute(
         builder:
             (context) => WeekPostListScreen(
               year: year,
               weekNumber: weekNumber,
-              posts: filteredPosts,
+              // postIds는 선택적: 그리드 셀에서 이미 알고 있는 경우에만 전달
+              // postIds: null, // 필요시 추가
             ),
       ),
     );
-  }
-
-  /// 🧪 디버그 모드: 빈 데이터 토글 버튼
-  Widget _buildEmptyDataToggle() {
-    if (!kDebugMode) return const SizedBox.shrink();
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.blue.withOpacity(0.05),
-        border: Border(
-          top: BorderSide(color: Colors.blue.withOpacity(0.2), width: 1),
-          bottom: BorderSide(color: Colors.blue.withOpacity(0.2), width: 1),
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.bug_report, size: 16, color: Colors.blue.shade700),
-          const SizedBox(width: 8),
-          Text(
-            '빈 데이터 토글',
-            style: GoogleFonts.notoSansKr(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Colors.blue.shade700,
-            ),
-          ),
-          const Spacer(),
-          Switch(
-            value: _showSampleData,
-            onChanged: (value) {
-              setState(() {
-                _showSampleData = value;
-              });
-            },
-            activeColor: Colors.blue.shade700,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            _showSampleData ? '샘플 데이터' : '빈 데이터',
-            style: GoogleFonts.notoSansKr(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: Colors.blue.shade700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 🧪 테스트 모드 버튼 UI (가로 스크롤 한 줄)
-  Widget _buildTestModeButtons() {
-    if (!kDebugMode) return const SizedBox.shrink();
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.orange.withOpacity(0.05),
-        border: Border(
-          top: BorderSide(color: Colors.orange.withOpacity(0.2), width: 1),
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 헤더 (리셋 버튼 포함)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              children: [
-                Icon(Icons.bug_report, size: 14, color: Colors.orange.shade700),
-                const SizedBox(width: 4),
-                Text(
-                  '테스트 모드',
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.orange.shade700,
-                  ),
-                ),
-                const Spacer(),
-                if (_isTestMode)
-                  TextButton(
-                    onPressed: () {
-                      setState(() {
-                        _isTestMode = false;
-                        _testSignupAt = null;
-                        _testAsOf = null;
-                        _testContributions = null;
-                      });
-                    },
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: Text(
-                      '리셋',
-                      style: GoogleFonts.notoSansKr(
-                        fontSize: 10,
-                        color: Colors.red,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 6),
-          // 가로 스크롤 버튼 리스트
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              children: [
-                _buildTestButton('1. 가입일 초반', () => _loadTestCase(1)),
-                const SizedBox(width: 6),
-                _buildTestButton('2. 가입일 중반', () => _loadTestCase(2)),
-                const SizedBox(width: 6),
-                _buildTestButton('3. 가입일 말', () => _loadTestCase(3)),
-                const SizedBox(width: 6),
-                _buildTestButton('4. 포스트 많음', () => _loadTestCase(4)),
-                const SizedBox(width: 6),
-                _buildTestButton('5. 포스트 적음', () => _loadTestCase(5)),
-                const SizedBox(width: 6),
-                _buildTestButton('6. 그라데이션', () => _loadTestCase(6)),
-                const SizedBox(width: 6),
-                _buildTestButton('7. 최소 2행', () => _loadTestCase(7)),
-                const SizedBox(width: 6),
-                _buildTestButton('8. 오늘+미리보기', () => _loadTestCase(8)),
-                const SizedBox(width: 6),
-                _buildTestButton('9. 연말(45셀)', () => _loadTestCase(9)),
-                const SizedBox(width: 6),
-                _buildTestButton('10. 연중반(30셀)', () => _loadTestCase(10)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTestButton(String label, VoidCallback onPressed) {
-    return ElevatedButton(
-      onPressed: onPressed,
-      style: ElevatedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        backgroundColor: Colors.orange.shade50,
-        foregroundColor: Colors.orange.shade900,
-        elevation: 0,
-        minimumSize: const Size(0, 32),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: BorderSide(color: Colors.orange.shade200),
-        ),
-      ),
-      child: Text(
-        label,
-        style: GoogleFonts.notoSansKr(
-          fontSize: 10,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-    );
-  }
-
-  /// 🧪 테스트 케이스 로드 (통합 함수)
-  void _loadTestCase(int caseNumber) {
-    ({
-      DateTime signupAt,
-      DateTime asOf,
-      List<WeeklyContributionData> contributions,
-      int year,
-    })
-    testData;
-
-    switch (caseNumber) {
-      case 1:
-        testData = WeeklyContributionTestData.generateTestCase1();
-        break;
-      case 2:
-        testData = WeeklyContributionTestData.generateTestCase2();
-        break;
-      case 3:
-        testData = WeeklyContributionTestData.generateTestCase3();
-        break;
-      case 4:
-        testData = WeeklyContributionTestData.generateTestCase4();
-        break;
-      case 5:
-        testData = WeeklyContributionTestData.generateTestCase5();
-        break;
-      case 6:
-        testData = WeeklyContributionTestData.generateTestCase6();
-        break;
-      case 7:
-        testData = WeeklyContributionTestData.generateTestCase7();
-        break;
-      case 8:
-        testData = WeeklyContributionTestData.generateTestCase8();
-        break;
-      case 9:
-        testData = WeeklyContributionTestData.generateTestCase9();
-        break;
-      case 10:
-        testData = WeeklyContributionTestData.generateTestCase10();
-        break;
-      default:
-        return;
-    }
-
-    setState(() {
-      _isTestMode = true;
-      _testSignupAt = testData.signupAt;
-      _testAsOf = testData.asOf;
-      _testContributions = testData.contributions;
-      _selectedYear = testData.year;
-    });
-  }
-
-  /// 기존 포스트 데이터를 분석하여 주차별 기여도 데이터 생성
-  List<WeeklyContributionData> _generateContributionsFromPosts() {
-    // 포스트 로딩 제거됨 - 빈 리스트 반환
-    final year = _selectedYear ?? WeekUtils.getCurrentYear();
-    final totalWeeks = WeekUtils.getWeeksInYear(year);
-    final contributions = <WeeklyContributionData>[];
-
-    // 모든 주차에 대해 빈 데이터 생성
-    for (int week = 1; week <= totalWeeks; week++) {
-      final overrideCount = _localWeekPostOverrides[year]?[week] ?? 0;
-      contributions.add(
-        WeeklyContributionData(
-          year: year,
-          weekNumber: week,
-          hasPost: overrideCount > 0,
-          postCount: overrideCount,
-        ),
-      );
-    }
-
-    return contributions;
-  }
-
-  /// 외부(발행 화면)에서 호출: 방금 게시된 글을 홈 그리드/인삿말에 즉시 반영
-  void notifyPostPublished({DateTime? createdAt}) {
-    final when = (createdAt ?? DateTime.now());
-    final year = _selectedYear ?? when.year;
-    final weekNumber = WeekUtils.getWeekNumber(when);
-
-    setState(() {
-      final byWeek = _localWeekPostOverrides.putIfAbsent(year, () => {});
-      byWeek[weekNumber] = (byWeek[weekNumber] ?? 0) + 1;
-      _justFilledThisWeek = true;
-    });
   }
 }

@@ -19,6 +19,9 @@ import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:doppy/pages/components/search_video_widgets.dart'
+    show ThumbnailVideoPlayer;
 
 /// VideoPlayer 컨트롤러를 저장하는 맵
 final videoPlayerControllers = <String, VideoPlayerControllerProxy>{};
@@ -63,21 +66,31 @@ void cleanupAllVideoPlayers() {
   for (final entry in videoPlayerControllers.entries) {
     final controller = entry.value;
     controller.pause?.call();
+    // ✅ 프록시에 실제 컨트롤러가 연결된 경우도 강제 pause
+    try {
+      final c = controller.controller;
+      if (c != null && c.value.isInitialized) {
+        c.pause();
+      }
+    } catch (_) {}
   }
   videoPlayerControllers.clear();
+
+  // ✅ 홈/검색 썸네일 풀 컨트롤러도 전역 pause (MediaPicker 진입 시 백그라운드 재생 방지)
+  // ignore: discarded_futures
+  ThumbnailVideoPlayer.pauseAll(seekToStart: true, mute: true);
 
   debugPrint('[ClipComponent] 모든 비디오 플레이어 정리 완료');
 }
 
 /// 주어진 key를 제외한 모든 비디오를 일시정지한다
 void pauseAllVideosExcept(String keepKey) {
-  // build 중 setState를 유발하지 않도록 프레임 이후로 미룸
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    for (final entry in videoPlayerControllers.entries) {
-      if (entry.key == keepKey) continue;
-      entry.value.pause?.call();
-    }
-  });
+  // ✅ pause()는 내부적으로 setState를 호출하지 않으므로 즉시 실행해도 안전하다.
+  // (postFrame에만 의존하면 “프레임이 안 잡혀서 play가 안 되는” 케이스가 생길 수 있음)
+  for (final entry in videoPlayerControllers.entries) {
+    if (entry.key == keepKey) continue;
+    entry.value.pause?.call();
+  }
 }
 
 /// 모든 비디오를 mute시킨다 (발행 전 Step1으로 이동할 때 사용)
@@ -85,7 +98,19 @@ void pauseAllVideosExcept(String keepKey) {
 /// (표준 방식: 각 위젯이 자체 컨트롤러를 관리)
 void muteAllVideos() {
   debugPrint('[ClipComponent] 🔇 muteAllVideos 호출됨 - 모든 비디오 음소거');
-  // 🎯 표준 방식: 각 위젯이 자체 컨트롤러를 관리하므로 별도 처리 불필요
+
+  // ✅ 프록시 기반(에디터/리더) 컨트롤러 음소거
+  for (final entry in videoPlayerControllers.entries) {
+    final proxy = entry.value;
+    try {
+      proxy.controller?.setVolume(0.0);
+    } catch (_) {}
+  }
+
+  // ✅ 썸네일 풀 컨트롤러 음소거(+일시정지)
+  // ignore: discarded_futures
+  ThumbnailVideoPlayer.pauseAll(seekToStart: false, mute: true);
+
   debugPrint('[ClipComponent] 🔇 muteAllVideos 완료');
 }
 
@@ -540,9 +565,13 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                 curve: Curves.easeOutCubic,
                 alignment: Alignment.topCenter,
                 child: RepaintBoundary(
-                  key: ValueKey(
-                    'clip_video_${widget.nodeId}_$currentPaddingMode',
-                  ),
+                  // ✅ padding(center/full) 토글은 레이아웃(패딩/너비)만 바뀌는 것이고,
+                  // 비디오 소스(url/localPath)는 동일하다.
+                  // 여기 key에 paddingMode를 포함시키면 토글할 때마다 subtree가 dispose되어
+                  // VideoPlayerController가 매번 재생성/재초기화(=재로딩, 재생 리셋)된다.
+                  //
+                  // 따라서 key는 노드 단위로 고정한다.
+                  key: ValueKey('clip_video_${widget.nodeId}'),
                   child: Padding(
                     padding: EdgeInsets.zero,
                     child: _buildVideoContent(context),
@@ -1507,6 +1536,23 @@ class _VideoPlayerWidget extends StatefulWidget {
 }
 
 class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted || _isDisposed) return;
+    // build/layout/paint 중 setState 방지: 다음 프레임으로 미룸
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.transientCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _isDisposed) return;
+        setState(fn);
+      });
+      // postFrame이 확실히 실행되도록 프레임을 강제로 스케줄링
+      SchedulerBinding.instance.scheduleFrame();
+      return;
+    }
+    setState(fn);
+  }
+
   String _proxyKey() {
     final namespace = widget.isEditing ? 'editor' : 'reader';
     return videoPlayerProxyKey(
@@ -2200,32 +2246,28 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       'position=${position.inMilliseconds}ms, isPlaying=$isCurrentlyPlaying',
     );
 
-    // build 중 setState 방지: 프레임 이후에 정지/재생 실행
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _controller == null) {
-        debugPrint(
-          '[ClipComponent] ⚠️ _playVideo 취소: mounted=$mounted, controller=${_controller != null}',
-        );
-
-        return;
-      }
-      final key = _proxyKey();
-      pauseAllVideosExcept(key);
-
-      final beforePlay = _controller!.value.isPlaying;
-      _controller!.play();
-      final afterPlay = _controller!.value.isPlaying;
-
+    // ✅ 재생은 즉시 실행한다. (postFrame에만 의존하면 프레임이 발생하기 전까지 재생이 시작되지 않을 수 있음)
+    if (!mounted || _controller == null) {
       debugPrint(
-        '[ClipComponent] ✅ play() 호출 완료: before=$beforePlay, after=$afterPlay, url=${widget.url}',
+        '[ClipComponent] ⚠️ _playVideo 취소: mounted=$mounted, controller=${_controller != null}',
       );
+      return;
+    }
 
-      // 재생 시작 시 일시정지 플래그 해제
-      if (mounted) {
-        setState(() {
-          _isPausedByUser = false;
-        });
-      }
+    final key = _proxyKey();
+    pauseAllVideosExcept(key);
+
+    final beforePlay = _controller!.value.isPlaying;
+    _controller!.play();
+    final afterPlay = _controller!.value.isPlaying;
+
+    debugPrint(
+      '[ClipComponent] ✅ play() 호출 완료: before=$beforePlay, after=$afterPlay, url=${widget.url}',
+    );
+
+    // 재생 시작 시 일시정지 플래그 해제
+    _safeSetState(() {
+      _isPausedByUser = false;
     });
   }
 
@@ -2355,28 +2397,33 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
       return controllerSize.width / controllerSize.height;
     }
 
-    // 메타데이터에서 가져오기 (편집 모드에서만)
-    if (widget.isEditing) {
-      try {
-        // ignore: invalid_use_of_visible_for_testing_member
-        final seState = context.findAncestorStateOfType<SuperEditorState>();
-        // ignore: invalid_use_of_visible_for_testing_member
-        final doc = seState?.editContext.editor.document;
-        final node = doc?.getNodeById(widget.nodeId);
-        if (node is ClipNode) {
-          final aspectRatioValue = node.metadata['aspectRatio'];
-          if (aspectRatioValue != null) {
-            final metadataAspectRatio =
-                (aspectRatioValue is num)
-                    ? aspectRatioValue.toDouble()
-                    : double.tryParse(aspectRatioValue.toString());
-            if (metadataAspectRatio != null) {
-              return metadataAspectRatio;
-            }
+    // ✅ 메타데이터에서 가져오기 (읽기/편집 모드 모두)
+    // - 업로드 시 UploadService/EditorService가 aspectRatio를 metadata에 넣어주는데
+    //   이전 구현은 reader에서 이를 무시해서 "기본 비율로 먼저 그렸다가 나중에 확장"되는 현상이 생겼다.
+    _loadMetadataAspectRatio();
+    if (_metadataAspectRatio != null && _metadataAspectRatio! > 0) {
+      return _metadataAspectRatio!;
+    }
+    try {
+      // ignore: invalid_use_of_visible_for_testing_member
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_visible_for_testing_member
+      final doc = seState?.editContext.editor.document;
+      final node = doc?.getNodeById(widget.nodeId);
+      if (node is ClipNode) {
+        final aspectRatioValue = node.metadata['aspectRatio'];
+        if (aspectRatioValue != null) {
+          final metadataAspectRatio =
+              (aspectRatioValue is num)
+                  ? aspectRatioValue.toDouble()
+                  : double.tryParse(aspectRatioValue.toString());
+          if (metadataAspectRatio != null && metadataAspectRatio > 0) {
+            _metadataAspectRatio = metadataAspectRatio;
+            return metadataAspectRatio;
           }
         }
-      } catch (_) {}
-    }
+      }
+    } catch (_) {}
 
     // 기본값
     return 16 / 9;
@@ -2388,15 +2435,28 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     if (!widget.isEditing) return false;
     if (!widget.shouldAutoPlay) return false;
     if (_hasPlayedOnce || _isPausedByUser) return false;
+    // ✅ 컨트롤러가 준비되지 않았으면 false 반환 (다른 조건에서 처리)
+    if (!_isReadyToPlay) return false;
     final isPlayingNow = _controller?.value.isPlaying ?? _isPlaying;
     return !isPlayingNow;
   }
 
   /// 로딩 스피너를 표시해야 하는지 확인
   bool _shouldShowSpinner() {
-    // 읽기 모드: 업로드/처리 중일 때만
+    // 읽기 모드: 업로드/처리 중 + "화면에 보이는 동안(shouldAutoPlay)" 초기화/버퍼링은 로딩으로 취급
     if (!widget.isEditing) {
-      return widget.isUploading || widget.isProcessing;
+      if (widget.isUploading || widget.isProcessing) return true;
+
+      // ✅ 보이는 상태인데 컨트롤러가 아직 준비되지 않았으면 "멈춘 썸네일"처럼 보이므로 스피너 표시
+      if (widget.shouldAutoPlay) {
+        if (_controller == null || !_isInitialized) return true;
+        try {
+          final v = _controller!.value;
+          if (v.isBuffering && !v.isPlaying) return true;
+        } catch (_) {}
+      }
+
+      return false;
     }
 
     // 편집 모드: 여러 조건 체크
@@ -2408,14 +2468,15 @@ class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
     final isBuffering = _controller?.value.isBuffering ?? false;
     final isPlayingNow = _controller?.value.isPlaying ?? _isPlaying;
 
+    // ✅ 자동재생 대기 중이면 스피너 표시 (가장 먼저 체크하여 재생 시작 전까지 스피너 유지)
+    // _isReadyToPlay가 true인데 실제 재생이 시작되지 않았으면 스피너 유지
+    if (_shouldBlockUntilPlayStart()) return true;
+
     // 컨트롤러가 준비되지 않았고 재생 중이 아니면 스피너 표시
     if (!_isReadyToPlay && !isPlayingNow) return true;
 
     // 버퍼링 중이고 재생 중이 아니면 스피너 표시
     if (isBuffering && !isPlayingNow) return true;
-
-    // 자동재생 대기 중이면 스피너 표시
-    if (_shouldBlockUntilPlayStart()) return true;
 
     return false;
   }

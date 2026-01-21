@@ -26,7 +26,11 @@ class GroupImageLayoutSelector extends StatelessWidget {
 
   /// 선택 시 부모에서 원하는 타이밍/처리를 제어할 수 있도록 훅 제공.
   /// - null이면 기존처럼 `Navigator.pop(layout)`로 결과 반환
-  final Future<void> Function(GroupImageLayout layout)? onSelected;
+  final Future<void> Function(
+    BuildContext selectorContext,
+    GroupImageLayout layout,
+  )?
+  onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -39,57 +43,38 @@ class GroupImageLayoutSelector extends StatelessWidget {
     final showGrid3 = _shouldShowGrid3(imageCount);
     final showPageView = _shouldShowPageView(imageCount);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+    return Scaffold(
+      backgroundColor: colorScheme.surface,
+      appBar: AppBar(
+        scrolledUnderElevation: 0,
+        backgroundColor: colorScheme.surface,
+        elevation: 0,
+        leading: CupertinoButton(
+          padding: EdgeInsets.zero,
+          onPressed: () => Navigator.of(context).pop(),
+          child: Icon(
+            Icons.close,
+            color: colorScheme.onSurface.withOpacity(0.6),
+            size: 24,
+          ),
+        ),
+        title: Text(
+          l10n.t('select_layout'),
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: colorScheme.onSurface,
+          ),
+        ),
+        centerTitle: true,
       ),
-      child: SafeArea(
+      body: SafeArea(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            // 드래그 핸들
-            const SizedBox(height: 8),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: colorScheme.onSurface.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // 타이틀
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    l10n.t('select_layout'),
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      color: colorScheme.onSurface,
-                    ),
-                  ),
-                  CupertinoButton(
-                    padding: EdgeInsets.zero,
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: Icon(
-                      Icons.close,
-                      color: colorScheme.onSurface.withOpacity(0.6),
-                      size: 24,
-                    ),
-                  ),
-                ],
-              ),
-            ),
             const SizedBox(height: 20),
 
             // 레이아웃 옵션들
-            Flexible(
+            Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
@@ -102,7 +87,10 @@ class GroupImageLayoutSelector extends StatelessWidget {
                       onTap: () async {
                         if (!context.mounted) return;
                         if (onSelected != null) {
-                          await onSelected!(GroupImageLayout.individual);
+                          await onSelected!(
+                            context,
+                            GroupImageLayout.individual,
+                          );
                           return;
                         }
                         Navigator.of(context).pop(GroupImageLayout.individual);
@@ -119,7 +107,7 @@ class GroupImageLayoutSelector extends StatelessWidget {
                         onTap: () async {
                           if (!context.mounted) return;
                           if (onSelected != null) {
-                            await onSelected!(GroupImageLayout.grid2);
+                            await onSelected!(context, GroupImageLayout.grid2);
                             return;
                           }
                           Navigator.of(context).pop(GroupImageLayout.grid2);
@@ -136,7 +124,7 @@ class GroupImageLayoutSelector extends StatelessWidget {
                         onTap: () async {
                           if (!context.mounted) return;
                           if (onSelected != null) {
-                            await onSelected!(GroupImageLayout.grid3);
+                            await onSelected!(context, GroupImageLayout.grid3);
                             return;
                           }
                           Navigator.of(context).pop(GroupImageLayout.grid3);
@@ -153,7 +141,10 @@ class GroupImageLayoutSelector extends StatelessWidget {
                         onTap: () async {
                           if (!context.mounted) return;
                           if (onSelected != null) {
-                            await onSelected!(GroupImageLayout.pageview);
+                            await onSelected!(
+                              context,
+                              GroupImageLayout.pageview,
+                            );
                             return;
                           }
                           Navigator.of(context).pop(GroupImageLayout.pageview);
@@ -197,23 +188,35 @@ class GroupImageLayoutSelector extends StatelessWidget {
     return imageCount >= 2;
   }
 
-  /// ✅ 공통 메서드: 그룹 이미지 레이아웃 선택 모달 바텀시트 표시
+  /// ✅ 공통 메서드: 그룹 이미지 레이아웃 선택 전체 화면 표시
   /// - AssetEntity만 사용 (파일 기반 프리뷰 제거)
-  static Future<GroupImageLayout?> showLayoutSelector({
+  /// - 전체 화면으로 변경하여 피커 화면과 동시에 닫을 수 있도록 함
+  /// - onSelected 콜백이 제공되면 콜백에서 모든 처리를 완료한 후 닫기
+  static Future<void> showLayoutSelector({
     required BuildContext context,
     required List<AssetEntity> previewAssets,
+    Future<void> Function(
+      BuildContext selectorContext,
+      GroupImageLayout layout,
+    )?
+    onSelected,
   }) async {
-    return await showModalBottomSheet<GroupImageLayout>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      isDismissible: true,
-      enableDrag: true,
-      builder:
-          (context) => FractionallySizedBox(
-            heightFactor: 0.93,
-            child: GroupImageLayoutSelector(previewAssets: previewAssets),
-          ),
+    const duration = Duration(milliseconds: 180);
+    await Navigator.push<void>(
+      context,
+      PageRouteBuilder(
+        transitionDuration: duration,
+        reverseTransitionDuration: duration,
+        pageBuilder:
+            (context, animation, secondaryAnimation) =>
+                GroupImageLayoutSelector(
+                  previewAssets: previewAssets,
+                  onSelected: onSelected,
+                ),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
     );
   }
 
@@ -223,19 +226,46 @@ class GroupImageLayoutSelector extends StatelessWidget {
     required BuildContext context,
     required List<Uint8List> previewBytes,
   }) async {
-    return await showModalBottomSheet<GroupImageLayout>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      isDismissible: true,
-      enableDrag: true,
-      builder:
-          (context) => FractionallySizedBox(
-            heightFactor: 0.93,
-            child: _GroupImageLayoutSelectorForBytes(
-              previewBytes: previewBytes,
+    const duration = Duration(milliseconds: 180);
+    return await Navigator.push<GroupImageLayout?>(
+      context,
+      PageRouteBuilder(
+        transitionDuration: duration,
+        reverseTransitionDuration: duration,
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return Scaffold(
+            backgroundColor: Theme.of(context).colorScheme.surface,
+            appBar: AppBar(
+              backgroundColor: Theme.of(context).colorScheme.surface,
+              elevation: 0,
+              leading: CupertinoButton(
+                padding: EdgeInsets.zero,
+                onPressed: () => Navigator.of(context).pop(),
+                child: Icon(
+                  Icons.close,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.6),
+                  size: 24,
+                ),
+              ),
+              title: Text(
+                AppLocalizations.of(context).t('select_layout'),
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              centerTitle: true,
             ),
-          ),
+            body: _GroupImageLayoutSelectorForBytes(previewBytes: previewBytes),
+          );
+        },
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
     );
   }
 }
@@ -248,7 +278,6 @@ class _GroupImageLayoutSelectorForBytes extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final l10n = AppLocalizations.of(context);
     final imageCount = previewBytes.length;
 
@@ -259,52 +288,14 @@ class _GroupImageLayoutSelectorForBytes extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: colorScheme.surface,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 드래그 핸들
-            const SizedBox(height: 8),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: colorScheme.onSurface.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
             const SizedBox(height: 16),
-
-            // 타이틀
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    l10n.t('select_layout'),
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      color: colorScheme.onSurface,
-                    ),
-                  ),
-                  CupertinoButton(
-                    padding: EdgeInsets.zero,
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: Icon(
-                      Icons.close,
-                      color: colorScheme.onSurface.withOpacity(0.6),
-                      size: 24,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
 
             // 레이아웃 옵션들
             Flexible(
@@ -395,6 +386,7 @@ class _LayoutSectionForBytes extends StatelessWidget {
 
     return CupertinoButton(
       padding: EdgeInsets.zero,
+      pressedOpacity: 1.0, // ✅ 터치 시 어두워지는 효과 제거
       onPressed: onTap,
       child: Container(
         padding:
@@ -535,7 +527,7 @@ class _LayoutSectionForBytes extends StatelessWidget {
             children: [
               PageView.builder(
                 itemCount: itemCount,
-                controller: PageController(viewportFraction: 0.998),
+                controller: PageController(viewportFraction: 0.7),
                 padEnds: false,
                 onPageChanged: (index) {
                   setState(() {
@@ -544,10 +536,7 @@ class _LayoutSectionForBytes extends StatelessWidget {
                 },
                 itemBuilder: (context, index) {
                   return Padding(
-                    padding: EdgeInsets.only(
-                      left: 0,
-                      right: index < itemCount - 1 ? 12 : 0,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: _buildPreviewImage(
@@ -632,6 +621,7 @@ class _LayoutSection extends StatelessWidget {
 
     return CupertinoButton(
       padding: EdgeInsets.zero,
+      pressedOpacity: 1.0, // ✅ 터치 시 어두워지는 효과 제거
       onPressed: onTap,
       child: Container(
         padding:
@@ -795,7 +785,7 @@ class _LayoutSection extends StatelessWidget {
               // 실제 PageView
               PageView.builder(
                 itemCount: itemCount,
-                controller: PageController(viewportFraction: 0.998),
+                controller: PageController(viewportFraction: 0.7),
                 padEnds: false,
                 onPageChanged: (index) {
                   setState(() {
@@ -804,10 +794,7 @@ class _LayoutSection extends StatelessWidget {
                 },
                 itemBuilder: (context, index) {
                   return Padding(
-                    padding: EdgeInsets.only(
-                      left: 0,
-                      right: index < itemCount - 1 ? 12 : 0,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: _buildPreviewAsset(

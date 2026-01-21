@@ -15,6 +15,8 @@ class FriendProvider with ChangeNotifier {
   List<Friend> _acceptedFriends = [];
   List<Friend> _receivedRequests = [];
   List<Friend> _sentRequests = [];
+  List<User> _friendRecommendations = []; // 친구 추천 목록
+  List<Map<String, dynamic>> _friendPosts = []; // ✅ 친구 포스트 목록 (friend-bundle에서)
   bool _isLoading = false; // 목록 로딩 상태
   String? _errorMessage;
 
@@ -50,6 +52,8 @@ class FriendProvider with ChangeNotifier {
   List<Friend> get acceptedFriends => _acceptedFriends;
   List<Friend> get receivedRequests => _receivedRequests;
   List<Friend> get sentRequests => _sentRequests;
+  List<User> get friendRecommendations => _friendRecommendations;
+  List<Map<String, dynamic>> get friendPosts => _friendPosts; // ✅ 친구 포스트 목록
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
@@ -70,9 +74,8 @@ class FriendProvider with ChangeNotifier {
 
   // --- API 호출 메소드 ---
 
-  /// ✨ [추가] '이웃 관리' 화면에 필요한 모든 데이터를 한번에 불러옵니다.
-  /// 타이밍 기반 캐시 사용: forceRefresh가 false이고 캐시가 유효하면 서버 조회 스킵
-  Future<void> fetchAllFriendData({bool forceRefresh = false}) async {
+  /// 친구 번들 로드 (GET /api/friends/bundle)
+  Future<void> fetchFriendsBundle({bool forceRefresh = false}) async {
     // 🎯 타이밍 기반 캐시 체크
     final now = DateTime.now();
     final isCacheValid =
@@ -99,19 +102,60 @@ class FriendProvider with ChangeNotifier {
 
     notifyListeners();
     try {
-      final results = await Future.wait([
-        _friendService.getAcceptedFriends(page: 0, size: 20),
-        _friendService.getReceivedFriendRequests(page: 0, size: 20),
-        _friendService.getSentFriendRequests(page: 0, size: 20),
-      ]);
-      _acceptedFriends = results[0];
-      _receivedRequests = results[1];
-      _sentRequests = results[2];
+      final bundle = await _friendService.getFriendsBundle();
 
-      // 🎯 더 불러올 데이터가 있는지 확인
-      _hasMoreAcceptedFriends = results[0].length >= 20;
-      _hasMoreReceivedRequests = results[1].length >= 20;
-      _hasMoreSentRequests = results[2].length >= 20;
+      // 번들에서 데이터 파싱
+      final friendRecommendations =
+          bundle['friendRecommendations'] as List? ?? [];
+      final friendPosts = bundle['friendPosts'] as Map<String, dynamic>?;
+
+      // 친구 추천 목록 저장
+      _friendRecommendations =
+          friendRecommendations
+              .map((item) => User.fromJson(item as Map<String, dynamic>))
+              .toList();
+
+      // ✅ 친구 포스트 저장 (friendPosts.content에서 가져오기)
+      if (friendPosts != null && friendPosts['content'] != null) {
+        final postsContent = friendPosts['content'] as List? ?? [];
+        _friendPosts =
+            postsContent.map((item) => item as Map<String, dynamic>).toList();
+        debugPrint('[FriendProvider] 친구 포스트 저장: ${_friendPosts.length}개');
+      } else {
+        _friendPosts = [];
+        debugPrint('[FriendProvider] 친구 포스트 없음 (빈 배열)');
+      }
+
+      final acceptedList = bundle['acceptedFriends'] as List? ?? [];
+      final receivedList = bundle['receivedRequests'] as List? ?? [];
+      final sentList = bundle['sentRequests'] as List? ?? [];
+
+      _acceptedFriends =
+          acceptedList
+              .map((item) => Friend.fromJson(item as Map<String, dynamic>))
+              .toList();
+      _receivedRequests =
+          receivedList
+              .map((item) => Friend.fromJson(item as Map<String, dynamic>))
+              .toList();
+      _sentRequests =
+          sentList
+              .map((item) => Friend.fromJson(item as Map<String, dynamic>))
+              .toList();
+
+      debugPrint(
+        '[FriendProvider] 친구 번들 파싱 완료: '
+        'recommendations=${friendRecommendations.length}, '
+        'friendPosts=${_friendPosts.length}, '
+        'accepted=${_acceptedFriends.length}, '
+        'received=${_receivedRequests.length}, '
+        'sent=${_sentRequests.length}',
+      );
+
+      // 🎯 더 불러올 데이터가 있는지 확인 (번들에서는 첫 20개만 제공)
+      _hasMoreAcceptedFriends = _acceptedFriends.length >= 20;
+      _hasMoreReceivedRequests = _receivedRequests.length >= 20;
+      _hasMoreSentRequests = _sentRequests.length >= 20;
 
       // 🎯 페이지 번호 증가
       if (_hasMoreAcceptedFriends) _acceptedFriendsPage = 1;
@@ -120,13 +164,21 @@ class FriendProvider with ChangeNotifier {
 
       // 🎯 조회 시간 저장
       _lastFetchTime = DateTime.now();
-      debugPrint('[FriendProvider] 서버에서 데이터 새로고침 완료');
+      debugPrint('[FriendProvider] 친구 번들 로드 완료');
     } catch (e) {
       _errorMessage = "데이터 로딩에 실패했습니다: $e";
+      debugPrint('[FriendProvider] 친구 번들 로드 실패: $e');
     } finally {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  /// ✨ [추가] '이웃 관리' 화면에 필요한 모든 데이터를 한번에 불러옵니다.
+  /// 타이밍 기반 캐시 사용: forceRefresh가 false이고 캐시가 유효하면 서버 조회 스킵
+  /// 하위 호환성 유지: 번들 API 사용
+  Future<void> fetchAllFriendData({bool forceRefresh = false}) async {
+    return fetchFriendsBundle(forceRefresh: forceRefresh);
   }
 
   /// 🎯 수락된 친구 목록 더 불러오기 (무한 스크롤)
@@ -523,6 +575,7 @@ class FriendProvider with ChangeNotifier {
     _acceptedFriends.clear();
     _receivedRequests.clear();
     _sentRequests.clear();
+    _friendRecommendations.clear();
     _isLoading = false;
     _errorMessage = null;
     _lastFetchTime = null; // 🎯 캐시 시간도 초기화

@@ -18,15 +18,13 @@ class MyProfileFeedProvider extends BaseFeedProvider {
   bool _loadingMore = false;
   bool _hasMore = true;
   int _currentPage = 0;
-  int _totalPages = 0;
   bool _hasUserReordered = false;
 
   bool get hasUserReordered => _hasUserReordered;
 
   // 내 피드 캐시
   Map<String, dynamic>? _cachedUserInfo;
-  List<Map<String, dynamic>>? _cachedCategories;
-  Map<String, List<Map<String, dynamic>>>? _cachedPostsByCategory;
+  List<Map<String, dynamic>>? _cachedPosts;
   Map<String, List<Map<String, dynamic>>>? _cachedSystemCategoryMappings;
   DateTime? _lastCacheTime;
   static const Duration _cacheValidDuration = Duration(minutes: 5); // 5분 캐시
@@ -71,34 +69,31 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     notifyListeners();
 
     try {
-      // 병렬 호출: 스키마 + 첫 페이지 포스트
-      final results = await Future.wait([
-        blogService.getProfileSchema(_username!),
-        blogService.getProfilePosts(_username!, page: 0, size: pageSize),
-      ]);
+      // 통합 API 호출: 스키마 + 포스트
+      // getProfileFeed는 이미 { success, data, message }에서 data만 추출해서 반환
+      final feedData = await blogService.getProfileFeed(
+        _username!,
+        page: 0,
+        size: pageSize,
+      );
 
-      final schemaResp = results[0];
-      final postsResp = results[1];
+      // feedData는 이미 data 필드의 내용 (ProfileFeedSchemaAndPostsResponse)
+      // processServerResponse에 전달하기 위해 { data: feedData } 형태로 래핑
+      final feedResp = {'data': feedData};
 
-      if (schemaResp['success'] == true && postsResp['success'] == true) {
-        // 부모 클래스의 공통 처리 로직 사용
-        processServerResponse(schemaResp, postsResp);
-        setNetworkError(null); // 성공 시 에러 클리어
+      // 부모 클래스의 공통 처리 로직 사용
+      processServerResponse(feedResp);
+      setNetworkError(null); // 성공 시 에러 클리어
 
-        // 페이지네이션 처리
-        final postsData = postsResp['data'];
-        _currentPage = 0;
-        _totalPages = postsData['totalPages'] ?? 0;
-        _hasMore = _currentPage < _totalPages;
+      // 페이지네이션 처리
+      final postsData = feedData['posts'] as Map<String, dynamic>?;
+      _currentPage = 0;
+      _hasMore = postsData?['hasNext'] ?? false;
 
-        // 캐시에 저장
-        _saveToCache();
+      // 캐시에 저장
+      _saveToCache();
 
-        debugPrint('[MyProfileFeedProvider] 서버 로드 완료');
-      } else {
-        debugPrint('[MyProfileFeedProvider] 서버 응답 실패');
-        clearData();
-      }
+      debugPrint('[MyProfileFeedProvider] 서버 로드 완료');
     } catch (e) {
       debugPrint('[MyProfileFeedProvider] 서버 로드 실패: $e');
       debugPrint('[MyProfileFeedProvider] 에러 타입: ${e.runtimeType}');
@@ -125,19 +120,11 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     if (_cachedUserInfo != null)
       userInfoInternal = Map<String, dynamic>.from(_cachedUserInfo!);
 
-    if (_cachedCategories != null) {
-      categoriesInternal.clear();
-      categoriesInternal.addAll(
-        _cachedCategories!.map((e) => Map<String, dynamic>.from(e)),
+    if (_cachedPosts != null) {
+      postsInternal.clear();
+      postsInternal.addAll(
+        _cachedPosts!.map((e) => Map<String, dynamic>.from(e)),
       );
-    }
-
-    if (_cachedPostsByCategory != null) {
-      postsByCategoryInternal.clear();
-      _cachedPostsByCategory!.forEach((key, value) {
-        postsByCategoryInternal[key] =
-            value.map((e) => Map<String, dynamic>.from(e)).toList();
-      });
     }
 
     if (_cachedSystemCategoryMappings != null) {
@@ -156,14 +143,8 @@ class MyProfileFeedProvider extends BaseFeedProvider {
         userInfoInternal != null
             ? Map<String, dynamic>.from(userInfoInternal!)
             : null;
-    _cachedCategories =
-        categoriesInternal.map((e) => Map<String, dynamic>.from(e)).toList();
-    _cachedPostsByCategory = postsByCategoryInternal.map(
-      (key, value) => MapEntry(
-        key,
-        value.map((e) => Map<String, dynamic>.from(e)).toList(),
-      ),
-    );
+    _cachedPosts =
+        postsInternal.map((e) => Map<String, dynamic>.from(e)).toList();
     _cachedSystemCategoryMappings = systemCategoryMappingsInternal?.map(
       (key, value) => MapEntry(
         key,
@@ -178,8 +159,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
   /// 캐시 무효화
   void invalidateCache() {
     _cachedUserInfo = null;
-    _cachedCategories = null;
-    _cachedPostsByCategory = null;
+    _cachedPosts = null;
     _cachedSystemCategoryMappings = null;
     _lastCacheTime = null;
     debugPrint('[MyProfileFeedProvider] 캐시 무효화');
@@ -244,50 +224,51 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     if (postId == null) return;
 
     // 현재 데이터 업데이트
-    for (final categoryId in _cachedPostsByCategory!.keys) {
-      final posts = _cachedPostsByCategory![categoryId]!;
-      final idx = posts.indexWhere((p) => p['id']?.toString() == postId);
-      if (idx != -1) {
-        posts[idx] = updatedPost;
-        break;
-      }
+    final idx = postsInternal.indexWhere((p) => p['id']?.toString() == postId);
+    if (idx != -1) {
+      // 기존 포스트 데이터와 병합 (모든 필드 업데이트)
+      final existingPost = postsInternal[idx];
+      postsInternal[idx] = {...existingPost, ...updatedPost};
+    } else {
+      // 포스트가 없으면 추가 (새로 발행된 경우)
+      postsInternal.insert(0, updatedPost);
     }
 
     // 캐시 데이터도 업데이트
-    if (_cachedPostsByCategory != null) {
-      for (final categoryId in _cachedPostsByCategory!.keys) {
-        final posts = _cachedPostsByCategory![categoryId]!;
-        final idx = posts.indexWhere((p) => p['id']?.toString() == postId);
-        if (idx != -1) {
-          posts[idx] = Map<String, dynamic>.from(updatedPost);
-          break;
-        }
+    if (_cachedPosts != null) {
+      final cachedIdx = _cachedPosts!.indexWhere(
+        (p) => p['id']?.toString() == postId,
+      );
+      if (cachedIdx != -1) {
+        final existingCachedPost = _cachedPosts![cachedIdx];
+        _cachedPosts![cachedIdx] = Map<String, dynamic>.from({
+          ...existingCachedPost,
+          ...updatedPost,
+        });
+      } else {
+        // 캐시에도 없으면 추가
+        _cachedPosts!.insert(0, Map<String, dynamic>.from(updatedPost));
       }
     }
 
     notifyListeners();
+    debugPrint('[MyProfileFeedProvider] ✅ 포스트 캐시 업데이트 완료: $postId');
   }
 
   /// 포스트 삭제 시 캐시 업데이트
   void removePostFromCache(String postId) {
     // 현재 데이터에서 제거
-    for (final categoryId in _cachedPostsByCategory!.keys) {
-      final posts = _cachedPostsByCategory![categoryId]!;
-      posts.removeWhere((p) => p['id']?.toString() == postId);
-    }
+    postsInternal.removeWhere((p) => p['id']?.toString() == postId);
 
     // 캐시 데이터에서도 제거
-    if (_cachedPostsByCategory != null) {
-      for (final categoryId in _cachedPostsByCategory!.keys) {
-        final posts = _cachedPostsByCategory![categoryId]!;
-        posts.removeWhere((p) => p['id']?.toString() == postId);
-      }
+    if (_cachedPosts != null) {
+      _cachedPosts!.removeWhere((p) => p['id']?.toString() == postId);
     }
 
     notifyListeners();
   }
 
-  /// 🎯 새로 발행한 글을 해당 카테고리의 맨 앞에 배치
+  /// 🎯 새로 발행한 글을 맨 앞에 배치
   /// 기존 순서는 유지하고 새 글만 맨 앞으로 이동
   /// 서버와도 순서 동기화를 수행합니다.
   Future<void> moveNewPostToFront(String postId) async {
@@ -301,22 +282,10 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       }
 
       // 현재 데이터에서 찾기
-      Map<String, dynamic>? foundPost;
-      String? categoryId;
-      int? currentIndex;
-
-      for (final catId in postsByCategoryInternal.keys) {
-        final posts = postsByCategoryInternal[catId]!;
-        final idx = posts.indexWhere((p) => (p['id'] as int?) == postIdInt);
-        if (idx != -1) {
-          foundPost = posts[idx];
-          categoryId = catId;
-          currentIndex = idx;
-          break;
-        }
-      }
-
-      if (foundPost == null || categoryId == null || currentIndex == null) {
+      final idx = postsInternal.indexWhere(
+        (p) => (p['id'] as int?) == postIdInt,
+      );
+      if (idx == -1) {
         debugPrint(
           '[MyProfileFeedProvider] moveNewPostToFront: 포스트를 찾을 수 없음: $postId',
         );
@@ -324,49 +293,47 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       }
 
       // 이미 맨 앞에 있으면 아무것도 하지 않음
-      if (currentIndex == 0) {
+      if (idx == 0) {
         debugPrint(
           '[MyProfileFeedProvider] moveNewPostToFront: 이미 맨 앞에 있음: $postId',
         );
         return;
       }
 
-      final categoryIdInt = int.tryParse(categoryId);
-      if (categoryIdInt == null) {
-        debugPrint(
-          '[MyProfileFeedProvider] moveNewPostToFront: 유효하지 않은 categoryId: $categoryId',
-        );
-        return;
+      // 🎯 로컬에서 먼저 맨 앞으로 이동 (낙관적 업데이트)
+      final foundPost = postsInternal[idx];
+      postsInternal.removeAt(idx);
+      postsInternal.insert(0, foundPost);
+
+      // globalIndex 업데이트
+      for (int i = 0; i < postsInternal.length; i++) {
+        postsInternal[i]['globalIndex'] = i;
       }
 
-      // 🎯 로컬에서 먼저 맨 앞으로 이동 (낙관적 업데이트)
-      final posts = postsByCategoryInternal[categoryId]!;
-      posts.removeAt(currentIndex);
-      posts.insert(0, foundPost);
-
       // 캐시도 업데이트
-      if (_cachedPostsByCategory != null &&
-          _cachedPostsByCategory!.containsKey(categoryId)) {
-        final cachedPosts = _cachedPostsByCategory![categoryId]!;
-        final cachedIdx = cachedPosts.indexWhere(
+      if (_cachedPosts != null) {
+        final cachedIdx = _cachedPosts!.indexWhere(
           (p) => (p['id'] as int?) == postIdInt,
         );
         if (cachedIdx != -1) {
-          final cachedPost = cachedPosts[cachedIdx];
-          cachedPosts.removeAt(cachedIdx);
-          cachedPosts.insert(0, cachedPost);
+          final cachedPost = _cachedPosts![cachedIdx];
+          _cachedPosts!.removeAt(cachedIdx);
+          _cachedPosts!.insert(0, cachedPost);
+          // 캐시의 globalIndex도 업데이트
+          for (int i = 0; i < _cachedPosts!.length; i++) {
+            _cachedPosts![i]['globalIndex'] = i;
+          }
         }
       }
 
       notifyListeners();
-      debugPrint(
-        '[MyProfileFeedProvider] ✅ 새 글을 맨 앞에 배치 완료 (로컬): $postId (카테고리: $categoryId)',
-      );
+      debugPrint('[MyProfileFeedProvider] ✅ 새 글을 맨 앞에 배치 완료 (로컬): $postId');
 
       // 🎯 서버와 순서 동기화 (실패해도 시스템이 뻑나지 않도록 안전하게 처리)
       try {
-        final orderedPostIds = posts.map((post) => '${post['id']}').toList();
-        await reorderPostsInCategory(categoryIdInt, orderedPostIds);
+        final orderedPostIds =
+            postsInternal.map((post) => '${post['id']}').toList();
+        await reorderPosts(orderedPostIds);
         debugPrint('[MyProfileFeedProvider] ✅ 새 글 순서 서버 동기화 완료: $postId');
       } catch (e, stackTrace) {
         // 서버 동기화 실패해도 로컬 순서는 유지 (사용자 경험 우선)
@@ -392,40 +359,33 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     notifyListeners();
 
     try {
-      final postsResp = await blogService.getProfilePosts(
+      // getProfileFeed는 이미 { success, data, message }에서 data만 추출해서 반환
+      final feedData = await blogService.getProfileFeed(
         _username!,
         page: _currentPage + 1,
         size: pageSize,
       );
 
-      if (postsResp['success'] == true) {
-        final List<dynamic> newPosts = postsResp['data']['posts'] ?? [];
-        final totalPages = postsResp['data']['totalPages'] ?? 0;
+      // feedData는 이미 data 필드의 내용 (ProfileFeedSchemaAndPostsResponse)
+      final postsData = feedData['posts'] as Map<String, dynamic>?;
+      final List<dynamic> newPosts = postsData?['posts'] ?? [];
+      final hasNext = postsData?['hasNext'] ?? false;
 
-        if (newPosts.isEmpty) {
-          _hasMore = false;
-        } else {
-          // 새 포스트를 카테고리별로 병합
-          for (final postData in newPosts) {
-            if (postData is! Map<String, dynamic>) continue;
-
-            final categoryId = (postData['categoryId'] ?? 0).toString();
-            if (!postsByCategoryInternal.containsKey(categoryId)) {
-              postsByCategoryInternal[categoryId] = [];
-            }
-            postsByCategoryInternal[categoryId]!.add(postData);
-          }
-
-          _currentPage++;
-          _totalPages = totalPages;
-          _hasMore = _currentPage < _totalPages;
-          // 초기 로드 이후에도 사용자가 직접 순서를 바꾸기 전까지는 서버 순서를 유지
-
-          // 캐시 업데이트
-          _saveToCache();
-        }
-      } else {
+      if (newPosts.isEmpty) {
         _hasMore = false;
+      } else {
+        // 새 포스트를 배열 순서대로 추가 (서버에서 이미 정렬되어 옴)
+        for (final postData in newPosts) {
+          if (postData is Map<String, dynamic>) {
+            postsInternal.add(postData);
+          }
+        }
+
+        _currentPage++;
+        _hasMore = hasNext;
+
+        // 캐시 업데이트
+        _saveToCache();
       }
     } catch (e) {
       debugPrint('[MyProfileFeedProvider] loadMore 실패: $e');
@@ -444,11 +404,9 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     _hasMore = true;
     _username = null;
     _currentPage = 0;
-    _totalPages = 0;
     invalidateCache();
     // 선택 상태도 초기화
     selectBase(BaseFilter.all);
-    selectCategory(null);
     notifyListeners();
     debugPrint('[MyProfileFeedProvider] 로그아웃 - 모든 데이터 초기화 완료');
   }
@@ -464,15 +422,12 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
   /// 주어진 순서를 로컬에 즉시 반영
   @override
-  void reorderPostsLocally(int categoryId, List<String> orderedPostIds) {
-    reorderPostsLocallyImpl(categoryId, orderedPostIds);
+  void reorderPostsLocally(List<String> orderedPostIds) {
+    reorderPostsLocallyImpl(orderedPostIds);
   }
 
   @override
-  Future<void> reorderPostsInCategory(
-    int categoryId,
-    List<String> postIds,
-  ) async {
+  Future<void> reorderPosts(List<String> postIds) async {
     try {
       // 문자열 ID를 정수로 변환
       final orderedIntIds =
@@ -488,18 +443,13 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       }
 
       // 낙관적 업데이트: 먼저 로컬에서 순서 변경
-      final prevPosts = Map<String, List<Map<String, dynamic>>>.from(
-        postsByCategoryProtected,
-      );
-      reorderPostsLocally(categoryId, postIds);
+      final prevPosts = List<Map<String, dynamic>>.from(postsProtected);
+      reorderPostsLocally(postIds);
 
       try {
         // 서버에 순서 변경 요청
-        await blogService.reorderPostsInCategory(
-          categoryId: categoryId,
-          orderedIds: orderedIntIds,
-        );
-        debugPrint('[MyProfileFeedProvider] 카테고리 $categoryId 포스트 순서 서버 저장 성공');
+        await blogService.reorderPosts(orderedIntIds);
+        debugPrint('[MyProfileFeedProvider] 포스트 순서 서버 저장 성공');
 
         // 캐시 업데이트
         _saveToCache();
@@ -507,8 +457,8 @@ class MyProfileFeedProvider extends BaseFeedProvider {
         debugPrint('⚠️ [MyProfileFeedProvider] 서버 포스트 순서 변경 실패, 롤백: $e');
 
         // 실패 시 롤백
-        postsByCategoryProtected.clear();
-        postsByCategoryProtected.addAll(prevPosts);
+        postsProtected.clear();
+        postsProtected.addAll(prevPosts);
         notifyListeners();
         rethrow;
       }
@@ -516,85 +466,5 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       debugPrint('[MyProfileFeedProvider] 포스트 순서 변경 실패: $e');
       rethrow;
     }
-  }
-
-  @override
-  Future<void> reorderAllSections(List<String> newOrderIds) async {
-    final orderedIntIds = <int>[];
-    for (final idStr in newOrderIds) {
-      if (idStr == 'system_doppy_uncategorized') {
-        orderedIntIds.add(0);
-        continue;
-      }
-      final id = int.tryParse(idStr);
-      if (id != null) orderedIntIds.add(id);
-    }
-
-    if (orderedIntIds.isEmpty) return;
-
-    final prevOrder =
-        categoriesInternal.map<int>((c) => (c['id'] as int)).toList();
-
-    // 🎯 먼저 플래그 설정 (자동 정렬 방지)
-    _hasUserReordered = true;
-
-    reorderCategoriesLocally(orderedIntIds); // Optimistic update
-
-    try {
-      await blogService.reorderCategories(orderedIntIds);
-      _saveToCache(); // Update cache on success
-    } catch (e) {
-      debugPrint('⚠️ [MyProfileFeedProvider] 서버 재정렬 실패, 롤백: $e');
-      categoriesInternal
-        ..clear()
-        ..addAll(
-          prevOrder
-              .map((id) => findCategoryById(id))
-              .where((c) => c != null)
-              .cast<Map<String, dynamic>>(),
-        );
-      notifyListeners();
-      rethrow;
-    }
-  }
-
-  @override
-  void reorderCategoriesLocally(List<int> orderedIntIds) {
-    if (orderedIntIds.isEmpty) return;
-
-    _reorderCategoriesInternalImpl(orderedIntIds);
-    notifyListeners();
-  }
-
-  /// 🚀 최적화: notifyListeners 없이 조용히 재정렬 (Feed 자동 정렬용)
-  void reorderCategoriesLocallySilently(List<int> orderedIntIds) {
-    if (orderedIntIds.isEmpty) return;
-    _reorderCategoriesInternalImpl(orderedIntIds);
-  }
-
-  /// 🔧 내부 구현: 실제 재정렬 로직 (중복 제거)
-  void _reorderCategoriesInternalImpl(List<int> orderedIntIds) {
-    final orderSet = orderedIntIds.toSet();
-
-    // 요청된 순서대로 먼저 배치
-    final ordered = <Map<String, dynamic>>[];
-    for (final id in orderedIntIds) {
-      final idx = categoriesInternal.indexWhere((c) => (c['id'] as int?) == id);
-      if (idx != -1) {
-        ordered.add(categoriesInternal[idx]);
-      }
-    }
-
-    // 나머지(요청에 없는 항목) 기존 순서 유지하여 뒤에 추가
-    for (final cat in categoriesInternal) {
-      final cid = cat['id'] as int?;
-      if (cid == null || !orderSet.contains(cid)) {
-        ordered.add(cat);
-      }
-    }
-
-    categoriesInternal
-      ..clear()
-      ..addAll(ordered);
   }
 }

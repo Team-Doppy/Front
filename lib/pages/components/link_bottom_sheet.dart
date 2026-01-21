@@ -52,7 +52,7 @@ class LinkBottomSheet extends StatelessWidget {
     final l10n = AppLocalizations.of(context);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
       decoration: const BoxDecoration(color: Colors.transparent),
       child: Stack(
         children: [
@@ -296,8 +296,8 @@ class _LinkTile extends StatelessWidget {
                       ? CachedNetworkImage(
                         imageUrl: thumbnailUrl,
                         fit: BoxFit.cover,
-                        fadeInDuration: Duration.zero,
-                        fadeOutDuration: Duration.zero,
+                        fadeInDuration: Duration(milliseconds: 200),
+                        fadeOutDuration: Duration(milliseconds: 200),
                         memCacheWidth: 80,
                         maxWidthDiskCache: 200,
                         errorWidget: (context, url, error) {

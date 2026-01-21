@@ -1179,7 +1179,6 @@ class PostExporter {
     bool? publicOnly = false,
     bool? friendsOnly = false,
     // 그룹 기능 제거로 인해 selectedGroupIds 파라미터 제거
-    int? categoryId, // 카테고리 ID (필수)
     bool skipValidation = false, // 임시저장용 검증 생략 플래그
     int? year, // 🎯 연도 (새 포스트 발행 시 필수)
     int? nthWeek, // 🎯 주차 번호 (새 포스트 발행 시 필수)
@@ -1193,11 +1192,6 @@ class PostExporter {
     final dynamic content = base['content'];
     if (!skipValidation && content == null) {
       throw StateError('content is required for all access levels');
-    }
-
-    // 카테고리 ID 검증 (발행 시에만 필수, 0은 미지정 카테고리로 유효)
-    if (!skipValidation && categoryId == null) {
-      throw StateError('categoryId is required for publishing');
     }
 
     // 2. 공개 범위에 따른 필수 필드 설정
@@ -1236,17 +1230,12 @@ class PostExporter {
 
     // 그룹 기능 제거로 인해 sharedGroupIds는 제거된 상태 유지
 
-    // 6. 카테고리 ID 추가 (필수)
-    if (categoryId != null) {
-      result['categoryId'] = categoryId;
-    }
-
-    // 🎯 6-1. 연도와 주차 정보 추가 (새 포스트 발행 시 필수)
+    // 🎯 6. 연도와 주차 정보 추가 (새 포스트 발행 시 필수)
     if (year != null && nthWeek != null) {
       result['year'] = year;
-      result['nthWeek'] = nthWeek;
+      result['weekOfYear'] = nthWeek; // 서버 DTO: weekOfYear
       debugPrint(
-        '[composeFinalPayload] 연도와 주차 추가: year=$year, nthWeek=$nthWeek',
+        '[composeFinalPayload] 연도와 주차 추가: year=$year, weekOfYear=$nthWeek',
       );
     }
 
@@ -1427,7 +1416,6 @@ class PostPublishService {
   /// [privateOnly] - 나만보기 여부
   /// [publicOnly] - 전체공개 여부
   /// [friendsOnly] - 친구공유 여부
-  /// [categoryId] - 카테고리 ID
   ///
   /// 반환: 최종 발행용 JSON 맵
   Future<Map<String, dynamic>> buildFinalPayload({
@@ -1438,7 +1426,8 @@ class PostPublishService {
     required bool publicOnly,
     required bool friendsOnly,
     // 그룹 기능 제거로 인해 selectedGroupIds 파라미터 제거
-    required int? categoryId,
+    int? year, // 🎯 연도 (지정된 경우 사용, 없으면 현재 주차 기준)
+    int? nthWeek, // 🎯 주차 (지정된 경우 사용, 없으면 현재 주차 기준)
   }) async {
     // ✅ 썸네일 URL 검증은 UI 레이어(_publish)에서 이미 수행됨
     // 여기서는 검증 없이 페이로드만 빌드
@@ -1456,8 +1445,23 @@ class PostPublishService {
     final usedUrls = _collectUsedImageUrls(editedBase, thumbnailImageUrl);
     editedBase['usedImageUrls'] = usedUrls.toList();
 
-    // 🎯 새 포스트 발행 시 현재 연도와 주차 정보 추가
-    final currentYearAndWeek = WeekUtils.getCurrentYearAndWeekForPublish();
+    // 🎯 연도와 주차 정보 결정: 지정된 값이 있으면 사용, 없으면 현재 주차 기준
+    final int finalYear;
+    final int finalNthWeek;
+    if (year != null && nthWeek != null) {
+      finalYear = year;
+      finalNthWeek = nthWeek;
+      debugPrint(
+        '[PostPublishService] 지정된 연도/주차 사용: year=$finalYear, nthWeek=$finalNthWeek',
+      );
+    } else {
+      final currentYearAndWeek = WeekUtils.getCurrentYearAndWeekForPublish();
+      finalYear = currentYearAndWeek.year;
+      finalNthWeek = currentYearAndWeek.nthWeek;
+      debugPrint(
+        '[PostPublishService] 현재 주차 기준 사용: year=$finalYear, nthWeek=$finalNthWeek',
+      );
+    }
 
     return PostExporter.composeFinalPayload(
       thumbnailImageUrl: thumbnailImageUrl,
@@ -1465,10 +1469,9 @@ class PostPublishService {
       privateOnly: privateOnly,
       publicOnly: publicOnly,
       friendsOnly: friendsOnly,
-      categoryId: categoryId,
       createdAt: DateTime.now().toUtc(),
-      year: currentYearAndWeek.year,
-      nthWeek: currentYearAndWeek.nthWeek,
+      year: finalYear,
+      nthWeek: finalNthWeek,
     );
   }
 

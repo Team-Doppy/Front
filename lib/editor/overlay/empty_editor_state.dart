@@ -7,9 +7,14 @@ import 'package:provider/provider.dart';
 /// 🎯 에디터가 비어있을 때 표시하는 빈 상태 UI
 /// 댓글 빈 상태 UI와 비슷한 스타일
 class EmptyEditorState extends StatelessWidget {
-  const EmptyEditorState({super.key, this.onTap});
+  const EmptyEditorState({
+    super.key,
+    this.onTap,
+    this.customMessage, // 🎯 커스텀 메시지 (온보딩용)
+  });
 
   final VoidCallback? onTap;
+  final String? customMessage; // 🎯 커스텀 메시지 (null이면 기본 메시지 사용)
 
   @override
   Widget build(BuildContext context) {
@@ -56,11 +61,7 @@ class EmptyEditorState extends StatelessWidget {
                   ),
               const SizedBox(height: 16),
               Text(
-                username.isNotEmpty
-                    ? context
-                        .tr('username_dopy')
-                        .replaceAll('{username}', username)
-                    : context.tr('dopy'),
+                customMessage ?? context.tr('tap_to_start_writing'),
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -72,13 +73,17 @@ class EmptyEditorState extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                context.tr('tap_to_start_writing'),
+                username.isNotEmpty
+                    ? context
+                        .tr('username_dopy')
+                        .replaceAll('{username}', username)
+                    : context.tr('dopy'),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Theme.of(
                     context,
-                  ).colorScheme.onBackground.withOpacity(0.5),
-                  fontSize: 14,
+                  ).colorScheme.onBackground.withOpacity(0.8),
+                  fontSize: 15,
                   fontWeight: FontWeight.w500,
                 ),
               ),

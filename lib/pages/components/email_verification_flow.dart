@@ -194,28 +194,25 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
 
         // 인증번호 발송 성공 메시지는 스낵바로 표시하지 않음 (화면 전환으로 충분)
       } else {
-        final code = result.error?.error;
         // 사용자 친화적인 메시지로 변환
         final msg =
             result.error?.message ??
             result.message ??
             ErrorHandler.getHttpErrorMessage(result.statusCode ?? 400);
+        final userFriendlyMsg = ErrorHandler.getErrorMessage(msg);
 
-        // 서버 에러코드에 맞춘 UX
-        if (code == 'SEND_CODE_FAILED') {
-          setState(() {
-            _emailError = msg;
-          });
-        } else {
-          // 기술적 에러 메시지 필터링
-          final userFriendlyMsg = ErrorHandler.getErrorMessage(msg);
-          ErrorHandler.showError(context, userFriendlyMsg);
-        }
+        // 모든 에러를 텍스트 필드 아래 에러 텍스트로 표시
+        setState(() {
+          _emailError = userFriendlyMsg;
+        });
       }
     } catch (e) {
       if (!mounted) return;
-      // catch 블록의 에러도 사용자 친화적으로 변환
-      ErrorHandler.handleError(context, e);
+      // catch 블록의 에러도 텍스트 필드 아래 에러 텍스트로 표시
+      final errorMsg = ErrorHandler.getErrorMessage(e);
+      setState(() {
+        _emailError = errorMsg;
+      });
     } finally {
       if (mounted) {
         setState(() {
@@ -306,8 +303,11 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
       }
     } catch (e) {
       if (!mounted) return;
-      // catch 블록의 에러도 사용자 친화적으로 변환
-      ErrorHandler.handleError(context, e);
+      // catch 블록의 에러도 텍스트 필드 아래 에러 텍스트로 표시
+      final errorMsg = ErrorHandler.getErrorMessage(e);
+      setState(() {
+        _pinError = errorMsg;
+      });
     } finally {
       if (mounted) {
         setState(() {

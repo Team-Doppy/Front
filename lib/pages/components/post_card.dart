@@ -329,6 +329,21 @@ class _PostCardState extends State<PostCard>
   }
 
   Widget _buildImage() {
+    // ✅ 이미지가 없으면 셔머 표시
+    if (widget.thumbnailImageUrl.isEmpty) {
+      return Container(
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(22)),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: ShimmerBox(
+            width: double.infinity,
+            height: double.infinity,
+            borderRadius: BorderRadius.circular(22),
+          ),
+        ),
+      );
+    }
+
     // 🎯 네트워크 URL인지 먼저 판단 (대부분의 경우)
     final isNetworkUrl =
         widget.thumbnailImageUrl.isNotEmpty &&
@@ -338,14 +353,9 @@ class _PostCardState extends State<PostCard>
     if (isNetworkUrl) {
       // 네트워크 이미지/영상
       return Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-          ),
-        ),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(22)),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(12), // 보더 두께만큼 작게
+          borderRadius: BorderRadius.circular(22), // 보더 두께만큼 작게
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -376,7 +386,7 @@ class _PostCardState extends State<PostCard>
                               ),
                               width: double.infinity,
                               height: double.infinity,
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(22),
                             ),
                   )
                   : SizedBox.expand(
@@ -394,7 +404,7 @@ class _PostCardState extends State<PostCard>
                         return ShimmerBox(
                           width: double.infinity,
                           height: double.infinity,
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(22),
                         );
                       },
                       errorBuilder: (context, error, stackTrace) {
@@ -444,14 +454,9 @@ class _PostCardState extends State<PostCard>
     } else {
       // 로컬 에셋 또는 빈 URL
       return Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-          ),
-        ),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(22)),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(22),
           child: Image.asset(
             widget.thumbnailImageUrl,
             width: double.infinity,
@@ -466,67 +471,13 @@ class _PostCardState extends State<PostCard>
   @override
   Widget build(BuildContext context) {
     super.build(context); // AutomaticKeepAliveClientMixin 필수
-    // 🎯 로컬 에셋 기반 포스트인지 확인 (온보딩 플레이스홀더)
-    final isOnboardingPost = widget.postId.startsWith('onboarding_placeholder');
 
     // 디버그 로그 제거 (불필요한 리빌드 방지)
 
     return Stack(
       children: [
         _buildImage(),
-        // 🎯 작성자 정보 (이미지 위 상단 오버레이) - 로컬 에셋이 아닐 때만 표시
-        if (!isOnboardingPost)
-          Positioned(
-            left: 10,
-            bottom: 8,
-            child: GestureDetector(
-              onTap: () {
-                final currentUser = context.read<UserProvider>().currentUser;
-                final isMyPost = widget.author == currentUser?.username;
 
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder:
-                        (context) => UserProfileScreen(
-                          otherUser:
-                              isMyPost
-                                  ? null // 내 프로필일 때는 null로 내 프로필 표시
-                                  : User(
-                                    username: widget.author,
-                                    alias: widget.author,
-                                    profileImageUrl:
-                                        widget.authorProfileImageUrl,
-                                  ),
-                        ),
-                  ),
-                );
-              },
-              behavior: HitTestBehavior.opaque,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CommonProfileAvatar(
-                    imageUrl: widget.authorProfileImageUrl ?? "",
-                    username: widget.author,
-                    size: 28,
-                    borderWidth: 0,
-                    borderColor: Colors.transparent,
-                    backgroundColor: Colors.transparent,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    widget.author,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
         // 🎯 좋아요 정보 (오른쪽 하단) - 로컬 에셋이 아닐 때만 표시
         /*
         if (!isOnboardingPost)

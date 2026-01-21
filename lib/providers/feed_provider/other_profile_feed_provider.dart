@@ -54,33 +54,29 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
     notifyListeners();
 
     try {
-      // 병렬 호출: 스키마 + 첫 페이지 포스트
-      final results = await Future.wait([
-        blogService.getProfileSchema(_username!),
-        blogService.getProfilePosts(_username!, page: 0, size: pageSize),
-      ]);
+      // 통합 API 호출: 스키마 + 포스트
+      // getProfileFeed는 이미 { success, data, message }에서 data만 추출해서 반환
+      final feedData = await blogService.getProfileFeed(
+        _username!,
+        page: 0,
+        size: pageSize,
+      );
 
-      final schemaResp = results[0];
-      final postsResp = results[1];
+      // feedData는 이미 data 필드의 내용 (ProfileFeedSchemaAndPostsResponse)
+      // processServerResponse에 전달하기 위해 { data: feedData } 형태로 래핑
+      final feedResp = {'data': feedData};
 
-      if (schemaResp['success'] == true && postsResp['success'] == true) {
-        // 부모 클래스의 공통 처리 로직 사용
-        processServerResponse(schemaResp, postsResp);
-        setNetworkError(null); // 성공 시 에러 클리어
+      // 부모 클래스의 공통 처리 로직 사용
+      processServerResponse(feedResp);
+      setNetworkError(null); // 성공 시 에러 클리어
 
-        // 페이지네이션 처리
-        final postsData = postsResp['data'];
-        _currentPage = 0;
-        _totalPages = postsData['totalPages'] ?? 0;
-        _hasMore = _currentPage < _totalPages;
+      // 페이지네이션 처리
+      final postsData = feedData['posts'] as Map<String, dynamic>?;
+      _currentPage = 0;
+      _totalPages = postsData?['totalPages'] ?? 0;
+      _hasMore = postsData?['hasNext'] ?? false;
 
-        debugPrint('[OtherProfileFeedProvider] 서버 로드 완료: $_username');
-      } else {
-        debugPrint(
-          '[OtherProfileFeedProvider] 서버 응답 실패: ${postsResp['message']}',
-        );
-        // 🚀 실패 시에도 기존 데이터는 유지 (에러 상태 표시용)
-      }
+      debugPrint('[OtherProfileFeedProvider] 서버 로드 완료: $_username');
     } catch (e) {
       debugPrint('[OtherProfileFeedProvider] 서버 로드 실패: $e');
 
@@ -104,36 +100,32 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
     notifyListeners();
 
     try {
-      final postsResp = await blogService.getProfilePosts(
+      // getProfileFeed는 이미 { success, data, message }에서 data만 추출해서 반환
+      final feedData = await blogService.getProfileFeed(
         _username!,
         page: _currentPage + 1,
         size: pageSize,
       );
 
-      if (postsResp['success'] == true) {
-        final List<dynamic> newPosts = postsResp['data']['posts'] ?? [];
-        final totalPages = postsResp['data']['totalPages'] ?? 0;
+      // feedData는 이미 data 필드의 내용 (ProfileFeedSchemaAndPostsResponse)
+      final postsData = feedData['posts'] as Map<String, dynamic>?;
+      final List<dynamic> newPosts = postsData?['posts'] ?? [];
+      final totalPages = postsData?['totalPages'] ?? 0;
+      final hasNext = postsData?['hasNext'] ?? false;
 
-        if (newPosts.isEmpty) {
-          _hasMore = false;
-        } else {
-          // 새 포스트를 카테고리별로 병합
-          for (final postData in newPosts) {
-            if (postData is! Map<String, dynamic>) continue;
-
-            final categoryId = (postData['categoryId'] ?? 0).toString();
-            if (!postsByCategoryInternal.containsKey(categoryId)) {
-              postsByCategoryInternal[categoryId] = [];
-            }
-            postsByCategoryInternal[categoryId]!.add(postData);
-          }
-
-          _currentPage++;
-          _totalPages = totalPages;
-          _hasMore = _currentPage < _totalPages;
-        }
-      } else {
+      if (newPosts.isEmpty) {
         _hasMore = false;
+      } else {
+        // 새 포스트를 배열 순서대로 추가 (서버에서 이미 정렬되어 옴)
+        for (final postData in newPosts) {
+          if (postData is Map<String, dynamic>) {
+            postsInternal.add(postData);
+          }
+        }
+
+        _currentPage++;
+        _totalPages = totalPages;
+        _hasMore = hasNext;
       }
     } catch (e) {
       debugPrint('[OtherProfileFeedProvider] loadMore 실패: $e');
@@ -162,7 +154,6 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
     _totalPages = 0;
     // 선택 상태도 초기화
     selectBase(BaseFilter.all);
-    selectCategory(null);
     notifyListeners();
     debugPrint('[OtherProfileFeedProvider] 로그아웃 - 모든 데이터 초기화 완료');
   }
@@ -176,27 +167,12 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
   }
 
   @override
-  Future<void> reorderAllSections(List<String> newOrderIds) async {
-    throw UnsupportedError(
-      'OtherProfileFeedProvider does not support reordering.',
-    );
-  }
-
-  @override
-  void reorderCategoriesLocally(List<int> orderedIntIds) {
+  void reorderPostsLocally(List<String> orderedPostIds) {
     // no-op (읽기 전용)
   }
 
   @override
-  void reorderPostsLocally(int categoryId, List<String> orderedPostIds) {
-    // no-op (읽기 전용)
-  }
-
-  @override
-  Future<void> reorderPostsInCategory(
-    int categoryId,
-    List<String> postIds,
-  ) async {
+  Future<void> reorderPosts(List<String> postIds) async {
     throw UnsupportedError(
       'OtherProfileFeedProvider does not support post reordering.',
     );

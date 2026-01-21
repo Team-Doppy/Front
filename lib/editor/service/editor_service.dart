@@ -4899,13 +4899,15 @@ class EditorService extends ChangeNotifier {
   }
 
   /// 🎯 성능 최적화: 여러 URL을 한 번에 배치 업데이트 (중복 document 읽기/쓰기 방지)
+  /// 🎯 metadata 변경은 히스토리에 포함하지 않음 (로컬 경로 → 네트워크 URL 변환만 수행)
   Future<void> replaceGroupImageUrlsByPath({
     required String groupNodeId,
     required Map<String, String> urlMap, // localPath -> networkUrl 매핑
   }) async {
     if (urlMap.isEmpty) return;
 
-    _isExecutingHistory = true;
+    // ✅ metadata 변경은 히스토리 추적 억제 (로컬 → 네트워크 URL 변환만 수행)
+    _beginSuppressHistoryTracking();
     try {
       final node = editor.document.getNodeById(groupNodeId);
       // ✅ 노드가 없으면(삭제/undo/redo 타이밍) 업로드 결과를 pending으로 저장한다.
@@ -4966,7 +4968,7 @@ class EditorService extends ChangeNotifier {
       // ✅ undo/redo로 업로드 이전 스냅샷으로 돌아갈 수 있으므로 업로드 결과를 캐시에 남긴다.
       _stashPendingGroupUploadUrls(groupNodeId: groupNodeId, urlMap: urlMap);
     } finally {
-      _isExecutingHistory = false;
+      _endSuppressHistoryTracking();
     }
   }
 

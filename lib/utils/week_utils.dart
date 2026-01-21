@@ -1,149 +1,135 @@
 import 'package:flutter/material.dart';
 
 /// 주차(Week) 및 연도(Year) 관련 중앙 유틸리티
-/// ISO 8601 기준으로 주차를 계산합니다.
+/// 1월 1일부터 시작하는 방식으로 주차를 계산합니다.
 ///
 /// 모든 주차/연도 관련 계산은 이 클래스를 통해서만 수행하여 일관성을 유지합니다.
 class WeekUtils {
   WeekUtils._(); // private constructor (static only)
 
-  /// ISO 8601 기준으로 날짜의 주차 번호를 계산합니다.
+  /// 월 기준 "주차"를 계산합니다. (한국 달력 UX에 맞춘 규칙)
   ///
-  /// ISO 8601 주차 규칙:
-  /// - 주는 월요일에 시작하여 일요일에 끝납니다.
-  /// - 연도의 첫 번째 주는 해당 연도의 첫 번째 목요일을 포함하는 주입니다.
+  /// 규칙(기본):
+  /// - 주 시작은 월요일
+  /// - 1주차는 "해당 월의 첫 번째 월요일"이 속한 주로 본다.
+  /// - 다만, 월 1일이 첫 월요일 이전인 경우(월초 자투리 구간)는 1주차로 취급한다.
+  ///
+  /// 예) 2026년 1월(1일=목):
+  /// - 1주차: 1/1~1/11(월초 자투리 + 첫 full week)
+  /// - 2주차: 1/12~1/18
+  /// - 3주차: 1/19~1/25
+  /// - 4주차: 1/26~2/1
+  static int getWeekOfMonth(DateTime date) {
+    final d = DateTime(date.year, date.month, date.day);
+    final firstDayOfMonth = DateTime(d.year, d.month, 1);
+
+    // 첫 월요일(해당 월 안에서) 찾기
+    final deltaToMonday = (DateTime.monday - firstDayOfMonth.weekday + 7) % 7;
+    final firstMonday = firstDayOfMonth.add(Duration(days: deltaToMonday));
+
+    // 월초 자투리(첫 월요일 이전)는 1주차로 취급
+    if (d.isBefore(firstMonday)) return 1;
+
+    final diffDays = d.difference(firstMonday).inDays;
+    return (diffDays ~/ 7) + 1;
+  }
+
+  /// 월 기준 주차(weekOfMonth)의 시작일을 반환합니다.
+  ///
+  /// - weekOfMonth=1은 "월초 자투리 + 첫 월요일이 속한 주"의 시작일(=해당 월 1일)을 반환합니다.
+  /// - weekOfMonth>=2는 (첫 월요일 + (weekOfMonth-1)*7) 을 반환합니다.
+  static DateTime getWeekStartDateOfMonth(
+    int year,
+    int month,
+    int weekOfMonth,
+  ) {
+    final firstDayOfMonth = DateTime(year, month, 1);
+    final deltaToMonday = (DateTime.monday - firstDayOfMonth.weekday + 7) % 7;
+    final firstMonday = firstDayOfMonth.add(Duration(days: deltaToMonday));
+
+    if (weekOfMonth <= 1) return firstDayOfMonth;
+    return firstMonday.add(Duration(days: (weekOfMonth - 1) * 7));
+  }
+
+  /// 월 기준 주차(weekOfMonth)의 "해당 연도 주차(weekOfYear)"를 반환합니다.
+  static int getWeekOfYearFromMonthWeek({
+    required int year,
+    required int month,
+    required int weekOfMonth,
+  }) {
+    final start = getWeekStartDateOfMonth(year, month, weekOfMonth);
+    return getWeekNumber(start);
+  }
+
+  /// 1월 1일부터 시작하는 방식으로 날짜의 주차 번호를 계산합니다.
+  ///
+  /// 주차 계산 규칙:
+  /// - 1월 1일부터 7일씩 나누어 주차를 계산합니다.
+  /// - 1주차: 1/1 ~ 1/7, 2주차: 1/8 ~ 1/14, 3주차: 1/15 ~ 1/21, ...
   ///
   /// [date] - 계산할 날짜 (로컬 시간대)
   /// 반환: 주차 번호 (1-53)
   static int getWeekNumber(DateTime date) {
-    // ISO 8601 주차 계산
-    // 1. 해당 연도의 1월 4일을 찾습니다 (항상 첫 번째 주에 포함됨)
-    final jan4 = DateTime(date.year, 1, 4);
+    // 1. 해당 연도의 1월 1일을 찾습니다
+    final jan1 = DateTime(date.year, 1, 1);
 
-    // 2. 1월 4일이 무슨 요일인지 계산 (1=월요일, 7=일요일)
-    final jan4Weekday = jan4.weekday;
+    // 2. 1월 1일부터 경과한 일수 계산
+    final daysSinceJan1 = date.difference(jan1).inDays;
 
-    // 3. 첫 번째 주의 시작일 계산 (1월 4일이 속한 주의 월요일)
-    // jan4Weekday가 1(월)이면 -3일, 2(화)면 -4일, ..., 7(일)이면 -6일
-    final daysToSubtract = jan4Weekday - 1;
-    final firstWeekStart = jan4.subtract(Duration(days: daysToSubtract));
+    // 3. 주차 계산 (0일부터 시작하므로 +1)
+    final weekNumber = (daysSinceJan1 ~/ 7) + 1;
 
-    // 4. 주어진 날짜가 속한 주의 월요일 계산
-    final dateWeekday = date.weekday;
-    final daysToMonday = dateWeekday - 1;
-    final weekStart = date.subtract(Duration(days: daysToMonday));
-
-    // 5. 첫 번째 주부터의 주차 수 계산
-    final daysDifference = weekStart.difference(firstWeekStart).inDays;
-    final weekNumber = (daysDifference ~/ 7) + 1;
-
-    // 6. 연도 경계 처리
-    // 만약 계산된 주차가 0 이하이면, 이전 연도의 마지막 주차입니다.
-    if (weekNumber <= 0) {
-      // 이전 연도의 마지막 주차를 직접 계산 (재귀 방지)
-      final prevYear = date.year - 1;
-      final prevJan4 = DateTime(prevYear, 1, 4);
-      final prevJan4Weekday = prevJan4.weekday;
-      final prevDaysToSubtract = prevJan4Weekday - 1;
-      final prevFirstWeekStart = prevJan4.subtract(
-        Duration(days: prevDaysToSubtract),
-      );
-      final prevDec28 = DateTime(prevYear, 12, 28);
-      final prevDec28Weekday = prevDec28.weekday;
-      final prevDaysToMonday = prevDec28Weekday - 1;
-      final prevDec28WeekStart = prevDec28.subtract(
-        Duration(days: prevDaysToMonday),
-      );
-      final prevDaysDifference =
-          prevDec28WeekStart.difference(prevFirstWeekStart).inDays;
-      return (prevDaysDifference ~/ 7) + 1;
+    // 4. 연도 경계 처리
+    // 만약 날짜가 이전 연도이면, 이전 연도의 마지막 주차를 반환
+    if (date.year < jan1.year) {
+      final prevYear = date.year;
+      final prevJan1 = DateTime(prevYear, 1, 1);
+      final prevDec31 = DateTime(prevYear, 12, 31);
+      final prevDaysSinceJan1 = prevDec31.difference(prevJan1).inDays;
+      return (prevDaysSinceJan1 ~/ 7) + 1;
     }
 
-    // 7. 계산된 주차가 해당 연도의 최대 주차를 초과하면, 다음 연도의 첫 번째 주차입니다.
-    // 재귀를 방지하기 위해 직접 계산
-    final currentYear = date.year;
-    final currentJan4 = DateTime(currentYear, 1, 4);
-    final currentJan4Weekday = currentJan4.weekday;
-    final currentDaysToSubtract = currentJan4Weekday - 1;
-    final currentFirstWeekStart = currentJan4.subtract(
-      Duration(days: currentDaysToSubtract),
-    );
-    final currentDec28 = DateTime(currentYear, 12, 28);
-    final currentDec28Weekday = currentDec28.weekday;
-    final currentDaysToMonday = currentDec28Weekday - 1;
-    final currentDec28WeekStart = currentDec28.subtract(
-      Duration(days: currentDaysToMonday),
-    );
-    final currentDaysDifference =
-        currentDec28WeekStart.difference(currentFirstWeekStart).inDays;
-    final maxWeeks = (currentDaysDifference ~/ 7) + 1;
-
-    if (weekNumber > maxWeeks) {
+    // 5. 다음 연도로 넘어간 경우
+    if (date.year > jan1.year) {
       return 1; // 다음 연도의 첫 번째 주차
     }
 
     return weekNumber;
   }
 
-  /// ISO 8601 기준으로 해당 연도의 총 주차 수를 계산합니다.
+  /// 1월 1일부터 시작하는 방식으로 해당 연도의 총 주차 수를 계산합니다.
   ///
-  /// ISO 8601 규칙:
-  /// - 12월 28일이 포함된 주차가 해당 연도의 마지막 주차입니다.
-  /// - 12월 28일의 주차 번호를 확인하면 해당 연도의 총 주차 수를 알 수 있습니다.
+  /// 규칙:
+  /// - 1월 1일부터 12월 31일까지 7일씩 나누어 계산합니다.
   ///
   /// [year] - 연도
   /// 반환: 해당 연도의 총 주차 수 (52 또는 53)
   static int getWeeksInYear(int year) {
-    // 재귀를 방지하기 위해 직접 계산
-    // 1. 해당 연도의 1월 4일을 찾습니다
-    final jan4 = DateTime(year, 1, 4);
-    final jan4Weekday = jan4.weekday;
-
-    // 2. 첫 번째 주의 시작일 계산
-    final daysToSubtract = jan4Weekday - 1;
-    final firstWeekStart = jan4.subtract(Duration(days: daysToSubtract));
-
-    // 3. 12월 28일이 속한 주의 월요일 계산
-    final dec28 = DateTime(year, 12, 28);
-    final dec28Weekday = dec28.weekday;
-    final daysToMonday = dec28Weekday - 1;
-    final dec28WeekStart = dec28.subtract(Duration(days: daysToMonday));
-
-    // 4. 첫 번째 주부터 12월 28일 주까지의 주차 수 계산
-    final daysDifference = dec28WeekStart.difference(firstWeekStart).inDays;
-    final weekNumber = (daysDifference ~/ 7) + 1;
-
-    return weekNumber;
+    final jan1 = DateTime(year, 1, 1);
+    final dec31 = DateTime(year, 12, 31);
+    final daysDifference = dec31.difference(jan1).inDays;
+    return (daysDifference ~/ 7) + 1;
   }
 
-  /// 특정 연도와 주차의 시작일(월요일)을 반환합니다.
+  /// 특정 연도와 주차의 시작일을 반환합니다.
   ///
   /// [year] - 연도
   /// [weekNumber] - 주차 번호 (1부터 시작)
-  /// 반환: 해당 주차의 시작일 (월요일, 로컬 시간대)
+  /// 반환: 해당 주차의 시작일 (1월 1일부터 7일씩 계산)
   static DateTime getWeekStartDate(int year, int weekNumber) {
-    // 1. 해당 연도의 1월 4일을 찾습니다
-    final jan4 = DateTime(year, 1, 4);
-    final jan4Weekday = jan4.weekday;
-
-    // 2. 첫 번째 주의 시작일 계산
-    final daysToSubtract = jan4Weekday - 1;
-    final firstWeekStart = jan4.subtract(Duration(days: daysToSubtract));
-
-    // 3. 요청한 주차의 시작일 계산
-    final weekStart = firstWeekStart.add(Duration(days: (weekNumber - 1) * 7));
-
-    return weekStart;
+    final jan1 = DateTime(year, 1, 1);
+    // (weekNumber - 1) * 7일을 더하면 해당 주차의 시작일
+    return jan1.add(Duration(days: (weekNumber - 1) * 7));
   }
 
-  /// 특정 연도와 주차의 종료일(일요일)을 반환합니다.
+  /// 특정 연도와 주차의 종료일을 반환합니다.
   ///
   /// [year] - 연도
   /// [weekNumber] - 주차 번호 (1부터 시작)
-  /// 반환: 해당 주차의 종료일 (일요일, 로컬 시간대)
+  /// 반환: 해당 주차의 종료일 (시작일로부터 6일 후)
   static DateTime getWeekEndDate(int year, int weekNumber) {
     final weekStart = getWeekStartDate(year, weekNumber);
-    // 일요일은 월요일로부터 6일 후
+    // 시작일로부터 6일 후가 종료일
     return weekStart.add(const Duration(days: 6));
   }
 

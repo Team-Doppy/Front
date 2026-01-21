@@ -367,7 +367,7 @@ class NodeComponentService extends ChangeNotifier {
               editorService: editorService,
               document: document,
               onDone:
-                  (editorContext, result) async {
+                  (editorContext, result, originalImages) async {
                         await _applyEditedImagesToNode(
                           context: context,
                           editorContext: editorContext,
@@ -376,9 +376,14 @@ class NodeComponentService extends ChangeNotifier {
                           editorService: editorService,
                           document: document,
                           result: result,
+                          originalImages: originalImages,
                         );
                       }
-                      as Future<void> Function(BuildContext, dynamic)?,
+                      as Future<void> Function(
+                        BuildContext,
+                        dynamic,
+                        List<Uint8List>,
+                      )?,
             );
           },
         ),
@@ -404,7 +409,12 @@ class _DelayedImageLoader extends StatefulWidget {
   final BuildContext parentContext;
   final EditorService editorService;
   final MutableDocument document;
-  final Future<void> Function(BuildContext, dynamic)? onDone;
+  final Future<void> Function(
+    BuildContext editorContext,
+    dynamic result,
+    List<Uint8List> originalImages,
+  )?
+  onDone;
 
   const _DelayedImageLoader({
     required this.future,
@@ -521,7 +531,11 @@ class _DelayedImageLoaderState extends State<_DelayedImageLoader> {
               onDone:
                   widget.onDone != null
                       ? (editorContext, result) async {
-                        await widget.onDone!(editorContext, result);
+                        await widget.onDone!(
+                          editorContext,
+                          result,
+                          imageBytesList,
+                        );
                       }
                       : null,
             )
@@ -532,7 +546,11 @@ class _DelayedImageLoaderState extends State<_DelayedImageLoader> {
               onDone:
                   widget.onDone != null
                       ? (editorContext, result) async {
-                        await widget.onDone!(editorContext, result);
+                        await widget.onDone!(
+                          editorContext,
+                          result,
+                          imageBytesList,
+                        );
                       }
                       : null,
             );
@@ -550,6 +568,7 @@ extension NodeComponentServiceExtension on NodeComponentService {
     required EditorService editorService,
     required MutableDocument document,
     required dynamic result,
+    required List<Uint8List> originalImages,
   }) async {
     if (!context.mounted) return;
 
@@ -577,7 +596,20 @@ extension NodeComponentServiceExtension on NodeComponentService {
 
     if (editedImages.isEmpty) return;
 
-    // ✅ (닫히기 전에) 사이즈 미리 측정
+    // ✅ 기존 노드 편집: 변경이 없으면 업로드/교체 없이 바로 닫기
+    // - 에디터는 "변화 없음"이면 원본 bytes를 그대로 반환할 수 있다.
+    // - 이 경우 서버 업로드를 하면 불필요한 네트워크/노드 교체가 발생한다.
+    final isUnchanged =
+        editedImages.length == originalImages.length &&
+        List.generate(
+          editedImages.length,
+          (i) => i,
+        ).every((i) => listEquals(editedImages[i], originalImages[i]));
+    if (isUnchanged) {
+      return;
+    }
+
+    // ✅ (업로드 전에) 사이즈 미리 측정
     final sizes = await Future.wait(
       List.generate(editedImages.length, (i) async {
         try {
@@ -713,7 +745,6 @@ extension NodeComponentServiceExtension on NodeComponentService {
       );
       editorService.document.replaceNodeById(imageId, newNode);
       editorService.saveHistoryNow();
-      if (editorContext.mounted) Navigator.of(editorContext).pop();
       return;
     }
 
@@ -726,7 +757,6 @@ extension NodeComponentServiceExtension on NodeComponentService {
       );
       editorService.document.replaceNodeById(imageId, newNode);
       editorService.saveHistoryNow();
-      if (editorContext.mounted) Navigator.of(editorContext).pop();
       return;
     }
 
@@ -738,7 +768,6 @@ extension NodeComponentServiceExtension on NodeComponentService {
       );
       editorService.document.replaceNodeById(imageId, newNode);
       editorService.saveHistoryNow();
-      if (editorContext.mounted) Navigator.of(editorContext).pop();
       return;
     }
 

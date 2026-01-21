@@ -11,9 +11,11 @@ import 'package:doppy/pages/components/received_request_bottom_sheet.dart';
 import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/pages/screens/join_screen.dart';
-// (기존) 전역 블러/주차 오버레이 제거됨
+import 'dart:ui';
 
 import 'package:doppy/pages/screens/onboarding_screen.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:doppy/utils/text_bold_utils.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
@@ -22,7 +24,10 @@ import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/locale_provider.dart';
 // import 'package:doppy/providers/feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/providers/weekly_contribution_provider.dart';
+import 'package:doppy/providers/home_recommendation_provider.dart';
 import 'package:doppy/providers/search_provider.dart';
+import 'package:doppy/providers/publish_provider.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -30,7 +35,6 @@ import 'package:doppy/data/services/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
@@ -134,7 +138,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 // 앱 버전 및 상수
 class AppConstants {
-  static const String appVersion = '1.0.1';
+  static const String appVersion = '2.0';
 
   // 🎯 웹 도메인 (Universal Links/App Links용)
   static const String webDomain = 'www.doppy.app';
@@ -287,17 +291,6 @@ Future<void> main() async {
     debugPrint('[Firebase] 초기화 실패: $e');
   }
 
-  // 1. FlutterSecureStorage 인스턴스를 생성합니다.
-  const storage = FlutterSecureStorage();
-
-  // 2. 'hasSeenOnboarding' 키의 값을 문자열로 읽어옵니다.
-  final String? hasSeenOnboardingStr = await storage.read(
-    key: 'hasSeenOnboarding',
-  );
-
-  // 3. 읽어온 값이 'true' 문자열인지 확인합니다.
-  final bool hasSeenOnboarding = hasSeenOnboardingStr == 'true';
-
   runApp(
     MultiProvider(
       providers: [
@@ -312,6 +305,12 @@ Future<void> main() async {
         ChangeNotifierProvider(
           create: (_) => MyProfileFeedProvider(),
         ), // 내 피드용 (싱글톤 인스턴스 사용)
+        ChangeNotifierProvider(
+          create: (_) => WeeklyContributionProvider(),
+        ), // 주차 기여도 관리
+        ChangeNotifierProvider(
+          create: (_) => HomeRecommendationProvider(),
+        ), // 홈용 추천 카드 관리
         ChangeNotifierProvider(create: (_) => CategoryOverlayProvider()),
         ChangeNotifierProvider(create: (_) => PostDragDropService()),
 
@@ -320,10 +319,9 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => NodeComponentService()),
         ChangeNotifierProvider(create: (_) => StickerService()),
         ChangeNotifierProvider(create: (_) => UploadService()),
+        ChangeNotifierProvider(create: (_) => PublishProvider()),
       ],
-      child: MyApp(
-        hasSeenOnboarding: hasSeenOnboarding,
-      ), // MyApp 위젯을 child로 감싸줍니다.
+      child: const MyApp(), // MyApp 위젯을 child로 감싸줍니다.
     ),
   );
 
@@ -340,8 +338,7 @@ Future<void> main() async {
 }
 
 class MyApp extends StatelessWidget {
-  final bool hasSeenOnboarding;
-  const MyApp({super.key, required this.hasSeenOnboarding});
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -712,9 +709,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
       // ✅ 피드가 이미 메모리에 있으면(캐시/인메모리) 강제 새로고침 금지
       // - 백그라운드 복귀 때마다 invalidateCache + force load를 하면
       //   화면이 비었다가(shimmer) 다시 채워지는 현상이 무조건 발생함.
-      final hasFeedData =
-          myProfileFeedProvider.categories.isNotEmpty ||
-          myProfileFeedProvider.posts.isNotEmpty;
+      final hasFeedData = myProfileFeedProvider.posts.isNotEmpty;
       if (hasFeedData) {
         debugPrint('[RootShell] ⏭️ 포그라운드 복귀 - 내 프로필 피드가 있어 새로고침 스킵');
         return;
@@ -742,9 +737,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         context,
         listen: false,
       );
-      final bool hasFeedData =
-          myProfileFeedProvider.categories.isNotEmpty ||
-          myProfileFeedProvider.posts.isNotEmpty;
+      final bool hasFeedData = myProfileFeedProvider.posts.isNotEmpty;
 
       if (hasFeedData) {
         debugPrint('[RootShell] ⏭️ 피드 정보가 이미 있어 프로필 재로드 건너뜀');
@@ -896,10 +889,191 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
                   isSearching: context.watch<SearchProvider>().isSearchActive,
                 ),
               ),
-              // (기존) 전역 블러 오버레이 제거됨: 주차 프리뷰는 HomeScreen에서 OverlayEntry로 처리
+              // 🎯 블러 오버레이 + 연도 선택 UI (페이드 애니메이션)
+              Consumer<WeeklyContributionProvider>(
+                builder: (context, provider, _) {
+                  if (!provider.showBlurOverlay) {
+                    return const SizedBox.shrink();
+                  }
+                  return Positioned.fill(
+                    child: AnimatedOpacity(
+                      opacity: provider.showBlurOverlay ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                      child: Stack(
+                        children: [
+                          // 블러 배경
+                          BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                            child: Container(
+                              color: Colors.black.withOpacity(0.8),
+                            ),
+                          ),
+                          // 연도 선택 UI (date_picker_screen 스타일)
+                          if (provider.yearPickerYears != null &&
+                              provider.yearPickerSelectedYear != null)
+                            _YearPickerOverlay(
+                              years: provider.yearPickerYears!,
+                              selectedYear: provider.yearPickerSelectedYear!,
+                              onConfirm: provider.yearPickerOnConfirm,
+                              onCancel: () => provider.closeYearPicker(),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// 연도 선택 오버레이 위젯 (블러 위에 표시, date_picker_screen 스타일)
+class _YearPickerOverlay extends StatefulWidget {
+  final List<int> years;
+  final int selectedYear;
+  final Function(int)? onConfirm;
+  final VoidCallback onCancel;
+
+  const _YearPickerOverlay({
+    required this.years,
+    required this.selectedYear,
+    this.onConfirm,
+    required this.onCancel,
+  });
+
+  @override
+  State<_YearPickerOverlay> createState() => _YearPickerOverlayState();
+}
+
+class _YearPickerOverlayState extends State<_YearPickerOverlay> {
+  late FixedExtentScrollController _yearController;
+  late int _tempSelectedYear;
+
+  @override
+  void initState() {
+    super.initState();
+    _tempSelectedYear = widget.selectedYear;
+    final initialIndex = widget.years
+        .indexOf(widget.selectedYear)
+        .clamp(0, widget.years.length - 1);
+    _yearController = FixedExtentScrollController(initialItem: initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _yearController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          icon: Icon(Icons.close, color: AppColors.lightSurface),
+          onPressed: widget.onCancel,
+        ),
+        actions: [
+          // 확인 버튼 (오른쪽 상단, 작게)
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: TextButton(
+              onPressed: () {
+                widget.onConfirm?.call(_tempSelectedYear);
+              },
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                '적용',
+                style: LocaleTypography.style(
+                  context: context,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.lightSurface,
+                ),
+              ),
+            ),
+          ),
+        ],
+        centerTitle: false,
+      ),
+      body: Center(
+        child: Stack(
+          children: [
+            SizedBox(
+              height: 500,
+              child: ClipRect(
+                clipBehavior: Clip.hardEdge,
+                child: CupertinoPicker(
+                  scrollController: _yearController,
+                  itemExtent: 100,
+                  diameterRatio: 1.0,
+                  useMagnifier: false,
+                  selectionOverlay: Container(),
+                  offAxisFraction: 0.0,
+                  onSelectedItemChanged: (index) {
+                    setState(() {
+                      _tempSelectedYear = widget.years[index];
+                    });
+                  },
+                  children:
+                      widget.years.map((year) {
+                        return Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            child: Text(
+                              '$year',
+                              style: LocaleTypography.style(
+                                context: context,
+                                fontSize: 34,
+                                fontWeight: FontWeight.w900,
+                                color: AppColors.lightSurface,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                ),
+              ),
+            ),
+            // 고정된 "년" 텍스트
+            Positioned(
+              right: 20,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: Text(
+                  '년',
+                  style: LocaleTypography.style(
+                    context: context,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w400,
+                    color: AppColors.lightSurface.withOpacity(0.6),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

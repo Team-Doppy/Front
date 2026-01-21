@@ -10,69 +10,15 @@ class UserService {
 
   final Dio _dio = BaseApiService().dio;
 
-  /// 자기소개 저장
-  Future<void> saveSelfIntroduction(String introduction) async {
-    try {
-      final response = await _dio.put(
-        '/api/users/self-introduction',
-        data: {'selfIntroduction': introduction},
-      );
-      if (response.statusCode != 200) {
-        throw Exception('자기소개 저장 실패');
-      }
-    } catch (e) {
-      if (e is DioException) {
-        throw Exception('자기소개 저장 실패: ${e.response?.statusCode}');
-      }
-      rethrow;
-    }
-  }
-
-  /// 6. 내 자기소개 조회
-  Future<String> getSelfIntroduction() async {
-    try {
-      final response = await _dio.get('/api/users/self-introduction');
-      if (response.statusCode == 200) {
-        return response.data['selfIntroduction'];
-      }
-      throw Exception('자기소개 조회 실패');
-    } catch (e) {
-      if (e is DioException) {
-        throw Exception('자기소개 조회 실패: ${e.response?.statusCode}');
-      }
-      rethrow;
-    }
-  }
-
-  /// 7. 타인 자기소개 조회
-  Future<String> getOtherUserSelfIntroduction(String username) async {
-    try {
-      final response = await _dio.get('/api/users/$username/self-introduction');
-      if (response.statusCode == 200) {
-        return response.data['selfIntroduction'];
-      }
-      throw Exception('타인 자기소개 조회 실패');
-    } catch (e) {
-      if (e is DioException) {
-        throw Exception('타인 자기소개 조회 실패: ${e.response?.statusCode}');
-      }
-      rethrow;
-    }
-  }
-
   /// 프로필 정보 업데이트 (/api/profile/info)
   Future<void> updateProfileInfo({
     required String alias,
-    required String selfIntroduction,
     List<String>? links, // 🎯 프로필 링크 목록
     Map<String, String>? linkTitles, // 🎯 링크 타이틀 (URL -> 타이틀)
     Map<String, String>? linkThumbnails, // 🎯 링크 썸네일 (URL -> thumbnailUrl)
   }) async {
     try {
-      final data = <String, dynamic>{
-        'alias': alias,
-        'selfIntroduction': selfIntroduction,
-      };
+      final data = <String, dynamic>{'alias': alias};
 
       // 🎯 links가 null이 아닐 때 항상 추가 (빈 배열도 전달하여 삭제 가능하게)
       if (links != null) {
@@ -80,28 +26,122 @@ class UserService {
       }
 
       // 🎯 linkTitles가 있으면 추가 (빈 맵도 전달 가능)
-      if (linkTitles != null) {
-        data['linkTitles'] = linkTitles;
+      // 단, links에 포함된 URL만 포함하도록 필터링
+      if (linkTitles != null && linkTitles.isNotEmpty) {
+        final filteredLinkTitles = <String, String>{};
+        if (links != null) {
+          // links에 포함된 URL만 linkTitles에 포함
+          for (final url in links) {
+            if (linkTitles.containsKey(url)) {
+              filteredLinkTitles[url] = linkTitles[url]!;
+            }
+          }
+        }
+        // 필터링된 맵이 비어있지 않을 때만 추가
+        if (filteredLinkTitles.isNotEmpty) {
+          data['linkTitles'] = filteredLinkTitles;
+        }
       }
 
       // 🎯 linkThumbnails가 있으면 추가 (빈 맵도 전달 가능)
-      if (linkThumbnails != null) {
-        data['linkThumbnails'] = linkThumbnails;
+      // 단, links에 포함된 URL만 포함하도록 필터링
+      if (linkThumbnails != null && linkThumbnails.isNotEmpty) {
+        final filteredLinkThumbnails = <String, String>{};
+        if (links != null) {
+          // links에 포함된 URL만 linkThumbnails에 포함
+          for (final url in links) {
+            if (linkThumbnails.containsKey(url)) {
+              filteredLinkThumbnails[url] = linkThumbnails[url]!;
+            }
+          }
+        }
+        // 필터링된 맵이 비어있지 않을 때만 추가
+        if (filteredLinkThumbnails.isNotEmpty) {
+          data['linkThumbnails'] = filteredLinkThumbnails;
+        }
       }
 
+      debugPrint('[UserService] updateProfileInfo 요청 데이터: $data');
       final response = await _dio.put('/api/profile/info', data: data);
+      debugPrint(
+        '[UserService] updateProfileInfo 응답 상태: ${response.statusCode}',
+      );
+      debugPrint('[UserService] updateProfileInfo 응답 데이터: ${response.data}');
+
       if (response.statusCode != 200) {
-        throw Exception('프로필 정보 업데이트 실패');
+        throw Exception('프로필 정보 업데이트 실패: ${response.statusCode}');
       }
     } catch (e) {
       if (e is DioException) {
-        throw Exception('프로필 정보 업데이트 실패: ${e.response?.statusCode}');
+        debugPrint('[UserService] updateProfileInfo DioException:');
+        debugPrint('  - Status Code: ${e.response?.statusCode}');
+        debugPrint('  - Response Data: ${e.response?.data}');
+        debugPrint('  - Request Data: ${e.requestOptions.data}');
+        debugPrint('  - Message: ${e.message}');
+        throw Exception(
+          '프로필 정보 업데이트 실패: ${e.response?.statusCode} - ${e.response?.data}',
+        );
+      }
+      debugPrint('[UserService] updateProfileInfo 기타 에러: $e');
+      rethrow;
+    }
+  }
+
+  /// 유저 + 세팅 번들 조회 (GET /api/users/bundle)
+  Future<Map<String, dynamic>> getUserBundle() async {
+    try {
+      final response = await _dio.get('/api/users/bundle');
+      if (response.statusCode == 200) {
+        final decoded = response.data;
+        // 일반 Map 또는 { data: {...} } 형태 모두 대응
+        if (decoded is Map<String, dynamic>) {
+          return decoded['data'] is Map<String, dynamic>
+              ? decoded['data'] as Map<String, dynamic>
+              : decoded;
+        }
+        throw Exception('유저 번들 응답 형식 오류: ${decoded.runtimeType}');
+      }
+      throw Exception('유저 번들 조회 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        throw Exception('유저 번들 조회 실패: ${e.response?.statusCode}');
       }
       rethrow;
     }
   }
 
-  /// 프로필 정보 조회 (/api/profile/info)
+  /// 온보딩 완료 상태 업데이트 (PATCH /api/users/onboarding)
+  /// - body: { "onboardingCompleted": true/false }
+  /// - 서버 스펙: onboardingCompleted가 없거나 null이면 true로 처리(완료 호출 기준)
+  Future<bool?> updateOnboardingCompleted({bool? onboardingCompleted}) async {
+    try {
+      final response = await _dio.patch(
+        '/api/users/onboarding',
+        data: <String, dynamic>{'onboardingCompleted': onboardingCompleted},
+      );
+
+      if (response.statusCode == 200) {
+        final decoded = response.data;
+        if (decoded is Map<String, dynamic>) {
+          final map =
+              decoded['data'] is Map<String, dynamic>
+                  ? decoded['data'] as Map<String, dynamic>
+                  : decoded;
+          final v = map['onboardingCompleted'];
+          return v is bool ? v : null;
+        }
+        throw Exception('온보딩 업데이트 응답 형식 오류: ${decoded.runtimeType}');
+      }
+      throw Exception('온보딩 업데이트 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        throw Exception('온보딩 업데이트 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
+  /// 프로필 정보 조회 (/api/profile/info) - 하위 호환성 유지
   Future<User> getMyProfile() async {
     try {
       final response = await _dio.get('/api/profile/info');
@@ -195,6 +235,37 @@ class UserService {
     } catch (e) {
       if (e is DioException) {
         throw Exception('알림 토글 실패: ${e.response?.statusCode}');
+      }
+      rethrow;
+    }
+  }
+
+  /// 주차 기여도 조회 (GET /api/weeks/contributions)
+  /// 응답: WeekContributionResponse { year, weeksInYear, weeks[], greeting{} }
+  Future<Map<String, dynamic>> getWeeklyContributions({int? year}) async {
+    try {
+      final queryParams = <String, dynamic>{};
+      if (year != null) {
+        queryParams['year'] = year;
+      }
+      final response = await _dio.get(
+        '/api/weeks/contributions',
+        queryParameters: queryParams.isEmpty ? null : queryParams,
+      );
+      if (response.statusCode == 200) {
+        final decoded = response.data;
+        // 일반 Map 또는 { data: {...} } 형태 모두 대응
+        if (decoded is Map<String, dynamic>) {
+          return decoded['data'] is Map<String, dynamic>
+              ? decoded['data'] as Map<String, dynamic>
+              : decoded;
+        }
+        throw Exception('주차 기여도 응답 형식 오류: ${decoded.runtimeType}');
+      }
+      throw Exception('주차 기여도 조회 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        throw Exception('주차 기여도 조회 실패: ${e.response?.statusCode}');
       }
       rethrow;
     }

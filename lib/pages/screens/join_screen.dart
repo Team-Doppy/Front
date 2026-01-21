@@ -8,7 +8,6 @@ import 'package:doppy/pages/screens/onboarding_screen.dart' show LoginScreen;
 import 'package:doppy/pages/components/email_verification_flow.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../../data/services/auth_service.dart';
 
 class JoinScreen extends StatefulWidget {
@@ -95,73 +94,84 @@ class _JoinScreenState extends State<JoinScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: GestureDetector(
-          onTap: () async {
-            // emailVerificationOnly 모드면 로그아웃 확인 다이얼로그 표시
-            if (widget.emailVerificationOnly) {
-              final confirmed = await DialogUtils.showConfirmDialog(
-                context,
-                title: context.tr('logout'),
-                message: context.tr('logout_confirm'),
-                confirmText: context.tr('logout'),
-                cancelText: context.tr('cancel'),
-                isDestructive: false,
-              );
+        leading:
+            _isCompleteStep()
+                ? null
+                : GestureDetector(
+                  onTap: () async {
+                    // emailVerificationOnly 모드면 로그아웃 확인 다이얼로그 표시
+                    if (widget.emailVerificationOnly) {
+                      final confirmed = await DialogUtils.showConfirmDialog(
+                        context,
+                        title: context.tr('logout'),
+                        message: context.tr('logout_confirm'),
+                        confirmText: context.tr('logout'),
+                        cancelText: context.tr('cancel'),
+                        isDestructive: false,
+                      );
 
-              if (confirmed == true && mounted) {
-                // 로그아웃 처리
-                await AuthProvider().logout();
-                // 온보딩 화면으로 이동 (스택 완전히 비우기)
-                if (mounted) {
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(
-                      builder: (context) => const LoginScreen(),
+                      if (confirmed == true && mounted) {
+                        // 로그아웃 처리
+                        await AuthProvider().logout();
+                        // 온보딩 화면으로 이동 (스택 완전히 비우기)
+                        if (mounted) {
+                          Navigator.of(context).pushAndRemoveUntil(
+                            MaterialPageRoute(
+                              builder: (context) => const LoginScreen(),
+                            ),
+                            (route) => false,
+                          );
+                        }
+                      }
+                      return;
+                    }
+                    // skipModeSelection이 true이고 첫 단계면 바로 닫기
+                    if (widget.skipModeSelection && _currentStep == 0) {
+                      Navigator.pop(context);
+                    } else if (_currentStep > 0) {
+                      _previousStep();
+                    } else {
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 24, top: 22),
+                    child: Text(
+                      context.tr('previous'),
+                      style: TextStyle(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.8),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    (route) => false,
-                  );
-                }
-              }
-              return;
-            }
-            // skipModeSelection이 true이고 첫 단계면 바로 닫기
-            if (widget.skipModeSelection && _currentStep == 0) {
-              Navigator.pop(context);
-            } else if (_currentStep > 0) {
-              _previousStep();
-            } else {
-              Navigator.pop(context);
-            }
-          },
-          child: Padding(
-            padding: const EdgeInsets.only(left: 24, top: 22),
-            child: Text(
-              context.tr('previous'),
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: LinearProgressIndicator(
-                value: (_currentStep + 1) / _stepTitles.length,
-                minHeight: 8,
-                backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  Theme.of(context).colorScheme.onSurface.withOpacity(0.9),
+                  ),
                 ),
-              ),
-            ),
-          ),
-        ),
+
+        bottom:
+            _isCompleteStep()
+                ? null
+                : PreferredSize(
+                  preferredSize: const Size.fromHeight(12),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: LinearProgressIndicator(
+                        value: (_currentStep + 1) / _stepTitles.length,
+                        minHeight: 8,
+                        backgroundColor:
+                            Theme.of(context).colorScheme.surfaceVariant,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.9),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
       ),
       body: IndexedStack(
         index: _currentStep,
@@ -297,13 +307,17 @@ class _JoinScreenState extends State<JoinScreen> {
                 cursorColor: Theme.of(context).colorScheme.onSurface,
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface,
-                  fontSize: 18,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
                 ),
                 controller: _idController,
                 textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
                   hintText: context.tr('join_id_hint'),
-                  hintStyle: TextStyle(color: Colors.grey[600]),
+                  hintStyle: TextStyle(
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
                   filled: true,
                   fillColor: Theme.of(context).colorScheme.surfaceVariant,
                   prefixIcon: Icon(Icons.alternate_email_rounded, size: 18),
@@ -311,8 +325,8 @@ class _JoinScreenState extends State<JoinScreen> {
                     context,
                   ).colorScheme.onSurfaceVariant.withOpacity(0.8),
                   contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 4,
-                    vertical: 8,
+                    horizontal: 16,
+                    vertical: 20,
                   ),
                   border: OutlineInputBorder(
                     borderSide: BorderSide.none,
@@ -327,9 +341,7 @@ class _JoinScreenState extends State<JoinScreen> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                   errorBorder: OutlineInputBorder(
-                    borderSide: BorderSide(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
+                    borderSide: BorderSide.none,
                     borderRadius: BorderRadius.circular(16),
                   ),
                   errorStyle: TextStyle(
@@ -338,9 +350,7 @@ class _JoinScreenState extends State<JoinScreen> {
                     fontWeight: FontWeight.w500,
                   ),
                   focusedErrorBorder: OutlineInputBorder(
-                    borderSide: BorderSide(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
+                    borderSide: BorderSide.none,
                     borderRadius: BorderRadius.circular(16),
                   ),
                   errorText:
@@ -479,16 +489,20 @@ class _JoinScreenState extends State<JoinScreen> {
                 textInputAction: TextInputAction.done,
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface,
-                  fontSize: 18,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
                 ),
                 decoration: InputDecoration(
                   hintText: context.tr('password_hint'),
-                  hintStyle: TextStyle(color: Colors.grey[600]),
+                  hintStyle: TextStyle(
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
                   filled: true,
                   fillColor: Theme.of(context).colorScheme.surfaceVariant,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16,
-                    vertical: 8,
+                    vertical: 20,
                   ),
                   border: OutlineInputBorder(
                     borderSide: BorderSide.none,
@@ -605,11 +619,12 @@ class _JoinScreenState extends State<JoinScreen> {
             style: TextStyle(
               color:
                   isValid
-                      ? Theme.of(context).colorScheme.onSurface
+                      ? Theme.of(context).colorScheme.onSurface.withOpacity(0.9)
                       : Theme.of(
                         context,
                       ).colorScheme.onSurfaceVariant.withOpacity(0.4),
-              fontSize: 14,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -665,30 +680,27 @@ class _JoinScreenState extends State<JoinScreen> {
                 textInputAction: TextInputAction.done,
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface,
-                  fontSize: 18,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
                 ),
                 decoration: InputDecoration(
                   hintText: context.tr('join_confirm_password_hint'),
-                  hintStyle: TextStyle(color: Colors.grey[600]),
+                  hintStyle: TextStyle(
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
                   filled: true,
                   fillColor: Theme.of(context).colorScheme.surfaceVariant,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16,
-                    vertical: 8,
+                    vertical: 20,
                   ),
                   border: OutlineInputBorder(
                     borderSide: BorderSide.none,
                     borderRadius: BorderRadius.circular(16),
                   ),
                   enabledBorder: OutlineInputBorder(
-                    borderSide:
-                        _isPasswordMatch &&
-                                _confirmPasswordController.text.isNotEmpty
-                            ? BorderSide(
-                              color: Theme.of(context).colorScheme.onSurface,
-                              width: 2,
-                            )
-                            : BorderSide.none,
+                    borderSide: BorderSide.none,
                     borderRadius: BorderRadius.circular(16),
                   ),
                   focusedBorder: OutlineInputBorder(
@@ -812,6 +824,11 @@ class _JoinScreenState extends State<JoinScreen> {
         RegExp(r'[0-9]').hasMatch(password);
   }
 
+  /// 완료 단계인지 확인
+  bool _isCompleteStep() {
+    return _currentStep == _stepTitles.length - 1;
+  }
+
   void _handleIdNext() {
     if (!_isIdDuplicateChecked) {
       // 중복확인 먼저 수행 (자동으로 다음 단계 진행)
@@ -919,23 +936,7 @@ class _JoinScreenState extends State<JoinScreen> {
 
       if (success) {
         // 회원가입 성공
-        // 🎯 첫 회원가입 플래그 저장 (계정별로 저장)
-        try {
-          final authService = AuthService();
-          final userId = await authService.getUserIdFromToken();
-
-          if (userId != null) {
-            final prefs = await SharedPreferences.getInstance();
-            final key = 'is_first_signup_$userId';
-            await prefs.setBool(key, true);
-            debugPrint('[JoinScreen] 첫 회원가입 플래그 저장 완료 (userId: $userId)');
-          } else {
-            debugPrint('[JoinScreen] 사용자 ID를 가져올 수 없어 플래그 저장 실패');
-          }
-        } catch (e) {
-          debugPrint('[JoinScreen] 첫 회원가입 플래그 저장 실패: $e');
-        }
-
+        // 🎯 서버에서 온보딩 플래그를 관리하므로 로컬 플래그 저장 제거
         _nextStep(); // 완료 화면으로 이동
 
         // 1초 후 스플래시 화면으로 부드럽게 페이드 전환 (로그인 성공 시와 동일)

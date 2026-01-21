@@ -4,8 +4,8 @@ import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/locale_provider.dart';
-import 'package:doppy/utils/error_handler.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui';
 import 'dart:math' as math;
@@ -32,6 +32,8 @@ class _LoginScreenState extends State<LoginScreen>
   bool _obscurePassword = true;
   bool _isLoggingIn = false;
   bool _isFadingOut = false; // 로고 페이드아웃 상태
+  bool _hasLoginError = false; // 로그인 에러 상태
+  String? _errorMessage; // 에러 메시지
 
   @override
   void initState() {
@@ -44,6 +46,25 @@ class _LoginScreenState extends State<LoginScreen>
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
+
+    // 포커스 시 에러 상태 제거
+    _emailFocusNode.addListener(() {
+      if (_emailFocusNode.hasFocus && _hasLoginError) {
+        setState(() {
+          _hasLoginError = false;
+          _errorMessage = null;
+        });
+      }
+    });
+
+    _loginPasswordFocusNode.addListener(() {
+      if (_loginPasswordFocusNode.hasFocus && _hasLoginError) {
+        setState(() {
+          _hasLoginError = false;
+          _errorMessage = null;
+        });
+      }
+    });
   }
 
   @override
@@ -62,9 +83,10 @@ class _LoginScreenState extends State<LoginScreen>
     // 키보드가 올라왔는지 확인
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
     final isKeyboardVisible = keyboardHeight > 0;
-
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final theme = Theme.of(context);
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       body: SafeArea(
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
@@ -78,7 +100,7 @@ class _LoginScreenState extends State<LoginScreen>
             crossAxisAlignment: CrossAxisAlignment.center,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Spacer(flex: 2),
+              Spacer(flex: 3),
 
               // Doppy 로딩 로고 스타일 제목 - 키보드 올라올 때 또는 로그인 중일 때 숨기기
               AnimatedOpacity(
@@ -104,18 +126,32 @@ class _LoginScreenState extends State<LoginScreen>
                     child: AnimatedBuilder(
                       animation: _typingController,
                       builder: (context, child) {
-                        return _buildTitleText(
-                          context,
-                          "doppy",
-                          ValueKey("doppy"),
+                        return Column(
+                          children: [
+                            _buildTitleText(
+                              context,
+                              "doppy",
+                              ValueKey("doppy"),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              "인생에서 단 한 번뿐인, 이번 주",
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w500,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.88),
+                              ),
+                            ),
+                          ],
                         );
                       },
                     ),
                   ),
                 ),
               ),
-
-              const SizedBox(height: 40),
+              const Spacer(),
 
               // 로그인 입력 필드
               Padding(
@@ -137,14 +173,13 @@ class _LoginScreenState extends State<LoginScreen>
                         hintStyle: TextStyle(
                           fontWeight: FontWeight.w500,
                           fontSize: 16,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.5),
+                          color: theme.colorScheme.onSurface.withOpacity(0.5),
                         ),
                         filled: true,
-                        fillColor: Theme.of(
-                          context,
-                        ).colorScheme.surfaceVariant.withOpacity(1),
+                        fillColor:
+                            isDark
+                                ? theme.colorScheme.background.withOpacity(1)
+                                : theme.colorScheme.surfaceVariant,
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 24,
                           vertical: 30,
@@ -178,14 +213,24 @@ class _LoginScreenState extends State<LoginScreen>
                         ),
                         suffixIcon: Icon(
                           Icons.alternate_email_rounded,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.5),
+                          color:
+                              _hasLoginError
+                                  ? Colors.red
+                                  : Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.5),
                           size: 20,
                         ),
                       ),
                       onChanged: (_) {
-                        setState(() {}); // 버튼 활성화 상태 업데이트
+                        if (_hasLoginError) {
+                          setState(() {
+                            _hasLoginError = false;
+                            _errorMessage = null;
+                          });
+                        } else {
+                          setState(() {}); // 버튼 활성화 상태 업데이트
+                        }
                       },
                       onSubmitted: (_) {
                         FocusScope.of(
@@ -221,9 +266,10 @@ class _LoginScreenState extends State<LoginScreen>
                           fontSize: 16,
                         ),
                         filled: true,
-                        fillColor: Theme.of(
-                          context,
-                        ).colorScheme.surfaceVariant.withOpacity(1),
+                        fillColor:
+                            isDark
+                                ? theme.colorScheme.background.withOpacity(1)
+                                : theme.colorScheme.surfaceVariant,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.only(
                             bottomLeft: Radius.circular(24),
@@ -251,14 +297,19 @@ class _LoginScreenState extends State<LoginScreen>
                           ),
                           borderSide: BorderSide.none,
                         ),
+                        errorText: _hasLoginError ? _errorMessage : null,
+                        errorStyle: TextStyle(fontSize: 14, color: Colors.red),
                         suffixIcon: IconButton(
                           icon: Icon(
                             _obscurePassword
                                 ? Icons.lock_outline_rounded
                                 : Icons.lock_open_outlined,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.5),
+                            color:
+                                _hasLoginError
+                                    ? Colors.red
+                                    : Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.5),
                             size: 20,
                           ),
                           onPressed: () {
@@ -269,7 +320,14 @@ class _LoginScreenState extends State<LoginScreen>
                         ),
                       ),
                       onChanged: (_) {
-                        setState(() {}); // 버튼 활성화 상태 업데이트
+                        if (_hasLoginError) {
+                          setState(() {
+                            _hasLoginError = false;
+                            _errorMessage = null;
+                          });
+                        } else {
+                          setState(() {}); // 버튼 활성화 상태 업데이트
+                        }
                       },
                       onSubmitted: (_) {
                         if (_emailController.text.trim().isNotEmpty &&
@@ -326,7 +384,6 @@ class _LoginScreenState extends State<LoginScreen>
 
               const Spacer(),
 
-              // 로그인 버튼 - 키보드 올라올 때 숨기기
               AnimatedOpacity(
                 opacity: isKeyboardVisible ? 0.0 : 1.0,
                 duration: const Duration(milliseconds: 300),
@@ -500,15 +557,13 @@ class _LoginScreenState extends State<LoginScreen>
         (route) => false,
       );
     } else {
-      // 로그인 실패 시 페이드아웃 상태 해제
+      // 로그인 실패 시 페이드아웃 상태 해제 및 에러 상태 설정
       setState(() {
         _isFadingOut = false;
         _isLoggingIn = false;
+        _hasLoginError = true;
+        _errorMessage = context.tr('login_failed_invalid_credentials');
       });
-      ErrorHandler.showError(
-        context,
-        context.tr('login_failed_invalid_credentials'),
-      );
     }
   }
 
@@ -523,9 +578,11 @@ class _LoginScreenState extends State<LoginScreen>
           Text(
             "D",
             style: TextStyle(
-              fontSize: 53,
+              fontSize: 48,
               fontWeight: FontWeight.w800,
-              color: Theme.of(context).colorScheme.onSurface,
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurfaceVariant.withOpacity(0.95),
               letterSpacing: -2,
             ),
           ),
@@ -534,13 +591,13 @@ class _LoginScreenState extends State<LoginScreen>
           Padding(
             padding: const EdgeInsets.only(top: 10),
             child: SizedBox(
-              width: 34,
-              height: 34,
+              width: 30,
+              height: 30,
               child: CustomPaint(
                 painter: _DoppyOSpinnerPainter(
                   progress: _typingController.value,
                   color: Theme.of(context).colorScheme.primary,
-                  strokeWidth: 8,
+                  strokeWidth: 7,
                 ),
               ),
             ),
@@ -549,9 +606,11 @@ class _LoginScreenState extends State<LoginScreen>
           Text(
             "ppy",
             style: TextStyle(
-              fontSize: 52,
+              fontSize: 48,
               fontWeight: FontWeight.w800,
-              color: Theme.of(context).colorScheme.onSurface,
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurfaceVariant.withOpacity(0.95),
               letterSpacing: -1,
             ),
           ),

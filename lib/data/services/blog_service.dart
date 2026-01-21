@@ -38,46 +38,30 @@ class BlogService {
 
   // 🎯 _buildSummaryFromContent 메서드 제거됨 (summary 필드 제거)
 
-  /// 새로운 프로필 피드 API 호출
-  Future<Map<String, dynamic>> getProfileFeed(String username) async {
-    debugPrint('[BlogService] 프로필 피드 요청: $username');
-
+  /// 프로필 피드 조회 (통합 API: 스키마 + 포스트)
+  /// 응답: { success, data: ProfileFeedSchemaAndPostsResponse, message }
+  Future<Map<String, dynamic>> getProfileFeed(
+    String username, {
+    int page = 0,
+    int size = 200,
+  }) async {
     try {
-      final response = await _dio.get('/api/profile/$username/feed');
-
-      debugPrint('[BlogService] 프로필 피드 응답 상태: ${response.statusCode}');
-      debugPrint('[BlogService] 프로필 피드 응답 전체: ${response.data}');
-      debugPrint(
-        '[BlogService] 프로필 피드 로드 성공: ${response.data['data']?['categories']?.length ?? 0}개 카테고리',
+      final response = await _dio.get(
+        '/api/profile/feed/$username',
+        queryParameters: {'page': page, 'size': size},
       );
 
-      return response.data;
+      final responseData = response.data as Map<String, dynamic>;
+      // { success, data, message } 형태에서 data 추출
+      if (responseData.containsKey('data')) {
+        return responseData['data'] as Map<String, dynamic>;
+      }
+      // data 필드가 없으면 전체 응답 반환 (하위 호환성)
+      return responseData;
     } catch (e) {
       debugPrint('[BlogService] 프로필 피드 로드 실패: $e');
 
       if (e is DioException) {
-        if (e.response?.statusCode == 404) {
-          throw Exception('사용자를 찾을 수 없습니다.');
-        } else if (e.response?.statusCode == 401) {
-          throw Exception('인증이 필요합니다.');
-        } else {
-          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// 프로필 스키마 조회 (카테고리/매핑 전용)
-  Future<Map<String, dynamic>> getProfileSchema(String username) async {
-    try {
-      final response = await _dio.get('/api/profile/feed/schema/$username');
-
-      return response.data as Map<String, dynamic>;
-    } catch (e) {
-      debugPrint('[BlogService] 프로필 스키마 로드 실패: $e');
-
-      if (e is DioException) {
         // 네트워크 연결 오류는 DioException을 그대로 전달
         if (e.type == DioExceptionType.connectionError ||
             e.type == DioExceptionType.connectionTimeout ||
@@ -98,326 +82,18 @@ class BlogService {
     }
   }
 
-  /// 프로필 포스트 페이지 조회 (페이지네이션)
-  Future<Map<String, dynamic>> getProfilePosts(
-    String username, {
-    int page = 0,
-    int size = 20,
-  }) async {
-    try {
-      final response = await _dio.get(
-        '/api/profile/feed/posts/$username',
-        queryParameters: {'page': page, 'size': size},
-      );
-
-      return response.data as Map<String, dynamic>;
-    } catch (e) {
-      debugPrint('[BlogService] 프로필 포스트 로드 실패: $e');
-
-      if (e is DioException) {
-        // 네트워크 연결 오류는 DioException을 그대로 전달
-        if (e.type == DioExceptionType.connectionError ||
-            e.type == DioExceptionType.connectionTimeout ||
-            e.type == DioExceptionType.sendTimeout ||
-            e.type == DioExceptionType.receiveTimeout) {
-          rethrow; // DioException 그대로 전달
-        }
-
-        // 400 에러인 경우, 서버 응답을 확인하여 빈 상태로 처리
-        if (e.response?.statusCode == 400) {
-          final responseData = e.response?.data;
-          if (responseData is Map<String, dynamic>) {
-            final message = responseData['message']?.toString() ?? '';
-            // "포스트 데이터 조회 중 오류" 메시지인 경우 빈 응답 반환 (회원가입 직후 포스트 없음)
-            if (message.contains('포스트 데이터 조회 중 오류') ||
-                message.contains('포스트') && message.contains('오류')) {
-              debugPrint('[BlogService] 포스트 없음으로 빈 응답 반환');
-              return {
-                'success': true,
-                'data': {
-                  'posts': [],
-                  'totalPages': 0,
-                  'totalElements': 0,
-                  'pageNumber': page,
-                  'pageSize': size,
-                },
-              };
-            }
-          }
-          // 기타 400 에러는 그대로 전달
-          rethrow;
-        }
-
-        // HTTP 상태 코드가 있는 경우에만 Exception 변환
-        if (e.response?.statusCode == 404) {
-          throw Exception('사용자를 찾을 수 없습니다.');
-        } else if (e.response?.statusCode == 401) {
-          throw Exception('인증이 필요합니다.');
-        } else {
-          rethrow; // 기타 네트워크 에러도 그대로 전달
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// 특정 포스트 중심 오프셋 조회
-  /// 포스트 ID를 중심으로 앞뒤 포스트를 조회합니다.
-  Future<Map<String, dynamic>> getProfilePostsAround(
-    String username,
-    String postId, {
-    int size = 20,
-  }) async {
-    debugPrint(
-      '[BlogService] 프로필 포스트 오프셋 조회: $username postId=$postId size=$size',
-    );
-
-    try {
-      final response = await _dio.get(
-        '/api/profile/feed/posts/$username/around/$postId',
-        queryParameters: {'size': size},
-        options: Options(receiveTimeout: const Duration(seconds: 10)),
-      );
-
-      final data = response.data as Map<String, dynamic>;
-
-      debugPrint('[BlogService] 오프셋 조회 응답 상태: ${response.statusCode}');
-      if (data.containsKey('data') && data['data'] is Map) {
-        final dataMap = data['data'] as Map<String, dynamic>;
-        if (dataMap.containsKey('posts') && dataMap['posts'] is List) {
-          final posts = dataMap['posts'] as List;
-          debugPrint('[BlogService] 오프셋 조회 포스트 개수: ${posts.length}');
-        }
-      }
-
-      return data;
-    } catch (e) {
-      debugPrint('[BlogService] 프로필 포스트 오프셋 조회 실패: $e');
-
-      if (e is DioException) {
-        if (e.type == DioExceptionType.connectionError ||
-            e.type == DioExceptionType.connectionTimeout ||
-            e.type == DioExceptionType.sendTimeout ||
-            e.type == DioExceptionType.receiveTimeout) {
-          rethrow;
-        }
-        if (e.response?.statusCode == 404) {
-          throw Exception('포스트를 찾을 수 없습니다.');
-        } else if (e.response?.statusCode == 401) {
-          throw Exception('인증이 필요합니다.');
-        } else {
-          rethrow;
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// 사용자의 카테고리 목록 조회
-  Future<List<Map<String, dynamic>>> getUserCategories(String username) async {
-    debugPrint('[BlogService] 카테고리 목록 조회 요청: $username');
-
-    try {
-      final response = await _dio.get('/api/categories/user/$username');
-
-      final data = response.data;
-      debugPrint('[BlogService] 카테고리 목록 조회 성공: ${data.length}개');
-      return List<Map<String, dynamic>>.from(data);
-    } catch (e) {
-      debugPrint('[BlogService] 카테고리 목록 조회 실패: $e');
-
-      if (e is DioException) {
-        if (e.response?.statusCode == 401) {
-          throw Exception('인증이 필요합니다.');
-        } else if (e.response?.statusCode == 404) {
-          throw Exception('사용자를 찾을 수 없습니다.');
-        } else {
-          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// 카테고리 생성
-  Future<Map<String, dynamic>> createCategory({
-    required String name,
-    required bool isPrivate,
-    required String description,
-  }) async {
-    debugPrint('[BlogService] 카테고리 생성 요청: $name');
-
-    try {
-      final response = await _dio.post(
-        '/api/categories',
-        data: {
-          'name': name,
-          'is_private': isPrivate,
-          'description': description,
-        },
-      );
-
-      final data = response.data;
-      debugPrint('[BlogService] 카테고리 생성 성공: ${data['data']?['name']}');
-      return data;
-    } catch (e) {
-      debugPrint('[BlogService] 카테고리 생성 실패: $e');
-
-      if (e is DioException) {
-        if (e.response?.statusCode == 400) {
-          final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
-          throw Exception(message);
-        } else if (e.response?.statusCode == 401) {
-          throw Exception('인증이 필요합니다.');
-        } else {
-          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// 카테고리 삭제
-  Future<void> deleteCategory(int categoryId) async {
-    debugPrint('[BlogService] 카테고리 삭제 요청: $categoryId');
-
-    try {
-      await _dio.delete('/api/categories/$categoryId');
-
-      debugPrint('[BlogService] 카테고리 삭제 성공: $categoryId');
-    } catch (e) {
-      debugPrint('[BlogService] 카테고리 삭제 실패: $e');
-
-      if (e is DioException) {
-        if (e.response?.statusCode == 400) {
-          final message = e.response?.data?['message'] ?? '카테고리를 삭제할 수 없습니다.';
-          throw Exception(message);
-        } else if (e.response?.statusCode == 401) {
-          throw Exception('인증이 필요합니다.');
-        } else if (e.response?.statusCode == 404) {
-          throw Exception('카테고리를 찾을 수 없습니다.');
-        } else {
-          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// 카테고리 이름 수정
-  Future<void> updateCategoryName({
-    required int categoryId,
-    required String name,
-  }) async {
-    debugPrint('[BlogService] 카테고리 이름 수정 요청: id=$categoryId, name=$name');
-    try {
-      await _dio.put('/api/categories/$categoryId', data: {'name': name});
-      debugPrint('[BlogService] 카테고리 이름 수정 성공: $categoryId');
-    } catch (e) {
-      debugPrint('[BlogService] 카테고리 이름 수정 실패: $e');
-      if (e is DioException) {
-        if (e.response?.statusCode == 400) {
-          final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
-          throw Exception(message);
-        } else if (e.response?.statusCode == 401) {
-          throw Exception('인증이 필요합니다.');
-        } else if (e.response?.statusCode == 404) {
-          throw Exception('카테고리를 찾을 수 없습니다.');
-        } else {
-          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// 카테고리 순서 변경
-  Future<void> reorderCategories(List<int> orderedIds) async {
-    debugPrint('[BlogService] 카테고리 순서 변경 요청: $orderedIds');
+  /// 포스트 순서 변경
+  Future<Map<String, dynamic>> reorderPosts(List<int> postIds) async {
+    debugPrint('[BlogService] 포스트 순서 변경 요청: ${postIds.length}개');
 
     try {
       final response = await _dio.put(
-        '/api/categories/reorder',
-        data: json.encode({'orderedIds': orderedIds}),
+        '/api/posts/reorder',
+        data: {'postIds': postIds},
       );
 
-      debugPrint('[BlogService] 카테고리 순서 변경 성공');
-      if (response.data != null && response.data.toString().isNotEmpty) {
-        debugPrint('[BlogService] 서버 응답 본문: ${response.data}');
-      }
-    } catch (e) {
-      debugPrint('[BlogService] 카테고리 순서 변경 실패: $e');
-
-      if (e is DioException) {
-        if (e.response?.statusCode == 400) {
-          final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
-          throw Exception(message);
-        } else if (e.response?.statusCode == 401) {
-          throw Exception('인증이 필요합니다.');
-        } else {
-          if (e.response?.data != null) {
-            debugPrint('[BlogService] 실패 응답 본문: ${e.response?.data}');
-          }
-          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// 포스트를 다른 카테고리로 이동 (명세 반영)
-  Future<void> movePostToCategory({
-    required int postId,
-    required int targetCategoryId,
-    int? targetPosition,
-  }) async {
-    debugPrint(
-      '[BlogService] 포스트 이동 요청: $postId -> $targetCategoryId (pos=$targetPosition)',
-    );
-
-    try {
-      await _dio.put(
-        '/api/categories/posts/$postId/move',
-        data: {
-          'targetCategoryId': targetCategoryId,
-          if (targetPosition != null) 'targetPosition': targetPosition,
-        },
-      );
-
-      debugPrint('[BlogService] 포스트 이동 성공: $postId -> $targetCategoryId');
-    } catch (e) {
-      debugPrint('[BlogService] 포스트 이동 실패: $e');
-
-      if (e is DioException) {
-        if (e.response?.statusCode == 400) {
-          final message = e.response?.data?['message'] ?? '잘못된 요청입니다.';
-          throw Exception(message);
-        } else if (e.response?.statusCode == 401) {
-          throw Exception('인증이 필요합니다.');
-        } else if (e.response?.statusCode == 404) {
-          throw Exception('포스트 또는 카테고리를 찾을 수 없습니다.');
-        } else {
-          throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// 카테고리 내 포스트 순서 변경
-  Future<void> reorderPostsInCategory({
-    required int categoryId,
-    required List<int> orderedIds,
-  }) async {
-    debugPrint('[BlogService] 포스트 순서 변경 요청: 카테고리 $categoryId');
-
-    try {
-      await _dio.put(
-        '/api/categories/$categoryId/posts/reorder',
-        data: {'orderedIds': orderedIds},
-      );
-
-      debugPrint('[BlogService] 포스트 순서 변경 성공: 카테고리 $categoryId');
+      debugPrint('[BlogService] 포스트 순서 변경 성공');
+      return response.data as Map<String, dynamic>;
     } catch (e) {
       debugPrint('[BlogService] 포스트 순서 변경 실패: $e');
 
@@ -427,8 +103,6 @@ class BlogService {
           throw Exception(message);
         } else if (e.response?.statusCode == 401) {
           throw Exception('인증이 필요합니다.');
-        } else if (e.response?.statusCode == 404) {
-          throw Exception('카테고리를 찾을 수 없습니다.');
         } else {
           throw Exception('서버 오류가 발생했습니다. (${e.response?.statusCode})');
         }
@@ -697,6 +371,8 @@ class BlogService {
   /// [content] - 새 본문 content (blocks 구조)
   /// [title] - 새 제목 (선택사항)
   /// [usedImageUrls] - 사용된 이미지/비디오 URL 목록
+  /// [year] - 연도 (선택사항)
+  /// [nthWeek] - 주차 (선택사항)
   ///
   // 🎯 summary 필드 제거됨
   Future<void> updatePostContent({
@@ -705,6 +381,8 @@ class BlogService {
     String? title,
     required List<String> usedImageUrls,
     required List<String> mentionedUsernames,
+    int? year,
+    int? nthWeek,
   }) async {
     debugPrint('[BlogService] 본문/타이틀 수정 요청: $postId');
 
@@ -719,6 +397,13 @@ class BlogService {
       if (title != null && title.isNotEmpty) {
         requestBody['title'] = title;
         debugPrint('[BlogService] - 타이틀: $title');
+      }
+
+      // 🎯 연도와 주차 정보 추가 (변경된 경우만)
+      if (year != null && nthWeek != null) {
+        requestBody['year'] = year;
+        requestBody['weekOfYear'] = nthWeek; // 서버 DTO: weekOfYear
+        debugPrint('[BlogService] - 연도/주차: year=$year, weekOfYear=$nthWeek');
       }
 
       debugPrint('[BlogService] - 사용된 미디어: ${usedImageUrls.length}개');
@@ -799,7 +484,8 @@ class BlogService {
               : <String>[],
       // 🎯 연도와 주차 정보 (새 포스트 발행 시 포함)
       if (postData['year'] != null) 'year': postData['year'] as int,
-      if (postData['nthWeek'] != null) 'nthWeek': postData['nthWeek'] as int,
+      if (postData['weekOfYear'] != null)
+        'weekOfYear': postData['weekOfYear'] as int,
       // 그룹 기능 제거로 인해 GROUPS 처리 제거
     };
 
@@ -1067,80 +753,6 @@ class BlogService {
     }
   }
 
-  /// 특정 사용자의 블로그 목록을 가져옵니다.
-  Future<List<Map<String, dynamic>>> getUserPosts({
-    required String username,
-    int page = 0,
-    int size = 10,
-  }) async {
-    try {
-      debugPrint(
-        '[BlogService] Fetching user posts: username=$username page=$page, size=$size',
-      );
-
-      final response = await _dio.get(
-        '/api/posts/user/$username',
-        queryParameters: {'page': page, 'size': size},
-        options: Options(receiveTimeout: const Duration(seconds: 10)),
-      );
-
-      final data = response.data;
-      final posts = List<Map<String, dynamic>>.from(
-        data['content'] ?? data as List? ?? [],
-      );
-      debugPrint(
-        '[BlogService] Successfully fetched ${posts.length} user posts',
-      );
-      return posts;
-    } catch (e) {
-      if (e is DioException) {
-        if (e.response?.statusCode == 404) {
-          // 사용자 포스트가 없거나 API 엔드포인트가 존재하지 않는 경우
-          debugPrint(
-            '[BlogService] User posts not found (404) for username: $username',
-          );
-          return []; // 빈 리스트 반환
-        }
-        debugPrint(
-          '[BlogService] Error ${e.response?.statusCode}: ${e.response?.data}',
-        );
-        throw Exception(
-          'Failed to fetch user posts: ${e.response?.statusCode}',
-        );
-      }
-
-      debugPrint('[BlogService] Exception: $e');
-      // 404 에러인 경우 빈 리스트 반환 (서버 문제 대응)
-      if (e.toString().contains('404')) {
-        debugPrint('[BlogService] Returning empty list due to 404 error');
-        return [];
-      }
-      throw Exception('Failed to fetch user posts: $e');
-    }
-  }
-
-  // 그룹 기능 제거로 인해 getGroupPosts 메서드 제거
-
-  /// 포스트 조회자 정보 조회
-  ///
-  /// [postId] - 포스트 ID
-  ///
-  /// 응답 구조:
-  /// {
-  ///   "postId": 123,
-  ///   "postTitle": "포스트 제목",
-  ///   "viewers": [
-  ///     {
-  ///       "userId": 1,
-  ///       "username": "viewer1",
-  ///       "profileImageUrl": "url",
-  ///       "viewedAt": "2024-01-01T00:00:00",
-  ///       "hasLiked": true
-  ///     },
-  ///     ...
-  ///   ],
-  ///   "totalViewerCount": 10
-  /// }
   Future<Map<String, dynamic>> getPostViewers(
     String postId, {
     int page = 0,
@@ -1222,6 +834,120 @@ class BlogService {
           throw Exception(errorMessage);
         } else if (statusCode == 401) {
           throw Exception('인증이 필요합니다.');
+        } else {
+          throw Exception('$errorMessage (상태 코드: $statusCode)');
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// 홈용 추천 카드 조회 (GET /api/recommendation-cache/for-home)
+  /// 응답: List<RecCardForHomeResponse>
+  Future<List<Map<String, dynamic>>> getHomeRecommendations() async {
+    try {
+      debugPrint('[BlogService] 홈용 추천 카드 조회 시작');
+
+      final response = await _dio.get(
+        '/api/recommendation-cache/for-home',
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        final recommendations = List<Map<String, dynamic>>.from(
+          data is List ? data : (data['data'] as List? ?? []),
+        );
+
+        debugPrint('[BlogService] 홈용 추천 카드 조회 성공: ${recommendations.length}개');
+        return recommendations;
+      }
+
+      throw Exception('홈용 추천 카드 조회 실패: ${response.statusCode}');
+    } catch (e) {
+      debugPrint('[BlogService] 홈용 추천 카드 조회 실패: $e');
+      if (e is DioException) {
+        final statusCode = e.response?.statusCode;
+        final responseData = e.response?.data;
+        
+        // 🎯 500 에러 상세 로깅
+        if (statusCode == 500) {
+          debugPrint('[BlogService] ⚠️ 서버 500 에러 상세:');
+          debugPrint('[BlogService]   - statusCode: $statusCode');
+          debugPrint('[BlogService]   - responseData: $responseData');
+          debugPrint('[BlogService]   - errorType: ${e.type}');
+          debugPrint('[BlogService]   - errorMessage: ${e.message}');
+        }
+        
+        final errorMessage = (responseData is Map<String, dynamic>)
+            ? (responseData['message'] ?? '홈용 추천 카드 조회 실패')
+            : '홈용 추천 카드 조회 실패';
+
+        if (statusCode == 401) {
+          throw Exception('인증이 필요합니다.');
+        } else {
+          throw Exception('$errorMessage (상태 코드: $statusCode)');
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// 주차 셀 포스트 목록 조회 (GET /api/weeks/postlist)
+  /// 응답: WeekPostListResponse { posts: BlogResponse[] }
+  Future<List<Map<String, dynamic>>> getWeekPostList({
+    required int year,
+    required int week,
+    List<int>? postIds,
+  }) async {
+    try {
+      debugPrint(
+        '[BlogService] 주차 포스트 목록 조회: $year년 $week주차, postIds: ${postIds?.length ?? 0}개',
+      );
+
+      final queryParams = <String, dynamic>{'year': year, 'week': week};
+
+      // postIds가 있으면 쉼표 구분 문자열로 추가
+      if (postIds != null && postIds.isNotEmpty) {
+        queryParams['postIds'] = postIds.join(',');
+      }
+
+      final response = await _dio.get(
+        '/api/weeks/postlist',
+        queryParameters: queryParams,
+      );
+
+      if (response.statusCode == 200) {
+        final responseData = response.data as Map<String, dynamic>;
+
+        // { success, data, message } 형태에서 data 추출
+        final data =
+            responseData.containsKey('data')
+                ? responseData['data'] as Map<String, dynamic>
+                : responseData;
+
+        // posts 배열 추출
+        final posts = data['posts'] as List<dynamic>? ?? [];
+        final postsList =
+            posts.map((post) => post as Map<String, dynamic>).toList();
+
+        debugPrint('[BlogService] 주차 포스트 목록 조회 성공: ${postsList.length}개');
+        return postsList;
+      }
+
+      throw Exception('주차 포스트 목록 조회 실패: ${response.statusCode}');
+    } catch (e) {
+      debugPrint('[BlogService] 주차 포스트 목록 조회 실패: $e');
+
+      if (e is DioException) {
+        final statusCode = e.response?.statusCode;
+        final responseData = e.response?.data as Map<String, dynamic>?;
+        final errorMessage = responseData?['message'] ?? '주차 포스트 목록 조회 실패';
+
+        if (statusCode == 401) {
+          throw Exception('인증이 필요합니다.');
+        } else if (statusCode == 404) {
+          throw Exception('데이터를 찾을 수 없습니다.');
         } else {
           throw Exception('$errorMessage (상태 코드: $statusCode)');
         }

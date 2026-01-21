@@ -48,7 +48,6 @@ import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/utils/access_level_parser.dart';
 import 'package:doppy/providers/theme_provider.dart';
-import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/editor/publish/post_export_screen.dart';
 
@@ -78,6 +77,10 @@ class PostwriteScreen extends StatefulWidget {
   final Map<String, dynamic>? exportedDataForEdit;
   final String? postId; // 수정 모드용 post ID
   final PostWriteMode mode; // ✅ 모드 enum
+  final int? initialYear; // 초기 연도
+  final int? initialYearOfWeek; // 초기 주차 (1-53)
+  final bool disableAutoFocus; // 🎯 키보드 자동 포커스 비활성화 (온보딩용)
+  final String? emptyStateMessage; // 🎯 빈 상태 커스텀 메시지 (온보딩용)
 
   const PostwriteScreen({
     super.key,
@@ -85,6 +88,10 @@ class PostwriteScreen extends StatefulWidget {
     this.exportedDataForEdit,
     this.postId,
     this.mode = PostWriteMode.normal, // ✅ 기본값은 일반 모드
+    this.initialYear,
+    this.initialYearOfWeek,
+    this.disableAutoFocus = false, // 🎯 기본값은 자동 포커스 활성화
+    this.emptyStateMessage, // 🎯 기본값은 null (기본 메시지 사용)
   });
 
   @override
@@ -120,6 +127,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   //keyboard
   // 🎯 성능 최적화: isKeyboardVisible은 build에서 MediaQuery로 직접 읽음
   String? currentDraftId; // 🎯 UUID 기반 임시저장 ID (글쓰기 시작 시 생성)
+
+  // 날짜 선택 상태 (동적으로 업데이트 가능)
+  int? _currentYear;
+  int? _currentYearOfWeek;
 
   // 영상 업로드 인디케이터 상태
   final ValueNotifier<bool> _videoUploadIndicatorNotifier = ValueNotifier<bool>(
@@ -257,6 +268,10 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   @override
   void initState() {
     super.initState();
+
+    // 날짜 초기화
+    _currentYear = widget.initialYear;
+    _currentYearOfWeek = widget.initialYearOfWeek;
 
     // 편집 모드이면 전달된 exportedDataForEdit를 기반으로 문서를 복원
     // 새 글 작성 모드이면 빈 문서 생성
@@ -441,7 +456,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 ? document.getNodeAt(0) as ParagraphNode
                 : null;
 
-        if (targetNode != null) {
+        // 🎯 온보딩 모드에서는 키보드 자동 포커스 비활성화
+        if (targetNode != null && !widget.disableAutoFocus) {
           if (!mounted) return; // 지연 중 뒤로가기로 나갔는지 체크
           final offset = targetNode.text.text.length;
           composer.setSelectionWithReason(
@@ -1019,12 +1035,13 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 오버레이가 남아있는 문제를 원천적으로 줄인다.
     //
     // 🎯 초기 진입 시 키보드가 올라오기 전까지는 오버레이를 숨김
+    // ✅ 온보딩 모드에서는 키보드가 자동으로 올라오지 않으므로 _isInitialEntry 체크를 건너뜀
     final shouldShowEmptyOverlay =
-        _isInitialEntry
-            ? false
-            : (!isKeyboardVisible &&
+        (widget.mode == PostWriteMode.onboarding || !_isInitialEntry)
+            ? (!isKeyboardVisible &&
                 composer.selection == null &&
-                _isDocumentEmpty());
+                _isDocumentEmpty())
+            : false;
     if (_isEmptyNotifier.value != shouldShowEmptyOverlay) {
       _isEmptyNotifier.value = shouldShowEmptyOverlay;
     }
@@ -1239,6 +1256,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                         initialTitleForExport: _draftTitleOverride,
                         initialThumbnailUrlForExport: _draftThumbnailOverride,
                         mode: widget.mode, // ✅ 온보딩 모드 전달
+                        initialYear: _currentYear,
+                        initialYearOfWeek: _currentYearOfWeek,
                         onExportMetadataChanged: (title, thumbnailUrl) {
                           setState(() {
                             _draftTitleOverride =
@@ -1430,6 +1449,8 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             return Opacity(opacity: opacity, child: child);
                           },
                           child: EmptyEditorState(
+                            customMessage:
+                                widget.emptyStateMessage, // 🎯 온보딩용 커스텀 메시지 전달
                             onTap: () {
                               // 빈 상태 UI를 탭하면 첫 번째 문단에 포커스
                               if (document.isNotEmpty) {
@@ -1491,6 +1512,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               onChangeMediaAlignment: _changeMediaAlignment,
               // (빈 상태는 build()에서 derived state로 동기화하므로 별도 토글 불필요)
               onMediaAdded: null,
+              initialYear: _currentYear,
+              initialYearOfWeek: _currentYearOfWeek,
+              onDateChanged: (year, yearOfWeek) {
+                if (mounted) {
+                  setState(() {
+                    _currentYear = year;
+                    _currentYearOfWeek = yearOfWeek;
+                  });
+                }
+              },
             ),
           ),
         ],
@@ -1775,25 +1806,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     if (widget.postId == null) return;
 
     try {
-      // 업로드/압축 중인 미디어가 있으면 차단
-      if (editorService.hasUnuploadedMedia()) {
-        if (kDebugMode) {
-          final activeTasks = editorService
-              .debugDumpBusyMediaForCurrentDocument(
-                kinds: {
-                  UploadKind.editorImage,
-                  UploadKind.video,
-                  UploadKind.drawing,
-                },
-              );
-          debugPrint(
-            '[PostwriteScreen] ⚠️ 업로드/압축 진행 중 - 다음 화면 진입 차단\n$activeTasks',
-          );
-        }
-        ErrorHandler.showError(context, context.tr('please_wait_for_upload'));
-        return;
-      }
-
       // 현재 문서 상태를 export
       final exported = PostExporter.exportToMap(
         editorService: editorService,
@@ -1803,46 +1815,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         textStylingService: textStylingService,
       );
 
-      // 서버에서 카테고리 ID와 공개범위 가져오기
+      // 서버에서 공개범위 가져오기
       final metadata = await BlogService().getPostMetadata(widget.postId!);
       debugPrint('[PostwriteScreen] getPostMetadata 결과: $metadata');
-
-      // 🎯 categoryId는 metadata에 없을 수 있으므로 피드 프로바이더에서 찾기
-      int? categoryId;
-
-      // 1. metadata에서 직접 가져오기
-      if (metadata.containsKey('categoryId')) {
-        categoryId = metadata['categoryId'] as int?;
-      } else if (metadata.containsKey('category')) {
-        // category 객체에서 id 추출
-        final category = metadata['category'];
-        if (category is Map) {
-          categoryId = category['id'] as int?;
-        }
-      }
-
-      // 2. metadata에 없으면 피드 프로바이더에서 찾기
-      if (categoryId == null) {
-        try {
-          final feedProvider = MyProfileFeedProvider();
-          // 포스트가 속한 카테고리 찾기
-          for (final categoryIdStr in feedProvider.postsByCategory.keys) {
-            final posts = feedProvider.postsByCategory[categoryIdStr] ?? [];
-            if (posts.any((p) => '${p['id']}' == widget.postId)) {
-              categoryId = int.tryParse(categoryIdStr);
-              debugPrint('[PostwriteScreen] 피드에서 카테고리 ID 찾음: $categoryId');
-              break;
-            }
-          }
-        } catch (e) {
-          debugPrint('[PostwriteScreen] 피드에서 카테고리 찾기 실패: $e');
-        }
-      }
-
-      // 3. 여전히 없으면 기본값 0 사용
-      categoryId ??= 0;
-      debugPrint('[PostwriteScreen] 최종 categoryId: $categoryId');
-
       final accessLevel =
           AccessLevelParser.parseAccessLevelString(metadata['accessLevel']) ??
           SystemCategoryKeys.public;
@@ -1873,8 +1848,12 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                 sessionKey: currentDraftId ?? 'draft_temp',
                 isEditMode: true,
                 postId: widget.postId,
-                initialCategoryId: categoryId,
                 initialAccessLevel: accessLevel,
+                initialExportedForComparison: jsonEncode(
+                  widget.exportedDataForEdit ?? <String, dynamic>{},
+                ),
+                initialYear: _currentYear,
+                initialYearOfWeek: _currentYearOfWeek,
               ),
           transitionDuration: const Duration(milliseconds: 200),
           reverseTransitionDuration: const Duration(milliseconds: 200),
@@ -1984,28 +1963,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         } else {
           return false; // ✅ mounted가 아니면 실패 반환
         }
-      }
-
-      // 🎯 업로드/압축 중인 미디어가 있으면 차단
-      if (editorService.hasUnuploadedMedia()) {
-        if (mounted) {
-          // 🎯 상세한 디버그 정보 출력 (kDebugMode에서만 실행)
-          if (kDebugMode) {
-            final activeTasks = editorService
-                .debugDumpBusyMediaForCurrentDocument(
-                  kinds: {
-                    UploadKind.editorImage,
-                    UploadKind.video,
-                    UploadKind.drawing,
-                  },
-                );
-            debugPrint(
-              '[PostwriteScreen] ⚠️ 업로드/압축 진행 중 - 임시저장 차단\n$activeTasks',
-            );
-          }
-          ErrorHandler.showError(context, context.tr('please_wait_for_upload'));
-        }
-        return false;
       }
 
       // 🎯 임시저장 제목/요약/썸네일:
@@ -2186,6 +2143,9 @@ class _BottomBar extends StatelessWidget {
   onChangeMediaAlignment;
   // ✅ 미디어 추가 시 빈 상태 오버레이를 숨기기 위한 콜백
   final VoidCallback? onMediaAdded;
+  final int? initialYear;
+  final int? initialYearOfWeek;
+  final Function(int year, int yearOfWeek)? onDateChanged;
 
   const _BottomBar({
     required this.keyboardHeight,
@@ -2202,6 +2162,9 @@ class _BottomBar extends StatelessWidget {
     required this.onDeleteNode,
     required this.onChangeMediaAlignment,
     this.onMediaAdded,
+    this.initialYear,
+    this.initialYearOfWeek,
+    this.onDateChanged,
   });
 
   @override
@@ -2306,6 +2269,9 @@ class _BottomBar extends StatelessWidget {
                         uploadRefId:
                             'editor_${editorService.hashCode}', // ✅ 드로잉 업로드 refId
                         onMediaAdded: onMediaAdded, // ✅ 미디어 추가 시 빈 상태 오버레이 숨기기
+                        initialYear: initialYear,
+                        initialYearOfWeek: initialYearOfWeek,
+                        onDateChanged: onDateChanged,
                       );
                     }
 

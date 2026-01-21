@@ -224,6 +224,7 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                       width: MediaQuery.of(context).size.width,
                       child: Row(
                         children: [
+                          const SizedBox(width: 4),
                           // 뒤로가기 버튼
                           IconButton(
                             onPressed: () => Navigator.of(context).pop(),
@@ -235,21 +236,21 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                               ).colorScheme.onSurface.withOpacity(0.75),
                             ),
                           ),
-
+                          const SizedBox(width: 2),
                           // 언두 버튼
                           Material(
                             color: Colors.transparent,
                             child: Padding(
-                              padding: const EdgeInsets.only(top: 2),
+                              padding: const EdgeInsets.only(top: 0),
                               child: InkWell(
                                 onTap: _canUndo() ? _undo : null,
                                 borderRadius: BorderRadius.circular(24),
                                 child: Container(
-                                  padding: const EdgeInsets.all(1),
+                                  padding: const EdgeInsets.only(bottom: 2),
                                   child: SvgPicture.asset(
                                     'assets/icons/editor_undo.svg',
-                                    width: 30,
-                                    height: 30,
+                                    width: 20,
+                                    height: 20,
                                     colorFilter: ColorFilter.mode(
                                       Theme.of(context).colorScheme.onSurface
                                           .withOpacity(_canUndo() ? 0.6 : 0.15),
@@ -260,22 +261,22 @@ class _DrawingOverlayState extends State<DrawingOverlay>
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 14),
 
                           // 리두 버튼
                           Padding(
-                            padding: const EdgeInsets.only(top: 2),
+                            padding: const EdgeInsets.only(top: 0),
                             child: Material(
                               color: Colors.transparent,
                               child: InkWell(
                                 onTap: _canRedo() ? _redo : null,
                                 borderRadius: BorderRadius.circular(24),
                                 child: Container(
-                                  padding: const EdgeInsets.all(1),
+                                  padding: const EdgeInsets.only(bottom: 2),
                                   child: SvgPicture.asset(
                                     'assets/icons/editor_redo.svg',
-                                    width: 30,
-                                    height: 30,
+                                    width: 20,
+                                    height: 20,
                                     colorFilter: ColorFilter.mode(
                                       Theme.of(context).colorScheme.onSurface
                                           .withOpacity(_canRedo() ? 0.6 : 0.15),

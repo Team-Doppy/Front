@@ -1,11 +1,15 @@
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/data/services/user_service.dart';
 import 'package:doppy/data/services/account_deletion_service.dart';
+import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/pages/screens/onboarding_screen.dart';
+import 'package:doppy/main.dart' show navigatorKey;
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AccountDeletionSheet extends StatefulWidget {
   const AccountDeletionSheet({super.key});
@@ -369,6 +373,7 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
   }
 
   /// 회원 탈퇴 처리 (Firebase 저장 → API 호출 → 로그아웃)
+  /// ✅ 버튼 클릭 시 즉시 화면 전환하고, 탈퇴 처리는 백그라운드에서 진행
   Future<void> _handleAccountDeletion(BuildContext context) async {
     if (_isDeleting) return;
 
@@ -376,18 +381,62 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
       _isDeleting = true;
     });
 
+    // ✅ 1. 탈퇴 이유 데이터 미리 수집 (화면 전환 전)
+    final reasons = _getReasonsWithContext(context);
+    final reasonData = reasons.firstWhere((r) => r['key'] == _selectedReason);
+    final reasonText = reasonData['text']!;
+    final reasonKey = _selectedReason!;
+    final detail = reasonKey == 'other' ? _detailController.text.trim() : null;
+
+    // ✅ 2. 짧은 딜레이 후 즉시 화면 전환 (백그라운드 처리 시작 전)
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    if (!mounted) return;
+
+    // 바텀시트 닫기 및 모든 화면 제거 후 LoginScreen으로 이동
+    Navigator.of(context, rootNavigator: true).pop();
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      (route) => false,
+    );
+
+    // ✅ 3. 백그라운드에서 탈퇴 처리 진행 (화면 전환 후)
+    _processAccountDeletionInBackground(
+      reasonKey: reasonKey,
+      reasonText: reasonText,
+      detail: detail,
+    );
+  }
+
+  /// 백그라운드에서 회원 탈퇴 처리 (서버 기반: API 성공 후에만 로컬 파쇄)
+  Future<void> _processAccountDeletionInBackground({
+    required String reasonKey,
+    required String reasonText,
+    String? detail,
+  }) async {
+    bool deletionSuccess = false;
+    String? accountKey;
+
     try {
-      // 1. 탈퇴 이유 텍스트 가져오기
-      final reasons = _getReasonsWithContext(context);
-      final reasonData = reasons.firstWhere((r) => r['key'] == _selectedReason);
-      final reasonText = reasonData['text']!;
-      final reasonKey = _selectedReason!;
+      // ✅ 0. 탈퇴 진행 중 플래그 설정 (재접속 시 상태 확인용)
+      try {
+        final authService = AuthService();
+        accountKey = await authService.getAccountKeyFromToken();
+        if (accountKey != null) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('account_deletion_in_progress_$accountKey', true);
+          debugPrint('[AccountDeletionSheet] ✅ 탈퇴 진행 중 플래그 설정');
+        }
+      } catch (e) {
+        debugPrint('[AccountDeletionSheet] ⚠️ 탈퇴 진행 중 플래그 설정 실패: $e');
+      }
 
-      // 2. 기타 선택 시 상세 설명 가져오기
-      final detail =
-          reasonKey == 'other' ? _detailController.text.trim() : null;
+      // ✅ IMPORTANT: 서버 기반 전환
+      // 1. 서버 API가 성공할 때만 로컬 파쇄
+      // 2. API 실패 시 재시도 (최대 3회)
+      // 3. 최종 실패 시에도 플래그는 유지하여 재접속 시 재시도 가능
 
-      // 3. Firebase Firestore에 탈퇴 이유 저장
+      // 1) Firebase Firestore에 탈퇴 이유 저장 (로그인 사용자 정보가 필요할 수 있음)
       try {
         final deletionService = AccountDeletionService();
         await deletionService.saveDeletionReason(
@@ -403,40 +452,78 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
         // Firestore 저장 실패해도 계속 진행 (API 호출은 수행)
       }
 
-      // 4. 회원 탈퇴 API 호출
-      final userService = UserService();
-      await userService.deleteAccount();
+      // 2) 회원 탈퇴 API 호출 (단일 시도)
+      try {
+        debugPrint('[AccountDeletionSheet] 회원 탈퇴 API 호출');
+        final userService = UserService();
+        await userService.deleteAccount();
+        debugPrint('[AccountDeletionSheet] ✅ 회원 탈퇴 API 호출 성공');
+        deletionSuccess = true;
+      } catch (e) {
+        debugPrint('[AccountDeletionSheet] ⚠️ 회원 탈퇴 API 호출 실패: $e');
+        deletionSuccess = false;
+      }
 
-      if (!mounted) return;
+      // ✅ 3) 서버 API 성공 시에만 로컬 데이터 파쇄
+      if (deletionSuccess) {
+        try {
+          // ✅ 순서: logout() 먼저 (SharedPreferences 참조 가능), 그 다음 prefs.clear()
+          // ✅ 토큰/리프레시 토큰 등 SecureStorage 삭제 + 모든 Provider/캐시 초기화
+          await AuthProvider().logout();
 
-      // 5. 바텀시트 닫기
-      Navigator.pop(context);
+          // ✅ SharedPreferences에 저장된 모든 데이터 삭제 (첫 설치 상태로)
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.clear();
 
-      // 6. 로그아웃 처리
-      await AuthProvider().logout();
+          // ✅ 탈퇴 진행 중 플래그도 제거
+          if (accountKey != null) {
+            await prefs.remove('account_deletion_in_progress_$accountKey');
+          }
 
-      // 7. 로그인 화면으로 이동
-      if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+          debugPrint(
+            '[AccountDeletionSheet] ✅ 로컬 데이터(SharedPreferences+토큰) 파쇄 및 Provider 초기화 완료',
+          );
+        } catch (e) {
+          debugPrint('[AccountDeletionSheet] ⚠️ 로컬 파쇄/로그아웃 실패(무시): $e');
+        }
+      } else {
+        // ✅ API 실패 시: 탈퇴 진행 중 플래그는 유지 (재접속 시 재시도 가능)
+        debugPrint('[AccountDeletionSheet] ❌ 회원 탈퇴 API 실패');
+      }
 
-        // 8. 탈퇴 완료 메시지 표시 (ErrorHandler 사용)
-        if (context.mounted) {
+      debugPrint('[AccountDeletionSheet] ✅ 회원 탈퇴 백그라운드 처리 완료');
+
+      // ✅ 4) 탈퇴 성공/실패 스낵바 표시
+      final context = navigatorKey.currentContext;
+      if (context != null) {
+        final localizations = AppLocalizations.of(context);
+        if (deletionSuccess) {
+          // 성공: "탈퇴처리되었습니다, 이용해주셔서 감사합니다"
           ErrorHandler.showInfo(
             context,
-            context.tr('account_deletion_complete'),
+            localizations.translate('account_deletion_success'),
+            duration: const Duration(seconds: 3),
+          );
+        } else {
+          // 실패: "탈퇴에 실패했어요 다시 시도해주세요"
+          ErrorHandler.showError(
+            context,
+            localizations.translate('account_deletion_failed'),
+            duration: const Duration(seconds: 3),
           );
         }
       }
     } catch (e) {
-      debugPrint('[AccountDeletionSheet] ❌ 회원 탈퇴 실패: $e');
-      if (mounted) {
-        ErrorHandler.showError(context, e.toString());
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isDeleting = false;
-        });
+      debugPrint('[AccountDeletionSheet] ❌ 회원 탈퇴 백그라운드 처리 실패: $e');
+      // ✅ 에러 발생 시에도 스낵바 표시
+      final context = navigatorKey.currentContext;
+      if (context != null) {
+        final localizations = AppLocalizations.of(context);
+        ErrorHandler.showError(
+          context,
+          localizations.translate('account_deletion_failed'),
+          duration: const Duration(seconds: 3),
+        );
       }
     }
   }

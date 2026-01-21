@@ -1,5 +1,6 @@
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:doppy/pages/onbording/steps/index0_step.dart';
@@ -258,7 +259,14 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                   PageRouteBuilder(
                     pageBuilder:
                         (context, animation, secondaryAnimation) =>
-                            PostwriteScreen(mode: PostWriteMode.onboarding),
+                            PostwriteScreen(
+                              mode: PostWriteMode.onboarding,
+                              disableAutoFocus:
+                                  true, // 🎯 온보딩에서는 키보드 자동 포커스 비활성화
+                              emptyStateMessage: context.tr(
+                                'onboarding_empty_state_message',
+                              ), // 🎯 온보딩용 빈 상태 메시지
+                            ),
                     transitionDuration: const Duration(milliseconds: 300),
                     reverseTransitionDuration: const Duration(
                       milliseconds: 250,
@@ -400,14 +408,8 @@ class _OnboardingFlowState extends State<OnboardingFlow>
       // API 호출
       final userProvider = context.read<UserProvider>();
       // 현재 자기소개 가져오기 (없으면 빈 문자열)
-      final currentSelfIntroduction =
-          userProvider.selfIntroduction ??
-          (userProvider.currentUser?.selfIntroduction ?? '');
 
-      final success = await userProvider.updateProfileInfo(
-        alias: nickname,
-        selfIntroduction: currentSelfIntroduction,
-      );
+      final success = await userProvider.updateProfileInfo(alias: nickname);
 
       if (success && mounted) {
         setState(() {
@@ -430,12 +432,12 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         });
       } else if (mounted) {
         // 실패 메시지 표시
-        ErrorHandler.showError(context, '별명 저장에 실패했습니다');
+        ErrorHandler.showError(context, context.tr('nickname_save_failed'));
       }
     } catch (e) {
       debugPrint('[OnboardingFlow] 별명 저장 실패: $e');
       if (mounted) {
-        ErrorHandler.showError(context, '별명 저장에 실패했습니다');
+        ErrorHandler.showError(context, context.tr('nickname_save_failed'));
       }
     }
   }

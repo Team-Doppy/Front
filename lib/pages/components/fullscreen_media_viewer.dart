@@ -298,7 +298,14 @@ class _FullscreenMediaViewerState extends State<FullscreenMediaViewer> {
 
   Widget _buildVideoPlayer() {
     if (!_isVideoInitialized || _videoController == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const SizedBox(
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+        ),
+      );
     }
 
     final isPlaying = _videoController!.value.isPlaying;

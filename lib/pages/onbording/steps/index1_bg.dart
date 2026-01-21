@@ -1,4 +1,5 @@
 import 'package:doppy/theme/app_colors.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 
 /// Index 1 background: 별명 입력 화면
@@ -66,7 +67,7 @@ class _Index1BackgroundState extends State<Index1Background> {
                       children: [
                         // 안내 텍스트
                         Text(
-                          '내 별명',
+                          context.tr('onboarding_my_nickname'),
                           style: TextStyle(
                             color: AppColors.darkSurfaceVariant,
                             fontSize: 20,
@@ -90,7 +91,9 @@ class _Index1BackgroundState extends State<Index1Background> {
                           ),
                           textInputAction: TextInputAction.done,
                           decoration: InputDecoration(
-                            hintText: '탭해서 별명 입력하기!',
+                            hintText: context.tr(
+                              'onboarding_tap_to_enter_nickname',
+                            ),
                             hintStyle: TextStyle(
                               color: AppColors.darkSurfaceVariant.withOpacity(
                                 0.5,
@@ -188,9 +191,9 @@ class _Index1BackgroundState extends State<Index1Background> {
                                       ),
                                     )
                                     : hasChanged
-                                    ? const Text(
-                                      '완료',
-                                      style: TextStyle(
+                                    ? Text(
+                                      context.tr('done'),
+                                      style: const TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w600,
                                       ),

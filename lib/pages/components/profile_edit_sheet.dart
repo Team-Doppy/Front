@@ -131,12 +131,10 @@ class ProfileEditBottomSheet extends StatelessWidget {
 class ProfileInfoEditBottomSheet extends StatefulWidget {
   final User? user;
   final TextEditingController? nameController; // 🎯 Optional로 변경
-  final TextEditingController? descriptionController; // 🎯 Optional로 변경
   final Future<void> Function()? onClearProfileImage;
   final Function(List<File>)? onImagesSelected;
   final Future<void> Function({
     required String alias,
-    required String description,
     List<String>? links, // 🎯 프로필 링크 목록
     Map<String, String>? linkTitles, // 🎯 링크 타이틀 (URL -> 타이틀)
     Map<String, String>? linkThumbnails, // 🎯 링크 썸네일 (URL -> thumbnailUrl)
@@ -147,7 +145,6 @@ class ProfileInfoEditBottomSheet extends StatefulWidget {
     super.key,
     required this.user,
     this.nameController, // 🎯 Optional
-    this.descriptionController, // 🎯 Optional
     this.onClearProfileImage,
     this.onImagesSelected,
     this.onSave,
@@ -162,15 +159,12 @@ class _ProfileInfoEditBottomSheetState
     extends State<ProfileInfoEditBottomSheet> {
   bool _saving = false;
   final FocusNode _nameFocus = FocusNode();
-  final FocusNode _descriptionFocus = FocusNode();
 
   // 🎯 Controller를 내부에서 관리 (외부에서 제공되지 않은 경우)
   late final TextEditingController _nameController;
-  late final TextEditingController _descriptionController;
   late final bool _ownsControllers; // 🎯 Controller를 소유하는지 여부
 
   late String _initialName;
-  late String _initialDescription;
   late List<String> _initialLinks; // 🎯 초기 링크 목록 (URL만)
   List<String> _links = []; // 🎯 현재 링크 목록 (URL만, 저장용)
   Map<String, String> _linkTitles = {}; // 🎯 링크 타이틀 저장 (URL -> 타이틀)
@@ -182,23 +176,18 @@ class _ProfileInfoEditBottomSheetState
     super.initState();
 
     // 🎯 외부에서 controller가 제공되었는지 확인
-    if (widget.nameController != null && widget.descriptionController != null) {
+    if (widget.nameController != null) {
       // 외부에서 제공된 경우 사용
       _nameController = widget.nameController!;
-      _descriptionController = widget.descriptionController!;
       _ownsControllers = false; // dispose 안 함
     } else {
       // 내부에서 생성
       _nameController = TextEditingController(text: widget.user?.alias ?? '');
-      _descriptionController = TextEditingController(
-        text: widget.user?.selfIntroduction ?? '',
-      );
       _ownsControllers = true; // dispose 필요
     }
 
     // trim()된 값으로 초기값 저장
     _initialName = _nameController.text.trim();
-    _initialDescription = _descriptionController.text.trim();
 
     // 🎯 초기 링크 목록 설정
     _initialLinks = List<String>.from(widget.user?.links ?? []);
@@ -221,7 +210,7 @@ class _ProfileInfoEditBottomSheetState
     }
 
     debugPrint(
-      '[ProfileEdit] 초기값 저장 - 이름: "$_initialName", 소개: "$_initialDescription", 링크: ${_initialLinks.length}개, 타이틀: ${_linkTitles.length}개',
+      '[ProfileEdit] 초기값 저장 - 이름: "$_initialName", 링크: ${_initialLinks.length}개, 타이틀: ${_linkTitles.length}개',
     );
     debugPrint('[ProfileEdit] 초기 링크 타이틀: $_linkTitles');
 
@@ -231,21 +220,17 @@ class _ProfileInfoEditBottomSheetState
   @override
   void dispose() {
     _nameFocus.dispose();
-    _descriptionFocus.dispose();
     // 🎯 내부에서 생성한 controller만 dispose
     if (_ownsControllers) {
       _nameController.dispose();
-      _descriptionController.dispose();
     }
     super.dispose();
   }
 
   bool get _hasChanges {
     final currentName = _nameController.text.trim();
-    final currentDescription = _descriptionController.text.trim();
 
     final hasNameChange = currentName != _initialName;
-    final hasDescChange = currentDescription != _initialDescription;
     // 🎯 링크 변경 체크 (순서 무관 비교)
     final hasLinksChange = !_listEquals(_links, _initialLinks);
 
@@ -255,9 +240,6 @@ class _ProfileInfoEditBottomSheetState
 
     debugPrint(
       '[ProfileEdit] 변경 체크 - 이름: "$currentName" vs "$_initialName" = $hasNameChange',
-    );
-    debugPrint(
-      '[ProfileEdit] 변경 체크 - 소개: "$currentDescription" vs "$_initialDescription" = $hasDescChange',
     );
     debugPrint(
       '[ProfileEdit] 변경 체크 - 링크: ${_links.length}개 vs ${_initialLinks.length}개 = $hasLinksChange',
@@ -271,10 +253,7 @@ class _ProfileInfoEditBottomSheetState
       return false;
     }
 
-    return hasNameChange ||
-        hasDescChange ||
-        hasLinksChange ||
-        hasLinkTitlesChange;
+    return hasNameChange || hasLinksChange || hasLinkTitlesChange;
   }
 
   // 🎯 리스트 비교 헬퍼 (순서 무관)
@@ -301,7 +280,7 @@ class _ProfileInfoEditBottomSheetState
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
       decoration: const BoxDecoration(color: Colors.transparent),
       child: Stack(
         children: [
@@ -327,13 +306,14 @@ class _ProfileInfoEditBottomSheetState
                 ),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 20,
-                  vertical: 24,
+                  vertical: 26,
                 ),
                 child: SingleChildScrollView(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      const SizedBox(height: 12),
                       // 원형 프로필 + 액션 버튼]
                       /*
                 Center(
@@ -390,8 +370,8 @@ class _ProfileInfoEditBottomSheetState
                           color: Theme.of(
                             context,
                           ).colorScheme.onSurface.withOpacity(0.8),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w400,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       // 별명 텍스트필드
@@ -453,56 +433,6 @@ class _ProfileInfoEditBottomSheetState
                         ),
                       ),
                       const SizedBox(height: 16),
-                      Text(
-                        AppLocalizations.of(context).translate('introduction'),
-                        style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.8),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                      // 소개글 텍스트필드
-                      TextField(
-                        controller: _descriptionController,
-                        focusNode: _descriptionFocus,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        cursorColor: Theme.of(context).colorScheme.onSurface,
-                        onChanged: (value) => setState(() {}),
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w400,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: AppLocalizations.of(
-                            context,
-                          ).translate('introduction_hint'),
-                          hintStyle: TextStyle(color: Colors.grey[600]),
-                          filled: true,
-                          fillColor:
-                              Theme.of(context).colorScheme.surfaceVariant,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: OutlineInputBorder(
-                            borderSide: BorderSide.none,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderSide: BorderSide.none,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderSide: BorderSide.none,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
 
                       // 🎯 링크 섹션
                       Row(
@@ -513,8 +443,8 @@ class _ProfileInfoEditBottomSheetState
                               color: Theme.of(
                                 context,
                               ).colorScheme.onSurface.withOpacity(0.8),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w400,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                           const Spacer(),
@@ -557,7 +487,7 @@ class _ProfileInfoEditBottomSheetState
 
                       if (_links.isEmpty) ...[
                         Container(
-                          height: 48,
+                          height: 56,
                           decoration: BoxDecoration(
                             color: Theme.of(context).colorScheme.surfaceVariant,
                             borderRadius: BorderRadius.circular(16),
@@ -600,7 +530,6 @@ class _ProfileInfoEditBottomSheetState
                             try {
                               await widget.onSave!(
                                 alias: _nameController.text.trim(),
-                                description: _descriptionController.text.trim(),
                                 links: _links, // 🎯 빈 배열도 전달하여 링크 삭제 가능하게
                                 linkTitles:
                                     _linkTitles.isEmpty ? null : _linkTitles,
@@ -779,7 +708,7 @@ class _ProfileInfoEditBottomSheetState
     return GestureDetector(
       onTap: () => _showLinkEditOverlay(context, link, index),
       child: Container(
-        height: 56,
+        height: 80,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surfaceVariant,
@@ -789,8 +718,8 @@ class _ProfileInfoEditBottomSheetState
           children: [
             // 🎯 링크 썸네일 또는 아이콘 (저장된 썸네일 우선, 없으면 Google Favicon API)
             Container(
-              width: 50,
-              height: 50,
+              width: 60,
+              height: 60,
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),

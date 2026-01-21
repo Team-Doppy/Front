@@ -311,6 +311,9 @@ class AuthService {
   /// - 🎯 알림 권한이 없으면 자동으로 요청하고 기본값을 on으로 설정
   /// - 🎯 알림 권한이 허용되면 서버 및 로컬 설정을 자동으로 on으로 동기화
   Future<bool> syncFcmTokenAndSettings() async {
+    // TODO: 알림 데이터 호출 주석처리
+    return false;
+    /*
     final authToken = await getToken();
     if (authToken == null || authToken.isEmpty) {
       return false;
@@ -358,6 +361,7 @@ class AuthService {
 
     // 🎯 권한이 허용되었는지 반환 (로컬 설정 동기화에 사용)
     return hasPermission;
+    */
   }
 
   Future<void> logout() async {
@@ -471,6 +475,45 @@ class AuthService {
     } catch (e, stackTrace) {
       debugPrint('[AuthService] getUserIdFromToken: 예외 발생: $e');
       debugPrint('[AuthService] getUserIdFromToken: 스택 트레이스: $stackTrace');
+      return null;
+    }
+  }
+
+  /// JWT payload에서 계정 식별 키를 문자열로 추출 (userId/sub/id/user_id 우선순위)
+  /// - 서버에서 sub가 username(String)으로 내려오는 케이스를 지원한다.
+  Future<String?> getAccountKeyFromToken() async {
+    try {
+      final token = await getToken();
+      if (token == null || token.isEmpty) {
+        debugPrint('[AuthService] getAccountKeyFromToken: 토큰이 없습니다');
+        return null;
+      }
+
+      final payload = _decodeJwtPayload(token);
+      if (payload == null) {
+        debugPrint('[AuthService] getAccountKeyFromToken: payload 디코딩 실패');
+        return null;
+      }
+
+      final raw =
+          payload['userId'] ??
+          payload['sub'] ??
+          payload['id'] ??
+          payload['user_id'];
+
+      if (raw == null) {
+        debugPrint(
+          '[AuthService] getAccountKeyFromToken: userId/sub/id/user_id 필드가 없습니다',
+        );
+        return null;
+      }
+
+      final key = raw.toString().trim();
+      if (key.isEmpty) return null;
+      debugPrint('[AuthService] getAccountKeyFromToken: 성공! key=$key');
+      return key;
+    } catch (e) {
+      debugPrint('[AuthService] getAccountKeyFromToken: 예외 발생: $e');
       return null;
     }
   }
@@ -823,7 +866,7 @@ class AuthService {
       return false;
     }
 
-    const maxRetries = 2;
+    const maxRetries = 0; // 재시도 1번만 (총 1회 시도)
     const retry1Delay = Duration(milliseconds: 300);
     const retry2Delay = Duration(milliseconds: 800);
 

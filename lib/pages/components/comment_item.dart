@@ -205,10 +205,7 @@ class CommentItem extends StatelessWidget {
                       MaterialPageRoute(
                         builder:
                             (context) => UserProfileScreen(
-                              otherUser: User(
-                                username: username,
-                                profileImageUrl: '', // 프로필 이미지는 서버에서 가져올 수 있음
-                              ),
+                              otherUser: User(username: username),
                             ),
                       ),
                     );

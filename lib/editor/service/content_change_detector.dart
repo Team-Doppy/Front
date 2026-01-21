@@ -8,6 +8,36 @@ import 'package:flutter/material.dart';
 /// 수정 모드에서 원본 데이터와 현재 데이터를 비교하여
 /// 실제 변경사항이 있는지 철저하게 확인합니다.
 class ContentChangeDetector {
+  /// ✅ exported(Map) 두 개를 직접 비교하여 본문(content/stickers) 변경 여부를 판단
+  ///
+  /// - PostExportScreen처럼 "에디터 서비스"가 없는 곳에서도 사용하기 위해 제공
+  /// - 공개범위/썸네일/타이틀 등은 _deepEquals에서 무시되거나 별도 관리 대상이므로,
+  ///   이 함수는 오직 content/stickers 구조 변경만 판단합니다.
+  static bool hasExportedContentChanged({
+    required Map<String, dynamic> originalExported,
+    required Map<String, dynamic> currentExported,
+  }) {
+    try {
+      debugPrint('[ContentChangeDetector] exported 직접 비교 시작');
+
+      if (_hasDocumentStructureChanged(originalExported, currentExported)) {
+        debugPrint('[ContentChangeDetector] ✓ 문서 구조 변경 감지(exported)');
+        return true;
+      }
+
+      if (_hasStickersChanged(originalExported, currentExported)) {
+        debugPrint('[ContentChangeDetector] ✓ 스티커 변경 감지(exported)');
+        return true;
+      }
+
+      debugPrint('[ContentChangeDetector] ✗ 변경사항 없음(exported)');
+      return false;
+    } catch (e) {
+      debugPrint('[ContentChangeDetector] exported 비교 에러: $e');
+      return true;
+    }
+  }
+
   /// 포스트 내용이 변경되었는지 확인
   ///
   /// 다음 항목들을 모두 비교합니다:

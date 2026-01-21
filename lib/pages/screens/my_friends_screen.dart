@@ -8,8 +8,6 @@ import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart'
     show CustomRefreshIndicator;
 import 'package:doppy/pages/components/friend_request_bottom_sheet.dart';
-import 'package:doppy/pages/components/received_request_bottom_sheet.dart';
-import 'package:doppy/pages/components/sent_requests_list_bottom_sheet.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/profile_image_view_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
@@ -77,7 +75,7 @@ class _MyFriendsScreenState extends State<MyFriendsScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (context) => _UserSearchBottomSheet(),
+      builder: (context) => UserSearchBottomSheet(),
     );
   }
 
@@ -161,7 +159,7 @@ class _MyFriendsScreenState extends State<MyFriendsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+            padding: const EdgeInsets.fromLTRB(20, 20, 16, 12),
             child: Text(
               context.tr('received_requests'),
               style: LocaleTypography.setStyle(
@@ -221,7 +219,7 @@ class _MyFriendsScreenState extends State<MyFriendsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+            padding: const EdgeInsets.fromLTRB(20, 20, 16, 12),
             child: Text(
               context.tr('sent_requests'),
               style: LocaleTypography.setStyle(
@@ -271,164 +269,240 @@ class _MyFriendsScreenState extends State<MyFriendsScreen> {
     FriendProvider friendProvider,
   ) {
     final List<Friend> accepted = friendProvider.acceptedFriends;
+    final List<Friend> received = friendProvider.receivedRequests;
+    final List<Friend> sent = friendProvider.sentRequests;
+    final List<User> recommended = friendProvider.friendRecommendations;
+
+    // ✅ 받은 요청 또는 보낸 요청만 있어도 추천 친구 표시
+    final bool showRecommended =
+        accepted.isEmpty &&
+        !friendProvider.isLoading &&
+        (received.isNotEmpty || sent.isNotEmpty || recommended.isNotEmpty);
+
+    // ✅ 모든 것이 없을 때 체크 (친구, 추천친구, 받은 요청, 보낸 요청 모두 없음)
+    final bool isEmpty =
+        accepted.isEmpty &&
+        received.isEmpty &&
+        sent.isEmpty &&
+        recommended.isEmpty &&
+        !friendProvider.isLoading;
+
+    // ✅ 추천 친구 최대 10명만 표시 (원래 순서 유지, 매 프레임 섞이지 않도록)
+    final List<User> limitedRecommended = recommended.take(10).toList();
 
     // 🎯 수락된 친구 섹션 제목과 그리드
     return SliverMainAxisGroup(
       slivers: [
-        // 섹션 제목
-        if (accepted.isNotEmpty || friendProvider.isLoading)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+        // ✅ 모든 것이 없을 때: 가운데에 "아직 친구가 없어요"만 표시
+        if (isEmpty)
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(
               child: Text(
-                context.tr('all_friends'),
-                style: LocaleTypography.setStyle(
-                  context: context,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
+                context.tr('no_friends_to_display'),
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.7),
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          )
+        else ...[
+          // 섹션 제목
+          if (accepted.isNotEmpty ||
+              friendProvider.isLoading ||
+              showRecommended)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 16, 12),
+                child: Text(
+                  showRecommended
+                      ? context.tr('no_friends_to_display')
+                      : context.tr('all_friends'),
+                  style: LocaleTypography.setStyle(
+                    context: context,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
-          ),
-        // 🎯 친구 로딩 중: Shimmer로 그리드 UI 유지
-        if (friendProvider.isLoading)
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 100),
-            sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 6,
-                childAspectRatio: 0.75,
-              ),
-              delegate: SliverChildBuilderDelegate((context, index) {
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // 프로필 원형 Shimmer
-                    ShimmerBox(
-                      width: 110,
-                      height: 110,
-                      shape: const CircleBorder(),
-                    ),
-                    const SizedBox(height: 6),
-                    // 이름 Shimmer (한 줄만)
-                    SizedBox(
-                      width: double.infinity,
-                      height: 18,
-                      child: Center(
-                        child: ShimmerBox(
-                          width: 80,
-                          height: 14,
-                          borderRadius: BorderRadius.circular(4),
+          // 🎯 친구 로딩 중: Shimmer로 그리드 UI 유지
+          if (friendProvider.isLoading)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 100),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 6,
+                  childAspectRatio: 0.75,
+                ),
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // 프로필 원형 Shimmer
+                      ShimmerBox(
+                        width: 110,
+                        height: 110,
+                        shape: const CircleBorder(),
+                      ),
+                      const SizedBox(height: 6),
+                      // 이름 Shimmer (한 줄만)
+                      SizedBox(
+                        width: double.infinity,
+                        height: 18,
+                        child: Center(
+                          child: ShimmerBox(
+                            width: 80,
+                            height: 14,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                );
-              }, childCount: 9),
-            ),
-          )
-        // 🎯 로딩 완료 후에만 "친구 없음" 메시지 표시
-        else if (accepted.isEmpty)
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: SizedBox(
-              height: MediaQuery.of(context).size.height * 0.4,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Expanded(child: Container()),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Text(
-                      context.tr('no_friends_to_display'),
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.7),
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  Expanded(child: Container()),
-                ],
-              ),
-            ),
-          )
-        // 무한 스크롤 그리드
-        else
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 100),
-            sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 6,
-                childAspectRatio: 0.75,
-              ),
-              delegate: SliverChildBuilderDelegate(
-                (context, i) {
-                  final bool shouldLoadMore =
-                      friendProvider.hasMoreAcceptedFriends &&
-                      !friendProvider.isLoadingMoreAcceptedFriends;
-
-                  // 🎯 마지막에서 3번째 아이템에 도달하면 더 불러오기
-                  if (i == accepted.length - 3 && shouldLoadMore) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      friendProvider.loadMoreAcceptedFriends();
-                    });
-                  }
-
-                  // 🎯 로딩 인디케이터
-                  if (i >= accepted.length) {
-                    return Center(
-                      child:
-                          friendProvider.isLoadingMoreAcceptedFriends
-                              ? const Padding(
-                                padding: EdgeInsets.all(16.0),
-                                child: CircularProgressIndicator(),
-                              )
-                              : const SizedBox.shrink(),
-                    );
-                  }
-
-                  final friend = accepted[i];
-                  return FriendTile(
-                    data: FriendTileData(
-                      username: friend.username,
-                      url: friend.profileImageUrl,
-                      alias: friend.alias,
-                      state: FriendState.accepted,
-                    ),
-                    isSelected: false,
-                    onToggle: () {},
+                    ],
                   );
-                },
-                childCount:
-                    accepted.length +
-                    (friendProvider.isLoadingMoreAcceptedFriends ||
-                            friendProvider.hasMoreAcceptedFriends
-                        ? 3
-                        : 0),
+                }, childCount: 9),
+              ),
+            )
+          // 🎯 친구가 없을 때 또는 받은/보낸 요청만 있을 때 추천 친구 그리드 표시
+          else if (showRecommended)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 100),
+              sliver:
+                  recommended.isEmpty
+                      ? SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: SizedBox(
+                          height: MediaQuery.of(context).size.height * 0.4,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Expanded(child: Container()),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                ),
+                                child: Text(
+                                  context.tr('no_friends_to_display'),
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withOpacity(0.7),
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                              Expanded(child: Container()),
+                            ],
+                          ),
+                        ),
+                      )
+                      : SliverGrid(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              mainAxisSpacing: 12,
+                              crossAxisSpacing: 6,
+                              childAspectRatio: 0.75,
+                            ),
+                        delegate: SliverChildBuilderDelegate((context, i) {
+                          if (i >= limitedRecommended.length) {
+                            return const SizedBox.shrink();
+                          }
+
+                          final user = limitedRecommended[i];
+                          return FriendTile(
+                            data: FriendTileData(
+                              username: user.username,
+                              url: user.profileImageUrl,
+                              alias: user.alias,
+                              state: FriendState.accepted,
+                            ),
+                            isSelected: false,
+                            onToggle: () {},
+                          );
+                        }, childCount: limitedRecommended.length),
+                      ),
+            )
+          // 무한 스크롤 그리드
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 100),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 6,
+                  childAspectRatio: 0.75,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, i) {
+                    final bool shouldLoadMore =
+                        friendProvider.hasMoreAcceptedFriends &&
+                        !friendProvider.isLoadingMoreAcceptedFriends;
+
+                    // 🎯 마지막에서 3번째 아이템에 도달하면 더 불러오기
+                    if (i == accepted.length - 3 && shouldLoadMore) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        friendProvider.loadMoreAcceptedFriends();
+                      });
+                    }
+
+                    // 🎯 로딩 인디케이터
+                    if (i >= accepted.length) {
+                      return Center(
+                        child:
+                            friendProvider.isLoadingMoreAcceptedFriends
+                                ? const Padding(
+                                  padding: EdgeInsets.all(16.0),
+                                  child: CircularProgressIndicator(),
+                                )
+                                : const SizedBox.shrink(),
+                      );
+                    }
+
+                    final friend = accepted[i];
+                    return FriendTile(
+                      data: FriendTileData(
+                        username: friend.username,
+                        url: friend.profileImageUrl,
+                        alias: friend.alias,
+                        state: FriendState.accepted,
+                      ),
+                      isSelected: false,
+                      onToggle: () {},
+                    );
+                  },
+                  childCount:
+                      accepted.length +
+                      (friendProvider.isLoadingMoreAcceptedFriends ||
+                              friendProvider.hasMoreAcceptedFriends
+                          ? 3
+                          : 0),
+                ),
               ),
             ),
-          ),
+        ],
       ],
     );
   }
 }
 
 /// 유저 검색 및 친구 요청 바텀시트
-class _UserSearchBottomSheet extends StatefulWidget {
+class UserSearchBottomSheet extends StatefulWidget {
   @override
-  State<_UserSearchBottomSheet> createState() => _UserSearchBottomSheetState();
+  State<UserSearchBottomSheet> createState() => UserSearchBottomSheetState();
 }
 
-class _UserSearchBottomSheetState extends State<_UserSearchBottomSheet> {
+class UserSearchBottomSheetState extends State<UserSearchBottomSheet> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   // 🎯 username별 액션(요청/취소) 로딩 상태
@@ -1130,7 +1204,7 @@ class FriendTile extends StatelessWidget {
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
                 letterSpacing: -0.5,
-                color: textColor,
+                color: textColor.withOpacity(0.9),
               ),
             ),
           ),

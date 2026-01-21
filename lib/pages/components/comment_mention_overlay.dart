@@ -241,10 +241,7 @@ class _CommentMentionOverlayState extends State<CommentMentionOverlay>
               width: double.infinity, // 화면 전체 너비
               constraints: BoxConstraints(
                 maxHeight:
-                    widget.searchQuery.isEmpty
-                        ? 200 // 🎯 검색어가 비어있을 때는 낮은 높이로 시작
-                        : MediaQuery.of(context).size.height *
-                            0.3, // 검색 중일 때는 더 높게
+                    MediaQuery.of(context).size.height * 0.3, // 검색 중일 때는 더 높게
               ),
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface,

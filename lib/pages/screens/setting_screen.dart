@@ -13,6 +13,7 @@ import 'package:doppy/pages/components/account_deletion_confirm.dart';
 import 'package:doppy/data/services/user_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/main.dart' show AppConstants;
+import 'package:doppy/utils/text_bold_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
@@ -144,13 +145,11 @@ class _SettingScreenState extends State<SettingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final surfaceColor = isDark ? const Color(0xFF1A1A1A) : Colors.white;
     final authProvider = context.watch<AuthProvider>();
+    final surfaceColor = Theme.of(context).colorScheme.surface;
 
     return Scaffold(
-      backgroundColor:
-          isDark ? AppColors.darkBackground : const Color(0xFFF5F5F5),
+      backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         scrolledUnderElevation: 0,
@@ -165,8 +164,17 @@ class _SettingScreenState extends State<SettingScreen> {
             size: 24,
           ),
         ),
+        centerTitle: true,
 
-        centerTitle: false,
+        title: Text(
+          context.tr('settings'),
+          style: LocaleTypography.style(
+            context: context,
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+        ),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -178,12 +186,13 @@ class _SettingScreenState extends State<SettingScreen> {
             surfaceColor: surfaceColor,
             children: [
               _SettingTile(
-                icon: Icons.person_outline,
+                icon: Icons.person,
                 label: context.tr('user_id'),
                 trailing: Text(
                   authProvider.username ?? '-',
                   style: TextStyle(
                     fontSize: 17,
+                    fontWeight: FontWeight.w600,
                     color: Theme.of(context).colorScheme.primary,
                   ),
                 ),
@@ -191,7 +200,7 @@ class _SettingScreenState extends State<SettingScreen> {
                 onTap: () {},
               ),
               _SettingTile(
-                icon: Icons.favorite_border,
+                icon: Icons.favorite,
                 label: context.tr('favorites'),
                 onTap: () {
                   Navigator.push(
@@ -216,7 +225,7 @@ class _SettingScreenState extends State<SettingScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
 
           // 2. 일반
           _buildSection(
@@ -229,14 +238,14 @@ class _SettingScreenState extends State<SettingScreen> {
                   final notificationEnabled =
                       userProvider.notificationEnabled ?? true;
                   return _SettingTile(
-                    icon: Icons.notifications_outlined,
+                    icon: Icons.notifications,
                     label: context.tr('notification_settings'),
                     trailing: Text(
                       notificationEnabled ? 'ON' : 'OFF',
                       style: TextStyle(
                         fontSize: 15,
                         color: AppColors.primary,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     onTap: _toggleNotification,
@@ -248,14 +257,14 @@ class _SettingScreenState extends State<SettingScreen> {
                   final marketingEnabled =
                       userProvider.marketingEnabled ?? false;
                   return _SettingTile(
-                    icon: Icons.campaign_outlined,
+                    icon: Icons.campaign,
                     label: context.tr('marketing_consent'),
                     trailing: Text(
                       marketingEnabled ? 'ON' : 'OFF',
                       style: TextStyle(
                         fontSize: 15,
                         color: AppColors.primary,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     onTap: _toggleMarketing,
@@ -272,7 +281,7 @@ class _SettingScreenState extends State<SettingScreen> {
                   style: TextStyle(
                     fontSize: 15,
                     color: AppColors.primary,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 onTap: () {
@@ -282,7 +291,7 @@ class _SettingScreenState extends State<SettingScreen> {
               // 🎯 언어 설정 제거: OS 언어만 사용 (한국 사용자는 영어로 변경 불가, 영어 사용자는 한국어로 변경 불가)
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
 
           // 3. 앱 정보
           _buildSection(
@@ -307,7 +316,7 @@ class _SettingScreenState extends State<SettingScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
 
           // 4. 기타
           _buildSection(
@@ -345,7 +354,7 @@ class _SettingScreenState extends State<SettingScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
 
           // 5. 고객지원
           _buildSection(
@@ -427,13 +436,14 @@ class _SettingScreenState extends State<SettingScreen> {
                     context: context,
                     isScrollControlled: true,
                     backgroundColor: Colors.transparent,
+                    isDismissible: false, // ✅ 탈퇴 중 바텀시트 닫기 방지
+                    enableDrag: false, // ✅ 드래그로 닫기 방지
                     builder: (context) => const AccountDeletionSheet(),
                   );
                 },
               ),
             ],
           ),
-          const SizedBox(height: 24),
         ],
       ),
     );
@@ -445,11 +455,6 @@ class _SettingScreenState extends State<SettingScreen> {
     required Color surfaceColor,
     required List<Widget> children,
   }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final dividerColor = Theme.of(
-      context,
-    ).colorScheme.onSurface.withOpacity(0.08);
-
     // 타일 사이에 구분선 추가
     final childrenWithDividers = <Widget>[];
     for (int i = 0; i < children.length; i++) {
@@ -458,7 +463,7 @@ class _SettingScreenState extends State<SettingScreen> {
         childrenWithDividers.add(
           Padding(
             padding: const EdgeInsets.only(left: 58),
-            child: Divider(height: 1, thickness: 1, color: dividerColor),
+            child: Divider(height: 1, thickness: 1, color: Colors.transparent),
           ),
         );
       }
@@ -468,26 +473,19 @@ class _SettingScreenState extends State<SettingScreen> {
       decoration: BoxDecoration(
         color: surfaceColor,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
-            blurRadius: 12,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
             child: Text(
               title,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                letterSpacing: 0.5,
+              style: LocaleTypography.style(
+                context: context,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.9),
               ),
             ),
           ),
@@ -531,9 +529,7 @@ class _SettingTile extends StatelessWidget {
               child: Icon(
                 icon,
                 size: 20,
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withOpacity(0.75),
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.75),
               ),
             ),
             const SizedBox(width: 8),

@@ -7,7 +7,6 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/image/group_image_layout_selector.dart';
-import 'package:flutter_svg/svg.dart';
 import 'package:image/image.dart' as img;
 import 'crop_editor.dart'
     show
@@ -30,7 +29,7 @@ import 'package:doppy/overlay_engine/widgets/overlay_stage.dart';
 import 'package:doppy/overlay_engine/controller/overlay_controller.dart';
 
 /// 간단한 커스텀 이미지 편집 화면
-/// 바텀시트 기반 UI, Undo/Redo, 실시간 미리보기 제공
+/// 바텀시트 기반 UI, 실시간 미리보기 제공
 class SimpleImageEditorScreen extends StatefulWidget {
   const SimpleImageEditorScreen({
     super.key,
@@ -115,6 +114,8 @@ class _CropSessionSnapshot {
     required this.rotationQuarterTurns,
     required this.flipHorizontal,
     required this.flipVertical,
+    required this.cropRectImage,
+    required this.isCropRectInitialized,
     required this.imageOffset,
     required this.imageScale,
     required this.selectedAspectRatio,
@@ -126,6 +127,8 @@ class _CropSessionSnapshot {
   final int rotationQuarterTurns;
   final bool flipHorizontal;
   final bool flipVertical;
+  final Rect? cropRectImage;
+  final bool isCropRectInitialized;
   final Offset imageOffset;
   final double imageScale;
   final String? selectedAspectRatio;
@@ -414,10 +417,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   // 이미지별 편집 상태 관리
   final Map<int, _ImageEditState> _imageEditStates = {};
 
-  // Undo/Redo 스택 (이미지별, "Apply 단위" 스냅샷) - 최대 20개로 제한됨
-  final Map<int, List<_EditSnapshot>> _history = {};
-  final Map<int, List<_EditSnapshot>> _redoStack = {};
-
   // 바텀시트 관련
   bool _isBottomSheetOpen = false;
   late AnimationController _bottomSheetController;
@@ -467,9 +466,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     );
   }
 
-  // UI 토글
-  bool _showUI = true;
-
   // 필터 스와이프 관련
   bool _hasSwiped = false;
 
@@ -486,6 +482,13 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
   // ✅ 크롭 Apply로 닫히는 동안(바텀시트 내려오는 중)엔 "커밋 프리뷰"를 먼저 보여준다
   bool _isClosingAfterCropApply = false;
+
+  // ✅ 크롭 "취소/뒤로"로 닫히는 동안: 크롭 박스/핸들을 즉시 숨기기 위해 사용
+  bool _isClosingAfterCropCancel = false;
+
+  // ✅ 크롭 "적용" 누른 순간의 containerSize를 잠깐 고정해서(레이아웃 변화로 인한 점프 방지)
+  // 바텀시트가 내려오는 동안에도 동일한 좌표계에서 커밋 프리뷰를 그릴 수 있게 한다.
+  final Map<int, Size> _closingCropContainerSizes = {};
 
   // 크롭 관련 상태
   final Map<int, Size> _imageDisplaySizes = {}; // 이미지별 표시 크기
@@ -531,6 +534,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       rotationQuarterTurns: state.rotationQuarterTurns,
       flipHorizontal: state.flipHorizontal,
       flipVertical: state.flipVertical,
+      cropRectImage: state.cropState.cropRectImage,
+      isCropRectInitialized: state.cropState.isCropRectInitialized,
       imageOffset: state.imageOffset,
       imageScale: state.imageScale,
       selectedAspectRatio: state.selectedAspectRatio,
@@ -561,7 +566,11 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     state.imageOffset = snap.imageOffset;
     state.imageScale = snap.imageScale;
     state.selectedAspectRatio = snap.selectedAspectRatio;
-    state.cropState.reset();
+    // ✅ 핵심: 크롭 취소(뒤로) 시에도 "진입 전 커밋된 크롭 상태"를 그대로 복원해야 한다.
+    // (reset하면 커밋된 cropRect가 날아가고, offset/scale만 남아 쏠림/점프가 발생할 수 있음)
+    state.cropState.selectedAspectRatio = snap.selectedAspectRatio;
+    state.cropState.cropRectImage = snap.cropRectImage;
+    state.cropState.isCropRectInitialized = snap.isCropRectInitialized;
 
     // crop gesture handler도 초기화
     _getCropGestureHandler(index).reset();
@@ -614,10 +623,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       _loadImageToCache(i, _images[i]);
       // ✅ 원본 이미지의 ui.Image도 미리 로드
       _loadOriginalImageToCache(i, _originalImages[i]);
-      // ✅ 히스토리 시드(표준): bytes가 아니라 "편집 상태 스냅샷"을 1개 넣어둔다
-      final s = _imageEditStates.putIfAbsent(i, () => _ImageEditState());
-      _history.putIfAbsent(i, () => []).add(_EditSnapshot.fromState(s));
-      _redoStack.putIfAbsent(i, () => []).clear();
     }
   }
 
@@ -843,8 +848,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       image?.dispose();
     }
     _originalUiImageCache.clear();
-    _history.clear();
-    _redoStack.clear();
 
     _pageController.dispose();
     _bottomSheetController.dispose();
@@ -927,53 +930,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   // (표준 비파괴 편집) bytes를 중간에 교체하지 않으므로
   // _onImageEdited / _onCropApplied 같은 "bytes 커밋" 루틴은 사용하지 않는다.
 
-  void _saveToHistorySnapshot(int index) {
-    final history = _history.putIfAbsent(index, () => []);
-    final snap = _snapshotOf(index);
-
-    if (history.isEmpty) {
-      history.add(snap);
-      _redoStack.putIfAbsent(index, () => []).clear();
-      return;
-    }
-
-    // ✅ 연속 중복 스냅샷 방지 (Apply 눌렀는데 변화 없으면 스택 증가 X)
-    if (history.last.sameAs(snap)) return;
-
-    history.add(snap);
-    _redoStack.putIfAbsent(index, () => []).clear();
-    if (history.length > 20) {
-      history.removeAt(0);
-    }
-  }
-
-  void _undo() {
-    final history = _history[_currentIndex];
-    if (history == null || history.length <= 1) return;
-
-    history.removeLast();
-    final previous = history.last;
-    _redoStack
-        .putIfAbsent(_currentIndex, () => [])
-        .add(_snapshotOf(_currentIndex));
-    setState(() {
-      _applySnapshotToIndex(_currentIndex, previous);
-    });
-  }
-
-  void _redo() {
-    final redoStack = _redoStack[_currentIndex];
-    if (redoStack == null || redoStack.isEmpty) return;
-
-    final redoSnap = redoStack.removeLast();
-    _history
-        .putIfAbsent(_currentIndex, () => [])
-        .add(_snapshotOf(_currentIndex));
-    setState(() {
-      _applySnapshotToIndex(_currentIndex, redoSnap);
-    });
-  }
-
   Future<void> _handleDone() async {
     if (_isExporting) return;
     setState(() => _isExporting = true);
@@ -986,6 +942,13 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         final baked = await _exportFinalBytes(0);
         if (!mounted) return;
         if (widget.onDone != null) {
+          // ✅ 기존 노드 편집 모드: 업로드/노드 교체는 "바깥(호출자)"에서 로딩을 띄우며 처리한다.
+          // - 여기서는 결과만 전달하고 에디터는 즉시 닫는다.
+          if (widget.isExistingNodeEdit) {
+            unawaited(widget.onDone!(context, baked));
+            if (mounted) Navigator.of(context).pop();
+            return;
+          }
           await widget.onDone!(context, baked);
           return;
         }
@@ -1004,6 +967,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           final bakedImages = await _bakeAllFinalBytes();
           if (!mounted) return;
           if (widget.onDone != null) {
+            // ✅ 기존 노드 편집 모드: 결과만 전달하고 에디터는 즉시 닫는다.
+            if (widget.isExistingNodeEdit) {
+              unawaited(widget.onDone!(context, bakedImages));
+              if (mounted) Navigator.of(context).pop();
+              return;
+            }
             await widget.onDone!(context, bakedImages);
             return;
           }
@@ -1084,6 +1053,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
           if (imageDimensions != null) 'imageDimensions': imageDimensions,
         };
         if (widget.onDone != null) {
+          // ✅ 기존 노드 편집 모드: 결과만 전달하고 에디터는 즉시 닫는다.
+          if (widget.isExistingNodeEdit) {
+            unawaited(widget.onDone!(context, payload));
+            if (mounted) Navigator.of(context).pop();
+            return;
+          }
           await widget.onDone!(context, payload);
           return;
         }
@@ -1093,6 +1068,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       final baked = await _exportFinalBytes(0);
       if (!mounted) return;
       if (widget.onDone != null) {
+        // ✅ 기존 노드 편집 모드: 결과만 전달하고 에디터는 즉시 닫는다.
+        if (widget.isExistingNodeEdit) {
+          unawaited(widget.onDone!(context, baked));
+          if (mounted) Navigator.of(context).pop();
+          return;
+        }
         await widget.onDone!(context, baked);
         return;
       }
@@ -1110,16 +1091,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   Future<List<Uint8List>> _bakeAllFinalBytes() async {
     final out = <Uint8List>[];
     for (int i = 0; i < _images.length; i++) {
-      // ✅ 변경 없는 이미지는 굽지 않고 원본 bytes 그대로 반환 (속도 최적화)
-      final initial =
-          _history[i]?.isNotEmpty == true ? _history[i]!.first : null;
-      if (initial != null) {
-        final current = _snapshotOf(i);
-        if (current.sameAs(initial)) {
-          out.add(_images[i]);
-          continue;
-        }
-      }
       // UI에 프레임을 양보해서(특히 레이아웃 선택 중) 덜 끊기게
       await Future.delayed(Duration.zero);
       out.add(await _exportFinalBytes(i));
@@ -1245,26 +1216,13 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         isDark ? AppColors.darkBackground : AppColors.lightBackground;
     final fgColor =
         isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary;
+    final safeInsets = MediaQuery.of(context).viewPadding;
 
     return Scaffold(
       // ✅ 에디터 진입 순간에도 배경색이 비지 않도록 Scaffold 레벨에서 기본 배경을 깔아준다.
-      backgroundColor: bgColor.withOpacity(0.8),
+      backgroundColor: bgColor,
       body: Stack(
         children: [
-          // 글래스 블러 배경
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: _isBottomSheetOpen ? null : () => Navigator.pop(context),
-              child: ClipRRect(
-                child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                  child: Container(color: bgColor.withOpacity(0.8)),
-                ),
-              ),
-            ),
-          ),
-
           // 메인 컨테이너
           Positioned.fill(
             child: SafeArea(
@@ -1276,8 +1234,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                     builder: (context, child) {
                       final p = _bottomSheetAnimation.value;
                       final currentHeight = kToolbarHeight * (1 - p);
-                      final opacity =
-                          _showUI && !_isBottomSheetOpen ? 1.0 : 0.0;
+                      final opacity = !_isBottomSheetOpen ? 1.0 : 0.0;
 
                       if (currentHeight <= 0) {
                         return const SizedBox.shrink();
@@ -1294,132 +1251,116 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
                               ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
+                              child: Stack(
+                                alignment: Alignment.center,
                                 children: [
+                                  // ✅ 좌우 버튼들
                                   Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          bottom: 2.0,
-                                          right: 4,
-                                        ),
-                                        child: IconButton(
-                                          onPressed: () {
-                                            if (_isBottomSheetOpen) {
-                                              _closeBottomSheet(cancel: true);
-                                            } else {
-                                              Navigator.pop(context);
-                                            }
-                                          },
-                                          icon: Icon(
-                                            _isBottomSheetOpen
-                                                ? null
-                                                : Icons.close,
-                                            color: fgColor,
-                                            size: 26,
+                                      Row(
+                                        children: [
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              bottom: 2.0,
+                                              right: 4,
+                                            ),
+                                            child: IconButton(
+                                              onPressed: () {
+                                                if (_isBottomSheetOpen) {
+                                                  _closeBottomSheet(
+                                                    cancel: true,
+                                                  );
+                                                } else {
+                                                  Navigator.pop(context);
+                                                }
+                                              },
+                                              icon: Icon(
+                                                _isBottomSheetOpen
+                                                    ? null
+                                                    : Icons.close,
+                                                color: fgColor,
+                                                size: 24,
+                                              ),
+                                            ),
                                           ),
-                                        ),
+                                        ],
                                       ),
-                                      if (!_isBottomSheetOpen) ...[
+                                      if (!_isBottomSheetOpen)
                                         GestureDetector(
                                           onTap:
-                                              ((_history[_currentIndex]
-                                                              ?.length ??
-                                                          0) >
-                                                      1)
-                                                  ? (_isExporting
-                                                      ? null
-                                                      : _undo)
-                                                  : null,
-                                          child: SvgPicture.asset(
-                                            'assets/icons/editor_undo.svg',
-                                            width: 30,
-                                            height: 30,
-                                            colorFilter: ColorFilter.mode(
-                                              ((_history[_currentIndex]
-                                                              ?.length ??
-                                                          0) >
-                                                      1)
-                                                  ? fgColor
-                                                  : fgColor.withOpacity(0.3),
-                                              BlendMode.srcIn,
+                                              (_isExporting || _isPageScrolling)
+                                                  ? null
+                                                  : _handleDone,
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            child: BackdropFilter(
+                                              filter: ui.ImageFilter.blur(
+                                                sigmaX: 10,
+                                                sigmaY: 10,
+                                              ),
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 20,
+                                                      vertical: 10,
+                                                    ),
+                                                child:
+                                                    _isExporting
+                                                        ? Row(
+                                                          mainAxisSize:
+                                                              MainAxisSize.min,
+                                                          children: const [],
+                                                        )
+                                                        : Text(
+                                                          widget.doneLabelOverride ??
+                                                              (widget.isExistingNodeEdit
+                                                                  ? l10n.t(
+                                                                    'apply',
+                                                                  )
+                                                                  : l10n
+                                                                      .t(
+                                                                        'add_with_count',
+                                                                      )
+                                                                      .replaceAll(
+                                                                        '{count}',
+                                                                        '${_images.length}',
+                                                                      )),
+                                                          style: TextStyle(
+                                                            color: fgColor,
+                                                            fontSize: 16,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                          ),
+                                                        ),
+                                              ),
                                             ),
                                           ),
                                         ),
-                                        const SizedBox(width: 8),
-                                        GestureDetector(
-                                          onTap:
-                                              (_redoStack[_currentIndex]
-                                                          ?.isNotEmpty ??
-                                                      false)
-                                                  ? (_isExporting
-                                                      ? null
-                                                      : _redo)
-                                                  : null,
-                                          child: SvgPicture.asset(
-                                            'assets/icons/editor_redo.svg',
-                                            width: 30,
-                                            height: 30,
-                                            colorFilter: ColorFilter.mode(
-                                              (_redoStack[_currentIndex]
-                                                          ?.isNotEmpty ??
-                                                      false)
-                                                  ? fgColor
-                                                  : fgColor.withOpacity(0.3),
-                                              BlendMode.srcIn,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
                                     ],
                                   ),
-                                  if (!_isBottomSheetOpen)
-                                    GestureDetector(
-                                      onTap:
-                                          (_isExporting || _isPageScrolling)
-                                              ? null
-                                              : _handleDone,
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(12),
-                                        child: BackdropFilter(
-                                          filter: ui.ImageFilter.blur(
-                                            sigmaX: 10,
-                                            sigmaY: 10,
-                                          ),
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 20,
-                                              vertical: 10,
-                                            ),
-                                            child:
-                                                _isExporting
-                                                    ? Row(
-                                                      mainAxisSize:
-                                                          MainAxisSize.min,
-                                                      children: const [],
-                                                    )
-                                                    : Text(
-                                                      widget.doneLabelOverride ??
-                                                          (widget.isExistingNodeEdit
-                                                              ? l10n.t('apply')
-                                                              : l10n
-                                                                  .t(
-                                                                    'add_with_count',
-                                                                  )
-                                                                  .replaceAll(
-                                                                    '{count}',
-                                                                    '${_images.length}',
-                                                                  )),
-                                                      style: TextStyle(
-                                                        color: fgColor,
-                                                        fontSize: 16,
-                                                        fontWeight:
-                                                            FontWeight.w600,
-                                                      ),
-                                                    ),
-                                          ),
+                                  // ✅ 페이지 인디케이터 카드 (앱바 중앙)
+                                  if (_editMode == _EditMode.none &&
+                                      _isMultiImage &&
+                                      !_isBottomSheetOpen)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 8,
+                                      ),
+
+                                      child: Text(
+                                        '${_currentIndex + 1}/${_images.length}',
+                                        style: TextStyle(
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
                                         ),
                                       ),
                                     ),
@@ -1481,48 +1422,15 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                       final toolbarFactor = (1.0 - _bottomSheetAnimation.value)
                           .clamp(0.0, 1.0);
 
-                      // UI 숨김 상태면 "보이진 않되" 레이아웃 점프 방지
-                      final opacity = _showUI ? 1.0 : 0.0;
-
                       return ClipRect(
                         child: Align(
                           alignment: Alignment.topCenter,
                           heightFactor: toolbarFactor,
                           child: SizedBox(
                             height: _mainToolbarHeight,
-                            child: Opacity(
-                              opacity: opacity * toolbarFactor,
-                              child: IgnorePointer(
-                                ignoring: toolbarFactor < 0.99,
-                                child: Stack(
-                                  alignment: Alignment.bottomCenter,
-                                  children: [
-                                    // ✅ 페이지 인디케이터 (툴바와 간격 확보)
-                                    if (_editMode == _EditMode.none &&
-                                        _isMultiImage)
-                                      Positioned(
-                                        left: 0,
-                                        right: 0,
-                                        bottom: _mainToolbarHeight + 20,
-                                        child: IgnorePointer(
-                                          child: Center(
-                                            child: Text(
-                                              '${_currentIndex + 1}/${_images.length}',
-                                              style: TextStyle(
-                                                color: fgColor.withOpacity(0.9),
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-
-                                    // ✅ 기존 툴바 그대로
-                                    _buildMainToolbar(),
-                                  ],
-                                ),
-                              ),
+                            child: IgnorePointer(
+                              ignoring: toolbarFactor < 0.99,
+                              child: _buildMainToolbar(),
                             ),
                           ),
                         ),
@@ -1772,6 +1680,15 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                       // ✅ 바텀시트가 내려오기 전에 먼저 "커밋 프리뷰"로 전환
                                       setState(() {
                                         _isClosingAfterCropApply = true;
+                                        // ✅ 바텀시트가 내려가며 LayoutBuilder constraints가 바뀌어도
+                                        // "적용된 크롭 영역"이 그대로 확대되게 좌표계를 freeze
+                                        final s =
+                                            _containerSizes[_currentIndex] ??
+                                            _lastContainerSize;
+                                        if (s != null) {
+                                          _closingCropContainerSizes[_currentIndex] =
+                                              s;
+                                        }
                                       });
                                     }
                                     _closeBottomSheet(cancel: false);
@@ -1798,78 +1715,53 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
             ),
           ),
 
-          // 상단 SafeArea 반투명 블러 오버레이
-          Positioned(
-            left: 0,
-            right: 0,
-            top: 0,
-            child: AnimatedBuilder(
-              animation: _bottomSheetAnimation,
-              builder: (context, _) {
-                if (_bottomSheetAnimation.value <= 0) {
-                  return const SizedBox.shrink();
-                }
-                final safeAreaTop = MediaQuery.of(context).padding.top;
-                if (safeAreaTop <= 0) {
-                  return const SizedBox.shrink();
-                }
-                return ClipRRect(
-                  child: Opacity(
-                    opacity: _bottomSheetAnimation.value,
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                      child: Container(
-                        height: safeAreaTop,
-                        decoration: BoxDecoration(
-                          color: bgColor.withOpacity(0.8),
-                        ),
-                      ),
+          // ✅ SafeArea 상단 영역(노치/상태바)도 항상 검정 블러로 덮는다 (요구사항)
+          if (safeInsets.top > 0)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: safeInsets.top,
+              child: IgnorePointer(
+                child: ClipRect(
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                    child: Container(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.background.withOpacity(0.55),
                     ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
-          ),
 
-          // 하단 SafeArea 반투명 블러 오버레이
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: AnimatedBuilder(
-              animation: _bottomSheetAnimation,
-              builder: (context, _) {
-                if (_bottomSheetAnimation.value <= 0) {
-                  return const SizedBox.shrink();
-                }
-                final safeAreaBottom = MediaQuery.of(context).padding.bottom;
-                if (safeAreaBottom <= 0) {
-                  return const SizedBox.shrink();
-                }
-                return ClipRRect(
-                  child: Opacity(
-                    opacity: _bottomSheetAnimation.value,
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                      child: Container(
-                        height: safeAreaBottom,
-                        decoration: BoxDecoration(
-                          color: bgColor.withOpacity(0.8),
-                        ),
-                      ),
+          // ✅ SafeArea 하단 영역(홈 인디케이터)도 항상 검정 블러로 덮는다 (요구사항)
+          if (safeInsets.bottom > 0)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: safeInsets.bottom,
+              child: IgnorePointer(
+                child: ClipRect(
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                    child: Container(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.background.withOpacity(0.55),
                     ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
-          ),
 
           // ✅ 완료(export) 중에는 즉시 피드백(로딩 오버레이)
           if (_isExporting)
             Positioned.fill(
               child: IgnorePointer(
                 child: Container(
-                  color: bgColor.withOpacity(0.25),
                   child: Center(
                     child: SizedBox(
                       width: 20,
@@ -1944,6 +1836,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                       isActive: _editMode == _EditMode.filter,
                       textColor: fgColor,
                     ),
+                    /*
                     Container(
                       width: 1,
                       height: 40,
@@ -1955,7 +1848,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                       onTap: _toggleSticker,
                       isActive: _editMode == _EditMode.sticker,
                       textColor: fgColor,
-                    ),
+                    ),*/
                   ],
                 ),
               ),
@@ -2189,12 +2082,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
             final preview = GestureDetector(
               // ✅ GestureDetector를 Stack 최상위로 올려서 모든 레이어의 이벤트를 받음
               behavior: HitTestBehavior.translucent,
-              onTap:
-                  _isBottomSheetOpen
-                      ? null
-                      : _editMode == _EditMode.sticker
-                      ? null
-                      : _toggleUI, // ✅ 오버레이 활성화 시 탭은 오버레이가 우선 처리
+              onTap: null,
               // ✅ 핀치/팬 통합: crop 모드에서는 ScaleGesture로 처리
               onScaleStart:
                   _editMode == _EditMode.crop
@@ -2233,7 +2121,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                     child: RepaintBoundary(
                       child:
                           ((_editMode != _EditMode.crop ||
-                                      _isClosingAfterCropApply) &&
+                                      _isClosingAfterCropApply ||
+                                      _isClosingAfterCropCancel) &&
                                   state.cropState.isCropRectInitialized &&
                                   state.cropState.cropRectImage != null &&
                                   _uiImageCache[index] != null)
@@ -2244,7 +2133,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                       painter: _CommittedCropPreviewPainter(
                                         image: _uiImageCache[index]!,
                                         state: state,
-                                        containerSize: containerSize,
+                                        containerSize:
+                                            (_isClosingAfterCropApply &&
+                                                    _closingCropContainerSizes[index] !=
+                                                        null)
+                                                ? _closingCropContainerSizes[index]!
+                                                : containerSize,
                                       ),
                                       size: Size.infinite,
                                     ),
@@ -2253,7 +2147,12 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                     painter: _CommittedCropPreviewPainter(
                                       image: _uiImageCache[index]!,
                                       state: state,
-                                      containerSize: containerSize,
+                                      containerSize:
+                                          (_isClosingAfterCropApply &&
+                                                  _closingCropContainerSizes[index] !=
+                                                      null)
+                                              ? _closingCropContainerSizes[index]!
+                                              : containerSize,
                                     ),
                                     size: Size.infinite,
                                   ))
@@ -2291,6 +2190,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                   // ✅ 드래그 중이면 고정된 cropRectScreen 전달
                   if (_editMode == _EditMode.crop &&
                       !_isClosingAfterCropApply &&
+                      !_isClosingAfterCropCancel &&
                       state.cropState.isCropRectInitialized &&
                       imageRectForCrop != null &&
                       imageSize != null)
@@ -2410,6 +2310,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                 // ✅ 크롭 모드이고 바텀시트가 열려있을 때만 즉시 표시 (페이드아웃 없음)
                 if (_editMode == _EditMode.crop &&
                     _isBottomSheetOpen &&
+                    !_isClosingAfterCropApply &&
+                    !_isClosingAfterCropCancel &&
                     cropRectScreen != null &&
                     imageRectForCrop != null)
                   Builder(
@@ -2494,14 +2396,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     return result;
   }
 
-  void _toggleUI() {
-    if (!_isBottomSheetOpen) {
-      setState(() {
-        _showUI = !_showUI;
-      });
-    }
-  }
-
   void _openCropPanel() {
     final state = _getCurrentEditState();
 
@@ -2544,10 +2438,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         _currentIndex,
         () => _snapshotOf(_currentIndex),
       );
-      _panelSessionHistoryLengths.putIfAbsent(
-        _currentIndex,
-        () => _history[_currentIndex]?.length ?? 0,
-      );
+      _panelSessionHistoryLengths.putIfAbsent(_currentIndex, () => 0);
 
       _editMode = _EditMode.filter;
       _isBottomSheetOpen = true;
@@ -2555,6 +2446,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     });
   }
 
+  // ignore: unused_element
   void _toggleSticker() {
     if (_isPageScrolling) return;
     _snapPageViewToNearestPageIfNeeded();
@@ -2591,10 +2483,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         _currentIndex,
         () => _snapshotOf(_currentIndex),
       );
-      _panelSessionHistoryLengths.putIfAbsent(
-        _currentIndex,
-        () => _history[_currentIndex]?.length ?? 0,
-      );
+      _panelSessionHistoryLengths.putIfAbsent(_currentIndex, () => 0);
 
       _editMode = _EditMode.adjust;
       _isBottomSheetOpen = true;
@@ -2605,29 +2494,28 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   void _closeBottomSheet({required bool cancel}) {
     // ✅ 취소 버튼을 누르거나 바텀시트를 내리면 즉시 크롭박스 숨기기
     if (cancel && _editMode == _EditMode.crop) {
+      // ✅ 뒤로/드래그 닫기 순간에도 크롭박스/핸들을 즉시 숨긴다
+      _isClosingAfterCropCancel = true;
       // ✅ 취소/드래그 닫기: "크롭 진입 전 이미지"로 즉시 복원 (애니메이션 내려가는 동안에도 정상 표시)
       _restoreCropSnapshotIfAny(_currentIndex);
+      _closingCropContainerSizes.remove(_currentIndex);
       setState(() {});
+    }
+    // ✅ 크롭 Apply로 닫는 경우: 취소 복원용 스냅샷은 더 이상 필요 없으므로 정리
+    if (!cancel && _editMode == _EditMode.crop) {
+      _cropSessionSnapshots.remove(_currentIndex);
     }
     // ✅ 필터 모드 취소 시 원본으로 복귀
     if (cancel &&
         (_editMode == _EditMode.filter || _editMode == _EditMode.adjust)) {
       // ✅ 조정/필터 취소: 진입 전 스냅샷으로 복원 (기존에 적용되어 있던 값은 유지)
       final snap = _panelSessionSnapshots.remove(_currentIndex);
-      final historyLen = _panelSessionHistoryLengths.remove(_currentIndex);
+      _panelSessionHistoryLengths.remove(_currentIndex);
       if (snap != null) {
         setState(() {
           _applySnapshotToIndex(_currentIndex, snap);
         });
       }
-      // ✅ 취소 시: 세션 중 쌓인 히스토리/리두도 롤백 (적용 전 변경이 남지 않도록)
-      final history = _history[_currentIndex];
-      if (historyLen != null &&
-          history != null &&
-          history.length > historyLen) {
-        history.removeRange(historyLen, history.length);
-      }
-      _redoStack[_currentIndex]?.clear();
     } else {
       // cancel이 아니거나(=적용/완료) 다른 모드면 세션 스냅샷은 정리
       _panelSessionSnapshots.remove(_currentIndex);
@@ -2643,6 +2531,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         _editMode = _EditMode.none;
         _dragOffset = 0.0;
         _isClosingAfterCropApply = false;
+        _isClosingAfterCropCancel = false;
+        _closingCropContainerSizes.remove(_currentIndex);
       });
     });
   }
@@ -2693,7 +2583,6 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
   }
 
   Future<void> _applyEdit() async {
-    _saveToHistorySnapshot(_currentIndex);
     // ✅ 적용 후에는 세션 스냅샷 제거 (취소 복원 대상 아님)
     _panelSessionSnapshots.remove(_currentIndex);
     _panelSessionHistoryLengths.remove(_currentIndex);
@@ -2976,8 +2865,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
         });
       },
       onDragEnd: () {
-        // ✅ 슬라이더 드래그 종료 시 히스토리에 저장 (언두/리두 가능하도록)
-        _saveToHistorySnapshot(_currentIndex);
+        // ✅ 슬라이더 드래그 종료
       },
     );
   }

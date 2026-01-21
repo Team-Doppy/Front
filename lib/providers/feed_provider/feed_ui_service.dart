@@ -1,9 +1,6 @@
-import 'package:doppy/data/services/blog_service.dart';
 import 'dart:async';
 import 'package:doppy/data/models/post_data.dart';
-import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum FeedDisplayMode { card, imageOnly }
@@ -318,103 +315,6 @@ class PostDragDropService extends ChangeNotifier {
       categoryId,
       () => ScrollController(),
     );
-  }
-
-  // 포스트 카테고리 이동 (새로운 API 연동)
-  Future<void> movePostToCategory(
-    PostData post,
-    int targetCategoryId, {
-    int? targetPosition,
-  }) async {
-    debugPrint('   - 포스트 ID: ${post.id}');
-    debugPrint('   - 포스트 제목: ${post.title}');
-    debugPrint('   - 타겟 카테고리 ID: $targetCategoryId');
-    debugPrint('   - 타겟 위치: $targetPosition');
-
-    try {
-      // 새로운 API 호출
-      await BlogService().movePostToCategory(
-        postId: int.parse(post.id),
-        targetCategoryId: targetCategoryId,
-        targetPosition: targetPosition,
-      );
-
-      debugPrint('✅ [PostDragDropService] 포스트 카테고리 이동 완료');
-    } catch (e) {
-      debugPrint('❌ [PostDragDropService] 포스트 카테고리 이동 실패: $e');
-      rethrow;
-    }
-  }
-
-  // 컨텍스트를 인자로 받아 로컬 피드를 즉시 반영 (새로운 API 구조)
-  Future<void> movePostToCategoryWithContext(
-    BuildContext context,
-    PostData post,
-    int targetCategoryId, {
-    int? targetPosition,
-    BaseFeedProvider? provider,
-  }) async {
-    provider ??= context.read<BaseFeedProvider>();
-
-    // 백업: 원래 카테고리 정보 저장
-    String? sourceCategoryId;
-    int? sourcePosition;
-    Map<String, dynamic>? backupPost;
-
-    // 원본 위치 찾기
-    for (final categoryId in provider.postsByCategory.keys) {
-      final posts = provider.postsByCategory[categoryId]!;
-      final idx = posts.indexWhere((p) => '${p['id']}' == post.id);
-      if (idx != -1) {
-        sourceCategoryId = categoryId;
-        sourcePosition = idx;
-        backupPost = Map<String, dynamic>.from(posts[idx]);
-        break;
-      }
-    }
-
-    // 동일한 위치에 드롭하는 경우 서버 요청하지 않음
-    if (sourceCategoryId == targetCategoryId.toString() &&
-        sourcePosition == targetPosition) {
-      return;
-    }
-
-    debugPrint(
-      '[FeedService] 포스트 이동 시작: ${post.id} ($sourceCategoryId[$sourcePosition] → $targetCategoryId[$targetPosition])',
-    );
-
-    // 1) 낙관적 로컬 반영 (먼저 UI 업데이트)
-    provider.movePostLocally(post.id, targetCategoryId, targetPosition);
-
-    // 2) 서버 저장 시도
-    try {
-      await movePostToCategory(
-        post,
-        targetCategoryId,
-        targetPosition: targetPosition,
-      );
-      debugPrint('[FeedService] 서버 저장 완료');
-
-      // 그룹 기능 제거로 인해 그룹 캐시 무효화 로직 제거
-    } catch (e) {
-      debugPrint('⚠️ [FeedService] 서버 이동 실패, 롤백: $e');
-
-      // 3) 실패 시 롤백
-      if (sourceCategoryId != null && backupPost != null) {
-        provider.movePostLocally(
-          post.id,
-          int.tryParse(sourceCategoryId) ?? 0,
-          sourcePosition,
-        );
-      }
-
-      // 사용자에게 알림
-      try {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('이동 실패: 서버 오류가 발생했습니다')));
-      } catch (_) {}
-    }
   }
 
   @override

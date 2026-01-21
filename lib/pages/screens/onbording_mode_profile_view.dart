@@ -81,6 +81,8 @@ class _OnbordingModeProfileImageViewScreenState
   double? _initialScale; // 핀치 시작 시 초기 scale
   double _imageRotation = 0.0; // ✅ 두 손 회전(라디안)
   double? _initialRotation; // 핀치 시작 시 초기 rotation
+  double? _rotationBaseInGesture; // ✅ 제스처 내 rotation 기준점 (details.rotation 베이스)
+  int _lastPointerCount = 0; // ✅ 포인터 수 변화 감지 (1↔2 전환 시 기준 재설정)
   Offset? _lastPanPosition;
 
   // 원형 크롭박스 크기 (고정)
@@ -934,10 +936,22 @@ class _OnbordingModeProfileImageViewScreenState
       onScaleStart: (details) {
         _initialScale = _imageScale;
         _initialRotation = _imageRotation;
+        _rotationBaseInGesture = null; // ✅ 포인터 변화(1→2) 첫 프레임에서 세팅
+        _lastPointerCount = details.pointerCount;
         _lastPanPosition = details.focalPoint;
       },
       onScaleUpdate: (details) {
         if (_uiImage == null) return;
+
+        // ✅ 포인터 수가 바뀌는 순간(특히 1↔2) 기준을 현재 상태로 재설정하지 않으면 회전이 "확" 튀는 케이스가 생김
+        if (details.pointerCount != _lastPointerCount) {
+          _initialScale = _imageScale;
+          _initialRotation = _imageRotation;
+          _rotationBaseInGesture =
+              details.pointerCount >= 2 ? details.rotation : null;
+          _lastPanPosition = details.focalPoint;
+          _lastPointerCount = details.pointerCount;
+        }
 
         final startScale = _initialScale ?? _imageScale;
         final startRotation = _initialRotation ?? _imageRotation;
@@ -950,8 +964,22 @@ class _OnbordingModeProfileImageViewScreenState
         final dampedScale =
             math.pow(details.scale, pinchScaleSensitivity).toDouble();
         final newScale = (startScale * dampedScale).clamp(_minScale, 5.0);
+        // ✅ 회전: details.rotation(제스처 내 누적)을 그대로 더하면 포인터/제스처 전환에서 점프가 발생할 수 있음
+        // - pointerCount < 2: 회전 베이스라인 리셋
+        // - pointerCount >= 2: 처음 들어온 프레임의 details.rotation을 베이스라인으로 잡고 delta만 적용
+        if (details.pointerCount < 2) {
+          _rotationBaseInGesture = null;
+        } else {
+          _rotationBaseInGesture ??= details.rotation;
+        }
+        // ✅ 각도 차이는 -pi..pi로 정규화(경계에서 튐 방지)
+        double _wrapRad(double v) => math.atan2(math.sin(v), math.cos(v));
+        final rotationDelta =
+            (_rotationBaseInGesture == null)
+                ? 0.0
+                : _wrapRad(details.rotation - _rotationBaseInGesture!);
         final newRotation =
-            startRotation + (details.rotation * pinchRotationSensitivity);
+            startRotation + (rotationDelta * pinchRotationSensitivity);
 
         // scale 변경 시 offset을 중심 기준으로 비례 보정
         final scaleRatio = (newScale / _imageScale);
@@ -960,6 +988,14 @@ class _OnbordingModeProfileImageViewScreenState
         // 드래그 처리 (scale/rotation과 함께 동시 적용)
         if (_lastPanPosition != null) {
           final delta = details.focalPoint - _lastPanPosition!;
+          // ✅ 드래그: 회전된 상태에서도 손 방향과 이미지 이동 방향을 일치시키기 위해
+          // 화면 delta를 "역회전"해서 offset(회전 전 좌표계)에 적용한다.
+          final c = math.cos(-newRotation);
+          final s = math.sin(-newRotation);
+          final unrotatedDelta = Offset(
+            delta.dx * c - delta.dy * s,
+            delta.dx * s + delta.dy * c,
+          );
 
           // 드래그 감도 조정: 기본 감도 + 스케일에 비례한 감도 증가
           final baseSensitivity = 1.5;
@@ -969,8 +1005,8 @@ class _OnbordingModeProfileImageViewScreenState
           newOffset =
               newOffset +
               Offset(
-                delta.dx / newScale * dragSensitivity,
-                delta.dy / newScale * dragSensitivity,
+                unrotatedDelta.dx / newScale * dragSensitivity,
+                unrotatedDelta.dy / newScale * dragSensitivity,
               );
           _lastPanPosition = details.focalPoint;
         }
@@ -995,6 +1031,8 @@ class _OnbordingModeProfileImageViewScreenState
           _lastPanPosition = null;
           _initialScale = null;
           _initialRotation = null;
+          _rotationBaseInGesture = null;
+          _lastPointerCount = 0;
           // 최종 clamp
           if (_uiImage != null) {
             _imageOffset = _clampOffsetWithRotation(

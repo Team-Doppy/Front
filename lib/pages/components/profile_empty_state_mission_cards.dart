@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:doppy/utils/text_bold_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -30,8 +31,10 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
           child: Center(
             child: Text(
               context.tr('no_posts_on_profile'),
-              style: GoogleFonts.notoSansKr(
+              style: LocaleTypography.style(
+                context: context,
                 fontSize: 16,
+                fontWeight: FontWeight.w600,
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
               ),
             ),
@@ -57,10 +60,9 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
                     (user?.profileImageUrl?.isNotEmpty ?? false);
                 // 🎯 프로필 정보 설정하기: alias와 함께 links 또는 bio 중 하나가 있어야 완료
                 final hasAlias = (user?.alias?.isNotEmpty ?? false);
-                final hasBio = (user?.selfIntroduction?.isNotEmpty ?? false);
                 final hasLinks =
                     (user?.links != null && user!.links!.isNotEmpty);
-                final hasProfileInfo = hasAlias && (hasBio || hasLinks);
+                final hasProfileInfo = hasAlias && hasLinks;
                 // 🎯 실제 친구 1명 이상이어야 완료
                 final hasFriends = friendProvider.acceptedFriends.length >= 1;
 
@@ -286,22 +288,26 @@ class ProfileEmptyStateMissionCards extends StatelessWidget {
           // controller는 내부에서 자동 생성됨
           onSave: ({
             required String alias,
-            required String description,
             Map<String, String>? linkThumbnails,
             List<String>? links,
             Map<String, String>? linkTitles,
           }) async {
             final success = await userProvider.updateProfileInfo(
               alias: alias,
-              selfIntroduction: description,
               links: links,
               linkTitles: linkTitles,
+              linkThumbnails: linkThumbnails,
             );
-            if (success && context.mounted) {
-              Navigator.of(context).pop();
+            if (context.mounted) {
+              if (success) {
+                // 성공 메시지 표시
+                final l10n = AppLocalizations.of(context);
+                ErrorHandler.showInfo(context, l10n.t('profile_updated'));
+                Navigator.of(context).pop();
 
-              // 🎯 UI 업데이트 안정화를 위한 짧은 지연
-              await Future.delayed(const Duration(milliseconds: 150));
+                // 🎯 UI 업데이트 안정화를 위한 짧은 지연
+                await Future.delayed(const Duration(milliseconds: 150));
+              }
             }
           },
         );

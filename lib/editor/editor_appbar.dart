@@ -17,7 +17,6 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:convert';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/postwrite_screen.dart' show PostWriteMode;
-import 'package:doppy/pages/screens/splash_screen.dart';
 
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
@@ -97,7 +96,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                         (context, _) => Material(
                           color: Colors.transparent,
                           child: Padding(
-                            padding: const EdgeInsets.only(top: 2),
+                            padding: const EdgeInsets.only(bottom: 2),
                             child: InkWell(
                               onTap:
                                   widget.editorService.canUndo
@@ -110,8 +109,8 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                                 padding: const EdgeInsets.all(1),
                                 child: SvgPicture.asset(
                                   'assets/icons/editor_undo.svg',
-                                  width: 30,
-                                  height: 30,
+                                  width: 20,
+                                  height: 20,
                                   colorFilter: ColorFilter.mode(
                                     Theme.of(
                                       context,
@@ -126,7 +125,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                           ),
                         ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 13),
 
                   // 리두 버튼
                   AnimatedBuilder(
@@ -135,7 +134,7 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                         (context, _) => Material(
                           color: Colors.transparent,
                           child: Padding(
-                            padding: const EdgeInsets.only(top: 2),
+                            padding: const EdgeInsets.only(bottom: 2),
                             child: InkWell(
                               onTap:
                                   widget.editorService.canRedo
@@ -148,8 +147,8 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
                                 padding: const EdgeInsets.all(1),
                                 child: SvgPicture.asset(
                                   'assets/icons/editor_redo.svg',
-                                  width: 30,
-                                  height: 30,
+                                  width: 20,
+                                  height: 20,
                                   colorFilter: ColorFilter.mode(
                                     Theme.of(
                                       context,
@@ -252,6 +251,8 @@ class EditorAppBar extends StatelessWidget {
   final String? initialTitleForExport; // ✅ 다음(썸네일 편집) 프리필용
   final String? initialThumbnailUrlForExport; // ✅ 다음(썸네일 편집) 프리필용
   final PostWriteMode? mode; // ✅ 온보딩 모드 여부
+  final int? initialYear; // 초기 연도
+  final int? initialYearOfWeek; // 초기 주차 (1-53)
 
   const EditorAppBar({
     super.key,
@@ -265,26 +266,12 @@ class EditorAppBar extends StatelessWidget {
     this.initialTitleForExport,
     this.initialThumbnailUrlForExport,
     this.mode,
+    this.initialYear,
+    this.initialYearOfWeek,
   });
 
   Future<void> _onNextButtonTapped(BuildContext context) async {
-    // ✅ 온보딩 모드일 때는 스플래시로 이동 (디버그용)
-    if (mode == PostWriteMode.onboarding) {
-      debugPrint('[EditorAppBar] 온보딩 모드: 스플래시로 이동 (온보딩 플로우 스킵)');
-      // 스택을 완전히 비우고 스플래시로 이동 (온보딩 플로우 스킵 플래그 전달)
-      Navigator.of(context).pushAndRemoveUntil(
-        PageRouteBuilder(
-          pageBuilder: (_, __, ___) => const SplashScreen(skipOnboarding: true),
-          transitionDuration: const Duration(milliseconds: 300),
-          reverseTransitionDuration: const Duration(milliseconds: 300),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-        ),
-        (route) => false, // 모든 이전 라우트 제거
-      );
-      return;
-    }
+    // 🎯 온보딩 모드에서도 실제 발행 플로우를 타도록 변경 (스플래시로 바로 이동 제거)
 
     // 업로드 가드: 업로드 중인 미디어가 있으면 진행 차단 (압축 중인 비디오도 포함)
     if (editorService.hasUnuploadedMedia()) {
@@ -347,10 +334,10 @@ class EditorAppBar extends StatelessWidget {
         );
       } else {
         // 기타 에러
-        ErrorHandler.handleError(
+        DialogUtils.showInfoDialog(
           context,
-          e,
-          customMessage: '발행 준비 중 오류가 발생했습니다.',
+          title: context.tr('error'),
+          message: context.tr('error_occurred'),
         );
       }
       return;
@@ -378,6 +365,10 @@ class EditorAppBar extends StatelessWidget {
             (_, __, ___) => PostExportScreen(
               exported: json,
               sessionKey: sessionKey, // draft ID를 sessionKey로 사용
+              initialYear: initialYear,
+              initialYearOfWeek: initialYearOfWeek,
+              isOnboardingMode:
+                  mode == PostWriteMode.onboarding, // 🎯 온보딩 모드 전달
             ),
       ),
     );
@@ -437,7 +428,7 @@ class EditorAppBar extends StatelessWidget {
                             (context, _) => Material(
                               color: Colors.transparent,
                               child: Padding(
-                                padding: const EdgeInsets.only(top: 2),
+                                padding: const EdgeInsets.only(bottom: 2),
                                 child: InkWell(
                                   onTap:
                                       editorService.canUndo
@@ -450,8 +441,8 @@ class EditorAppBar extends StatelessWidget {
                                     padding: const EdgeInsets.all(1),
                                     child: SvgPicture.asset(
                                       'assets/icons/editor_undo.svg',
-                                      width: 30,
-                                      height: 30,
+                                      width: 20,
+                                      height: 20,
                                       colorFilter: ColorFilter.mode(
                                         Theme.of(
                                           context,
@@ -466,14 +457,14 @@ class EditorAppBar extends StatelessWidget {
                               ),
                             ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 13),
 
                       // 리두 버튼
                       AnimatedBuilder(
                         animation: editorService,
                         builder:
                             (context, _) => Padding(
-                              padding: const EdgeInsets.only(top: 2),
+                              padding: const EdgeInsets.only(bottom: 2),
                               child: Material(
                                 color: Colors.transparent,
                                 child: InkWell(
@@ -488,8 +479,8 @@ class EditorAppBar extends StatelessWidget {
                                     padding: const EdgeInsets.all(1),
                                     child: SvgPicture.asset(
                                       'assets/icons/editor_redo.svg',
-                                      width: 30,
-                                      height: 30,
+                                      width: 20,
+                                      height: 20,
                                       colorFilter: ColorFilter.mode(
                                         Theme.of(
                                           context,

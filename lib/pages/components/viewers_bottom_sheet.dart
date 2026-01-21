@@ -974,7 +974,25 @@ class _ViewersBottomSheetState extends State<ViewersBottomSheet> {
           padding: EdgeInsets.only(
             top: MediaQuery.of(context).size.height * 0.3,
           ),
-          children: const [],
+          children: [
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    AppLocalizations.of(context).translate('no_viewers'),
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onBackground.withOpacity(0.7),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       );
     }

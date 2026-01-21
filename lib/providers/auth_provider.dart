@@ -77,7 +77,6 @@ class AuthProvider extends ChangeNotifier {
             role: null,
             alias: '',
             profileImageUrl: '',
-            selfIntroduction: '',
             friendCount: 0,
           ),
         );

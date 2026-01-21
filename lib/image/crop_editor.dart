@@ -1129,14 +1129,23 @@ class CropOverlayPainter extends CustomPainter {
       );
     }
 
-    // 크롭 박스 테두리
+    // 크롭 박스 테두리 (안쪽으로 두껍게)
+    const borderWidth = 4.0; // 보더 두께 증가
     final borderPaint =
         Paint()
           ..color = borderColor
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 3.0;
+          ..strokeWidth = borderWidth;
 
-    canvas.drawRect(cropRectScreen, borderPaint);
+    // ✅ 보더를 안쪽으로 그리기 위해 Rect를 축소 (strokeWidth의 절반만큼)
+    final insetRect = Rect.fromLTWH(
+      cropRectScreen.left + borderWidth / 2,
+      cropRectScreen.top + borderWidth / 2,
+      cropRectScreen.width - borderWidth,
+      cropRectScreen.height - borderWidth,
+    );
+
+    canvas.drawRect(insetRect, borderPaint);
 
     // 3x3 그리드
     final gridPaint =
@@ -1199,7 +1208,7 @@ class CropCornerHandlePainter extends CustomPainter {
           ..color = handleColor
           ..style = PaintingStyle.stroke
           ..strokeWidth = handleThickness
-          ..strokeCap = StrokeCap.round;
+          ..strokeCap = StrokeCap.square; // ✅ 각지게 (round → square)
 
     final center = Offset(size.width / 2, size.height / 2);
     final halfLength = handleLength / 2;
@@ -1683,10 +1692,15 @@ class CropHandleBuilder {
 
     // ✅ 핸들은 크롭박스 좌표를 기준으로 직접 배치 (clamp 없이)
     // 비율 모드에서도 핸들이 보이지만, 리사이즈 시 비율이 유지됨
+    // ✅ 모서리 핸들을 안쪽으로 배치 (간격 줄임)
+    const handleInset = 6.0; // ✅ 간격 감소 (8.0 → 4.0)
     return Stack(
       children: [
         _CropHandleWidget(
-          position: finalCropRectScreen.topLeft,
+          position: Offset(
+            finalCropRectScreen.left + handleInset,
+            finalCropRectScreen.top + handleInset,
+          ),
           type: CropHandleType.topLeft,
           activeHandle: activeHandle,
           cropState: cropState,
@@ -1699,7 +1713,10 @@ class CropHandleBuilder {
           handleColor: handleColor,
         ),
         _CropHandleWidget(
-          position: finalCropRectScreen.topRight,
+          position: Offset(
+            finalCropRectScreen.right - handleInset,
+            finalCropRectScreen.top + handleInset,
+          ),
           type: CropHandleType.topRight,
           activeHandle: activeHandle,
           cropState: cropState,
@@ -1712,7 +1729,10 @@ class CropHandleBuilder {
           handleColor: handleColor,
         ),
         _CropHandleWidget(
-          position: finalCropRectScreen.bottomLeft,
+          position: Offset(
+            finalCropRectScreen.left + handleInset,
+            finalCropRectScreen.bottom - handleInset,
+          ),
           type: CropHandleType.bottomLeft,
           activeHandle: activeHandle,
           cropState: cropState,
@@ -1725,7 +1745,10 @@ class CropHandleBuilder {
           handleColor: handleColor,
         ),
         _CropHandleWidget(
-          position: finalCropRectScreen.bottomRight,
+          position: Offset(
+            finalCropRectScreen.right - handleInset,
+            finalCropRectScreen.bottom - handleInset,
+          ),
           type: CropHandleType.bottomRight,
           activeHandle: activeHandle,
           cropState: cropState,
@@ -1907,8 +1930,8 @@ class _CropHandleWidgetState extends State<_CropHandleWidget> {
     double handleSize,
     bool isActive,
   ) {
-    final handleThickness = 6.0; // 액티브 상태와 관계없이 항상 같은 두께
-    final handleLength = handleSize * 0.6;
+    final handleThickness = 2.0; // ✅ 얇게 (8.0 → 2.0)
+    final handleLength = handleSize * 0.5; // ✅ 길이 조정 (0.6 → 0.5)
 
     return Container(
       width: handleSize,

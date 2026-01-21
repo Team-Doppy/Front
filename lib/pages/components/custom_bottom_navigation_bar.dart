@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:provider/provider.dart';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'dart:ui';
 
 class CustomBottomNavigationBar extends StatelessWidget {
@@ -54,9 +57,38 @@ class CustomBottomNavigationBar extends StatelessWidget {
             ),
             child: Row(
               children: List.generate(4, (index) {
-                var iconSize = 28.0;
+                // index 3 (프로필)은 CommonProfileAvatar 사용
                 if (index == 3) {
-                  iconSize = 32.0;
+                  return Expanded(
+                    child: Consumer<UserProvider>(
+                      builder: (context, userProvider, _) {
+                        final currentUser = userProvider.currentUser;
+                        final profileImageUrl = currentUser?.profileImageUrl;
+                        final username = currentUser?.username ?? '';
+
+                        return GestureDetector(
+                          onTap: () => onTap(index),
+                          behavior: HitTestBehavior.translucent,
+                          child: Center(
+                            child: CommonProfileAvatar(
+                              imageUrl: profileImageUrl,
+                              username: username,
+                              size: 32.0,
+                              borderWidth: profileImageUrl == null ? 3 : 1,
+                              borderColor:
+                                  Theme.of(context).colorScheme.surfaceVariant,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                }
+
+                // 나머지 아이콘들은 기존 SVG 사용
+                var iconSize = 28.0;
+                if (index == 0) {
+                  iconSize = 25.0;
                 }
 
                 return Expanded(

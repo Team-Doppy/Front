@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:doppy/pages/screens/onbording_mode_profile_view.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/theme/app_theme.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
@@ -356,7 +357,11 @@ class _Index2BackgroundState extends State<Index2Background>
                         children: [
                           // 안내 텍스트 (업로드 완료 시 "멋진데요?" 표시)
                           Text(
-                            _isUploadComplete ? '멋진데요?' : '거의 다 됐어요, 프로필만 남았어요',
+                            _isUploadComplete
+                                ? context.tr('onboarding_looks_great')
+                                : context.tr(
+                                  'onboarding_almost_done_profile_left',
+                                ),
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: AppColors.lightBackground,

@@ -125,6 +125,12 @@ class _PostReaderScreenState extends State<PostReaderScreen>
   static const double _preloadBottomThresholdFallback =
       800.0; // 🎯 뷰포트 계산 불가 시 fallback (하단 800px)
   double? _cachedScreenHeight; // 🎯 성능 최적화: 화면 높이 캐싱
+  List<ComponentBuilder>?
+  _cachedComponentBuilders; // 🎯 성능 최적화: componentBuilders 캐싱
+  double?
+  _cachedComponentBuildersScreenWidth; // 🎯 componentBuilders 생성 시 사용된 screenWidth
+  bool?
+  _cachedComponentBuildersIsDarkMode; // 🎯 componentBuilders 생성 시 사용된 isDarkMode
 
   // 스크롤 애니메이션을 위한 변수들
   static const double _appBarHeight = 56.0; // AppBar 높이 (kToolbarHeight와 동일)
@@ -544,8 +550,7 @@ class _PostReaderScreenState extends State<PostReaderScreen>
 
     try {
       await _blogService.deletePost(postId);
-
-      // 그룹 기능 제거로 인해 그룹 관련 동기화 제거
+      // 🎯 포스트 삭제 시 홈 화면 동기화 제거 (등록 시에만 provider 호출)
 
       if (mounted) {
         // 뒤로가기 전에 결과 전달하여 프로필 화면이 다시 빌드되도록 함
@@ -788,18 +793,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
             ),
       ),
     );
-  }
-
-  void _onCommentServiceChanged() {
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  void _onLikeServiceChanged() {
-    if (mounted) {
-      setState(() {});
-    }
   }
 
   // 본문 로드 + 상위 6개 이미지 + 모든 클립 미리 디코딩
@@ -1062,10 +1055,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
       }
     }
 
-    // 서비스 변경사항 감지
-    _commentService.addListener(_onCommentServiceChanged);
-    _likeService.addListener(_onLikeServiceChanged);
-
     try {
       _composer.clearSelection();
     } catch (_) {}
@@ -1151,9 +1140,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     // 🎯 dispose 순서 중요: 프리로드 중단 → 스크롤 리스너 제거 → 리소스 정리
     _scrollPreloadService.dispose(); // ✅ 남아있는 프리로드 작업 중단
     _scrollCtrl.removeListener(_onScroll); // 🎯 스크롤 리스너 제거 (프리로드 트리거 방지)
-    _commentService.removeListener(_onCommentServiceChanged);
-    _likeService.removeListener(_onLikeServiceChanged);
-
     // WebSocket 연결 해제
     _commentService.disconnectWebSocket();
 
@@ -1275,9 +1261,10 @@ class _PostReaderScreenState extends State<PostReaderScreen>
     final bool isMyPost =
         currentUser != null && currentUser.username == postAuthor;
 
-    // 🎯 성능 최적화: ThemeProvider를 한 번만 읽어서 변수로 저장
+    // 🎯 성능 최적화: ThemeProvider를 read로 변경하여 rebuild 트리거 방지
+    // (SuperEditor의 componentBuilders에서만 isDarkMode가 필요하므로)
     final isDarkMode =
-        context.watch<ThemeProvider>().themeMode == ThemeMode.dark;
+        context.read<ThemeProvider>().themeMode == ThemeMode.dark;
 
     // ✅ iOS "스와이프 백(오른쪽으로 밀어서 뒤로가기)"는 WillPopScope가 있으면 막히는 경우가 많아서,
     // PopScope로 전환하고 필요한 경우에만 pop을 가로챈다.
@@ -1508,39 +1495,50 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                             ),
                                           );
                                         },
-                                        child: PostReaderHeader(
-                                          exportedRoot: widget.exported,
+                                        child: AnimatedBuilder(
+                                          // ✅ 성능 최적화: AnimatedBuilder로 감싸서 Header만 rebuild
+                                          animation: Listenable.merge([
+                                            _likeService,
+                                            _commentService,
+                                          ]),
+                                          builder: (context, _) {
+                                            return PostReaderHeader(
+                                              exportedRoot: widget.exported,
 
-                                          currentExportedData:
-                                              _currentExportedData,
-                                          postAuthor: postAuthor,
-                                          authorProfileImageUrl:
-                                              widget.exported['authorProfileImageUrl']
-                                                  as String?,
-                                          enableAuthorTap:
-                                              !isMyPost &&
-                                              widget.exported['authorId'] !=
-                                                  null,
-                                          onAuthorTap: () {},
-                                          horizontalPadding: 20,
-                                          topSpacing: 90,
-                                          gapHeight: gapHeight,
-                                          isMyPost: isMyPost,
-                                          likeCount: _likeService
-                                              .getPostLikeCount(
+                                              currentExportedData:
+                                                  _currentExportedData,
+                                              postAuthor: postAuthor,
+                                              authorProfileImageUrl:
+                                                  widget.exported['authorProfileImageUrl']
+                                                      as String?,
+                                              enableAuthorTap:
+                                                  !isMyPost &&
+                                                  widget.exported['authorId'] !=
+                                                      null,
+                                              onAuthorTap: () {},
+                                              horizontalPadding: 20,
+                                              topSpacing: 90,
+                                              gapHeight: gapHeight,
+                                              isMyPost: isMyPost,
+                                              likeCount: _likeService
+                                                  .getPostLikeCount(
+                                                    widget.exported['id']
+                                                            ?.toString() ??
+                                                        '',
+                                                  ),
+                                              commentCount:
+                                                  _commentService
+                                                      .getTotalCommentCount(),
+                                              onLikeTap: _toggleLike,
+                                              onCommentTap:
+                                                  _showCommentBottomSheet,
+                                              isLiked: _likeService.isPostLiked(
                                                 widget.exported['id']
                                                         ?.toString() ??
                                                     '',
-                                              ),
-                                          commentCount:
-                                              _commentService
-                                                  .getTotalCommentCount(),
-                                          onLikeTap: _toggleLike,
-                                          onCommentTap: _showCommentBottomSheet,
-                                          isLiked: _likeService.isPostLiked(
-                                            widget.exported['id']?.toString() ??
-                                                '',
-                                          ), // ← 추가
+                                              ), // ← 추가
+                                            );
+                                          },
                                         ),
                                       ),
                                     ),
@@ -1561,45 +1559,35 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                           MediaQuery.sizeOf(
                                             context,
                                           ).width; // 🚀 최고 효율: 한 번만 계산
-                                      return SuperEditor(
-                                        editor: _editor,
-                                        stylesheet: buildCustomStylesheet(
-                                          context,
-                                          isReadOnly:
-                                              true, // 🎯 읽기 모드: 전역 폰트 사용 안 함, 블록 metadata만 사용
-                                        ),
-                                        selectionStyle: SelectionStyles(
-                                          selectionColor: Colors.transparent,
-                                          highlightEmptyTextBlocks: false,
-                                        ),
-                                        componentBuilders: [
+
+                                      // 🎯 성능 최적화: componentBuilders 캐싱 (screenWidth나 isDarkMode가 변경될 때만 재생성)
+                                      if (_cachedComponentBuilders == null ||
+                                          _cachedComponentBuildersScreenWidth !=
+                                              screenWidth ||
+                                          _cachedComponentBuildersIsDarkMode !=
+                                              isDarkMode) {
+                                        _cachedComponentBuilders = [
                                           SingleImageComponentBuilder(
-                                            screenWidth:
-                                                screenWidth, // 🚀 최고 효율: 전달
+                                            screenWidth: screenWidth,
                                             dragService: _dragService,
-                                            isEditing: false, // 읽기 모드
-                                            isDarkMode:
-                                                isDarkMode, // 🎯 성능 최적화: 변수 사용
+                                            isEditing: false,
+                                            isDarkMode: isDarkMode,
                                           ),
                                           RowImageComponentBuilder(
-                                            screenWidth:
-                                                screenWidth, // 🚀 최고 효율: 전달
+                                            screenWidth: screenWidth,
                                             dragService: _dragService,
-                                            isEditing: false, // 읽기 모드
-                                            isDarkMode:
-                                                isDarkMode, // 🎯 성능 최적화: 변수 사용
+                                            isEditing: false,
+                                            isDarkMode: isDarkMode,
                                           ),
                                           PageViewImageComponentBuilder(
-                                            screenWidth:
-                                                screenWidth, // 🚀 최고 효율: 전달
+                                            screenWidth: screenWidth,
                                             dragService: _dragService,
-                                            isEditing: false, // 읽기 모드
+                                            isEditing: false,
                                             isDarkMode: isDarkMode,
                                           ),
                                           LinkComponentBuilder(
                                             isEditing: false,
-                                            isDarkMode:
-                                                isDarkMode, // 🎯 성능 최적화: 변수 사용
+                                            isDarkMode: isDarkMode,
                                           ),
                                           DividerComponentBuilder(),
                                           MentionComponentBuilder(
@@ -1611,7 +1599,6 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                               }
 
                                               if (!mounted) return;
-                                              // 여러 명이면 선택 바텀시트
                                               MentionBottomSheet.show(
                                                 context,
                                                 usernames: names,
@@ -1621,14 +1608,14 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                             isDarkMode: isDarkMode,
                                           ),
                                           ClipComponentBuilder(
-                                            screenWidth: screenWidth, // 🚀 전달
+                                            screenWidth: screenWidth,
                                             dragService: _dragService,
                                             isDarkMode: isDarkMode,
                                           ),
                                           CustomParagraphComponentBuilder(
                                             dragService: _dragService,
                                             editorService: _editorService,
-                                            isEditing: false, // 읽기 모드
+                                            isEditing: false,
                                             onMentionTap: (names) {
                                               if (names.isEmpty) return;
                                               if (names.length == 1) {
@@ -1643,7 +1630,25 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                             },
                                           ),
                                           ...defaultComponentBuilders,
-                                        ],
+                                        ];
+                                        _cachedComponentBuildersScreenWidth =
+                                            screenWidth;
+                                        _cachedComponentBuildersIsDarkMode =
+                                            isDarkMode;
+                                      }
+
+                                      return SuperEditor(
+                                        editor: _editor,
+                                        stylesheet: buildCustomStylesheet(
+                                          context,
+                                          isReadOnly: true,
+                                        ),
+                                        selectionStyle: SelectionStyles(
+                                          selectionColor: Colors.transparent,
+                                          highlightEmptyTextBlocks: false,
+                                        ),
+                                        componentBuilders:
+                                            _cachedComponentBuilders!,
                                         documentLayoutKey: _layoutKey,
                                         focusNode: _readOnlyFocus,
                                         gestureMode: DocumentGestureMode.mouse,
@@ -1718,251 +1723,292 @@ class _PostReaderScreenState extends State<PostReaderScreen>
                                 // MediaQuery.of 대신 aspect 구독(paddingOf) 사용
                                 _appBarHeight +
                                 MediaQuery.paddingOf(context).top;
-                            return PostReaderAppBar(
-                              showAppBar: _showAppBar,
-                              barHeight: computedBarHeight,
-                              isMyPost: isMyPost,
-                              onBack: _closeScreen,
-                              onEdit: () async {
-                                final dataToEdit =
-                                    _currentExportedData ?? widget.exported;
-                                final postId =
-                                    dataToEdit['id']?.toString() ??
-                                    widget.exported['id']?.toString();
+                            // ✅ 성능 최적화: AnimatedBuilder로 감싸서 AppBar만 rebuild
+                            return AnimatedBuilder(
+                              animation: Listenable.merge([
+                                _likeService,
+                                _commentService,
+                              ]),
+                              builder: (context, _) {
+                                return PostReaderAppBar(
+                                  showAppBar: _showAppBar,
+                                  barHeight: computedBarHeight,
+                                  isMyPost: isMyPost,
+                                  onBack: _closeScreen,
+                                  onEdit: () async {
+                                    final dataToEdit =
+                                        _currentExportedData ?? widget.exported;
+                                    final postId =
+                                        dataToEdit['id']?.toString() ??
+                                        widget.exported['id']?.toString();
 
-                                if (postId == null || postId.isEmpty) {
-                                  debugPrint('[PostReaderScreen] postId가 없습니다');
-                                  return;
-                                }
-
-                                // 편집 화면 열기
-                                debugPrint('[PostReaderScreen] 편집 화면 진입');
-                                debugPrint(
-                                  '  - dataToEdit의 content.nodes: ${((dataToEdit['content'] as Map?)?['nodes'] as List?)?.length ?? 0}개',
-                                );
-
-                                // 편집 화면 열기 (저장 성공 여부를 pop result로 받음)
-                                final result =
-                                    await PostReaderService.openEditScreen(
-                                      context,
-                                      exportedData: dataToEdit,
-                                      postId: postId,
-                                    );
-
-                                if (!mounted) return;
-
-                                final resultKeys =
-                                    result is Map ? result.keys.toList() : null;
-                                debugPrint(
-                                  '[PostReaderScreen][EDIT_RESULT] resultType=${result.runtimeType} keys=$resultKeys',
-                                );
-
-                                if (result is! Map) return;
-                                final bool didEdit =
-                                    (result['didEdit'] == true);
-
-                                // 저장/적용이 실제로 일어난 경우에만 최신 문서로 갱신
-                                if (!didEdit) return;
-
-                                try {
-                                  // ✅ Postwrite에서 로컬 export/content를 pop으로 넘긴 경우
-                                  // 추가 서버 호출 없이 pop 결과로 즉시 반영한다.
-                                  Map<String, dynamic>? poppedExported;
-                                  try {
-                                    final raw = result['exported'];
-                                    if (raw is Map) {
-                                      poppedExported =
-                                          raw.cast<String, dynamic>();
+                                    if (postId == null || postId.isEmpty) {
+                                      debugPrint(
+                                        '[PostReaderScreen] postId가 없습니다',
+                                      );
+                                      return;
                                     }
-                                  } catch (_) {
-                                    poppedExported = null;
-                                  }
 
-                                  Map<String, dynamic>? poppedContent;
-                                  try {
-                                    final raw = result['content'];
-                                    if (raw is Map) {
-                                      poppedContent =
-                                          raw.cast<String, dynamic>();
-                                    }
-                                  } catch (_) {
-                                    poppedContent = null;
-                                  }
-
-                                  late final MutableDocument refreshedDoc;
-                                  late final Map<String, dynamic> merged;
-
-                                  debugPrint(
-                                    '[PostReaderScreen][EDIT_RESULT] didEdit=$didEdit poppedExported=${poppedExported != null} poppedContent=${poppedContent != null}',
-                                  );
-                                  if (poppedExported != null) {
+                                    // 편집 화면 열기
+                                    debugPrint('[PostReaderScreen] 편집 화면 진입');
                                     debugPrint(
-                                      '[PostReaderScreen][EDIT_RESULT] exported.title=${poppedExported['title']} exported.summary=${poppedExported['summary']} exported.thumbnail=${poppedExported['thumbnailImageUrl']} exported.accessLevel=${poppedExported['accessLevel']}',
+                                      '  - dataToEdit의 content.nodes: ${((dataToEdit['content'] as Map?)?['nodes'] as List?)?.length ?? 0}개',
                                     );
-                                  }
 
-                                  if (poppedContent != null ||
-                                      poppedExported != null) {
-                                    merged = Map<String, dynamic>.from(
-                                      dataToEdit,
-                                    );
-                                    if (poppedExported != null) {
-                                      merged.addAll(poppedExported);
-                                    }
-                                    if (poppedContent != null) {
-                                      merged['content'] = poppedContent;
-                                    }
-
-                                    refreshedDoc = _postReaderService
-                                        .rebuildDocumentForRead(merged);
-                                  } else {
-                                    // fallback: 서버에서 최신 content 재조회
-                                    final (
-                                      d,
-                                      m,
-                                    ) = await PostReaderService.refreshDocumentAfterEdit(
-                                      context,
-                                      postId,
-                                      currentExportedData: dataToEdit,
-                                    );
-                                    refreshedDoc = d;
-                                    merged = m;
-                                  }
-
-                                  if (!mounted) return;
-
-                                  final mergedContent =
-                                      (merged['content'] as Map?)
-                                          ?.cast<String, dynamic>() ??
-                                      <String, dynamic>{};
-
-                                  debugPrint(
-                                    '[PostReaderScreen][EDIT_APPLY] beforeTitle=${(_currentExportedData?['title'] ?? widget.exported['title'])} afterTitle=${merged['title']}',
-                                  );
-
-                                  setState(() {
-                                    _currentExportedData = merged;
-
-                                    // 공개범위도 최신으로 동기화
-                                    _accessLevel =
-                                        (merged['accessLevel'] as String?) ??
-                                        _accessLevel;
-                                    // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
-
-                                    // FutureBuilder도 최신 content를 사용하게 교체
-                                    _contentFuture =
-                                        Future<Map<String, dynamic>>.value(
-                                          mergedContent,
+                                    // 편집 화면 열기 (저장 성공 여부를 pop result로 받음)
+                                    final result =
+                                        await PostReaderService.openEditScreen(
+                                          context,
+                                          exportedData: dataToEdit,
+                                          postId: postId,
                                         );
 
-                                    // 문서/에디터를 최신 content로 교체
-                                    _document = refreshedDoc;
-                                    _editor = createDefaultDocumentEditor(
-                                      document: _document,
-                                      composer: _composer,
-                                    );
-                                    try {
-                                      _editorService.dispose();
-                                    } catch (_) {}
-                                    _editorService = EditorService(
-                                      editor: _editor,
-                                      document: _document,
-                                      enableInitialStateSave: false,
-                                    );
-                                    _editorService.setDocumentLayoutKey(
-                                      _layoutKey,
-                                    );
-                                    _dragService = DragService(
-                                      editorService: _editorService,
-                                    );
-                                    _documentInitialized = true;
-                                  });
-                                } catch (e) {
-                                  debugPrint(
-                                    '[PostReaderScreen] 수정 후 문서 갱신 실패(무시): $e',
-                                  );
-                                }
-                              },
-                              onDelete: _deletePost,
-                              onShowComments: _showCommentBottomSheet,
-                              title:
-                                  (_currentExportedData?['title'] ??
-                                          widget.exported['title'] ??
-                                          '')
-                                      .toString(),
-                              likeCount: _likeService.getPostLikeCount(
-                                widget.exported['id']?.toString() ?? '',
-                              ),
-                              commentCount:
-                                  _commentService.getTotalCommentCount(),
-                              onLikeTap: _toggleLike,
-                              onCommentTap: _showCommentBottomSheet,
-                              isLiked: _likeService.isPostLiked(
-                                widget.exported['id']?.toString() ?? '',
-                              ),
-                              animationDuration:
-                                  _bottomBarAnimationDuration, // 🎯 바텀바와 동일한 속도
-                              scrollOffset:
-                                  _currentScrollOffset, // 🎯 현재 스크롤 위치 전달
-                              viewCount:
-                                  int.tryParse(
-                                    (_currentExportedData?['viewCount'] ??
-                                            widget.exported['viewCount'])
-                                        .toString(),
-                                  ) ??
-                                  0,
-                              onViewCountTap: () {
-                                // 🎯 나만보기 포스트는 제외
-                                final accessLevelStr =
-                                    _accessLevel ?? SystemCategoryKeys.public;
-                                if (accessLevelStr !=
-                                    SystemCategoryKeys.private) {
-                                  _openViewersOverlay();
-                                }
-                              },
-                              isPrivate:
-                                  (_accessLevel ?? SystemCategoryKeys.public) ==
-                                  SystemCategoryKeys.private, // 🎯 나만보기 포스트 여부
-                              onMoreTap:
-                                  !isMyPost
-                                      ? () {
-                                        final postId =
-                                            widget.exported['id']?.toString() ??
-                                            '';
-                                        final postTitle =
-                                            (_currentExportedData?['title'] ??
-                                                    widget.exported['title'] ??
-                                                    '')
-                                                .toString();
-                                        final authorUsername = postAuthor;
-                                        final authorProfileImageUrl =
-                                            widget
-                                                .exported['authorProfileImageUrl']
-                                                ?.toString();
-                                        final authorAlias =
-                                            widget.exported['authorAlias']
-                                                ?.toString();
-                                        final thumbnailImageUrl =
-                                            widget.exported['thumbnailImageUrl']
-                                                ?.toString();
-                                        final likeCount = _likeService
-                                            .getPostLikeCount(postId);
+                                    if (!mounted) return;
 
-                                        PostActionBottomSheet.show(
-                                          context,
-                                          postId: postId,
-                                          postTitle: postTitle,
-                                          authorUsername: authorUsername,
-                                          authorAlias: authorAlias,
-                                          authorProfileImageUrl:
-                                              authorProfileImageUrl,
-                                          thumbnailImageUrl: thumbnailImageUrl,
-                                          likeCount: likeCount,
-                                          onShowLikedUsers:
-                                              null, // 🎯 좋아요 기능은 뷰어로 이동됨
+                                    final resultKeys =
+                                        result is Map
+                                            ? result.keys.toList()
+                                            : null;
+                                    debugPrint(
+                                      '[PostReaderScreen][EDIT_RESULT] resultType=${result.runtimeType} keys=$resultKeys',
+                                    );
+
+                                    if (result is! Map) return;
+                                    final bool didEdit =
+                                        (result['didEdit'] == true);
+
+                                    // 저장/적용이 실제로 일어난 경우에만 최신 문서로 갱신
+                                    if (!didEdit) return;
+
+                                    try {
+                                      // ✅ Postwrite에서 로컬 export/content를 pop으로 넘긴 경우
+                                      // 추가 서버 호출 없이 pop 결과로 즉시 반영한다.
+                                      Map<String, dynamic>? poppedExported;
+                                      try {
+                                        final raw = result['exported'];
+                                        if (raw is Map) {
+                                          poppedExported =
+                                              raw.cast<String, dynamic>();
+                                        }
+                                      } catch (_) {
+                                        poppedExported = null;
+                                      }
+
+                                      Map<String, dynamic>? poppedContent;
+                                      try {
+                                        final raw = result['content'];
+                                        if (raw is Map) {
+                                          poppedContent =
+                                              raw.cast<String, dynamic>();
+                                        }
+                                      } catch (_) {
+                                        poppedContent = null;
+                                      }
+
+                                      late final MutableDocument refreshedDoc;
+                                      late final Map<String, dynamic> merged;
+
+                                      debugPrint(
+                                        '[PostReaderScreen][EDIT_RESULT] didEdit=$didEdit poppedExported=${poppedExported != null} poppedContent=${poppedContent != null}',
+                                      );
+                                      if (poppedExported != null) {
+                                        debugPrint(
+                                          '[PostReaderScreen][EDIT_RESULT] exported.title=${poppedExported['title']} exported.summary=${poppedExported['summary']} exported.thumbnail=${poppedExported['thumbnailImageUrl']} exported.accessLevel=${poppedExported['accessLevel']}',
                                         );
                                       }
-                                      : null,
+
+                                      if (poppedContent != null ||
+                                          poppedExported != null) {
+                                        merged = Map<String, dynamic>.from(
+                                          dataToEdit,
+                                        );
+                                        if (poppedExported != null) {
+                                          merged.addAll(poppedExported);
+                                        }
+                                        if (poppedContent != null) {
+                                          merged['content'] = poppedContent;
+                                        }
+
+                                        refreshedDoc = _postReaderService
+                                            .rebuildDocumentForRead(merged);
+                                      } else {
+                                        // fallback: 서버에서 최신 content 재조회
+                                        final (
+                                          d,
+                                          m,
+                                        ) = await PostReaderService.refreshDocumentAfterEdit(
+                                          context,
+                                          postId,
+                                          currentExportedData: dataToEdit,
+                                        );
+                                        refreshedDoc = d;
+                                        merged = m;
+                                      }
+
+                                      if (!mounted) return;
+
+                                      final mergedContent =
+                                          (merged['content'] as Map?)
+                                              ?.cast<String, dynamic>() ??
+                                          <String, dynamic>{};
+
+                                      debugPrint(
+                                        '[PostReaderScreen][EDIT_APPLY] beforeTitle=${(_currentExportedData?['title'] ?? widget.exported['title'])} afterTitle=${merged['title']}',
+                                      );
+
+                                      setState(() {
+                                        _currentExportedData = merged;
+
+                                        // 공개범위도 최신으로 동기화
+                                        _accessLevel =
+                                            (merged['accessLevel']
+                                                as String?) ??
+                                            _accessLevel;
+                                        // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
+
+                                        // FutureBuilder도 최신 content를 사용하게 교체
+                                        _contentFuture =
+                                            Future<Map<String, dynamic>>.value(
+                                              mergedContent,
+                                            );
+
+                                        // 문서/에디터를 최신 content로 교체
+                                        _document = refreshedDoc;
+                                        _editor = createDefaultDocumentEditor(
+                                          document: _document,
+                                          composer: _composer,
+                                        );
+                                        try {
+                                          _editorService.dispose();
+                                        } catch (_) {}
+                                        _editorService = EditorService(
+                                          editor: _editor,
+                                          document: _document,
+                                          enableInitialStateSave: false,
+                                        );
+                                        _editorService.setDocumentLayoutKey(
+                                          _layoutKey,
+                                        );
+                                        _dragService = DragService(
+                                          editorService: _editorService,
+                                        );
+                                        _documentInitialized = true;
+                                      });
+
+                                      // ✅ 프로필에서 들어왔다면 피드 업데이트
+                                      if (widget.fromProfile) {
+                                        try {
+                                          final feed = MyProfileFeedProvider();
+                                          final postId =
+                                              widget.exported['id']?.toString();
+                                          if (postId != null) {
+                                            // 포스트 수정 후 피드 캐시 업데이트
+                                            feed.updatePostInCache(merged);
+                                            debugPrint(
+                                              '[PostReaderScreen] ✅ 프로필 피드 업데이트 완료 (포스트 수정)',
+                                            );
+                                          }
+                                        } catch (e) {
+                                          debugPrint(
+                                            '[PostReaderScreen] ⚠️ 프로필 피드 업데이트 실패: $e',
+                                          );
+                                        }
+                                      }
+                                    } catch (e) {
+                                      debugPrint(
+                                        '[PostReaderScreen] 수정 후 문서 갱신 실패(무시): $e',
+                                      );
+                                    }
+                                  },
+                                  onDelete: _deletePost,
+                                  onShowComments: _showCommentBottomSheet,
+                                  title:
+                                      (_currentExportedData?['title'] ??
+                                              widget.exported['title'] ??
+                                              '')
+                                          .toString(),
+                                  likeCount: _likeService.getPostLikeCount(
+                                    widget.exported['id']?.toString() ?? '',
+                                  ),
+                                  commentCount:
+                                      _commentService.getTotalCommentCount(),
+                                  onLikeTap: _toggleLike,
+                                  onCommentTap: _showCommentBottomSheet,
+                                  isLiked: _likeService.isPostLiked(
+                                    widget.exported['id']?.toString() ?? '',
+                                  ),
+                                  animationDuration:
+                                      _bottomBarAnimationDuration, // 🎯 바텀바와 동일한 속도
+                                  scrollOffset:
+                                      _currentScrollOffset, // 🎯 현재 스크롤 위치 전달
+                                  viewCount:
+                                      int.tryParse(
+                                        (_currentExportedData?['viewCount'] ??
+                                                widget.exported['viewCount'])
+                                            .toString(),
+                                      ) ??
+                                      0,
+                                  onViewCountTap: () {
+                                    // 🎯 나만보기 포스트는 제외
+                                    final accessLevelStr =
+                                        _accessLevel ??
+                                        SystemCategoryKeys.public;
+                                    if (accessLevelStr !=
+                                        SystemCategoryKeys.private) {
+                                      _openViewersOverlay();
+                                    }
+                                  },
+                                  isPrivate:
+                                      (_accessLevel ??
+                                          SystemCategoryKeys.public) ==
+                                      SystemCategoryKeys
+                                          .private, // 🎯 나만보기 포스트 여부
+                                  onMoreTap:
+                                      !isMyPost
+                                          ? () {
+                                            final postId =
+                                                widget.exported['id']
+                                                    ?.toString() ??
+                                                '';
+                                            final postTitle =
+                                                (_currentExportedData?['title'] ??
+                                                        widget
+                                                            .exported['title'] ??
+                                                        '')
+                                                    .toString();
+                                            final authorUsername = postAuthor;
+                                            final authorProfileImageUrl =
+                                                widget
+                                                    .exported['authorProfileImageUrl']
+                                                    ?.toString();
+                                            final authorAlias =
+                                                widget.exported['authorAlias']
+                                                    ?.toString();
+                                            final thumbnailImageUrl =
+                                                widget
+                                                    .exported['thumbnailImageUrl']
+                                                    ?.toString();
+                                            final likeCount = _likeService
+                                                .getPostLikeCount(postId);
+
+                                            PostActionBottomSheet.show(
+                                              context,
+                                              postId: postId,
+                                              postTitle: postTitle,
+                                              authorUsername: authorUsername,
+                                              authorAlias: authorAlias,
+                                              authorProfileImageUrl:
+                                                  authorProfileImageUrl,
+                                              thumbnailImageUrl:
+                                                  thumbnailImageUrl,
+                                              likeCount: likeCount,
+                                              onShowLikedUsers:
+                                                  null, // 🎯 좋아요 기능은 뷰어로 이동됨
+                                            );
+                                          }
+                                          : null,
+                                );
+                              },
                             );
                           },
                         ),

@@ -30,14 +30,6 @@ class _SearchExploreScreenState extends State<SearchExploreScreen> {
   bool _isNavigating = false;
   bool _isBlogSearching = false;
 
-  PageRouteBuilder<T> _noAnimRoute<T>(Widget page) {
-    return PageRouteBuilder<T>(
-      pageBuilder: (_, __, ___) => page,
-      transitionDuration: Duration.zero,
-      reverseTransitionDuration: Duration.zero,
-    );
-  }
-
   @override
   void initState() {
     super.initState();
@@ -98,12 +90,13 @@ class _SearchExploreScreenState extends State<SearchExploreScreen> {
       });
 
       await Navigator.of(context).push(
-        _noAnimRoute(
-          SearchBlogResultsScreen(
-            keyword: q,
-            initialPosts: posts,
-            initialHasMore: searchService.blogsHasMore,
-          ),
+        MaterialPageRoute(
+          builder:
+              (_) => SearchBlogResultsScreen(
+                keyword: q,
+                initialPosts: posts,
+                initialHasMore: searchService.blogsHasMore,
+              ),
         ),
       );
 
@@ -224,16 +217,18 @@ class _SearchExploreScreenState extends State<SearchExploreScreen> {
 
                                           Navigator.push(
                                                 context,
-                                                _noAnimRoute(
-                                                  UserProfileScreen(
-                                                    otherUser: User(
-                                                      username:
-                                                          item.username ?? '',
-                                                      alias: item.alias,
-                                                      profileImageUrl:
-                                                          item.profileImageUrl,
-                                                    ),
-                                                  ),
+                                                MaterialPageRoute(
+                                                  builder:
+                                                      (_) => UserProfileScreen(
+                                                        otherUser: User(
+                                                          username:
+                                                              item.username ??
+                                                              '',
+                                                          alias: item.alias,
+                                                          profileImageUrl:
+                                                              item.profileImageUrl,
+                                                        ),
+                                                      ),
                                                 ),
                                               )
                                               .then((_) {
@@ -301,15 +296,16 @@ class _SearchExploreScreenState extends State<SearchExploreScreen> {
 
                                   Navigator.push(
                                         context,
-                                        _noAnimRoute(
-                                          UserProfileScreen(
-                                            otherUser: User(
-                                              username: item.username ?? '',
-                                              alias: item.alias,
-                                              profileImageUrl:
-                                                  item.profileImageUrl,
-                                            ),
-                                          ),
+                                        MaterialPageRoute(
+                                          builder:
+                                              (_) => UserProfileScreen(
+                                                otherUser: User(
+                                                  username: item.username ?? '',
+                                                  alias: item.alias,
+                                                  profileImageUrl:
+                                                      item.profileImageUrl,
+                                                ),
+                                              ),
                                         ),
                                       )
                                       .then((_) {

@@ -290,7 +290,42 @@ class FriendService {
     }
   }
 
-  /// 14. 수락된 친구 목록 조회 (페이지네이션 지원)
+  /// 친구 번들 조회 (GET /api/friends/bundle)
+  Future<Map<String, dynamic>> getFriendsBundle() async {
+    try {
+      final response = await _dio.get('/api/friends/bundle');
+      if (response.statusCode == 200) {
+        final decoded = response.data;
+        // 일반 Map 또는 { data: {...} } 형태 모두 대응
+        if (decoded is Map<String, dynamic>) {
+          return decoded['data'] is Map<String, dynamic>
+              ? decoded['data'] as Map<String, dynamic>
+              : decoded;
+        }
+        throw Exception('친구 번들 응답 형식 오류: ${decoded.runtimeType}');
+      }
+      throw Exception('친구 번들 조회 실패: ${response.statusCode}');
+    } catch (e) {
+      if (e is DioException) {
+        final statusCode = e.response?.statusCode;
+        final responseData = e.response?.data;
+
+        // 🎯 500 에러 상세 로깅
+        if (statusCode == 500) {
+          debugPrint('[FriendService] ⚠️ 서버 500 에러 상세:');
+          debugPrint('[FriendService]   - statusCode: $statusCode');
+          debugPrint('[FriendService]   - responseData: $responseData');
+          debugPrint('[FriendService]   - errorType: ${e.type}');
+          debugPrint('[FriendService]   - errorMessage: ${e.message}');
+        }
+
+        throw Exception('친구 번들 조회 실패: $statusCode');
+      }
+      rethrow;
+    }
+  }
+
+  /// 14. 수락된 친구 목록 조회 (페이지네이션 지원) - 하위 호환성 유지
   Future<List<Friend>> getAcceptedFriends({int page = 0, int size = 20}) async {
     try {
       final response = await _dio.get(

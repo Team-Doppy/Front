@@ -1,6 +1,17 @@
 /// 언급 파싱 유틸리티
 /// 명세서의 언급 규칙을 모두 고려하여 구현
 class MentionParser {
+  // username token: 영문/숫자/_ + 점(.) 세그먼트 허용
+  // - 연속 점/끝 점 방지: (?:\.[...]+)* 구조
+  static final RegExp _mentionTokenRegex = RegExp(
+    r'@([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)',
+  );
+
+  static bool _isWordChar(String ch) {
+    // username/email 등에 쓰이는 기본 word 범위만 차단하면 됨
+    return RegExp(r'[A-Za-z0-9_]').hasMatch(ch);
+  }
+
   /// 메시지에서 언급된 사용자명 추출
   ///
   /// 규칙:
@@ -17,20 +28,40 @@ class MentionParser {
   static List<String> extractMentions(String message) {
     if (message.isEmpty) return [];
 
-    // @로 시작하고, 영문자/숫자/언더스코어로만 구성된 패턴 매칭
-    // \w+ 는 [a-zA-Z0-9_] 와 동일
-    final mentionRegex = RegExp(r'@(\w+)');
-
     final mentions = <String>[];
-    final matches = mentionRegex.allMatches(message);
+    int i = 0;
 
-    for (final match in matches) {
-      if (match.groupCount >= 1) {
-        final username = match.group(1);
-        if (username != null && username.isNotEmpty) {
-          mentions.add(username);
-        }
+    while (i < message.length) {
+      final at = message.indexOf('@', i);
+      if (at == -1) break;
+
+      // ✅ 경계 조건: 이메일(test@domain.com)처럼 단어/아이디 중간의 @는 멘션으로 보지 않음
+      if (at > 0 && _isWordChar(message[at - 1])) {
+        i = at + 1;
+        continue;
       }
+
+      // ✅ @ 위치에서 token을 prefix로 매칭
+      final m = _mentionTokenRegex.matchAsPrefix(message, at);
+      if (m == null) {
+        i = at + 1;
+        continue;
+      }
+
+      final username = m.group(1) ?? '';
+      if (username.isEmpty) {
+        i = at + 1;
+        continue;
+      }
+
+      // ✅ 점이 깨진 케이스 방어: @jang. / @jang..xx 처럼 '.'이 바로 뒤에 오면 부분매칭(@jang)도 무효 처리
+      if (m.end < message.length && message[m.end] == '.') {
+        i = at + 1;
+        continue;
+      }
+
+      mentions.add(username);
+      i = m.end;
     }
 
     // 중복 제거 (Set 사용)
@@ -55,30 +86,49 @@ class MentionParser {
     if (message.isEmpty) return [];
 
     final parts = <({String text, bool isMention})>[];
-    final mentionRegex = RegExp(r'@(\w+)');
-
     int lastEnd = 0;
-    final matches = mentionRegex.allMatches(message);
+    int i = 0;
 
-    for (final match in matches) {
-      // 언급 전의 일반 텍스트
-      if (match.start > lastEnd) {
-        final beforeText = message.substring(lastEnd, match.start);
+    while (i < message.length) {
+      final at = message.indexOf('@', i);
+      if (at == -1) break;
+
+      // 이메일/단어 중간의 @는 멘션으로 처리하지 않음
+      if (at > 0 && _isWordChar(message[at - 1])) {
+        i = at + 1;
+        continue;
+      }
+
+      final m = _mentionTokenRegex.matchAsPrefix(message, at);
+      if (m == null) {
+        i = at + 1;
+        continue;
+      }
+
+      // 점 깨짐 방어: 부분매칭도 무효
+      if (m.end < message.length && message[m.end] == '.') {
+        i = at + 1;
+        continue;
+      }
+
+      // 언급 전 일반 텍스트
+      if (at > lastEnd) {
+        final beforeText = message.substring(lastEnd, at);
         if (beforeText.isNotEmpty) {
           parts.add((text: beforeText, isMention: false));
         }
       }
 
-      // 언급 부분
-      final mentionText = match.group(0) ?? '';
+      final mentionText = m.group(0) ?? '';
       if (mentionText.isNotEmpty) {
         parts.add((text: mentionText, isMention: true));
       }
 
-      lastEnd = match.end;
+      lastEnd = m.end;
+      i = m.end;
     }
 
-    // 마지막 언급 이후의 일반 텍스트
+    // 마지막 이후 텍스트
     if (lastEnd < message.length) {
       final afterText = message.substring(lastEnd);
       if (afterText.isNotEmpty) {

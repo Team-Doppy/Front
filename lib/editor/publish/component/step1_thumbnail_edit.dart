@@ -1,13 +1,12 @@
 import 'dart:io';
 import 'dart:ui' as ui;
-import 'dart:typed_data';
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/image/media_picker_screen.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:doppy/image/simple_image_editor_screen.dart';
+import 'package:doppy/image/trimmer/video_trim_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
-import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/editor/utils/video_upload_utils.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:flutter/material.dart';
@@ -956,7 +955,9 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   }
 
   Widget _buildEditButton() {
-    final bool isVideo = widget.localVideoFile != null;
+    final bool isVideo =
+        widget.localVideoFile != null ||
+        _isVideoUrl(widget.exportedThumbnailImageUrl);
     final String buttonText =
         isVideo
             ? AppLocalizations.of(context).t('change_thumbnail')
@@ -1085,28 +1086,33 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
             widget.onLocalThumbnailChanged(null);
           }
         } else if (_isMounted()) {
-          ErrorHandler.showError(
+          DialogUtils.showInfoDialog(
             context,
-            AppLocalizations.of(context).t('thumbnail_upload_failed'),
+            title: AppLocalizations.of(context).t('thumbnail_upload_failed'),
+            message: AppLocalizations.of(context).t('upload_error_occurred'),
           );
           widget.onLocalThumbnailChanged(null);
         }
       }
     } catch (e) {
       if (_isMounted()) {
-        ErrorHandler.handleError(
+        DialogUtils.showInfoDialog(
           context,
-          e,
-          customMessage: AppLocalizations.of(context).t('upload_error'),
+          title: AppLocalizations.of(context).t('upload_error'),
+          message: AppLocalizations.of(context).t('upload_error_occurred'),
+          buttonText: AppLocalizations.of(context).t('ok'),
         );
         widget.onLocalThumbnailChanged(null);
       }
     } finally {
       if (_isMounted()) {
         widget.onIsUploadingThumbChanged(false);
-        widget.onEditModeChanged(false);
-        widget.controller.reverse();
-        FocusScope.of(context).unfocus();
+        // 🎯 제목 필드에 포커스가 있으면 편집 모드(축소 모드) 유지
+        if (!widget.titleFocusNode.hasFocus) {
+          widget.onEditModeChanged(false);
+          widget.controller.reverse();
+          FocusScope.of(context).unfocus();
+        }
       }
     }
   }
@@ -1324,18 +1330,23 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
         }) async {
           if (!_isMounted()) return;
           if (url.isEmpty) {
-            ErrorHandler.showError(
+            DialogUtils.showInfoDialog(
               context,
-              AppLocalizations.of(context).t('video_url_failed'),
+              title: AppLocalizations.of(context).t('video_url_failed'),
+              message: AppLocalizations.of(context).t('upload_error_occurred'),
+              buttonText: AppLocalizations.of(context).t('ok'),
             );
             widget.onIsUploadingThumbChanged(false);
             return;
           }
           widget.onThumbnailUrlChanged(url);
           widget.onIsUploadingThumbChanged(false);
-          widget.onEditModeChanged(false);
-          widget.controller.reverse();
-          FocusScope.of(context).unfocus();
+          // 🎯 제목 필드에 포커스가 있으면 편집 모드(축소 모드) 유지
+          if (!widget.titleFocusNode.hasFocus) {
+            widget.onEditModeChanged(false);
+            widget.controller.reverse();
+            FocusScope.of(context).unfocus();
+          }
         },
         onDeleteNode: (_) {
           if (!_isMounted()) return;
@@ -1359,9 +1370,12 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       if (_isMounted()) {
         await VideoUploadUtils.showGeneralErrorDialog(context);
         _restoreStateSnapshot();
-        widget.onEditModeChanged(false);
-        widget.controller.reverse();
-        FocusScope.of(context).unfocus();
+        // 🎯 제목 필드에 포커스가 있으면 편집 모드(축소 모드) 유지
+        if (!widget.titleFocusNode.hasFocus) {
+          widget.onEditModeChanged(false);
+          widget.controller.reverse();
+          FocusScope.of(context).unfocus();
+        }
       }
     }
   }
@@ -1371,8 +1385,18 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     widget.controller.reverse();
     FocusScope.of(context).unfocus();
 
-    if (widget.exportedThumbnailImageUrl.isEmpty ||
-        widget.localVideoFile != null) {
+    final isVideoThumb =
+        widget.localVideoFile != null ||
+        _isVideoUrl(widget.exportedThumbnailImageUrl);
+
+    // ✅ 비디오 썸네일이면: 이미지 편집기가 아니라 영상 편집기로 들어간다.
+    if (isVideoThumb) {
+      await _editThumbnailVideo();
+      return;
+    }
+
+    // 썸네일이 비어있으면 갤러리로
+    if (widget.exportedThumbnailImageUrl.isEmpty) {
       await _openGalleryPicker();
       return;
     }
@@ -1398,9 +1422,11 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       );
       if (response.statusCode != 200) {
         if (mounted) {
-          ErrorHandler.showError(
+          DialogUtils.showInfoDialog(
             context,
-            AppLocalizations.of(context).t('image_load_failed'),
+            title: AppLocalizations.of(context).t('image_load_failed'),
+            message: AppLocalizations.of(context).t('upload_error_occurred'),
+            buttonText: AppLocalizations.of(context).t('ok'),
           );
         }
         return;
@@ -1439,11 +1465,14 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       final newUrl = tasks.firstOrNull?.url;
       if (newUrl == null || newUrl.isEmpty) {
         if (_isMounted()) {
-          ErrorHandler.showError(
+          DialogUtils.showInfoDialog(
             context,
-            tasks.isEmpty
-                ? AppLocalizations.of(context).t('thumbnail_upload_failed')
-                : AppLocalizations.of(context).t('upload_url_failed'),
+            title:
+                tasks.isEmpty
+                    ? AppLocalizations.of(context).t('thumbnail_upload_failed')
+                    : AppLocalizations.of(context).t('upload_url_failed'),
+            message: AppLocalizations.of(context).t('upload_error_occurred'),
+            buttonText: AppLocalizations.of(context).t('ok'),
           );
         }
         return;
@@ -1455,15 +1484,73 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       }
     } catch (e) {
       if (_isMounted()) {
-        ErrorHandler.handleError(
+        DialogUtils.showInfoDialog(
           context,
-          e,
-          customMessage: AppLocalizations.of(context).t('image_edit_failed'),
+          title: AppLocalizations.of(context).t('image_edit_failed'),
+          message: AppLocalizations.of(context).t('upload_error_occurred'),
+          buttonText: AppLocalizations.of(context).t('ok'),
         );
       }
     } finally {
       if (_isMounted()) {
         widget.onIsUploadingThumbChanged(false);
+      }
+    }
+  }
+
+  Future<void> _editThumbnailVideo() async {
+    // ✅ 로컬 비디오가 있어야 “영상 편집기”로 들어갈 수 있다.
+    // 서버 비디오 URL만 있는 경우는 안전하게 “변경(갤러리)”로 유도한다.
+    final file = widget.localVideoFile;
+    if (file == null) {
+      await _openGalleryPicker();
+      return;
+    }
+
+    try {
+      // VideoTrimScreen은 videoDuration이 필요하므로 file로 duration을 얻는다.
+      final probe = VideoPlayerController.file(file);
+      await probe.initialize();
+      final duration = probe.value.duration;
+      await probe.dispose();
+
+      if (!_isMounted()) return;
+
+      final trimResult = await Navigator.push<VideoTrimResult>(
+        context,
+        PageRouteBuilder(
+          pageBuilder:
+              (context, animation, secondaryAnimation) =>
+                  VideoTrimScreen(videoFile: file, videoDuration: duration),
+          transitionDuration: const Duration(milliseconds: 200),
+          reverseTransitionDuration: const Duration(milliseconds: 200),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+        ),
+      );
+
+      if (trimResult == null || !_isMounted()) return;
+
+      // ✅ 트림 화면에서 생성된 썸네일(포스터)을 반영
+      final thumbPath = trimResult.thumbnailPath;
+      if (thumbPath != null && thumbPath.isNotEmpty) {
+        final thumbFile = File(thumbPath);
+        if (thumbFile.existsSync()) {
+          widget.onLocalThumbnailChanged(thumbFile);
+          // 세션 스코프에 썸네일 경로 저장 (복원/발행 플로우에서 사용)
+          NodeComponentService().setTempVideoThumbnail(_nsKey, thumbPath);
+        }
+      }
+    } catch (e) {
+      debugPrint('[Step1ThumbnailEdit] 비디오 편집 진입 실패: $e');
+      if (_isMounted()) {
+        DialogUtils.showInfoDialog(
+          context,
+          title: AppLocalizations.of(context).t('video_load_failed'),
+          message: AppLocalizations.of(context).t('upload_error_occurred'),
+          buttonText: AppLocalizations.of(context).t('ok'),
+        );
       }
     }
   }

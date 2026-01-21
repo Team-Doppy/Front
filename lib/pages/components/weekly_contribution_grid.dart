@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -54,6 +55,36 @@ class WeeklyContributionGrid extends StatefulWidget {
 
 class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
   static const int _columns = 7; // 주 7일
+  Timer? _tickTimer;
+  DateTime _liveNow = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+
+    // ✅ 앱을 켜둔 채로 시간이 흘러도(특히 주차가 바뀌는 시점) 그리드가 자동 확장되도록
+    // "현재 연도일 때만" 주차 변화를 감지해서 리빌드한다.
+    _tickTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted) return;
+      final now = DateTime.now();
+      if (widget.year != now.year) return;
+
+      final prevWeek = WeekUtils.getWeekNumber(_liveNow);
+      final nextWeek = WeekUtils.getWeekNumber(now);
+      if (prevWeek != nextWeek) {
+        setState(() {
+          _liveNow = now;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tickTimer?.cancel();
+    _tickTimer = null;
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,13 +93,9 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [Text('${widget.year}')],
-        ),
-        // 그리드
+        SizedBox(height: 12),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           child: _buildGrid(contributions),
         ),
       ],
@@ -77,12 +104,30 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
 
   Widget _buildGrid(List<WeeklyContributionData> contributions) {
     final weeksInYear = WeekUtils.getWeeksInYear(widget.year);
+    final currentYear = _asOf.year;
+    final isPastYear = widget.year < currentYear;
+    final isFutureYear = widget.year > currentYear;
+
     final byWeek = <int, WeeklyContributionData>{};
     for (final c in contributions) {
       if (c.year == widget.year) byWeek[c.weekNumber] = c;
     }
 
-    final range = _getRenderRange(weeksInYear);
+    // 🎯 가입일 이전 주차에 글을 "지정해서" 쓴 케이스를 지원하기 위해
+    // 해당 연도에서 가장 이른 포스트 주차를 렌더 범위 계산에 반영한다.
+    int? earliestPostWeek;
+    for (final entry in byWeek.entries) {
+      if ((entry.value.postCount) > 0) {
+        if (earliestPostWeek == null || entry.key < earliestPostWeek) {
+          earliestPostWeek = entry.key;
+        }
+      }
+    }
+
+    final range = _getRenderRange(
+      weeksInYear,
+      earliestPostWeek: earliestPostWeek,
+    );
     final firstWeek = range.firstWeek;
     final lastWeek = range.lastWeek;
     final startWeek = range.startWeek;
@@ -120,11 +165,8 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
       final w = renderWeeks[idx];
       if (w < 1 || w > weeksInYear) return false;
 
-      // ISO 주차의 "연도 소속"은 목요일(weekStart+3) 기준이 가장 자연스럽다.
-      // (week 1의 시작일이 12월 말일 수 있어도, 목요일은 1월이어서 해당 연도에 속함)
-      final weekStart = WeekUtils.getWeekStartDate(widget.year, w);
-      final anchor = weekStart.add(const Duration(days: 3)); // Thu
-      if (anchor.year != widget.year) return false; // 논리상 이전/다음년도는 "활동 없음"
+      // ✅ WeekUtils는 "1월 1일부터 7일=1주" 규칙을 사용한다.
+      // 따라서 ISO(목요일 anchor) 기반 연도 소속 판정은 사용하지 않는다.
 
       // 포스트가 있는 경우
       if ((byWeek[w]?.postCount ?? 0) > 0) return true;
@@ -161,27 +203,43 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
 
     final grayOpacityByIndex = List<double>.filled(renderWeeks.length, 1.0);
     final grayBetweenByIndex = List<bool>.filled(renderWeeks.length, false);
-    for (int i = 0; i < renderWeeks.length; i++) {
-      if (isActiveAtIndex(i)) {
+
+    // 🎯 과거 연도에서는 모든 셀을 100% opacity로 표시 (opacity 감쇠 없음)
+    // 🎯 미래 연도는 전체를 약하게(연하게) 보여주되, 상호작용은 막는다.
+    if (isPastYear) {
+      for (int i = 0; i < renderWeeks.length; i++) {
         grayOpacityByIndex[i] = 1.0;
         grayBetweenByIndex[i] = false;
-        continue;
       }
-      final l = leftActiveIdx[i];
-      final r = rightActiveIdx[i];
-      if (l == null && r == null) {
-        grayOpacityByIndex[i] = 0.0;
+    } else if (isFutureYear) {
+      for (int i = 0; i < renderWeeks.length; i++) {
+        grayOpacityByIndex[i] = 0.25;
         grayBetweenByIndex[i] = false;
-        continue;
       }
-      if (l != null && r != null) {
-        // 보라 사이에 끼어있을 때는 100% opacity
-        grayOpacityByIndex[i] = 1.0; // 100% 고정
-        grayBetweenByIndex[i] = true;
-      } else {
-        final dist = (l != null) ? (i - l) : (r! - i);
-        grayOpacityByIndex[i] = stepOpacity(dist);
-        grayBetweenByIndex[i] = false;
+    } else {
+      // 현재 연도: 기존 opacity 감쇠 로직 적용
+      for (int i = 0; i < renderWeeks.length; i++) {
+        if (isActiveAtIndex(i)) {
+          grayOpacityByIndex[i] = 1.0;
+          grayBetweenByIndex[i] = false;
+          continue;
+        }
+        final l = leftActiveIdx[i];
+        final r = rightActiveIdx[i];
+        if (l == null && r == null) {
+          grayOpacityByIndex[i] = 0.0;
+          grayBetweenByIndex[i] = false;
+          continue;
+        }
+        if (l != null && r != null) {
+          // 보라 사이에 끼어있을 때는 100% opacity
+          grayOpacityByIndex[i] = 1.0; // 100% 고정
+          grayBetweenByIndex[i] = true;
+        } else {
+          final dist = (l != null) ? (i - l) : (r! - i);
+          grayOpacityByIndex[i] = stepOpacity(dist);
+          grayBetweenByIndex[i] = false;
+        }
       }
     }
 
@@ -236,23 +294,46 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
 
                       final weekNumber = renderWeeks[index];
                       final data = byWeek[weekNumber];
+                      final postCount = data?.postCount ?? 0;
 
+                      // 🎯 가입일 이전이라도 "이미 포스트가 있으면" 비활성 취급하면 안 된다.
+                      // (과거 기록: 가입 후 과거 주차로 지정해서 쓰는 케이스)
+                      final hasPost = postCount > 0;
+                      final signupAt = widget.signupAt;
                       final isBeforeSignup =
-                          widget.year == (widget.signupAt?.year) &&
-                          weekNumber < startWeek;
+                          !hasPost &&
+                          signupAt != null &&
+                          // ✅ "가입일 이전 연도"는 막지 않는다. (과거 기록/데이터 이관 등 케이스)
+                          // ✅ 가입 연도 내에서만, 가입 주차 이전을 비활성 처리한다.
+                          (widget.year == signupAt.year &&
+                              weekNumber < startWeek);
                       final isFuturePreview =
+                          isFutureYear ||
                           (weekNumber > weeksInYear) ||
                           (todayWeek != null && weekNumber > todayWeek);
 
-                      final isSelectable =
+                      // 🎯 포스트가 있는 경우 또는 오늘 주차의 빈 셀은 클릭 가능
+                      final isClickable =
                           !isBeforeSignup &&
+                          !isFutureYear &&
                           (weekNumber <= weeksInYear) &&
                           (todayWeek == null
                               ? true
-                              : weekNumber <= todayWeek); // 미래 미리보기는 선택 불가
+                              : weekNumber <= todayWeek) &&
+                          (postCount > 0 || // 포스트가 있으면 클릭 가능
+                              (todayWeek != null &&
+                                  weekNumber == todayWeek &&
+                                  postCount == 0)); // 오늘 주차의 빈 셀도 클릭 가능
+
+                      // 🎯 롱프레스는 포스트 유무와 관계없이 가능 (단, 가입 전/미래는 제외)
+                      final isLongPressable =
+                          !isBeforeSignup &&
+                          !isFutureYear &&
+                          (weekNumber <= weeksInYear) &&
+                          (todayWeek == null ? true : weekNumber <= todayWeek);
 
                       final isSelected =
-                          isSelectable && widget.selectedWeek == weekNumber;
+                          isClickable && widget.selectedWeek == weekNumber;
 
                       // 마지막 열은 right padding 제거하여 오버플로우 방지
                       return Padding(
@@ -268,7 +349,8 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                           isSelected: isSelected,
                           isBeforeSignup: isBeforeSignup,
                           isFuturePreview: isFuturePreview,
-                          isSelectable: isSelectable,
+                          isClickable: isClickable,
+                          isLongPressable: isLongPressable,
                           todayWeek: todayWeek,
                           maxPostCount: maxPostCount,
                           grayOpacity:
@@ -307,7 +389,8 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
     required bool isSelected,
     required bool isBeforeSignup,
     required bool isFuturePreview,
-    required bool isSelectable,
+    required bool isClickable,
+    required bool isLongPressable,
     required int? todayWeek,
     required int maxPostCount,
     required double grayOpacity,
@@ -378,42 +461,46 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
         // 잉크 물결(리플)만 보이도록 한다. (선택/오늘은 테두리로만 표현)
         Border? border;
         if (isTodayWeek) {
-          border = Border.all(color: primary.withOpacity(0.6), width: 2);
+          border = Border.all(color: primary.withOpacity(1), width: 2);
         } else if (isSelected) {
-          border = Border.all(color: primary.withOpacity(0.45), width: 1.6);
+          border = null; // 선택 시 테두리 제거
         }
 
         // 월 텍스트 표시 여부 확인 (4주마다 = 4칸에 한번)
-        // - ISO 주차에서 weekStart는 12월 말일 수 있으므로 "목요일(anchor)" 기준으로 월/연도 판단
-        // - 현재 연도(1-12월)만 표시
+        // - WeekUtils(1/1 기준 7일=1주)에 맞춰 "주차 중앙(weekStart+3일)"
+        //   연도 경계를 넘는 경우(마지막 주)에는 해당 연도의 마지막 날로 클램프하여 월 표시를 안정화한다.
         // - 같은 월이 연속으로 찍히면(4주 간격) 중복 제거
         String? monthText;
         if (weekNumber >= 1 &&
             weekNumber <= WeekUtils.getWeeksInYear(widget.year) &&
             (weekNumber - 1) % 4 == 0) {
-          final weekStart = WeekUtils.getWeekStartDate(widget.year, weekNumber);
-          final anchor = weekStart.add(const Duration(days: 3)); // Thu
+          DateTime anchor = WeekUtils.getWeekStartDate(
+            widget.year,
+            weekNumber,
+          ).add(const Duration(days: 3));
+          final jan1 = DateTime(widget.year, 1, 1);
+          final dec31 = DateTime(widget.year, 12, 31);
+          if (anchor.isBefore(jan1)) anchor = jan1;
+          if (anchor.isAfter(dec31)) anchor = dec31;
 
-          if (anchor.year == widget.year) {
-            final month = anchor.month;
+          final month = anchor.month;
+          if (weekNumber > 4) {
+            final prevCycleWeek = weekNumber - 4;
+            DateTime prevAnchor = WeekUtils.getWeekStartDate(
+              widget.year,
+              prevCycleWeek,
+            ).add(const Duration(days: 3));
+            if (prevAnchor.isBefore(jan1)) prevAnchor = jan1;
+            if (prevAnchor.isAfter(dec31)) prevAnchor = dec31;
 
-            if (weekNumber > 4) {
-              final prevCycleWeek = weekNumber - 4;
-              final prevStart = WeekUtils.getWeekStartDate(
-                widget.year,
-                prevCycleWeek,
-              );
-              final prevAnchor = prevStart.add(const Duration(days: 3));
-
-              // 같은 월이면 표시하지 않음 (이전 cycle도 현재연도일 때만 비교)
-              if (prevAnchor.year == widget.year && prevAnchor.month == month) {
-                monthText = null;
-              } else {
-                monthText = '$month';
-              }
+            // 같은 월이면 표시하지 않음
+            if (prevAnchor.month == month) {
+              monthText = null;
             } else {
               monthText = '$month';
             }
+          } else {
+            monthText = '$month';
           }
         }
 
@@ -437,7 +524,7 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onLongPressStart:
-                        isSelectable
+                        isLongPressable
                             ? (details) {
                               final renderObject =
                                   cellContext.findRenderObject();
@@ -461,7 +548,7 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                             }
                             : null,
                     onLongPressMoveUpdate:
-                        isSelectable
+                        isLongPressable
                             ? (details) {
                               // position은 null이 되면 프리뷰가 화면 중앙으로 튈 수 있어서
                               // 항상 globalPosition을 유지한다.
@@ -474,7 +561,7 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                             }
                             : null,
                     onLongPressEnd:
-                        isSelectable
+                        isLongPressable
                             ? (_) {
                               widget.onLongPress?.call(
                                 widget.year,
@@ -485,7 +572,7 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                             }
                             : null,
                     onLongPressCancel:
-                        isSelectable
+                        isLongPressable
                             ? () {
                               widget.onLongPress?.call(
                                 widget.year,
@@ -500,10 +587,11 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                       customBorder: RoundedRectangleBorder(
                         borderRadius: borderRadius,
                       ),
-                      splashColor: primary.withOpacity(0.22),
-                      highlightColor: primary.withOpacity(0.10),
+                      splashColor: primary.withOpacity(0.4),
+                      highlightColor: primary.withOpacity(0.0),
+                      // 🎯 포스트가 있는 경우에만 클릭 가능
                       onTap:
-                          isSelectable
+                          isClickable
                               ? () {
                                 widget.onWeekSelected?.call(
                                   widget.year,
@@ -516,24 +604,27 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                   ),
                 ),
               // 월 텍스트 표시 (로딩 중일 때는 표시하지 않음)
+              // 🎯 IgnorePointer로 감싸서 제스처가 바로 전달되도록 함
               if (monthText != null && !isLoading)
-                Center(
-                  child: Text(
-                    monthText,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      // 배경이 보라색(포스트 있음)이면 흰색, 회색이면 검정색
-                      // opacity도 배경과 동일하게 적용
-                      color:
-                          (data?.postCount ?? 0) > 0
-                              ? Colors.white
-                              : const Color.fromARGB(
-                                255,
-                                94,
-                                94,
-                                94,
-                              ).withOpacity(grayOpacity),
+                IgnorePointer(
+                  child: Center(
+                    child: Text(
+                      monthText,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        // 배경이 보라색(포스트 있음)이면 흰색, 회색이면 검정색
+                        // opacity도 배경과 동일하게 적용
+                        color:
+                            (data?.postCount ?? 0) > 0
+                                ? Colors.white
+                                : const Color.fromARGB(
+                                  255,
+                                  94,
+                                  94,
+                                  94,
+                                ).withOpacity(grayOpacity),
+                      ),
                     ),
                   ),
                 ),
@@ -558,7 +649,8 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
         return Material(
           color: Colors.transparent,
           child: MouseRegion(
-            cursor: isSelectable ? SystemMouseCursors.click : MouseCursor.defer,
+            // 🎯 포스트가 있는 경우에만 클릭 커서 표시
+            cursor: isClickable ? SystemMouseCursors.click : MouseCursor.defer,
             child: cellContent,
           ),
         );
@@ -594,7 +686,11 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
     );
   }
 
-  DateTime get _asOf => widget.asOf ?? DateTime.now();
+  DateTime get _asOf {
+    // 현재 연도는 "실시간"으로 따라가야 그리드가 자연스럽게 확장된다.
+    if (widget.year == _liveNow.year) return _liveNow;
+    return widget.asOf ?? _liveNow;
+  }
 
   /// 선택 연도에서 "시작 주"를 결정한다.
   /// - 가입연도면 가입 주차부터
@@ -617,38 +713,59 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
   /// - 과거 연도면: 해당 연도 끝까지
   /// - 최소 2행 보장
   ({int firstWeek, int lastWeek, int startWeek, int? todayWeek})
-  _getRenderRange(int weeksInYear) {
+  _getRenderRange(int weeksInYear, {int? earliestPostWeek}) {
     final startWeek = _getStartWeek().clamp(1, weeksInYear);
     final todayWeek = _getTodayWeekIfCurrentYear();
 
-    // startWeek가 속한 행 계산
-    final startRow = (startWeek - 1) ~/ _columns;
-    final firstWeekInRow = startRow * _columns + 1;
-    // 가입일이 속한 행의 첫 번째 셀부터 시작 (행 전체를 보여줌)
-    final firstWeek = firstWeekInRow;
+    // ✅ 과거/현재/미래 연도 분리 (todayWeek == null 로 과거/미래가 섞이는 문제 방지)
+    final currentYear = _liveNow.year;
+    final isPastYear = widget.year < currentYear;
+    final isFutureYear = widget.year > currentYear;
 
-    final totalRows = (weeksInYear / _columns).ceil();
-    final lastRowIndex = totalRows - 1;
+    int firstWeek;
+    int lastWeek;
 
-    int targetLastRow;
-    if (todayWeek == null) {
-      // 과거(또는 미래) 연도: 전체 표시
-      targetLastRow = lastRowIndex;
+    if (isPastYear) {
+      // 🎯 과거 연도: 전체 주차 표시 (1주차부터 마지막 주차까지)
+      firstWeek = 1;
+      lastWeek = weeksInYear;
+    } else if (isFutureYear) {
+      // 🎯 미래 연도: "논리적 셀"만(최소 2행) 보여주고, 상호작용은 상위에서 막는다.
+      firstWeek = 1;
+      lastWeek = math.min(weeksInYear, _columns * 2);
     } else {
+      // 현재 연도: 기존 로직 유지
+      // ✅ 가입일 이전 주차에 "이미 포스트가 있는" 경우, 그 주차까지는 보여줘야 함
+      final effectiveStartWeek =
+          (earliestPostWeek != null)
+              ? math.min(startWeek, earliestPostWeek.clamp(1, weeksInYear))
+              : startWeek;
+
+      // startWeek가 속한 행 계산
+      final startRow = (effectiveStartWeek - 1) ~/ _columns;
+      final firstWeekInRow = startRow * _columns + 1;
+      // 가입일이 속한 행의 첫 번째 셀부터 시작 (행 전체를 보여줌)
+      firstWeek = firstWeekInRow;
+
+      final totalRows = (weeksInYear / _columns).ceil();
+      final lastRowIndex = totalRows - 1;
+
       // 현재 연도: 오늘 주가 속한 행 + 아래 1행
-      final todayRow = (todayWeek - 1) ~/ _columns;
-      targetLastRow = math.min(lastRowIndex, todayRow + 1);
-    }
+      // todayWeek는 현재 연도에서만 의미가 있으나, 안전하게 null 가드
+      final safeTodayWeek = todayWeek ?? startWeek;
+      final todayRow = (safeTodayWeek - 1) ~/ _columns;
+      int targetLastRow = math.min(lastRowIndex, todayRow + 1);
 
-    // 최소 2행 보장: startRow부터 최소 2행은 보여줘야 함
-    // targetLastRow가 startRow + 1보다 작으면 startRow + 1로 확장
-    if (targetLastRow < startRow + 1) {
-      targetLastRow = math.min(lastRowIndex, startRow + 1);
-    }
+      // 최소 2행 보장: startRow부터 최소 2행은 보여줘야 함
+      // targetLastRow가 startRow + 1보다 작으면 startRow + 1로 확장
+      if (targetLastRow < startRow + 1) {
+        targetLastRow = math.min(lastRowIndex, startRow + 1);
+      }
 
-    // 마지막 행의 마지막 주차 계산
-    final lastWeekInRow = (targetLastRow + 1) * _columns;
-    final lastWeek = math.min(weeksInYear, lastWeekInRow);
+      // 마지막 행의 마지막 주차 계산
+      final lastWeekInRow = (targetLastRow + 1) * _columns;
+      lastWeek = math.min(weeksInYear, lastWeekInRow);
+    }
 
     return (
       firstWeek: firstWeek,
@@ -675,10 +792,15 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
 
     final postCount = data?.postCount ?? 0;
 
-    // 🎯 포스트가 있는 주차: #7680FF 색상 사용
+    // 🎯 포스트가 있는 주차: #7680FF 색상 사용 (다크모드에서는 더 밝게)
     if (postCount > 0) {
-      // #7680FF = RGB(118, 128, 255)
-      const purpleColor = Color(0xFF7680FF);
+      // 다크모드에서는 더 밝은 보라색 사용 (#8A95FF)
+      // 라이트모드: #7680FF = RGB(118, 128, 255)
+      // 다크모드: #8A95FF = RGB(138, 149, 255)
+      final purpleColor =
+          isDark
+              ? const Color.fromARGB(255, 122, 136, 255)
+              : const Color(0xFF7680FF);
 
       // 3개 이상: 100%, 2개: 70%, 1개: 40%
       final opacity =

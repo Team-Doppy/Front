@@ -50,7 +50,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
         });
       } else {
         setState(() {
-          _errorMessage = '사용자를 찾을 수 없습니다';
+          _errorMessage = context.tr('user_not_found');
         });
       }
     } catch (e) {
@@ -62,11 +62,11 @@ class _FindIdScreenState extends State<FindIdScreen> {
 
       // API 에러 코드 확인
       if (errorString.contains('EMAIL_NOT_VERIFIED')) {
-        errorMessage = '이메일이 인증되지 않았습니다';
+        errorMessage = context.tr('email_not_verified');
       } else if (errorString.contains('USER_NOT_FOUND')) {
-        errorMessage = '사용자를 찾을 수 없습니다';
+        errorMessage = context.tr('user_not_found');
       } else if (errorString.contains('FIND_USERNAME_FAILED')) {
-        errorMessage = '아이디 찾기에 실패했습니다';
+        errorMessage = context.tr('error_find_username_failed');
       }
 
       setState(() {
@@ -100,14 +100,14 @@ class _FindIdScreenState extends State<FindIdScreen> {
 
     if (!_isValidPassword(newPassword)) {
       setState(() {
-        _passwordError = '비밀번호가 너무 짧습니다';
+        _passwordError = context.tr('password_too_short_simple');
       });
       return;
     }
 
     if (newPassword != confirmPassword) {
       setState(() {
-        _passwordError = '비밀번호가 일치하지 않습니다';
+        _passwordError = context.tr('password_mismatch');
       });
       return;
     }
@@ -121,7 +121,9 @@ class _FindIdScreenState extends State<FindIdScreen> {
       if (_verifiedCode == null || _verifiedCode!.isEmpty) {
         setState(() {
           _changingPassword = false;
-          _passwordError = '인증 코드가 만료되었거나 유효하지 않습니다';
+          _passwordError = context.tr(
+            'verification_code_expired_or_invalid_simple',
+          );
         });
         return;
       }
@@ -146,7 +148,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
       } else {
         setState(() {
           _changingPassword = false;
-          _passwordError = '비밀번호 변경에 실패했습니다';
+          _passwordError = context.tr('error_password_change_failed');
         });
       }
     } catch (e) {
@@ -176,10 +178,10 @@ class _FindIdScreenState extends State<FindIdScreen> {
       } else if (errorString.contains('EMAIL_NOT_VERIFIED')) {
         errorMessage = context.tr('error_email_not_verified');
       } else if (errorString.contains('PASSWORD_CHANGE_FAILED')) {
-        errorMessage = '비밀번호 변경에 실패했습니다. 다시 시도해주세요.';
+        errorMessage = context.tr('password_change_failed_retry');
       } else {
         // 일반적인 에러는 기본 메시지 사용
-        errorMessage = '비밀번호 변경 중 오류가 발생했습니다. 다시 시도해주세요.';
+        errorMessage = context.tr('password_change_error');
       }
 
       setState(() {
@@ -213,7 +215,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
           child: Padding(
             padding: const EdgeInsets.only(left: 24, top: 22),
             child: Text(
-              _currentStep == 1 ? '확인' : '이전',
+              _currentStep == 1 ? context.tr('close') : context.tr('previous'),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.8),
                 fontSize: 18,
@@ -261,8 +263,8 @@ class _FindIdScreenState extends State<FindIdScreen> {
       children: [
         Expanded(
           child: FindEmailVerificationFlow(
-            title: '아이디/비밀번호 찾기',
-            subtitle: '이메일 인증을 통해 아이디를 찾을 수 있습니다',
+            title: context.tr('find_id_password_title'),
+            subtitle: context.tr('find_id_subtitle'),
             onVerified: (email, code) async {
               _verifiedEmail = email;
               _verifiedCode = code;
@@ -310,8 +312,8 @@ class _FindIdScreenState extends State<FindIdScreen> {
         children: [
           Spacer(flex: 1),
 
-          // 아이디 표시 - 키보드 올라올 때 숨기기
-          if (keyboardHeight <= 0)
+          // 아이디 표시 - 키보드 올라올 때 또는 비밀번호 변경 시 숨기기
+          if (keyboardHeight <= 0 && !_showPasswordChange)
             AnimatedOpacity(
               opacity: isKeyboardVisible ? 0.0 : 1.0,
               duration: const Duration(milliseconds: 300),
@@ -382,7 +384,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        '비밀번호 변경',
+                        context.tr('change_password'),
                         style: TextStyle(
                           fontSize: 17,
                           color: Theme.of(
@@ -425,7 +427,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
                     ),
                     textInputAction: TextInputAction.next,
                     decoration: InputDecoration(
-                      hintText: '새 비밀번호를 입력하세요',
+                      hintText: context.tr('new_password_hint'),
                       hintStyle: TextStyle(
                         fontWeight: FontWeight.w500,
                         fontSize: 16,
@@ -517,7 +519,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
                         horizontal: 24,
                         vertical: 30,
                       ),
-                      hintText: '비밀번호 확인',
+                      hintText: context.tr('password_confirm_hint'),
                       hintStyle: TextStyle(
                         color: Theme.of(
                           context,
@@ -690,7 +692,7 @@ class _FindIdScreenState extends State<FindIdScreen> {
                                 ),
                               )
                               : Text(
-                                '비밀번호 변경하기',
+                                context.tr('change_password_button'),
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,

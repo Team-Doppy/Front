@@ -191,7 +191,7 @@ class _SearchResultsViewState extends State<SearchResultsView> {
                 ? const NeverScrollableScrollPhysics() // 🎯 가로 제스처 감지 시 세로 스크롤 차단
                 : const AlwaysScrollableScrollPhysics(),
         slivers: [
-          // AppBar with 검색 칩
+          // AppBar with 뒤로가기 버튼
           SliverAppBar(
             automaticallyImplyLeading: false,
             toolbarHeight: 48,
@@ -201,6 +201,27 @@ class _SearchResultsViewState extends State<SearchResultsView> {
             pinned: false,
             floating: true,
             snap: false,
+            leading: AnimatedOpacity(
+              opacity: (1.0 - _pullProgress),
+              duration:
+                  _pullProgress != 0.0
+                      ? Duration(milliseconds: 0)
+                      : Duration(milliseconds: 100),
+              curve: Curves.easeInOut,
+              child: IconButton(
+                icon: Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+                onPressed: () {
+                  if (widget.searchQuery.isNotEmpty) {
+                    widget.onClearSearch();
+                  } else {
+                    Navigator.of(context).pop();
+                  }
+                },
+              ),
+            ),
             title: AnimatedOpacity(
               opacity: (1.0 - _pullProgress),
               duration:
@@ -208,86 +229,9 @@ class _SearchResultsViewState extends State<SearchResultsView> {
                       ? Duration(milliseconds: 0)
                       : Duration(milliseconds: 100),
               curve: Curves.easeInOut,
-              child: Container(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                  '',
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-              ),
+              child: _buildAppBarProfile(),
             ),
-            centerTitle: false,
-            actions: [
-              AnimatedOpacity(
-                opacity: (1.0 - _pullProgress),
-                duration: Duration(milliseconds: 150),
-                curve: Curves.easeInOut,
-                child:
-                    widget.searchQuery.isNotEmpty
-                        ? GestureDetector(
-                          onTap: widget.onSearchChipTap,
-                          child: Container(
-                            margin: const EdgeInsets.only(right: 8),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surface.withOpacity(0.6),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant
-                                      .withOpacity(0.7),
-                                  width: 1.2,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const SizedBox(width: 8),
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Text(
-                                      widget.searchQuery,
-                                      style: TextStyle(
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface,
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  GestureDetector(
-                                    onTap: widget.onClearSearch,
-                                    child: Icon(
-                                      Icons.close,
-                                      size: 22,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant
-                                          .withOpacity(0.9),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        )
-                        : const SizedBox.shrink(),
-              ),
-            ],
+            centerTitle: true,
           ),
           SliverToBoxAdapter(
             child: Container(
@@ -515,6 +459,40 @@ class _SearchResultsViewState extends State<SearchResultsView> {
     );
   }
 
+  Widget _buildAppBarProfile() {
+    if (widget.posts.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final safeIndex = _currentIndex.clamp(0, widget.posts.length - 1);
+    final post = widget.posts[safeIndex];
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CommonProfileAvatar(
+          imageUrl: post.authorProfileImageUrl,
+          username: post.author,
+          size: 28,
+          borderWidth: 0,
+          borderColor: Colors.transparent,
+          backgroundColor: Colors.transparent,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          post.author,
+          style: TextStyle(
+            color: onSurface,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _textArea(BuildContext context) {
     if (widget.posts.isEmpty) {
       return const SizedBox.shrink();
@@ -528,7 +506,7 @@ class _SearchResultsViewState extends State<SearchResultsView> {
         crossAxisAlignment: CrossAxisAlignment.center,
         mainAxisAlignment: MainAxisAlignment.start,
         children: [
-          SizedBox(height: 10),
+          SizedBox(height: 30),
           Text(
             post.title,
             textAlign: TextAlign.center,
@@ -538,7 +516,7 @@ class _SearchResultsViewState extends State<SearchResultsView> {
               fontWeight: FontWeight.bold,
               letterSpacing: -0.2,
             ),
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
           Expanded(

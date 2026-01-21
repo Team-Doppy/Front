@@ -10,6 +10,8 @@ import 'package:doppy/image/group_image_layout_selector.dart';
 import 'package:doppy/utils/image_size_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/editor/component/clip_component.dart';
+import 'package:doppy/pages/components/search_video_widgets.dart'
+    show ThumbnailVideoPlayer;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -83,6 +85,16 @@ class MediaPickerResult {
 enum MediaType { video, image }
 
 class _MediaPickerScreenState extends State<MediaPickerScreen> {
+  static const Duration _kFadeRouteDuration = Duration(milliseconds: 180);
+
+  Widget _buildUnifiedSpinner() {
+    return SizedBox(
+      width: 24,
+      height: 24,
+      child: CircularProgressIndicator(strokeWidth: 4, color: Colors.white),
+    );
+  }
+
   // 🎯 현재 열려있는 MediaPickerScreen 인스턴스 추적 (외부 새로고침용)
   static _MediaPickerScreenState? _currentInstance;
   List<AssetEntity> _media = [];
@@ -167,6 +179,12 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   @override
   void initState() {
     super.initState();
+    // ✅ 이 화면으로 들어오면, 기존에 재생되던 영상은 모두 중지한다.
+    // (피커 진입 중에도 백그라운드에서 영상이 재생되면 UX가 망가짐)
+    // ✅ 재생 토글이 꼬여도 "피커가 최상단"인 동안은 풀 자체가 play를 시도하지 않게 가드한다.
+    ThumbnailVideoPlayer.setGlobalPaused(true);
+    cleanupAllVideoPlayers();
+    muteAllVideos();
     // 🎯 현재 인스턴스 등록
     _currentInstance = this;
 
@@ -188,8 +206,6 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
     // 🎯 스크롤 리스너 추가 (페이지네이션)
     _scrollController.addListener(_onScroll);
-
-    muteAllVideos();
 
     // ✅ 첫 프레임(전환 애니메이션)을 먼저 확보한 뒤 권한/앨범/첫 페이지를 로드한다.
     // 탭 직후의 "멈춤"을 줄이는 핵심 포인트.
@@ -216,6 +232,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     _cachedAllAlbum = null;
     _cachedAllAlbumType = null;
 
+    // ✅ 피커가 닫히면 전역 pause 가드를 해제한다.
+    // (실제 재생 재개는 각 화면의 autoPlay/가시성 로직이 담당)
+    ThumbnailVideoPlayer.setGlobalPaused(false);
     super.dispose();
   }
 
@@ -713,17 +732,21 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
       if (imageBytesList.isEmpty || !mounted) return;
 
-      // 이미지 편집 화면으로 이동
+      // 이미지 편집 화면으로 이동 (페이드 전환으로 통일)
+      bool _isEditorSubmitting = false;
       await Navigator.push<void>(
         context,
-        MaterialPageRoute(
-          builder: (editorContext) {
+        PageRouteBuilder(
+          transitionDuration: _kFadeRouteDuration,
+          reverseTransitionDuration: _kFadeRouteDuration,
+          pageBuilder: (context, animation, secondaryAnimation) {
             return SimpleImageEditorScreen(
               imageBytesList: imageBytesList,
               onDone: (editorContext, result) async {
-                if (_isSubmitting) return;
+                // ✅ 편집 화면 내 "완료" 중복 탭 방지 (피커의 _isSubmitting과 분리)
+                if (_isEditorSubmitting) return;
                 if (!mounted) return;
-                _isSubmitting = true;
+                _isEditorSubmitting = true;
 
                 // ✅ SimpleImageEditorScreen 반환값 호환:
                 // - 단일: Uint8List
@@ -808,16 +831,8 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                         context: context,
                         barrierDismissible: false,
                         builder:
-                            (dialogContext) => Center(
-                              child: SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 4,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
+                            (dialogContext) =>
+                                Center(child: _buildUnifiedSpinner()),
                       );
                     }
                     try {
@@ -856,7 +871,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
                 // ✅ 노드 추가/리플레이스 완료 이후에만 닫기 (타이밍 보장)
                 final ok = await _runBeforePop(pickerResult);
                 if (!ok) {
-                  _isSubmitting = false; // ✅ 실패 시 재시도 가능
+                  _isEditorSubmitting = false; // ✅ 실패 시 재시도 가능
                   return;
                 }
                 if (!mounted) return;
@@ -872,7 +887,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
               },
             );
           },
-          fullscreenDialog: true,
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
         ),
       );
     } catch (e) {
@@ -915,81 +932,83 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       // 🎯 편집 화면에서 "다음"을 누르면 편집 화면을 닫지 않고 트림 화면으로 push
       await Navigator.push<void>(
         context,
-        MaterialPageRoute(
-          builder:
-              (editorContext) => SimpleVideoEditorScreen(
-                videoFile: file,
-                doneLabelOverride: AppLocalizations.of(
-                  context,
-                ).t('next'), // "추가" 대신 "다음"으로 변경
-                onDone: (editorContext, result) async {
-                  // VideoEditSpec을 받아서 편집 화면을 닫지 않고 트림 화면으로 이동
-                  if (result is VideoEditSpec && editorContext.mounted) {
-                    // 편집 spec 저장
-                    _pendingVideoEditSpec = result;
-                    debugPrint(
-                      '[MediaPicker] ✅ _pendingVideoEditSpec 저장: cropRectImage=${result.cropRectImage}, brightness=${result.brightness}, contrast=${result.contrast}',
-                    );
+        PageRouteBuilder(
+          transitionDuration: _kFadeRouteDuration,
+          reverseTransitionDuration: _kFadeRouteDuration,
+          pageBuilder: (context, animation, secondaryAnimation) {
+            return SimpleVideoEditorScreen(
+              videoFile: file,
+              doneLabelOverride: AppLocalizations.of(
+                context,
+              ).t('next'), // "추가" 대신 "다음"으로 변경
+              onDone: (editorContext, result) async {
+                // VideoEditSpec을 받아서 편집 화면을 닫지 않고 트림 화면으로 이동
+                if (result is VideoEditSpec && editorContext.mounted) {
+                  // 편집 spec 저장
+                  _pendingVideoEditSpec = result;
+                  debugPrint(
+                    '[MediaPicker] ✅ _pendingVideoEditSpec 저장: cropRectImage=${result.cropRectImage}, brightness=${result.brightness}, contrast=${result.contrast}',
+                  );
 
-                    // 편집 화면을 닫지 않고 트림 화면을 push (편집 화면이 스택에 남아있음)
-                    final trimResult = await Navigator.push<VideoTrimResult>(
-                      editorContext,
-                      PageRouteBuilder(
-                        pageBuilder:
-                            (context, animation, secondaryAnimation) =>
-                                VideoTrimScreen(
-                                  videoFile: file,
-                                  videoDuration: duration,
-                                  editSpec: result,
-                                  fromEditor: true,
-                                ),
-                        transitionDuration: const Duration(milliseconds: 200),
-                        reverseTransitionDuration: const Duration(
-                          milliseconds: 200,
-                        ),
-                        transitionsBuilder: (
-                          context,
-                          animation,
-                          secondaryAnimation,
-                          child,
-                        ) {
-                          return FadeTransition(
-                            opacity: animation,
-                            child: child,
-                          );
-                        },
+                  // 편집 화면을 닫지 않고 트림 화면을 push (편집 화면이 스택에 남아있음)
+                  final trimResult = await Navigator.push<VideoTrimResult>(
+                    editorContext,
+                    PageRouteBuilder(
+                      pageBuilder:
+                          (context, animation, secondaryAnimation) =>
+                              VideoTrimScreen(
+                                videoFile: file,
+                                videoDuration: duration,
+                                editSpec: result,
+                                fromEditor: true,
+                              ),
+                      transitionDuration: const Duration(milliseconds: 200),
+                      reverseTransitionDuration: const Duration(
+                        milliseconds: 200,
                       ),
-                    );
+                      transitionsBuilder: (
+                        context,
+                        animation,
+                        secondaryAnimation,
+                        child,
+                      ) {
+                        return FadeTransition(opacity: animation, child: child);
+                      },
+                    ),
+                  );
 
-                    // 트림 결과를 MediaPicker로 전달
-                    if (trimResult != null && editorContext.mounted) {
-                      // fromEditor: true인 경우 편집 화면도 pop (트림 화면은 이미 pop됨)
-                      Navigator.of(editorContext).pop();
-                      if (mounted) {
-                        final trim = trimResult.trim;
-                        debugPrint(
-                          '[MediaPicker] 🎯 MediaPickerResult 생성: trimSpec=start=${trim.startSeconds}, end=${trim.endSeconds}, editSpec=${_pendingVideoEditSpec != null ? "crop=${_pendingVideoEditSpec!.cropRectImage != null}, brightness=${_pendingVideoEditSpec!.brightness}" : "null"}',
-                        );
-                        widget.onMediaSelected(file);
-                        await _popWithResult(
-                          MediaPickerResult(
-                            files: [file],
-                            selectedMediaType: MediaType.video,
-                            thumbnailPath: trimResult.thumbnailPath,
-                            trimSpec: trim,
-                            editSpec: _pendingVideoEditSpec,
-                          ),
-                        );
-                        _pendingVideoEditSpec = null;
-                      }
-                    } else if (trimResult == null && editorContext.mounted) {
-                      // 트림에서 뒤로 가면 편집 화면으로 돌아감 (자동으로 pop됨)
-                      // 편집 화면은 그대로 유지되므로 아무것도 하지 않음
+                  // 트림 결과를 MediaPicker로 전달
+                  if (trimResult != null && editorContext.mounted) {
+                    // fromEditor: true인 경우 편집 화면도 pop (트림 화면은 이미 pop됨)
+                    Navigator.of(editorContext).pop();
+                    if (mounted) {
+                      final trim = trimResult.trim;
+                      debugPrint(
+                        '[MediaPicker] 🎯 MediaPickerResult 생성: trimSpec=start=${trim.startSeconds}, end=${trim.endSeconds}, editSpec=${_pendingVideoEditSpec != null ? "crop=${_pendingVideoEditSpec!.cropRectImage != null}, brightness=${_pendingVideoEditSpec!.brightness}" : "null"}',
+                      );
+                      widget.onMediaSelected(file);
+                      await _popWithResult(
+                        MediaPickerResult(
+                          files: [file],
+                          selectedMediaType: MediaType.video,
+                          thumbnailPath: trimResult.thumbnailPath,
+                          trimSpec: trim,
+                          editSpec: _pendingVideoEditSpec,
+                        ),
+                      );
+                      _pendingVideoEditSpec = null;
                     }
+                  } else if (trimResult == null && editorContext.mounted) {
+                    // 트림에서 뒤로 가면 편집 화면으로 돌아감 (자동으로 pop됨)
+                    // 편집 화면은 그대로 유지되므로 아무것도 하지 않음
                   }
-                },
-              ),
-          fullscreenDialog: true,
+                }
+              },
+            );
+          },
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
         ),
       );
 
@@ -1024,97 +1043,98 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     try {
       debugPrint('그룹이미지: ${selectedAssets.length}개 이미지');
 
-      // 🎯 레이아웃 선택 화면을 모달 바텀시트로 표시 (AssetEntity만 사용)
-      final layout = await GroupImageLayoutSelector.showLayoutSelector(
+      // 🎯 레이아웃 선택 화면을 전체 화면으로 표시 (AssetEntity만 사용)
+      // 🎯 onSelected 콜백을 사용하여 레이아웃 선택 후 모든 처리를 완료한 다음
+      // 레이아웃 선택 화면과 피커 화면을 동시에 닫기
+      final pickerNavigator = Navigator.of(context);
+      await GroupImageLayoutSelector.showLayoutSelector(
         context: context,
         previewAssets: selectedAssets,
-      );
+        onSelected: (selectorContext, layout) async {
+          // 🎯 레이아웃 선택 화면 컨텍스트(selectorContext)로만 선택 화면을 닫는다.
 
-      if (layout == null || !mounted) {
-        debugPrint('[MediaPicker] ⚠️ 레이아웃 선택 취소됨');
-        return;
-      }
-
-      if (_isSubmitting) return;
-      _isSubmitting = true;
-
-      debugPrint(
-        '[MediaPicker] ✅ 그룹이미지 선택 완료: ${selectedAssets.length}개, 레이아웃: $layout',
-      );
-
-      // ✅ 선택된 이미지들을 File로 변환 (결과 반환용)
-      final List<File> imageFiles = [];
-      for (final asset in selectedAssets) {
-        final file = await asset.originFile;
-        if (file != null) {
-          imageFiles.add(file);
-        }
-      }
-
-      if (imageFiles.isEmpty || !mounted) return;
-
-      // ✅ 노드 삽입 전에 이미지 크기를 미리 측정해서
-      // Row/PageView가 첫 프레임부터 정확한 높이로 그려지게 한다.
-      Map<String, dynamic>? preDimensions;
-      if (layout != GroupImageLayout.individual) {
-        // 간단한 로딩 오버레이
-        if (mounted) {
-          showDialog<void>(
-            context: context,
-            barrierDismissible: false,
-            builder:
-                (dialogContext) => Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 4,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
+          debugPrint(
+            '[MediaPicker] ✅ 그룹이미지 선택 완료: ${selectedAssets.length}개, 레이아웃: $layout',
           );
-        }
-        try {
-          final dims = <String, dynamic>{};
-          for (final f in imageFiles) {
-            final path = f.path;
-            final size = await ImageSizeUtils.extractSizeFromImageProvider(
-              path,
-            );
-            if (size == null) continue;
-            final entry = {
-              'width': size.width.round(),
-              'height': size.height.round(),
-            };
-            dims[path] = entry;
-            dims['file://$path'] = entry;
+
+          // ✅ 선택된 이미지들을 File로 변환 (결과 반환용)
+          final List<File> imageFiles = [];
+          for (final asset in selectedAssets) {
+            final file = await asset.originFile;
+            if (file != null) {
+              imageFiles.add(file);
+            }
           }
-          preDimensions = dims.isNotEmpty ? dims : null;
-        } finally {
+
+          if (imageFiles.isEmpty || !mounted) {
+            Navigator.of(selectorContext).pop(); // 레이아웃 선택 화면만 닫기
+            return;
+          }
+
+          // ✅ 노드 삽입 전에 이미지 크기를 미리 측정해서
+          // Row/PageView가 첫 프레임부터 정확한 높이로 그려지게 한다.
+          Map<String, dynamic>? preDimensions;
+          if (layout != GroupImageLayout.individual) {
+            // 간단한 로딩 오버레이
+            if (selectorContext.mounted) {
+              showDialog<void>(
+                context: selectorContext,
+                barrierDismissible: false,
+                builder:
+                    (dialogContext) => Center(child: _buildUnifiedSpinner()),
+              );
+            }
+            try {
+              final dims = <String, dynamic>{};
+              for (final f in imageFiles) {
+                final path = f.path;
+                final size = await ImageSizeUtils.extractSizeFromImageProvider(
+                  path,
+                );
+                if (size == null) continue;
+                final entry = {
+                  'width': size.width.round(),
+                  'height': size.height.round(),
+                };
+                dims[path] = entry;
+                dims['file://$path'] = entry;
+              }
+              preDimensions = dims.isNotEmpty ? dims : null;
+            } finally {
+              if (selectorContext.mounted) {
+                // 로딩 오버레이 닫기
+                Navigator.of(selectorContext, rootNavigator: true).pop();
+              }
+            }
+          }
+
+          final result = MediaPickerResult(
+            files: imageFiles,
+            selectedMediaType: MediaType.image,
+            groupLayout: layout,
+            imageDimensions: preDimensions,
+          );
+
+          // ✅ 노드 추가/리플레이스 완료 이후에만 피커 닫기
+          final ok = await _runBeforePop(result);
+          if (!ok) {
+            // ✅ 실패 시 재시도 가능
+            if (selectorContext.mounted) {
+              Navigator.of(selectorContext).pop(); // 레이아웃 선택 화면만 닫기
+            }
+            return;
+          }
+          if (!mounted) return;
+
+          // 🎯 성공 시: 레이아웃 선택 화면 닫기 → 즉시 피커 화면 닫기(결과 전달)
+          if (selectorContext.mounted) {
+            Navigator.of(selectorContext).pop();
+          }
           if (mounted) {
-            // 로딩 오버레이 닫기
-            Navigator.of(context, rootNavigator: true).pop();
+            pickerNavigator.pop(result);
           }
-        }
-      }
-
-      final result = MediaPickerResult(
-        files: imageFiles,
-        selectedMediaType: MediaType.image,
-        groupLayout: layout,
-        imageDimensions: preDimensions,
+        },
       );
-
-      // ✅ 노드 추가/리플레이스 완료 이후에만 피커 닫기
-      final ok = await _runBeforePop(result);
-      if (!ok) {
-        // ✅ 실패 시 재시도 가능
-        _isSubmitting = false;
-        return;
-      }
-      if (!mounted) return;
-      Navigator.of(context).pop(result);
     } catch (e) {
       debugPrint('그룹이미지 오류: $e');
       if (mounted) {
@@ -1810,15 +1830,19 @@ class _VideoThumbnailWidget extends StatelessWidget {
           if (isSelected)
             Positioned.fill(
               child: Container(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.6),
               ),
             ),
           // 선택 표시 (우측 상단)
           if (isSelected)
             Positioned(
-              top: 8,
-              right: 8,
-              child: Icon(Icons.check, color: Colors.white, size: 20),
+              top: 0,
+              bottom: 0,
+              right: 0,
+              left: 0,
+              child: Center(
+                child: Icon(Icons.check, color: Colors.white, size: 60),
+              ),
             ),
         ],
       ),
@@ -1908,15 +1932,18 @@ class _ImageThumbnailWidget extends StatelessWidget {
           if (isSelected)
             Positioned.fill(
               child: Container(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.6),
               ),
             ),
-          // 선택 표시 (우측 상단)
           if (isSelected)
             Positioned(
-              top: 8,
-              right: 8,
-              child: Icon(Icons.check, color: Colors.white, size: 20),
+              top: 0,
+              bottom: 0,
+              right: 0,
+              left: 0,
+              child: Center(
+                child: Icon(Icons.check, color: Colors.white, size: 60),
+              ),
             ),
         ],
       ),

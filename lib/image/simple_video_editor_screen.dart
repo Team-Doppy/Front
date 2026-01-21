@@ -7,7 +7,6 @@ import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/svg.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:doppy/image/video_edit_spec.dart';
@@ -30,7 +29,7 @@ import 'speed_editor.dart';
 import 'utils/filter_presets.dart';
 
 /// 간단한 커스텀 비디오 편집 화면
-/// 바텀시트 기반 UI, Undo/Redo, 실시간 미리보기 제공
+/// 바텀시트 기반 UI, 실시간 미리보기 제공
 class SimpleVideoEditorScreen extends StatefulWidget {
   const SimpleVideoEditorScreen({
     super.key,
@@ -1022,10 +1021,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
   // 비디오별 편집 상태 관리
   final Map<int, _VideoEditState> _videoEditStates = {};
 
-  // Undo/Redo 스택 (비디오별, "Apply 단위" 스냅샷) - 최대 20개로 제한됨
-  final Map<int, List<_EditSnapshot>> _history = {};
-  final Map<int, List<_EditSnapshot>> _redoStack = {};
-
   // 바텀시트 관련
   bool _isBottomSheetOpen = false;
   late AnimationController _bottomSheetController;
@@ -1075,9 +1070,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
     );
   }
 
-  // UI 토글
-  bool _showUI = true;
-
   // 필터 스와이프 관련
   bool _hasSwiped = false;
 
@@ -1094,6 +1086,9 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
 
   // ✅ 크롭 Apply로 닫히는 동안(바텀시트 내려오는 중)엔 "커밋 프리뷰"를 먼저 보여준다
   bool _isClosingAfterCropApply = false;
+
+  // ✅ 크롭 "취소/뒤로"로 닫히는 동안: 크롭 박스/핸들을 즉시 숨기기 위해 사용
+  bool _isClosingAfterCropCancel = false;
 
   // 크롭 관련 상태
   final Map<int, Size> _imageDisplaySizes = {}; // 이미지별 표시 크기
@@ -1230,10 +1225,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
       _initializeVideoController(i, _videos[i]);
       // ✅ 원본 비디오 컨트롤러는 미리 만들지 않음 (불필요한 2번째 컨트롤러/동시재생 방지)
       // 필요 시(정말 원본 복원이 필요할 때) lazy로 초기화한다.
-      // ✅ 히스토리 시드(표준): 파일이 아니라 "편집 상태 스냅샷"을 1개 넣어둔다
-      final s = _videoEditStates.putIfAbsent(i, () => _VideoEditState());
-      _history.putIfAbsent(i, () => []).add(_EditSnapshot.fromState(s));
-      _redoStack.putIfAbsent(i, () => []).clear();
     }
   }
 
@@ -1362,6 +1353,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             // 재생/일시정지 버튼
+            const SizedBox(width: 4),
             GestureDetector(
               onTap: () {
                 if (isPlaying) {
@@ -1374,10 +1366,10 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
               child: Icon(
                 isPlaying ? Icons.pause : Icons.play_arrow,
                 color: fgColor,
-                size: 24,
+                size: 26,
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 16),
             // 소리 버튼
             GestureDetector(
               onTap: () {
@@ -1387,7 +1379,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
               child: Icon(
                 isMuted ? Icons.volume_off : Icons.volume_up,
                 color: fgColor,
-                size: 24,
+                size: 26,
               ),
             ),
           ],
@@ -1408,8 +1400,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
     // ✅ 썸네일 캐시 정리
     _thumbnailCache.clear();
     _thumbnailFutures.clear();
-    _history.clear();
-    _redoStack.clear();
 
     _pageController.dispose();
     _bottomSheetController.dispose();
@@ -1545,7 +1535,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
           state.blur = 0.0;
           break;
       }
-      _saveToHistorySnapshot(_currentIndex);
     });
   }
 
@@ -1580,53 +1569,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
   // (표준 비파괴 편집) bytes를 중간에 교체하지 않으므로
   // _onImageEdited / _onCropApplied 같은 "bytes 커밋" 루틴은 사용하지 않는다.
 
-  void _saveToHistorySnapshot(int index) {
-    final history = _history.putIfAbsent(index, () => []);
-    final snap = _snapshotOf(index);
-
-    if (history.isEmpty) {
-      history.add(snap);
-      _redoStack.putIfAbsent(index, () => []).clear();
-      return;
-    }
-
-    // ✅ 연속 중복 스냅샷 방지 (Apply 눌렀는데 변화 없으면 스택 증가 X)
-    if (history.last.sameAs(snap)) return;
-
-    history.add(snap);
-    _redoStack.putIfAbsent(index, () => []).clear();
-    if (history.length > 20) {
-      history.removeAt(0);
-    }
-  }
-
-  void _undo() {
-    final history = _history[_currentIndex];
-    if (history == null || history.length <= 1) return;
-
-    history.removeLast();
-    final previous = history.last;
-    _redoStack
-        .putIfAbsent(_currentIndex, () => [])
-        .add(_snapshotOf(_currentIndex));
-    setState(() {
-      _applySnapshotToIndex(_currentIndex, previous);
-    });
-  }
-
-  void _redo() {
-    final redoStack = _redoStack[_currentIndex];
-    if (redoStack == null || redoStack.isEmpty) return;
-
-    final redoSnap = redoStack.removeLast();
-    _history
-        .putIfAbsent(_currentIndex, () => [])
-        .add(_snapshotOf(_currentIndex));
-    setState(() {
-      _applySnapshotToIndex(_currentIndex, redoSnap);
-    });
-  }
-
   Future<void> _handleDone() async {
     if (_isExporting) return;
     setState(() => _isExporting = true);
@@ -1644,9 +1586,20 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         await _pauseAndDisposeAllControllers();
 
         if (widget.onDone != null) {
-          await widget.onDone!(context, spec);
-          return;
+          debugPrint('[SimpleVideoEditor] ✅ onDone 콜백 호출 시작');
+          try {
+            await widget.onDone!(context, spec);
+            debugPrint('[SimpleVideoEditor] ✅ onDone 콜백 완료');
+            return;
+          } catch (e, stackTrace) {
+            debugPrint('[SimpleVideoEditor] ❌ onDone 콜백 예외 발생: $e');
+            debugPrint('[SimpleVideoEditor] 스택 트레이스: $stackTrace');
+            // 예외 발생 시에도 편집 화면은 유지 (onDone 콜백에서 처리하도록)
+            if (mounted) setState(() => _isExporting = false);
+            return;
+          }
         }
+        debugPrint('[SimpleVideoEditor] ⚠️ onDone이 null이어서 Navigator.pop 호출');
         Navigator.pop(context, spec);
         return;
       }
@@ -1662,9 +1615,22 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
       await _pauseAndDisposeAllControllers();
 
       if (widget.onDone != null) {
-        await widget.onDone!(context, specs);
-        return;
+        debugPrint('[SimpleVideoEditor] ✅ onDone 콜백 호출 시작 (다중 비디오)');
+        try {
+          await widget.onDone!(context, specs);
+          debugPrint('[SimpleVideoEditor] ✅ onDone 콜백 완료 (다중 비디오)');
+          return;
+        } catch (e, stackTrace) {
+          debugPrint('[SimpleVideoEditor] ❌ onDone 콜백 예외 발생 (다중 비디오): $e');
+          debugPrint('[SimpleVideoEditor] 스택 트레이스: $stackTrace');
+          // 예외 발생 시에도 편집 화면은 유지 (onDone 콜백에서 처리하도록)
+          if (mounted) setState(() => _isExporting = false);
+          return;
+        }
       }
+      debugPrint(
+        '[SimpleVideoEditor] ⚠️ onDone이 null이어서 Navigator.pop 호출 (다중 비디오)',
+      );
       Navigator.pop(context, specs);
       return;
     } finally {
@@ -1672,7 +1638,14 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
       debugPrint(
         '[SimpleVideoEditor] 완료(spec 반환) 소요: ${sw.elapsedMilliseconds}ms',
       );
-      if (mounted) setState(() => _isExporting = false);
+      // ✅ 트리머로 push했다가 다시 돌아오는 플로우에서는 이 화면이 계속 살아있다.
+      // 이때 _isExporting을 false로 복구하지 않으면 모든 버튼/툴바가 비활성화되어
+      // "아무 것도 클릭이 안 되는" 상태가 된다.
+      //
+      // 화면이 이미 pop된 경우엔 mounted=false라서 안전하다.
+      if (mounted) {
+        setState(() => _isExporting = false);
+      }
     }
   }
 
@@ -1773,8 +1746,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                     builder: (context, child) {
                       final p = _bottomSheetAnimation.value;
                       final currentHeight = kToolbarHeight * (1 - p);
-                      final opacity =
-                          _showUI && !_isBottomSheetOpen ? 1.0 : 0.0;
+                      final opacity = !_isBottomSheetOpen ? 1.0 : 0.0;
 
                       if (currentHeight <= 0) {
                         return const SizedBox.shrink();
@@ -1786,7 +1758,10 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                           child: AnimatedOpacity(
                             opacity: opacity,
                             duration: const Duration(milliseconds: 200),
+                            // ✅ 앱바 영역도 히트테스트되게 만들어(투명 영역 포함),
+                            //    뒤의 배경 GestureDetector(onTap: pop)로 터치가 관통되지 않도록 한다.
                             child: Container(
+                              color: Colors.transparent,
                               height: currentHeight,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
@@ -1820,56 +1795,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                                         ),
                                       ),
                                       if (!_isBottomSheetOpen) ...[
-                                        GestureDetector(
-                                          onTap:
-                                              ((_history[_currentIndex]
-                                                              ?.length ??
-                                                          0) >
-                                                      1)
-                                                  ? (_isExporting
-                                                      ? null
-                                                      : _undo)
-                                                  : null,
-                                          child: SvgPicture.asset(
-                                            'assets/icons/editor_undo.svg',
-                                            width: 30,
-                                            height: 30,
-                                            colorFilter: ColorFilter.mode(
-                                              ((_history[_currentIndex]
-                                                              ?.length ??
-                                                          0) >
-                                                      1)
-                                                  ? fgColor
-                                                  : fgColor.withOpacity(0.3),
-                                              BlendMode.srcIn,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        GestureDetector(
-                                          onTap:
-                                              (_redoStack[_currentIndex]
-                                                          ?.isNotEmpty ??
-                                                      false)
-                                                  ? (_isExporting
-                                                      ? null
-                                                      : _redo)
-                                                  : null,
-                                          child: SvgPicture.asset(
-                                            'assets/icons/editor_redo.svg',
-                                            width: 30,
-                                            height: 30,
-                                            colorFilter: ColorFilter.mode(
-                                              (_redoStack[_currentIndex]
-                                                          ?.isNotEmpty ??
-                                                      false)
-                                                  ? fgColor
-                                                  : fgColor.withOpacity(0.3),
-                                              BlendMode.srcIn,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 16),
                                         // 재생/뮤트 버튼
                                         _buildAppBarPlaybackControls(fgColor),
                                       ],
@@ -1981,9 +1906,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                       final toolbarFactor = (1.0 - _bottomSheetAnimation.value)
                           .clamp(0.0, 1.0);
 
-                      // UI 숨김 상태면 "보이진 않되" 레이아웃 점프 방지
-                      final opacity = _showUI ? 1.0 : 0.0;
-
                       return ClipRect(
                         child: Align(
                           alignment: Alignment.topCenter,
@@ -1991,7 +1913,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                           child: SizedBox(
                             height: _mainToolbarHeight,
                             child: Opacity(
-                              opacity: opacity * toolbarFactor,
+                              opacity: toolbarFactor,
                               child: IgnorePointer(
                                 ignoring: toolbarFactor < 0.99,
                                 child: Stack(
@@ -2039,6 +1961,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                       }
 
                       return GestureDetector(
+                        onTap: () {},
                         onPanStart: _onBottomSheetDragStart,
                         onPanUpdate: _onBottomSheetDragUpdate,
                         onPanEnd: _onBottomSheetDragEnd,
@@ -2354,9 +2277,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                                                         // ignore: discarded_futures
                                                         c.setPlaybackSpeed(1.0);
                                                       }
-                                                      _saveToHistorySnapshot(
-                                                        _currentIndex,
-                                                      );
                                                       setState(() {});
                                                     },
                                                     behavior:
@@ -2483,26 +2403,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
               },
             ),
           ),
-
-          // ✅ 완료(export) 중에는 즉시 피드백(로딩 오버레이)
-          if (_isExporting)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Container(
-                  color: bgColor.withOpacity(0.25),
-                  child: Center(
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 4,
-                        color: fgColor,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -3031,10 +2931,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
             final preview = GestureDetector(
               // ✅ GestureDetector를 Stack 최상위로 올려서 모든 레이어의 이벤트를 받음
               behavior: HitTestBehavior.translucent,
-              onTap:
-                  _isBottomSheetOpen
-                      ? null
-                      : _toggleUI, // ✅ 바텀시트 열려있을 때는 UI 토글 비활성화
+              onTap: null, // ✅ UI 토글 기능 제거 (버튼 투명화 문제 해결)
               // ✅ 핀치/팬 통합: crop 모드에서는 ScaleGesture로 처리 (순수 좌표계)
               onScaleStart:
                   _editMode == _EditMode.crop
@@ -3068,7 +2965,11 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
               child: Stack(
                 children: [
                   // 1️⃣ 비디오 레이어 (transform 적용)
+                  // ✅ "적용"으로 닫히는 중에는 크롭 오버레이/전체 프레임을 보여주지 않고,
+                  // 아래 else 분기(클립된 프리뷰)로 떨어져서 바로 검정 배경 + 크롭 영역만 보여주게 한다.
                   if (_editMode == _EditMode.crop &&
+                      !_isClosingAfterCropApply &&
+                      !_isClosingAfterCropCancel &&
                       currentImageRectForPreview != null &&
                       imageRectForCrop != null)
                     // ✅ 크롭 모드: Positioned를 Stack의 직접 자식으로 배치 + 회전 적용
@@ -3205,6 +3106,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
                   // ✅ 드래그 중이면 고정된 cropRectScreen 전달
                   if (_editMode == _EditMode.crop &&
                       !_isClosingAfterCropApply &&
+                      !_isClosingAfterCropCancel &&
                       state.cropState.isCropRectInitialized &&
                       imageRectForCrop != null &&
                       cropRectScreen != null &&
@@ -3315,11 +3217,31 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
             // ✅ 핸들들은 크롭 모드일 때만 표시 (조정은 크롭 옵션일 때만)
             return Stack(
               children: [
+                // ✅ 크롭이 "적용된 상태"에서는 crop 영역 밖이 투명으로 비치지 않도록
+                // 즉시 "테마 배경색"으로 바탕을 깐다. (검정 고정 X)
+                if ((_editMode != _EditMode.crop ||
+                        _isClosingAfterCropApply ||
+                        _isClosingAfterCropCancel) &&
+                    state.cropState.isCropRectInitialized &&
+                    state.cropState.cropRectImage != null)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Builder(
+                        builder: (context) {
+                          final cs = Theme.of(context).colorScheme;
+                          return ColoredBox(color: cs.background);
+                        },
+                      ),
+                    ),
+                  ),
+
                 // ✅ 비디오와 핸들 (패딩 없이 직접 배치)
                 preview,
                 // 2️⃣ 크롭 오버레이 레이어 (순수 좌표계)
                 // ✅ 크롭 모드일 때만 크롭박스 표시
                 if (_editMode == _EditMode.crop &&
+                    !_isClosingAfterCropApply &&
+                    !_isClosingAfterCropCancel &&
                     cropRectScreen != null &&
                     imageRectForCrop != null)
                   Builder(
@@ -3407,14 +3329,6 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
     return result;
   }
 
-  void _toggleUI() {
-    if (!_isBottomSheetOpen) {
-      setState(() {
-        _showUI = !_showUI;
-      });
-    }
-  }
-
   void _openCropPanel() {
     final state = _getCurrentEditState();
 
@@ -3486,10 +3400,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         _currentIndex,
         () => _snapshotOf(_currentIndex),
       );
-      _panelSessionHistoryLengths.putIfAbsent(
-        _currentIndex,
-        () => _history[_currentIndex]?.length ?? 0,
-      );
+      _panelSessionHistoryLengths.putIfAbsent(_currentIndex, () => 0);
 
       _editMode = _EditMode.filter;
       _isBottomSheetOpen = true;
@@ -3512,10 +3423,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         _currentIndex,
         () => _snapshotOf(_currentIndex),
       );
-      _panelSessionHistoryLengths.putIfAbsent(
-        _currentIndex,
-        () => _history[_currentIndex]?.length ?? 0,
-      );
+      _panelSessionHistoryLengths.putIfAbsent(_currentIndex, () => 0);
 
       _editMode = _EditMode.speed;
       _isBottomSheetOpen = true;
@@ -3540,10 +3448,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         _currentIndex,
         () => _snapshotOf(_currentIndex),
       );
-      _panelSessionHistoryLengths.putIfAbsent(
-        _currentIndex,
-        () => _history[_currentIndex]?.length ?? 0,
-      );
+      _panelSessionHistoryLengths.putIfAbsent(_currentIndex, () => 0);
 
       _editMode = _EditMode.adjust;
       _isBottomSheetOpen = true;
@@ -3554,6 +3459,8 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
   void _closeBottomSheet({required bool cancel}) {
     // ✅ 취소 버튼을 누르거나 바텀시트를 내리면 즉시 크롭박스 숨기기
     if (cancel && _editMode == _EditMode.crop) {
+      // ✅ 뒤로/드래그 닫기 순간에도 크롭박스/핸들을 즉시 숨긴다
+      _isClosingAfterCropCancel = true;
       // ✅ 취소/드래그 닫기: "크롭 진입 전 이미지"로 즉시 복원 (애니메이션 내려가는 동안에도 정상 표시)
       _restoreCropSnapshotIfAny(_currentIndex);
       setState(() {});
@@ -3563,20 +3470,12 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         (_editMode == _EditMode.filter || _editMode == _EditMode.adjust)) {
       // ✅ 조정/필터 취소: 진입 전 스냅샷으로 복원 (기존에 적용되어 있던 값은 유지)
       final snap = _panelSessionSnapshots.remove(_currentIndex);
-      final historyLen = _panelSessionHistoryLengths.remove(_currentIndex);
+      _panelSessionHistoryLengths.remove(_currentIndex);
       if (snap != null) {
         setState(() {
           _applySnapshotToIndex(_currentIndex, snap);
         });
       }
-      // ✅ 취소 시: 세션 중 쌓인 히스토리/리두도 롤백 (적용 전 변경이 남지 않도록)
-      final history = _history[_currentIndex];
-      if (historyLen != null &&
-          history != null &&
-          history.length > historyLen) {
-        history.removeRange(historyLen, history.length);
-      }
-      _redoStack[_currentIndex]?.clear();
     } else {
       // cancel이 아니거나(=적용/완료) 다른 모드면 세션 스냅샷은 정리
       _panelSessionSnapshots.remove(_currentIndex);
@@ -3592,6 +3491,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         _editMode = _EditMode.none;
         _dragOffset = 0.0;
         _isClosingAfterCropApply = false;
+        _isClosingAfterCropCancel = false;
         _isAdjustmentSliderMode = false;
       });
     });
@@ -3756,74 +3656,110 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         state.cropState.isCropRectInitialized = true;
 
         // ✅ 크롭 적용 후: 크롭박스가 화면(옵션 섹션 위 영역)을 꽉 채우도록 조정
+        debugPrint('[SimpleVideoEditor] 🎯 addPostFrameCallback 등록 시작');
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          final availableSize = containerSize;
+          debugPrint('[SimpleVideoEditor] 🎯 addPostFrameCallback 실행 시작');
+          try {
+            if (!mounted) {
+              debugPrint(
+                '[SimpleVideoEditor] ⚠️ addPostFrameCallback: mounted가 false',
+              );
+              return;
+            }
+            final availableSize = containerSize;
 
-          // 현재 화면에서 크롭박스 크기
-          final currentCropWidth = currentCropRectScreen.width;
-          final currentCropHeight = currentCropRectScreen.height;
+            // 현재 화면에서 크롭박스 크기
+            final currentCropWidth = currentCropRectScreen.width;
+            final currentCropHeight = currentCropRectScreen.height;
 
-          double scaleX = availableSize.width / currentCropWidth;
-          double scaleY = availableSize.height / currentCropHeight;
+            if (currentCropWidth <= 0 || currentCropHeight <= 0) {
+              debugPrint(
+                '[SimpleVideoEditor] ⚠️ addPostFrameCallback: 크롭박스 크기가 0 이하',
+              );
+              return;
+            }
 
-          // 비율 유지 + "crop 영역이 화면 안에 완전히 들어오도록(contain)" 최소 스케일 선택
-          // - 가로로 긴 crop(landscape)이면 width 기준(scaleX)이 더 작아져야 함
-          // - 세로로 긴 crop(portrait)이면 height 기준(scaleY)이 더 작아져야 함
-          final targetScaleFactor = math.min(scaleX, scaleY);
+            double scaleX = availableSize.width / currentCropWidth;
+            double scaleY = availableSize.height / currentCropHeight;
 
-          // 새로운 imageScale 계산
-          final newImageScale = state.imageScale * targetScaleFactor;
+            // 비율 유지 + "crop 영역이 화면 안에 완전히 들어오도록(contain)" 최소 스케일 선택
+            // - 가로로 긴 crop(landscape)이면 width 기준(scaleX)이 더 작아져야 함
+            // - 세로로 긴 crop(portrait)이면 height 기준(scaleY)이 더 작아져야 함
+            final targetScaleFactor = math.min(scaleX, scaleY);
 
-          // 새로운 scale로 이미지 rect 계산 (offset=0 기준)
-          final newImageRect = ImageRectUtils.computeImageRect(
-            containerSize: availableSize,
-            imageSize: videoSize,
-            scale: newImageScale,
-            offset: Offset.zero,
-          );
+            // 새로운 imageScale 계산
+            final newImageScale = state.imageScale * targetScaleFactor;
 
-          // 새로운 이미지 rect 기준으로 크롭박스 위치 계산
-          final scaleXNew = newImageRect.width / videoSize.width;
-          final scaleYNew = newImageRect.height / videoSize.height;
-          final newCropRectScreen = Rect.fromLTWH(
-            newImageRect.left + finalCropRectImage.left * scaleXNew,
-            newImageRect.top + finalCropRectImage.top * scaleYNew,
-            finalCropRectImage.width * scaleXNew,
-            finalCropRectImage.height * scaleYNew,
-          );
+            // 새로운 scale로 이미지 rect 계산 (offset=0 기준)
+            final newImageRect = ImageRectUtils.computeImageRect(
+              containerSize: availableSize,
+              imageSize: videoSize,
+              scale: newImageScale,
+              offset: Offset.zero,
+            );
 
-          // 크롭박스 중심을 화면 중심에 맞추도록 offset 조정
-          final containerCenter = Offset(
-            availableSize.width / 2,
-            availableSize.height / 2,
-          );
-          final newCropCenter = newCropRectScreen.center;
-          final offsetDelta = containerCenter - newCropCenter;
+            // 새로운 이미지 rect 기준으로 크롭박스 위치 계산
+            final scaleXNew = newImageRect.width / videoSize.width;
+            final scaleYNew = newImageRect.height / videoSize.height;
+            final newCropRectScreen = Rect.fromLTWH(
+              newImageRect.left + finalCropRectImage.left * scaleXNew,
+              newImageRect.top + finalCropRectImage.top * scaleYNew,
+              finalCropRectImage.width * scaleXNew,
+              finalCropRectImage.height * scaleYNew,
+            );
 
-          // imageScale과 imageOffset 업데이트
-          setState(() {
-            state.imageScale = newImageScale;
-            // ✅ imageOffset은 screen px 기준 (computeImageRect에서 그대로 더해짐)
-            // scale로 나누면 누적 오차/드리프트가 발생한다.
-            state.imageOffset = offsetDelta;
-            // ✅ 조정/필터 모드의 "크기 고정 캐시"도 커밋된 크기로 갱신
-            _imageDisplaySizes[_currentIndex] = newImageRect.size;
-          });
+            // 크롭박스 중심을 화면 중심에 맞추도록 offset 조정
+            final containerCenter = Offset(
+              availableSize.width / 2,
+              availableSize.height / 2,
+            );
+            final newCropCenter = newCropRectScreen.center;
+            final offsetDelta = containerCenter - newCropCenter;
+
+            // imageScale과 imageOffset 업데이트
+            if (mounted) {
+              setState(() {
+                state.imageScale = newImageScale;
+                // ✅ imageOffset은 screen px 기준 (computeImageRect에서 그대로 더해짐)
+                // scale로 나누면 누적 오차/드리프트가 발생한다.
+                state.imageOffset = offsetDelta;
+                // ✅ 조정/필터 모드의 "크기 고정 캐시"도 커밋된 크기로 갱신
+                _imageDisplaySizes[_currentIndex] = newImageRect.size;
+              });
+              debugPrint(
+                '[SimpleVideoEditor] ✅ addPostFrameCallback: setState 완료',
+              );
+            } else {
+              debugPrint(
+                '[SimpleVideoEditor] ⚠️ addPostFrameCallback: setState 전 mounted가 false',
+              );
+            }
+          } catch (e, stackTrace) {
+            debugPrint('[SimpleVideoEditor] ❌ addPostFrameCallback 예외 발생: $e');
+            debugPrint('[SimpleVideoEditor] 스택 트레이스: $stackTrace');
+          }
+          debugPrint('[SimpleVideoEditor] ✅ addPostFrameCallback 실행 완료');
         });
+        debugPrint('[SimpleVideoEditor] ✅ addPostFrameCallback 등록 완료');
 
         debugPrint(
           '✅ [크롭 적용] cropRectImage 저장: ${state.cropState.cropRectImage}, '
           'videoSize: $videoSize, '
           'currentCropRectScreen: $currentCropRectScreen',
         );
+        debugPrint('[SimpleVideoEditor] ✅ 크롭 적용 if 블록 완료');
+      } else {
+        debugPrint(
+          '[SimpleVideoEditor] ⚠️ 크롭 적용 실패: containerSize 또는 controller가 null',
+        );
       }
     }
 
-    _saveToHistorySnapshot(_currentIndex);
+    debugPrint('[SimpleVideoEditor] ✅ _applyEdit 크롭 모드 처리 완료, 세션 스냅샷 제거 시작');
     // ✅ 적용 후에는 세션 스냅샷 제거 (취소 복원 대상 아님)
     _panelSessionSnapshots.remove(_currentIndex);
     _panelSessionHistoryLengths.remove(_currentIndex);
+    debugPrint('[SimpleVideoEditor] ✅ _applyEdit 완료');
   }
 
   // 크롭 제스처 처리 (VideoCropGestureHandler 위임)
@@ -4262,7 +4198,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         }
       },
       onDragEnd: () {
-        _saveToHistorySnapshot(_currentIndex);
+        // ✅ 슬라이더 드래그 종료
       },
     );
   }
@@ -4302,8 +4238,7 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
         });
       },
       onDragEnd: () {
-        // ✅ 슬라이더 드래그 종료 시 히스토리에 저장 (언두/리두 가능하도록)
-        _saveToHistorySnapshot(_currentIndex);
+        // ✅ 슬라이더 드래그 종료
       },
     );
   }

@@ -94,8 +94,8 @@ class CommonProfileAvatar extends StatelessWidget {
         // ✅ 화질 개선: 캐시 크기를 3배로 증가 (더 선명한 이미지)
         memCacheWidth: (size * 3).round(),
         maxWidthDiskCache: (size * 3).round(),
-        fadeInDuration: const Duration(milliseconds: 0), // 🎯 즉시 표시
-        fadeOutDuration: const Duration(milliseconds: 0), // 🎯 즉시 표시
+        fadeInDuration: const Duration(milliseconds: 200), // 🎯 즉시 표시
+        fadeOutDuration: const Duration(milliseconds: 200), // 🎯 즉시 표시
         // ✅ 고품질 필터링 적용
         filterQuality: FilterQuality.high,
       );
@@ -131,7 +131,7 @@ class CommonProfileAvatar extends StatelessWidget {
           firstLetter,
           style: TextStyle(
             color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-            fontSize: size * 0.4,
+            fontSize: size * 0.3,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -209,8 +209,8 @@ class _StaticAvatarImage extends StatelessWidget {
         // ✅ 화질 개선: Hero 전환용이므로 더 높은 해상도 사용 (4배)
         memCacheWidth: (size * 4).round(),
         maxWidthDiskCache: (size * 4).round(),
-        fadeInDuration: const Duration(milliseconds: 0),
-        fadeOutDuration: const Duration(milliseconds: 0),
+        fadeInDuration: const Duration(milliseconds: 200),
+        fadeOutDuration: const Duration(milliseconds: 200),
         // ✅ 고품질 필터링 적용
         filterQuality: FilterQuality.high,
         // ✅ 잔상 방지: 이전 프레임을 숨기고 새 이미지가 로드될 때만 표시

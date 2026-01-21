@@ -14,8 +14,7 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   final AuthService authService = AuthService();
 
   // 현재 활성 사용자의 데이터 (UI에서 사용)
-  final List<Map<String, dynamic>> _categories = [];
-  final Map<String, List<Map<String, dynamic>>> _postsByCategory = {};
+  final List<Map<String, dynamic>> _posts = [];
   Map<String, dynamic>? _userInfo;
   Map<String, List<Map<String, dynamic>>>? _systemCategoryMappings;
 
@@ -23,15 +22,12 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   NetworkError? _networkError;
 
   // 자식에서 사용할 내부 접근자 (mutable)
-  List<Map<String, dynamic>> get categoriesInternal => _categories;
-  Map<String, List<Map<String, dynamic>>> get postsByCategoryInternal =>
-      _postsByCategory;
+  List<Map<String, dynamic>> get postsInternal => _posts;
   Map<String, dynamic>? get userInfoInternal => _userInfo;
 
   // Protected getter for child classes
   @protected
-  Map<String, List<Map<String, dynamic>>> get postsByCategoryProtected =>
-      _postsByCategory;
+  List<Map<String, dynamic>> get postsProtected => _posts;
   set userInfoInternal(Map<String, dynamic>? v) => _userInfo = v;
   Map<String, List<Map<String, dynamic>>>? get systemCategoryMappingsInternal =>
       _systemCategoryMappings;
@@ -39,9 +35,8 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     Map<String, List<Map<String, dynamic>>>? v,
   ) => _systemCategoryMappings = v;
 
-  // 카테고리 선택 상태 관리
+  // 공개 범위 필터 상태 관리
   BaseFilter _selectedBase = BaseFilter.all;
-  String? _selectedCategoryId;
   bool _isReadOnly = false;
 
   // 페이지네이션 (공통 설정)
@@ -55,31 +50,18 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   String? get username;
 
   // Getters
-  List<Map<String, dynamic>> get categories => List.unmodifiable(_categories);
-  Map<String, List<Map<String, dynamic>>> get postsByCategory =>
-      Map.unmodifiable(_postsByCategory);
+  List<Map<String, dynamic>> get posts => List.unmodifiable(_posts);
   Map<String, dynamic>? get userInfo => _userInfo;
   Map<String, List<Map<String, dynamic>>>? get systemCategoryMappings =>
       _systemCategoryMappings;
 
   BaseFilter get selectedBase => _selectedBase;
-  String? get selectedCategoryId => _selectedCategoryId;
   bool get isReadOnly => _isReadOnly;
   NetworkError? get networkError => _networkError;
 
-  // 기존 호환성을 위한 posts getter
-  List<Map<String, dynamic>> get posts {
-    final allPosts = <Map<String, dynamic>>[];
-    for (final categoryPosts in _postsByCategory.values) {
-      allPosts.addAll(categoryPosts);
-    }
-    return List.unmodifiable(allPosts);
-  }
-
   /// 데이터 클리어
   void clearData() {
-    _categories.clear();
-    _postsByCategory.clear();
+    _posts.clear();
     _userInfo = null;
     _systemCategoryMappings = null;
     _networkError = null;
@@ -91,168 +73,6 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   /// 더 많은 포스트 로드 (추상 메서드)
   Future<void> loadMore();
 
-  /// 특정 포스트 중심 오프셋 조회
-  /// 이미 로드된 포스트는 재사용하고, 누락된 포스트만 API로 조회합니다.
-  Future<void> loadPostsAround(String postId, {int size = 20}) async {
-    if (username == null) {
-      debugPrint('[BaseFeedProvider] loadPostsAround: username이 null입니다');
-      return;
-    }
-
-    try {
-      // 1. 스키마에서 globalIndex 확인
-      final schemaResp = await blogService.getProfileSchema(username!);
-      if (schemaResp['success'] != true) {
-        debugPrint('[BaseFeedProvider] loadPostsAround: 스키마 조회 실패');
-        return;
-      }
-
-      final schemaData = schemaResp['data'] as Map<String, dynamic>?;
-      if (schemaData == null) {
-        debugPrint('[BaseFeedProvider] loadPostsAround: 스키마 데이터가 null입니다');
-        return;
-      }
-
-      // 2. 스키마에서 포스트 ID의 globalIndex 찾기
-      final postsByCategoryData =
-          schemaData['postsByCategory'] as Map<String, dynamic>?;
-      if (postsByCategoryData == null) {
-        debugPrint(
-          '[BaseFeedProvider] loadPostsAround: postsByCategory가 null입니다',
-        );
-        return;
-      }
-
-      Map<String, dynamic>? targetPostOrder;
-      for (final postOrders in postsByCategoryData.values) {
-        if (postOrders is List) {
-          for (final postOrder in postOrders) {
-            if (postOrder is Map<String, dynamic>) {
-              final postIdValue = postOrder['id'];
-              if (postIdValue != null &&
-                  postIdValue.toString() == postId.toString()) {
-                targetPostOrder = postOrder;
-                break;
-              }
-            }
-          }
-          if (targetPostOrder != null) break;
-        }
-      }
-
-      if (targetPostOrder == null) {
-        debugPrint(
-          '[BaseFeedProvider] loadPostsAround: 포스트 ID $postId를 스키마에서 찾을 수 없습니다',
-        );
-        return;
-      }
-
-      final targetGlobalIndex = targetPostOrder['globalIndex'] as int?;
-      if (targetGlobalIndex == null) {
-        debugPrint(
-          '[BaseFeedProvider] loadPostsAround: 포스트 ID $postId의 globalIndex가 null입니다',
-        );
-        return;
-      }
-
-      // 3. 이미 로드된 포스트 확인 (선택적 최적화)
-      // 오프셋 조회 API는 항상 호출하여 최신 데이터를 받아오되,
-      // 결과 병합 시 중복을 제거합니다.
-      // 참고: 서버가 이미 필요한 포스트를 정렬된 순서로 반환하므로,
-      // 클라이언트에서 미리 계산할 필요 없음
-
-      // 4. 오프셋 조회 API 호출
-      debugPrint(
-        '[BaseFeedProvider] loadPostsAround: 포스트 ID $postId (globalIndex: $targetGlobalIndex) 중심으로 오프셋 조회',
-      );
-      final postsResp = await blogService.getProfilePostsAround(
-        username!,
-        postId,
-        size: size,
-      );
-
-      if (postsResp['success'] == true) {
-        final postsData = postsResp['data'] as Map<String, dynamic>?;
-        if (postsData != null) {
-          final List<dynamic> newPosts = postsData['posts'] ?? [];
-
-          // 9. 기존 데이터와 병합 (중복 제거)
-          final existingPostIds = <int, Map<String, dynamic>>{};
-          for (final categoryPosts in _postsByCategory.values) {
-            for (final post in categoryPosts) {
-              final postIdValue = post['id'] as int?;
-              if (postIdValue != null) {
-                existingPostIds[postIdValue] = post;
-              }
-            }
-          }
-
-          // 10. 새 포스트를 카테고리별로 병합
-          for (final newPost in newPosts) {
-            if (newPost is! Map<String, dynamic>) continue;
-
-            final postIdValue = newPost['id'] as int?;
-            if (postIdValue == null) continue;
-
-            final categoryId = (newPost['categoryId'] ?? 0).toString();
-
-            if (existingPostIds.containsKey(postIdValue)) {
-              // 이미 있는 포스트 → 업데이트 (더 최신 데이터 사용)
-              final existingPost = existingPostIds[postIdValue]!;
-              final updatedPost = {
-                ...existingPost,
-                ...newPost, // 새 데이터로 덮어쓰기
-                'order': existingPost['order'], // order는 유지
-              };
-
-              // 기존 위치에서 교체
-              final categoryPosts = _postsByCategory[categoryId] ?? [];
-              final index = categoryPosts.indexWhere(
-                (p) => (p['id'] as int?) == postIdValue,
-              );
-              if (index != -1) {
-                categoryPosts[index] = updatedPost;
-              }
-            } else {
-              // 새로운 포스트 → globalIndex 순서대로 삽입
-              if (!_postsByCategory.containsKey(categoryId)) {
-                _postsByCategory[categoryId] = [];
-              }
-              final categoryPosts = _postsByCategory[categoryId]!;
-              final newPostGlobalIndex = newPost['globalIndex'] as int?;
-
-              if (newPostGlobalIndex != null) {
-                // globalIndex 기준으로 삽입 위치 찾기
-                int insertIndex = categoryPosts.length;
-                for (int i = 0; i < categoryPosts.length; i++) {
-                  final existingGlobalIndex =
-                      categoryPosts[i]['globalIndex'] as int?;
-                  if (existingGlobalIndex != null &&
-                      existingGlobalIndex > newPostGlobalIndex) {
-                    insertIndex = i;
-                    break;
-                  }
-                }
-                categoryPosts.insert(insertIndex, newPost);
-              } else {
-                // globalIndex가 없으면 맨 뒤에 추가
-                categoryPosts.add(newPost);
-              }
-            }
-          }
-
-          notifyListeners();
-          debugPrint(
-            '[BaseFeedProvider] loadPostsAround: 오프셋 조회 완료 - ${newPosts.length}개 포스트 병합',
-          );
-        }
-      }
-    } catch (e) {
-      debugPrint('[BaseFeedProvider] loadPostsAround 실패: $e');
-      rethrow;
-    }
-  }
-
   /// 새로고침
   Future<void> refresh() async => loadInitial(force: true);
 
@@ -262,8 +82,23 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     _networkError = error;
     // NetworkManager에 네트워크 상태 업데이트
     if (error != null) {
-      debugPrint('[BaseFeedProvider] NetworkManager.setNetworkError(true) 호출');
-      NetworkManager.setNetworkError(true);
+      // ✅ "진짜 오프라인"만 전역 오프라인으로 취급
+      // - 프로필/피드에서 404, 500 등은 네트워크 연결 끊김이 아니므로 홈 오프라인 배너가 뜨면 안 됨
+      final isOfflineLike =
+          error.type == NetworkErrorType.noConnection ||
+          error.type == NetworkErrorType.timeout;
+
+      if (isOfflineLike) {
+        debugPrint(
+          '[BaseFeedProvider] NetworkManager.setNetworkError(true) 호출 (offline-like: ${error.type})',
+        );
+        NetworkManager.setNetworkError(true);
+      } else {
+        debugPrint(
+          '[BaseFeedProvider] NetworkManager.setNetworkRecovered() 호출 (non-offline error: ${error.type})',
+        );
+        NetworkManager.setNetworkRecovered();
+      }
     } else {
       debugPrint('[BaseFeedProvider] NetworkManager.setNetworkRecovered() 호출');
       NetworkManager.setNetworkRecovered();
@@ -273,66 +108,42 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   }
 
   /// 서버 응답 처리 (공통 로직)
-  void processServerResponse(
-    Map<String, dynamic> schemaResp,
-    Map<String, dynamic> postsResp,
-  ) {
-    final schemaData = schemaResp['data'];
-    final postsData = postsResp['data'];
+  /// 새로운 통합 API 응답 처리: data.posts.posts에서 포스트 배열 가져오기
+  void processServerResponse(Map<String, dynamic> feedResp) {
+    final data = feedResp['data'];
 
-    if (schemaData == null || postsData == null) {
+    if (data == null) {
       debugPrint('[BaseFeedProvider] 서버 응답의 data가 null입니다');
       clearData();
       return;
     }
 
     // 사용자 정보 저장
-    _userInfo = schemaData['userInfo'];
+    _userInfo = data['userInfo'];
 
-    // 카테고리 정보 저장
-    _categories.clear();
-    final categoriesData = schemaData['categories'];
-    if (categoriesData != null && categoriesData is List) {
-      try {
-        _categories.addAll(categoriesData.cast<Map<String, dynamic>>());
-      } catch (e) {
-        debugPrint('[BaseFeedProvider] 카테고리 데이터 캐스팅 실패: $e');
-        for (final item in categoriesData) {
-          if (item is Map<String, dynamic>) {
-            _categories.add(item);
-          }
-        }
-      }
-    }
-
-    // 카테고리별 포스트 저장
-    _postsByCategory.clear();
-    final postsByCategoryData = schemaData['postsByCategory'];
-    if (postsByCategoryData != null &&
-        postsByCategoryData is Map<String, dynamic>) {
-      for (final entry in postsByCategoryData.entries) {
-        if (entry.value is List) {
-          try {
-            _postsByCategory[entry.key] =
-                (entry.value as List).cast<Map<String, dynamic>>();
-          } catch (e) {
-            debugPrint(
-              '[BaseFeedProvider] 포스트 데이터 캐스팅 실패 (카테고리 ${entry.key}): $e',
-            );
-            final safePosts = <Map<String, dynamic>>[];
-            for (final item in entry.value as List) {
-              if (item is Map<String, dynamic>) {
-                safePosts.add(item);
-              }
+    // 포스트 정보 저장 (data.posts.posts 배열에서 가져오기)
+    _posts.clear();
+    final postsData = data['posts'];
+    if (postsData != null && postsData is Map<String, dynamic>) {
+      final postsList = postsData['posts'] as List?;
+      if (postsList != null) {
+        try {
+          final posts = postsList.cast<Map<String, dynamic>>();
+          // 배열 순서가 globalIndex 순서 (서버에서 정렬되어 옴)
+          _posts.addAll(posts);
+        } catch (e) {
+          debugPrint('[BaseFeedProvider] 포스트 데이터 캐스팅 실패: $e');
+          for (final item in postsList) {
+            if (item is Map<String, dynamic>) {
+              _posts.add(item);
             }
-            _postsByCategory[entry.key] = safePosts;
           }
         }
       }
     }
 
-    // 시스템 카테고리 매핑 저장
-    final systemCategoryMappingsData = schemaData['systemCategoryMappings'];
+    // 시스템 카테고리 매핑 저장 (본인 피드일 때만 있음)
+    final systemCategoryMappingsData = data['systemCategoryMappings'];
     if (systemCategoryMappingsData != null &&
         systemCategoryMappingsData is Map<String, dynamic>) {
       _systemCategoryMappings = <String, List<Map<String, dynamic>>>{};
@@ -340,62 +151,24 @@ abstract class BaseFeedProvider extends ChangeNotifier {
         if (entry.value is List) {
           final postIdMaps =
               (entry.value as List)
-                  .map((postId) => {'postId': postId})
+                  .map(
+                    (postId) =>
+                        postId is int ? {'postId': postId} : {'postId': postId},
+                  )
                   .toList();
           _systemCategoryMappings![entry.key] = postIdMaps;
         }
       }
     }
 
-    // 포스트 데이터 병합
-    final List<dynamic> newPosts = postsData['posts'] ?? [];
-
-    // posts를 빠른 조회용 맵으로 구성
-    final Map<int, Map<String, dynamic>> idToPost = {
-      for (final p in newPosts)
-        if (p['id'] != null) (p['id'] as int): p,
-    };
-
-    // postsByCategory 병합
-    final keys = List<String>.from(_postsByCategory.keys);
-    for (final key in keys) {
-      final original = _postsByCategory[key] ?? const <Map<String, dynamic>>[];
-      final merged = <Map<String, dynamic>>[];
-      for (final item in original) {
-        final pid = item['id'];
-        if (pid is int && idToPost.containsKey(pid)) {
-          final full = Map<String, dynamic>.from(idToPost[pid]!);
-          // 스키마에서 order와 globalIndex 유지
-          if (item.containsKey('order')) full['order'] = item['order'];
-          if (item.containsKey('globalIndex')) {
-            full['globalIndex'] = item['globalIndex'];
-          }
-          // 그룹 기능 제거로 인해 sharedGroupIds 보존 로직 제거
-          merged.add(full);
-        } else {
-          merged.add(item);
-        }
-      }
-      _postsByCategory[key] = merged;
-    }
-
-    // 페이지네이션은 자식 클래스에서 처리
-
     // 기본 선택 상태를 '전체'로 리셋
-    _selectedCategoryId = null;
     _selectedBase = BaseFilter.all;
   }
 
-  // 카테고리 선택 메서드들
+  // 공개 범위 필터 메서드
   void selectBase(BaseFilter base) {
-    if (_selectedBase == base && _selectedCategoryId == null) return;
-    _selectedCategoryId = null;
+    if (_selectedBase == base) return;
     _selectedBase = base;
-    notifyListeners();
-  }
-
-  void selectCategory(String? categoryId) {
-    _selectedCategoryId = categoryId;
     notifyListeners();
   }
 
@@ -450,14 +223,6 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   }
 
   String get selectedLabel {
-    if (_selectedCategoryId != null) {
-      final category = _categories.firstWhere(
-        (c) => c['id'].toString() == _selectedCategoryId,
-        orElse: () => {'name': 'all'},
-      );
-      return category['name'] ?? 'all';
-    }
-
     switch (_selectedBase) {
       case BaseFilter.all:
         return 'all';
@@ -465,7 +230,6 @@ abstract class BaseFeedProvider extends ChangeNotifier {
         return 'private';
       case BaseFilter.friends:
         return 'friends';
-      // 그룹 기능 제거로 인해 BaseFilter.groups case 제거
       case BaseFilter.public:
         return 'public';
     }
@@ -474,21 +238,16 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   /// 포스트 접근 레벨 업데이트 // my_profile_feed_provider.dart 에서만 사용
   void updatePostAccessLevelById(String postId, AccessLevel newLevel) {
     try {
-      for (final categoryId in _postsByCategory.keys) {
-        final posts = _postsByCategory[categoryId]!;
-        final idx = posts.indexWhere((p) => '${p['id']}' == postId);
-        if (idx != -1) {
-          String level = SystemCategoryKeys.public;
-          if (newLevel == AccessLevel.private) {
-            level = SystemCategoryKeys.private;
-          } else if (newLevel == AccessLevel.friends) {
-            level = SystemCategoryKeys.friends;
-          }
-          // 그룹 기능 제거로 인해 AccessLevel.groups 처리 제거
-          posts[idx]['accessLevel'] = level;
-          notifyListeners();
-          return;
+      final idx = _posts.indexWhere((p) => '${p['id']}' == postId);
+      if (idx != -1) {
+        String level = SystemCategoryKeys.public;
+        if (newLevel == AccessLevel.private) {
+          level = SystemCategoryKeys.private;
+        } else if (newLevel == AccessLevel.friends) {
+          level = SystemCategoryKeys.friends;
         }
+        _posts[idx]['accessLevel'] = level;
+        notifyListeners();
       }
     } catch (e) {
       debugPrint('[BaseFeedProvider] accessLevel 업데이트 실패: $e');
@@ -503,177 +262,112 @@ abstract class BaseFeedProvider extends ChangeNotifier {
     String? title,
     String? summary,
     String? accessLevel,
-    // 그룹 기능 제거로 인해 sharedGroupIds 파라미터 제거
   }) {
     try {
       bool hasUpdate = false;
       String? previousAccessLevel; // 🎯 변경 전 공개범위 저장
 
-      for (final categoryId in _postsByCategory.keys) {
-        final posts = _postsByCategory[categoryId]!;
-        final idx = posts.indexWhere((p) => '${p['id']}' == postId);
-        if (idx != -1) {
-          // 🎯 변경 전 공개범위 저장 (systemCategoryMappings 업데이트용)
-          if (accessLevel != null) {
-            previousAccessLevel = posts[idx]['accessLevel']?.toString();
-          }
-
-          // 변경된 필드만 업데이트
-          if (thumbnailImageUrl != null) {
-            posts[idx]['thumbnailImageUrl'] = thumbnailImageUrl;
-            hasUpdate = true;
-          }
-          if (title != null) {
-            posts[idx]['title'] = title;
-            hasUpdate = true;
-          }
-          if (summary != null) {
-            posts[idx]['summary'] = summary;
-            hasUpdate = true;
-          }
-          if (accessLevel != null) {
-            posts[idx]['accessLevel'] = accessLevel;
-            hasUpdate = true;
-          }
-          // 그룹 기능 제거로 인해 sharedGroupIds 업데이트 로직 제거
-
-          // 🎯 systemCategoryMappings 업데이트: 공개범위가 변경된 경우
-          if (accessLevel != null &&
-              previousAccessLevel != null &&
-              previousAccessLevel != accessLevel &&
-              _systemCategoryMappings != null) {
-            final postIdInt = int.tryParse(postId);
-            if (postIdInt != null) {
-              // 🎯 모든 공개범위 키에서 해당 포스트 제거 (중복 방지)
-              final allSystemKeys = SystemCategoryKeys.allKeys;
-              for (final key in allSystemKeys) {
-                final list = _systemCategoryMappings![key] as List?;
-                if (list != null) {
-                  final filteredList =
-                      list
-                          .where((item) {
-                            if (item is Map) {
-                              return item['postId']?.toString() != postId;
-                            } else if (item is int) {
-                              return item.toString() != postId;
-                            }
-                            return item?.toString() != postId;
-                          })
-                          .toList()
-                          .cast<Map<String, dynamic>>();
-                  _systemCategoryMappings![key] = filteredList;
-                }
-              }
-
-              // 🎯 새로운 공개범위에 추가
-              final newKey = accessLevel.toUpperCase();
-              if (!_systemCategoryMappings!.containsKey(newKey)) {
-                _systemCategoryMappings![newKey] = <Map<String, dynamic>>[];
-              }
-              final newList =
-                  _systemCategoryMappings![newKey]
-                      as List<Map<String, dynamic>>;
-              // 🎯 이미 존재하는지 확인 (모든 키에서 제거했으므로 false여야 함)
-              final exists = newList.any((item) {
-                return item['postId']?.toString() == postId;
-              });
-              if (!exists) {
-                newList.add({'postId': postIdInt});
-              }
-
-              debugPrint(
-                '✅ [BaseFeedProvider] systemCategoryMappings 업데이트: $postId (모든 키에서 제거 후 $newKey에 추가)',
-              );
-            }
-          }
-
-          if (hasUpdate) {
-            notifyListeners();
-            debugPrint('✅ [BaseFeedProvider] 포스트 $postId 메타데이터 선택적 업데이트 완료');
-          }
-          return;
+      final idx = _posts.indexWhere((p) => '${p['id']}' == postId);
+      if (idx != -1) {
+        // 🎯 변경 전 공개범위 저장 (systemCategoryMappings 업데이트용)
+        if (accessLevel != null) {
+          previousAccessLevel = _posts[idx]['accessLevel']?.toString();
         }
+
+        // 변경된 필드만 업데이트
+        if (thumbnailImageUrl != null) {
+          _posts[idx]['thumbnailImageUrl'] = thumbnailImageUrl;
+          hasUpdate = true;
+        }
+        if (title != null) {
+          _posts[idx]['title'] = title;
+          hasUpdate = true;
+        }
+        if (summary != null) {
+          _posts[idx]['summary'] = summary;
+          hasUpdate = true;
+        }
+        if (accessLevel != null) {
+          _posts[idx]['accessLevel'] = accessLevel;
+          hasUpdate = true;
+        }
+
+        // 🎯 systemCategoryMappings 업데이트: 공개범위가 변경된 경우
+        if (accessLevel != null &&
+            previousAccessLevel != null &&
+            previousAccessLevel != accessLevel &&
+            _systemCategoryMappings != null) {
+          final postIdInt = int.tryParse(postId);
+          if (postIdInt != null) {
+            // 🎯 모든 공개범위 키에서 해당 포스트 제거 (중복 방지)
+            final allSystemKeys = SystemCategoryKeys.allKeys;
+            for (final key in allSystemKeys) {
+              final list = _systemCategoryMappings![key] as List?;
+              if (list != null) {
+                final filteredList =
+                    list
+                        .where((item) {
+                          if (item is Map) {
+                            return item['postId']?.toString() != postId;
+                          } else if (item is int) {
+                            return item.toString() != postId;
+                          }
+                          return item?.toString() != postId;
+                        })
+                        .toList()
+                        .cast<Map<String, dynamic>>();
+                _systemCategoryMappings![key] = filteredList;
+              }
+            }
+
+            // 🎯 새로운 공개범위에 추가
+            final newKey = accessLevel.toUpperCase();
+            if (!_systemCategoryMappings!.containsKey(newKey)) {
+              _systemCategoryMappings![newKey] = <Map<String, dynamic>>[];
+            }
+            final newList =
+                _systemCategoryMappings![newKey] as List<Map<String, dynamic>>;
+            // 🎯 이미 존재하는지 확인 (모든 키에서 제거했으므로 false여야 함)
+            final exists = newList.any((item) {
+              return item['postId']?.toString() == postId;
+            });
+            if (!exists) {
+              newList.add({'postId': postIdInt});
+            }
+
+            debugPrint(
+              '✅ [BaseFeedProvider] systemCategoryMappings 업데이트: $postId (모든 키에서 제거 후 $newKey에 추가)',
+            );
+          }
+        }
+
+        if (hasUpdate) {
+          notifyListeners();
+          debugPrint('✅ [BaseFeedProvider] 포스트 $postId 메타데이터 선택적 업데이트 완료');
+        }
+      } else {
+        debugPrint('⚠️ [BaseFeedProvider] 포스트 $postId를 찾을 수 없어 메타데이터 업데이트 불가');
       }
-      debugPrint('⚠️ [BaseFeedProvider] 포스트 $postId를 찾을 수 없어 메타데이터 업데이트 불가');
     } catch (e) {
       debugPrint('[BaseFeedProvider] 포스트 메타데이터 업데이트 실패: $e');
     }
   }
 
-  /// 포스트를 로컬에서 카테고리 간 이동 // my_profile_feed_provider.dart 에서만 사용
-  void movePostLocally(
-    String postId,
-    int targetCategoryId, [
-    int? targetPosition,
-  ]) {
-    try {
-      Map<String, dynamic>? foundPost;
-      String? sourceCategory;
-      int? sourceIndex;
-
-      // 원본 포스트 찾기
-      for (final categoryId in _postsByCategory.keys) {
-        final posts = _postsByCategory[categoryId]!;
-        final idx = posts.indexWhere((p) => '${p['id']}' == postId);
-        if (idx != -1) {
-          foundPost = posts[idx];
-          sourceCategory = categoryId;
-          sourceIndex = idx;
-          break;
-        }
-      }
-
-      if (foundPost == null || sourceCategory == null || sourceIndex == null) {
-        debugPrint('[BaseFeedProvider] 이동할 포스트를 찾을 수 없음: $postId');
-        return;
-      }
-
-      // 원본에서 제거
-      _postsByCategory[sourceCategory]!.removeAt(sourceIndex);
-
-      // 대상 카테고리에 추가
-      final targetCategoryStr = targetCategoryId.toString();
-      if (!_postsByCategory.containsKey(targetCategoryStr)) {
-        _postsByCategory[targetCategoryStr] = [];
-      }
-
-      final targetPosts = _postsByCategory[targetCategoryStr]!;
-      if (targetPosition != null &&
-          targetPosition >= 0 &&
-          targetPosition <= targetPosts.length) {
-        targetPosts.insert(targetPosition, foundPost);
-      } else {
-        targetPosts.add(foundPost);
-      }
-
-      notifyListeners();
-      debugPrint(
-        '[BaseFeedProvider] 포스트 로컬 이동 완료: $postId -> $targetCategoryId',
-      );
-    } catch (e) {
-      debugPrint('[BaseFeedProvider] 포스트 로컬 이동 실패: $e');
-    }
-  }
-
   // Abstract methods - to be implemented by child classes
-  Future<void> reorderPostsInCategory(int categoryId, List<String> postIds);
-  void reorderPostsLocally(int categoryId, List<String> orderedPostIds);
-  void reorderCategoriesLocally(List<int> orderedIntIds);
-  Future<void> reorderAllSections(List<String> newOrderIds);
+  Future<void> reorderPosts(List<String> orderedPostIds);
+  void reorderPostsLocally(List<String> orderedPostIds);
 
-  /// 카테고리 내부 포스트 순서를 로컬에서 변경 (기본 구현)
-  void reorderPostsLocallyImpl(int categoryId, List<String> orderedPostIds) {
+  /// 포스트 순서를 로컬에서 변경 (기본 구현)
+  void reorderPostsLocallyImpl(List<String> orderedPostIds) {
     try {
-      final categoryStr = categoryId.toString();
-      final posts = _postsByCategory[categoryStr];
-      if (posts == null || posts.isEmpty) {
-        debugPrint('[BaseFeedProvider] 카테고리 $categoryId에 포스트가 없음');
+      if (_posts.isEmpty) {
+        debugPrint('[BaseFeedProvider] 포스트가 없음');
         return;
       }
 
       // 기존 포스트들을 ID 기준으로 맵핑
       final postMap = <String, Map<String, dynamic>>{};
-      for (final post in posts) {
+      for (final post in _posts) {
         final id = '${post['id']}';
         postMap[id] = post;
       }
@@ -688,26 +382,25 @@ abstract class BaseFeedProvider extends ChangeNotifier {
       }
 
       // 누락된 포스트들 추가 (혹시 모를 경우를 대비)
-      for (final post in posts) {
+      for (final post in _posts) {
         final id = '${post['id']}';
         if (!orderedPostIds.contains(id)) {
           reorderedPosts.add(post);
         }
       }
 
-      _postsByCategory[categoryStr] = reorderedPosts;
-      notifyListeners();
-      debugPrint('[BaseFeedProvider] 카테고리 $categoryId 포스트 순서 로컬 변경 완료');
-    } catch (e) {
-      debugPrint('[BaseFeedProvider] 카테고리 내 포스트 순서 로컬 변경 실패: $e');
-    }
-  }
+      _posts.clear();
+      _posts.addAll(reorderedPosts);
 
-  /// 카테고리 ID로 카테고리 찾기
-  Map<String, dynamic>? findCategoryById(int id) {
-    for (final c in categoriesInternal) {
-      if (c['id'] == id) return c;
+      // globalIndex 업데이트
+      for (int i = 0; i < _posts.length; i++) {
+        _posts[i]['globalIndex'] = i;
+      }
+
+      notifyListeners();
+      debugPrint('[BaseFeedProvider] 포스트 순서 로컬 변경 완료');
+    } catch (e) {
+      debugPrint('[BaseFeedProvider] 포스트 순서 로컬 변경 실패: $e');
     }
-    return null;
   }
 }

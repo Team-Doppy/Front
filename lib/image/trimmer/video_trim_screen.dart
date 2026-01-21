@@ -49,6 +49,10 @@ class Trimmer extends ChangeNotifier {
 
   double _startValue = 0.0;
   double _endValue = 60.0;
+  // ✅ 편집(속도) 스펙이 있는 경우: "최종 결과물 기준" 길이 제한 계산에 사용
+  // - 예: playbackSpeed=2.0이면 원본에서 최대 120초까지 선택 가능(최종 60초)
+  // - 예: playbackSpeed=0.5이면 원본에서 최대 30초까지 선택 가능(최종 60초)
+  double _playbackSpeed = 1.0;
   // 🎯 ValueNotifier로 currentPosition 최적화 (100ms 타이머 업데이트 최적화)
   final ValueNotifier<double> _currentPositionNotifier = ValueNotifier<double>(
     0.0,
@@ -78,11 +82,37 @@ class Trimmer extends ChangeNotifier {
   bool get isInitialized => _isInitialized;
   List<Uint8List?> get thumbnails => _thumbnails;
   bool get isLoadingThumbnails => _isLoadingThumbnails;
+  double get playbackSpeed => _playbackSpeed;
 
   // 🎯 도메인 규칙 접근
   double get minLength => TrimRangeConfig.minLength;
-  double get maxTrimLength => TrimRangeConfig.maxTrimLength;
+  double get maxTrimLength => TrimRangeConfig.maxTrimLength * _playbackSpeed;
   double get selectionMinGap => TrimRangeConfig.selectionMinGap;
+
+  /// ✅ 편집 스펙(재생 속도)에 맞춰 "최종 결과물 기준" 트림 최대 길이를 조정한다.
+  /// - 속도 변경은 (현재 파일에서는) 트리머 진입 시 1회만 적용되는 용도
+  void setPlaybackSpeed(double speed) {
+    final next = speed.clamp(0.5, 2.0);
+    if (_playbackSpeed == next) return;
+    _playbackSpeed = next;
+
+    // 이미 로드된 상태라면, 현재 선택 구간이 새로운 maxTrimLength를 넘지 않게 보정
+    final maxSeconds = _videoDuration?.inSeconds.toDouble() ?? 0.0;
+    if (maxSeconds > 0) {
+      final effectiveMaxEnd = math.min(maxSeconds, maxTrimLength);
+      if (_endValue > effectiveMaxEnd) {
+        _endValue = effectiveMaxEnd;
+      }
+      if (_startValue > _endValue) {
+        _startValue = (_endValue - selectionMinGap).clamp(0.0, _endValue);
+      }
+      _currentPositionNotifier.value = _currentPositionNotifier.value.clamp(
+        _startValue,
+        _endValue,
+      );
+    }
+    notifyListeners();
+  }
 
   /// 비디오 로드
   Future<void> loadVideo({
@@ -2224,15 +2254,33 @@ class _TrimEditorState extends State<TrimEditor> {
                   ),
                   Align(
                     alignment: Alignment.center,
-                    child: Text(
-                      _formatDurationMMSS(
-                        widget.trimmer.endValue - widget.trimmer.startValue,
-                      ),
-                      style: TextStyle(
-                        color: colorScheme.onSurface,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    child: ValueListenableBuilder<double>(
+                      valueListenable: widget.trimmer.currentPositionNotifier,
+                      builder: (context, currentPos, _) {
+                        // ✅ "잘린 결과 기준" 현재 시킹/재생 시점:
+                        // - (현재 원본 포지션 - startHandle) 을 기준으로 0..trimLength로 클램프
+                        // - 속도(2x/0.5x 등)가 있으면 최종 결과물 타임라인으로 환산 (÷ speed)
+                        final start = widget.trimmer.startValue;
+                        final end = widget.trimmer.endValue;
+                        final rawTrimLength = (end - start).clamp(0.0, 86400.0);
+                        final rawRelative = (currentPos - start).clamp(
+                          0.0,
+                          rawTrimLength,
+                        );
+
+                        final speed = widget.trimmer.playbackSpeed;
+                        final effectiveRelative =
+                            speed > 0 ? (rawRelative / speed) : rawRelative;
+
+                        return Text(
+                          _formatDurationMMSS(effectiveRelative),
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        );
+                      },
                     ),
                   ),
                   Align(
@@ -2288,6 +2336,13 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
 
   Future<void> _initializeTrimmer() async {
     try {
+      // ✅ 편집(에디터)에서 넘어온 속도 스펙을 "길이 제한/표시"에도 적용
+      // - 최종 결과물 60초 기준으로 제한하기 위해, 원본 선택 가능한 최대 길이를 speed에 맞게 스케일한다.
+      final initialSpeed = widget.editSpec?.playbackSpeed;
+      if (initialSpeed != null) {
+        _trimmer.setPlaybackSpeed(initialSpeed);
+      }
+
       await _trimmer.loadVideo(
         videoFile: widget.videoFile,
         videoDuration: widget.videoDuration,
@@ -2414,12 +2469,12 @@ class _VideoTrimScreenState extends State<VideoTrimScreen> {
           child:
               _isTrimming
                   ? SizedBox(
-                    width: 20,
-                    height: 20,
+                    width: 24,
+                    height: 24,
                     child: CircularProgressIndicator(
-                      strokeWidth: 2,
+                      strokeWidth: 4,
                       valueColor: AlwaysStoppedAnimation<Color>(
-                        colorScheme.onSurface.withOpacity(0.7),
+                        colorScheme.onSurface,
                       ),
                     ),
                   )

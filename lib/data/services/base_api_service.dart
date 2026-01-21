@@ -36,7 +36,7 @@ class BaseApiService {
   Dio get dio => _dio;
   bool _isRefreshing = false;
   Completer<bool>? _refreshCompleter;
-  static const int _maxRefreshRetries = 2;
+  static const int _maxRefreshRetries = 0; // 재시도 1번만 (총 1회 시도)
   static const Duration _retry1Delay = Duration(milliseconds: 300);
   static const Duration _retry2Delay = Duration(milliseconds: 800);
   static bool _sessionDialogVisible = false;

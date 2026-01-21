@@ -1,5 +1,6 @@
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/text_bold_utils.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 
 /// Index 0: card + background (임시 구조)
@@ -11,7 +12,7 @@ class Index0CardContent extends StatelessWidget {
     // TODO(user): replace with real UI
     return Center(
       child: Text(
-        '넘겨서 바로 시작 ',
+        context.tr('onboarding_swipe_to_start'),
         style: LocaleTypography.setStyle(
           context: context,
           fontSize: 36,
@@ -54,7 +55,7 @@ class Index0Background extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '정말 환영해요!',
+                    context.tr('onboarding_welcome_message'),
                     style: LocaleTypography.setStyle(
                       context: context,
                       fontSize: 30,

@@ -97,6 +97,12 @@ class SearchHeroSectionState extends State<SearchHeroSection> {
                     CachedNetworkImage(
                       imageUrl: imageUrl,
                       fit: BoxFit.cover,
+                      fadeInDuration: Duration(
+                        milliseconds: 200,
+                      ), // 🎯 페이드인 효과 제거
+                      fadeOutDuration: Duration(
+                        milliseconds: 200,
+                      ), // 🎯 페이드아웃 효과 제거
                       errorWidget:
                           (context, url, error) => Container(
                             color: Theme.of(context).colorScheme.surfaceVariant,

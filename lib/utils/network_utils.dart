@@ -219,12 +219,12 @@ class NetworkUtils {
             case 502:
             case 503:
             case 504:
-              // 서버 에러도 네트워크 문제로 간주
-              NetworkManager.setNetworkError(true);
+              // ✅ 서버 에러(5xx)는 "오프라인"으로 간주하지 않는다.
+              // (오프라인 배너는 noConnection/timeout 같은 실제 연결 문제일 때만 떠야 함)
               return NetworkError(
                 type: NetworkErrorType.serverError,
                 message: 'Server error: ${error.response?.data}',
-                userMessage: '오프라인 상태입니다',
+                userMessage: '서버 오류가 발생했습니다.',
                 statusCode: statusCode,
                 isRetryable: true,
               );

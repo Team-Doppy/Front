@@ -1,7 +1,7 @@
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/text_bold_utils.dart';
+import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// Index 3: card + background (임시 구조)
 class Index3CardContent extends StatelessWidget {
@@ -16,7 +16,7 @@ class Index3CardContent extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
-            '넘겨서 바로 기록',
+            context.tr('onboarding_swipe_to_record'),
             style: LocaleTypography.setStyle(
               context: context,
               fontSize: 36,
@@ -51,7 +51,7 @@ class Index3Background extends StatelessWidget {
                 children: [
                   const SizedBox(height: 30),
                   Text(
-                    '지나가면',
+                    context.tr('onboarding_if_passed'),
                     style: LocaleTypography.setStyle(
                       context: context,
                       fontSize: 30,
@@ -61,7 +61,7 @@ class Index3Background extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    '다시 오지 않습니다',
+                    context.tr('onboarding_wont_come_again'),
                     style: LocaleTypography.setStyle(
                       context: context,
                       fontSize: 30,

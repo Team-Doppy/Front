@@ -353,11 +353,37 @@ class _FindEmailVerificationFlowState extends State<FindEmailVerificationFlow> {
                       borderRadius: BorderRadius.circular(24),
                     ),
                     enabledBorder: OutlineInputBorder(
-                      borderSide: BorderSide.none,
+                      borderSide:
+                          _emailError != null
+                              ? BorderSide(
+                                color: theme.colorScheme.error,
+                                width: 1.5,
+                              )
+                              : BorderSide.none,
                       borderRadius: BorderRadius.circular(24),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderSide: BorderSide.none,
+                      borderSide:
+                          _emailError != null
+                              ? BorderSide(
+                                color: theme.colorScheme.error,
+                                width: 1.5,
+                              )
+                              : BorderSide.none,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    errorBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: theme.colorScheme.error,
+                        width: 1.5,
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    focusedErrorBorder: OutlineInputBorder(
+                      borderSide: BorderSide(
+                        color: theme.colorScheme.error,
+                        width: 1.5,
+                      ),
                       borderRadius: BorderRadius.circular(24),
                     ),
                     errorText: _emailError,
@@ -366,6 +392,7 @@ class _FindEmailVerificationFlowState extends State<FindEmailVerificationFlow> {
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
                     ),
+                    errorMaxLines: 2,
                   ),
                   onChanged: (_) {
                     setState(() {
@@ -445,11 +472,37 @@ class _FindEmailVerificationFlowState extends State<FindEmailVerificationFlow> {
                         borderRadius: BorderRadius.circular(24),
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide.none,
+                        borderSide:
+                            _pinError != null
+                                ? BorderSide(
+                                  color: theme.colorScheme.error,
+                                  width: 1.5,
+                                )
+                                : BorderSide.none,
                         borderRadius: BorderRadius.circular(24),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderSide: BorderSide.none,
+                        borderSide:
+                            _pinError != null
+                                ? BorderSide(
+                                  color: theme.colorScheme.error,
+                                  width: 1.5,
+                                )
+                                : BorderSide.none,
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      errorBorder: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: theme.colorScheme.error,
+                          width: 1.5,
+                        ),
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      focusedErrorBorder: OutlineInputBorder(
+                        borderSide: BorderSide(
+                          color: theme.colorScheme.error,
+                          width: 1.5,
+                        ),
                         borderRadius: BorderRadius.circular(24),
                       ),
                       errorText: _pinError,
@@ -458,6 +511,7 @@ class _FindEmailVerificationFlowState extends State<FindEmailVerificationFlow> {
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
                       ),
+                      errorMaxLines: 2,
                       counterText: '',
                     ),
                     onChanged: (_) {

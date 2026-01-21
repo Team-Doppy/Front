@@ -74,6 +74,7 @@ dependencies:
   app_links: ^6.3.3
   overlay_support: ^2.1.0
   imgly_sdk: ^3.3.0
+  audioplayers: ^6.5.1
 
 dependency_overrides:
   screenshot: ^3.0.0
@@ -107,6 +108,7 @@ flutter:
   assets:
     - assets/icons/
     - assets/images/
+    - assets/audio/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

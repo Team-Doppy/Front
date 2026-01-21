@@ -38,6 +38,8 @@ class AppLocalizations {
       'no': '아니오',
       'upload_error': '업로드 오류',
       'user_info_not_found': '사용자 정보를 찾을 수 없습니다.',
+      'past_record_period_expired': '과거 기록 기간이 만료되었습니다.',
+      'signup_date_within_7_days_only': '가입일 기준 7일 이내의 날짜만 선택할 수 있습니다.',
 
       // 이미지 에디터
       'adjust': '조정',
@@ -48,7 +50,7 @@ class AppLocalizations {
       'profile_image': '프로필 이미지',
 
       // 설정 화면
-      'settings': '설정',
+      'settings': '설정하기',
       'user_info': '사용자 정보',
       'user_id': '사용자 ID',
       'general': '일반',
@@ -100,6 +102,8 @@ class AppLocalizations {
       'delete_action': '탈퇴하기',
       'delete_account_final_confirm': '모든 데이터가 영구적으로 삭제돼요\n정말로 탈퇴하시겠습니까?',
       'account_deletion_complete': '회원 탈퇴가 완료되었습니다.',
+      'account_deletion_success': '탈퇴처리되었습니다, 이용해주셔서 감사합니다',
+      'account_deletion_failed': '탈퇴에 실패했어요 다시 시도해주세요',
       'delete_confirm': '탈퇴하기',
 
       // 언어 선택
@@ -153,6 +157,9 @@ class AppLocalizations {
       'load_failed': '불러올 수 없습니다',
       'friends_posts_load_failed': '친구글을 불러올 수 없습니다',
       'all_posts_load_failed': '전체글을 불러올 수 없습니다',
+      'failed_to_load_posts': '포스트를 불러올 수 없습니다',
+      'loading_week_posts_title': '{year}, {week}주차를',
+      'loading_week_posts_subtitle': '불러오고 있어요',
       'retry': '다시 시도',
       'network_connection_required': '네트워크 연결이 필요합니다',
       'network_connection_message': '인터넷 연결을 확인해주세요',
@@ -197,7 +204,7 @@ class AppLocalizations {
       'start_writing_hint': '텍스트, 이미지, 스티커를 추가해보세요',
       'dopy': '도피',
       'username_dopy': '{username}의 도피',
-      'tap_to_start_writing': '눌러서 작성 시작하기',
+      'tap_to_start_writing': '이번 주는 어떤 일이 있나요?',
       'view_post': '글보러가기',
       'just_now': '방금',
       'just_now_with_ago': '방금 전',
@@ -215,10 +222,17 @@ class AppLocalizations {
       'views': '조회',
       'viewers': '조회',
       'viewed_times': '{count}번 조회되었어요',
+      'no_viewers': '조회자 없음',
 
       // 글쓰기/수정
+      'write': '작성하기',
       'write_post': '글쓰기',
       'edit_mode': '수정하기',
+      'year': '년',
+      'month': '월',
+      'week': '주',
+      'no_posts_in_week': '이 주차에는\n기록이 없어요',
+      'week_format': '{year}.{week}주차',
       'title_hint': '제목을 입력하세요',
       'enter_title': '제목을 입력하세요',
       'content_hint': '내용을 입력하세요',
@@ -277,6 +291,7 @@ class AppLocalizations {
       'warning': '경고',
       'uploading_warning': '업로드 중인 미디어가 있습니다',
       'wait_for_upload': '업로드가 완료될 때까지 기다려주세요',
+      'please_wait_for_upload': '잠시만 기다려주세요',
       'file_too_large_title': '파일이 너무 큽니다',
       'video_size_limit': '최대 100MB까지만 업로드 가능합니다',
       'image_size_limit': '최대 10MB까지만 업로드 가능합니다',
@@ -333,6 +348,7 @@ class AppLocalizations {
       'nickname_required': '별명은 필수입니다',
       'introduction_hint': '새로운 소개글을 입력하세요',
       'save_profile': '저장하기',
+      'profile_updated': '프로필 정보가 수정되었습니다',
       'saving': '저장 중...',
       'save_error': '저장 중 오류가 발생했습니다.',
       'link': '링크',
@@ -397,7 +413,7 @@ class AppLocalizations {
       'view_profile': '프로필 보기',
       'create': '생성',
       'add_with_count': '추가 ({count})',
-      'no_friends_to_display': '아직 친구가 없어요',
+      'no_friends_to_display': '추천 친구를 확인해보세요',
       'no_friends_to_add': '아직 추가할 수 있는 친구가 없어요',
       'no_matching_posts': '일치하는 포스트가 없어요',
       'search_posts': '포스트 검색',
@@ -460,6 +476,19 @@ class AppLocalizations {
       // 온보딩 (OnboardingScreen)
       'onboarding_subtitle': '모두가 다 같은 친구는 아니니까',
       'onboarding_start_button': '시작하기',
+      'onboarding_swipe_to_start': '넘겨서 바로 시작',
+      'onboarding_welcome_message': '정말 환영해요!',
+      'onboarding_my_nickname': '내 별명',
+      'onboarding_tap_to_enter_nickname': '탭해서 별명 입력하기!',
+      'onboarding_almost_done_profile_left': '거의 다 됐어요, 프로필만 남았어요',
+      'onboarding_looks_great': '멋진데요?',
+      'onboarding_swipe_to_record': '넘겨서 바로 기록',
+      'onboarding_if_passed': '지나가면',
+      'onboarding_wont_come_again': '다시 오지 않습니다',
+      'onboarding_empty_state_message': '이번주는 어떤 일이 있나요?',
+      'onboarding_first_post_success': '첫 포스팅에 성공했어요!\n이렇게 매주 채워나갈거에요',
+      'onboarding_first_post_failed': '이번주부터 시작해봐요\n스트릭을 매주 채워나가주세요!',
+      'nickname_save_failed': '별명 저장에 실패했습니다',
 
       // 회원가입 / 로그인 (JoinScreen)
       'join_previous': '이전',
@@ -471,7 +500,7 @@ class AppLocalizations {
       'join_id_hint': '아이디를 입력하세요',
       'password_hint': '비밀번호를 입력하세요',
       'join_enter_id_title': '아이디를 입력해주세요',
-      'join_enter_id_subtitle': '도피에서 사용할 고유한 아이디를 정해주세요.',
+      'join_enter_id_subtitle': '사용할 고유한 아이디를 정해주세요.',
       'join_id_too_short': '아이디는 최소 4자 이상이어야 해요',
       'join_id_already_used': '이미 사용 중인 아이디예요',
       'join_set_password_title': '비밀번호를 설정해주세요',
@@ -544,11 +573,23 @@ class AppLocalizations {
       'forgot_id_password': '아이디/비밀번호를 잊었나요?',
       'find_id_password_title': '아이디/비밀번호 찾기',
       'find_id_password_subtitle': '회원가입 시 인증한 이메일 주소를 입력해주세요',
+      'find_id_subtitle': '이메일 인증을 통해 아이디를 찾을 수 있습니다',
       'signup_link': '아직 계정이 없나요?',
 
       // 아이디/비밀번호 찾기 에러 메시지
+      'user_not_found': '사용자를 찾을 수 없습니다',
       'error_user_not_found': '해당 이메일로 등록된 사용자를 찾을 수 없습니다.',
+      'email_not_verified': '이메일이 인증되지 않았습니다',
       'error_email_not_verified': '먼저 이메일 인증을 완료해주세요.',
+      'password_too_short_simple': '비밀번호가 너무 짧습니다',
+      'password_mismatch': '비밀번호가 일치하지 않습니다',
+      'verification_code_expired_or_invalid_simple': '인증 코드가 만료되었거나 유효하지 않습니다',
+      'password_change_failed_retry': '비밀번호 변경에 실패했습니다. 다시 시도해주세요.',
+      'password_change_error': '비밀번호 변경 중 오류가 발생했습니다. 다시 시도해주세요.',
+      'change_password': '비밀번호 변경',
+      'new_password_hint': '새 비밀번호를 입력하세요',
+      'password_confirm_hint': '비밀번호 확인',
+      'change_password_button': '비밀번호 변경하기',
       'error_find_username_failed': '아이디 찾기에 실패했습니다. 잠시 후 다시 시도해주세요.',
       'error_username_email_mismatch': '사용자명과 이메일이 일치하지 않습니다.',
       'error_password_too_short': '비밀번호는 최소 8자 이상이어야 합니다.',
@@ -602,7 +643,7 @@ class AppLocalizations {
       'category_list_load_failed': '카테고리 목록을 불러올 수 없습니다.',
       'cannot_publish': '등록할 수 없습니다.',
       'upload_error_occurred': '업로드 중 오류가 발생했어요',
-      'thumbnail_upload_failed': '썸네일 업로드에 실패했어요. 다시 시도해주세요.',
+      'thumbnail_upload_failed': '썸네일 업로드에 실패했어요.',
       'edit_failed_title': '수정에 실패했어요',
       'publish_failed_title': '등록에 실패했어요',
       'retry_error_message': '네트워크 상태를 확인한 뒤 다시 시도해 주세요.',
@@ -700,6 +741,11 @@ class AppLocalizations {
       'pageview_layout_description': '좌우 스와이프로 이미지 넘기기',
       'load_failed_text': '로드 실패',
       'loading_image': '이미지 불러오는 중',
+
+      // 네트워크 오프라인 상태
+      'offline_status': '오프라인 상태',
+      'check_network_connection': '네트워크 연결을 확인해주세요',
+      'offline_status_message': '오프라인 상태입니다',
     },
     'en': {
       // Common
@@ -720,6 +766,9 @@ class AppLocalizations {
       'no': 'No',
       'upload_error': 'Upload error',
       'user_info_not_found': 'User information not found.',
+      'past_record_period_expired': 'The past record period has expired.',
+      'signup_date_within_7_days_only':
+          'You can only select dates within 7 days of your signup date.',
 
       // Image editor
       'adjust': 'Adjust',
@@ -787,6 +836,9 @@ class AppLocalizations {
       'delete_account_final_confirm':
           'All data will be permanently deleted.\nAre you sure you want to delete your account?',
       'account_deletion_complete': 'Account deletion completed.',
+      'account_deletion_success':
+          'Account deletion completed. Thank you for using our service.',
+      'account_deletion_failed': 'Account deletion failed. Please try again.',
       'delete_confirm': 'Delete',
 
       // Language Selection
@@ -841,6 +893,9 @@ class AppLocalizations {
       'friends_posts_load_failed': 'Failed to load friends posts',
       'all_posts_load_failed': 'Failed to load all posts',
       'retry': 'Retry',
+      'failed_to_load_posts': 'Failed to load posts',
+      'loading_week_posts_title': 'Loading week {week} of {year}',
+      'loading_week_posts_subtitle': 'Please wait',
       'network_connection_required': 'Network connection required',
       'network_connection_message':
           'Please check your internet connection\nto load the category list',
@@ -904,10 +959,17 @@ class AppLocalizations {
       'views': 'Views',
       'viewers': 'Viewers',
       'viewed_times': 'Viewed {count} times',
+      'no_viewers': 'No viewers',
 
       // Write/Edit Post
+      'write': 'Write',
       'write_post': 'Write Post',
       'edit_mode': 'Edit',
+      'year': 'Year',
+      'month': 'Month',
+      'week': 'Week',
+      'no_posts_in_week': 'No posts in this week',
+      'week_format': '{year} Week {week}',
       'title_hint': 'Enter title',
       'enter_title': 'Enter title',
       'content_hint': 'Enter content',
@@ -967,6 +1029,7 @@ class AppLocalizations {
       'warning': 'Warning',
       'uploading_warning': 'Media is uploading',
       'wait_for_upload': 'Please wait for upload to complete',
+      'please_wait_for_upload': 'Please wait for upload',
       'file_too_large_title': 'File too large',
       'video_size_limit': 'Maximum 100MB allowed',
       'image_size_limit': 'Maximum 10MB allowed',
@@ -1017,6 +1080,7 @@ class AppLocalizations {
       'nickname_required': 'Nickname is required',
       'introduction_hint': 'Enter your bio',
       'save_profile': 'Save',
+      'profile_updated': 'Profile information has been updated',
       'saving': 'Saving...',
       'save_error': 'An error occurred while saving.',
       'link': 'Link',
@@ -1089,7 +1153,7 @@ class AppLocalizations {
       'view_profile': 'View Profile',
       'create': 'Create',
       'add_with_count': 'Add ({count})',
-      'no_friends_to_display': 'No friends yet',
+      'no_friends_to_display': 'No friends yet\nHow about recommended friends?',
       'no_friends_to_add': 'No friends to add',
       'no_matching_posts': 'No matching posts',
       'search_posts': 'Search posts',
@@ -1143,6 +1207,22 @@ class AppLocalizations {
       // Onboarding Screen
       'onboarding_subtitle': 'Not all friends are the same',
       'onboarding_start_button': 'Get Started',
+      'onboarding_swipe_to_start': 'Swipe to get started',
+      'onboarding_welcome_message': 'Welcome!',
+      'onboarding_my_nickname': 'My nickname',
+      'onboarding_tap_to_enter_nickname': 'Tap to enter your nickname',
+      'onboarding_almost_done_profile_left':
+          'Almost there! Just add your profile photo',
+      'onboarding_looks_great': 'Looking good!',
+      'onboarding_swipe_to_record': 'Swipe to start writing',
+      'onboarding_if_passed': 'If it passes',
+      'onboarding_wont_come_again': 'it won\'t come back',
+      'onboarding_empty_state_message': 'What happened this week?',
+      'onboarding_first_post_success':
+          'First post successful!\nLet\'s fill it up every week',
+      'onboarding_first_post_failed':
+          'Let\'s start this week\nFill up your streak every week!',
+      'nickname_save_failed': 'Failed to save nickname',
 
       // Auth / Join
       'join_previous': 'Prev',
@@ -1175,11 +1255,25 @@ class AppLocalizations {
       'find_id_password_title': 'Find ID/Password',
       'find_id_password_subtitle':
           'Please enter the email address you verified when signing up',
+      'find_id_subtitle': 'You can find your ID through email verification',
       'change_password': 'Change Password',
+      'new_password_hint': 'Enter new password',
+      'password_confirm_hint': 'Confirm password',
+      'change_password_button': 'Change Password',
 
       // Find ID/Password Error Messages
+      'user_not_found': 'User not found',
       'error_user_not_found': 'No user registered with this email address.',
+      'email_not_verified': 'Email not verified',
       'error_email_not_verified': 'Please complete email verification first.',
+      'password_too_short_simple': 'Password is too short',
+      'password_mismatch': 'Passwords do not match',
+      'verification_code_expired_or_invalid_simple':
+          'Verification code has expired or is invalid',
+      'password_change_failed_retry':
+          'Failed to change password. Please try again.',
+      'password_change_error':
+          'An error occurred while changing password. Please try again.',
       'error_find_username_failed':
           'Failed to find ID. Please try again later.',
       'error_username_email_mismatch': 'Username and email do not match.',
@@ -1402,6 +1496,11 @@ class AppLocalizations {
       'pageview_layout_description': 'Swipe left/right to view images',
       'load_failed_text': 'Load Failed',
       'loading_image': 'Loading image',
+
+      // Network offline status
+      'offline_status': 'Offline',
+      'check_network_connection': 'Please check your network connection',
+      'offline_status_message': 'You are offline',
     },
   };
 

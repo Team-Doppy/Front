@@ -12,11 +12,14 @@ class DoppyLoadingLogo extends StatelessWidget {
     this.showBackButton = false,
     this.onBack,
     this.spinnerColor,
-    this.dTextSize,
-    this.ppyTextSize,
-    this.spinnerStrokeWidth,
     this.color,
   });
+
+  // ✅ 사이즈 상수
+  static const double _dTextSize = 40.0;
+  static const double _ppyTextSize = 40.0;
+  static const double _spinnerSize = 36.0;
+  static const double _spinnerStrokeWidth = 6.0;
 
   /// 로고 투명도 (0.0 ~ 1.0)
   final double opacity;
@@ -37,96 +40,76 @@ class DoppyLoadingLogo extends StatelessWidget {
   /// 로딩 스피너 색상 (기본: onSurface)
   final Color? spinnerColor;
 
-  /// "d" 텍스트 크기 (기본: 32)
-  final double? dTextSize;
-
-  /// "ppy" 텍스트 크기 (기본: 32)
-  final double? ppyTextSize;
-
-  final double? spinnerStrokeWidth;
   final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Center(
-          child: AnimatedOpacity(
-            opacity: opacity,
-            duration: opacityDuration,
-            curve: opacityCurve,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  "d",
-                  style: TextStyle(
-                    fontSize: dTextSize ?? 32,
-                    fontWeight: FontWeight.w800,
-                    color: color ?? Theme.of(context).colorScheme.onSurface,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-                Padding(
-                  padding: EdgeInsets.only(top: 5),
-                  child: RepaintBoundary(
-                    // ✅ 스피너만 별도 레이어로 격리하여 메인 스레드 블로킹 최소화
-                    child: SizedBox(
-                      width: (ppyTextSize ?? 36) / 2,
-                      height: (ppyTextSize ?? 36) / 2,
-                      child: CircularProgressIndicator(
-                        strokeWidth: spinnerStrokeWidth ?? 4.2,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          color ??
-                              spinnerColor ??
-                              Theme.of(context).colorScheme.onSurface,
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Theme.of(context).colorScheme.background,
+        elevation: 0,
+        leading:
+            showBackButton
+                ? IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: Icon(Icons.arrow_back_ios_new_rounded),
+                )
+                : null,
+      ),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Center(
+              child: AnimatedOpacity(
+                opacity: opacity,
+                duration: opacityDuration,
+                curve: opacityCurve,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      "d",
+                      style: TextStyle(
+                        fontSize: _dTextSize,
+                        fontWeight: FontWeight.w800,
+                        color: color ?? Theme.of(context).colorScheme.onSurface,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    Padding(
+                      padding: EdgeInsets.only(top: 5),
+                      child: RepaintBoundary(
+                        // ✅ 스피너만 별도 레이어로 격리하여 메인 스레드 블로킹 최소화
+                        child: SizedBox(
+                          width: _spinnerSize / 2,
+                          height: _spinnerSize / 2,
+                          child: CircularProgressIndicator(
+                            strokeWidth: _spinnerStrokeWidth,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              color ??
+                                  spinnerColor ??
+                                  Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-                Text(
-                  "ppy",
-                  style: TextStyle(
-                    fontSize: ppyTextSize ?? 32,
-                    fontWeight: FontWeight.w800,
-                    color: color ?? Theme.of(context).colorScheme.onSurface,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        // 뒤로가기 버튼
-        if (showBackButton)
-          Positioned(
-            top: 0,
-            left: 0,
-            child: SafeArea(
-              bottom: false,
-              child: Container(
-                height: kToolbarHeight,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.75),
-                        size: 24,
+                    Text(
+                      "ppy",
+                      style: TextStyle(
+                        fontSize: _ppyTextSize,
+                        fontWeight: FontWeight.w800,
+                        color: color ?? Theme.of(context).colorScheme.onSurface,
+                        letterSpacing: 1.2,
                       ),
-                      onPressed: onBack ?? () => Navigator.of(context).pop(),
                     ),
                   ],
                 ),
               ),
             ),
-          ),
-      ],
+          ],
+        ),
+      ),
     );
   }
 }

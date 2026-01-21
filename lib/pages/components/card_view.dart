@@ -279,7 +279,6 @@ class _CardViewState extends State<CardView> {
 
   Widget _buildVideoPlaceholder(BuildContext context) {
     final theme = Theme.of(context);
-    final showText = _isRecentPost();
     return GestureDetector(
       onTap: () {
         if (!mounted) return;
@@ -300,16 +299,6 @@ class _CardViewState extends State<CardView> {
                 size: 34,
                 color: theme.colorScheme.onSurface.withOpacity(0.65),
               ),
-              if (showText) ...[
-                const SizedBox(height: 6),
-                Text(
-                  '영상 처리 중',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: theme.colorScheme.onSurface.withOpacity(0.65),
-                  ),
-                ),
-              ],
             ],
           ),
         ),
@@ -403,9 +392,7 @@ class _CardViewState extends State<CardView> {
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(11),
                             border: Border.all(
-                              color: theme.colorScheme.onSurface.withOpacity(
-                                0.3,
-                              ),
+                              color: theme.colorScheme.surfaceVariant,
                               width: 0.8,
                             ),
                           ),
@@ -556,8 +543,8 @@ class _CardViewState extends State<CardView> {
                       Text(
                         _formatDateString(widget.post.createdAt),
                         style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w300,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
                           color: theme.colorScheme.onSurface.withOpacity(0.5),
                         ),
                       ),
@@ -587,10 +574,9 @@ class _CardViewState extends State<CardView> {
                               formatCount(widget.post.likeCount),
                               style: TextStyle(
                                 fontSize: 14,
-                                fontWeight: FontWeight.w300,
-                                color: theme.colorScheme.onSurface.withOpacity(
-                                  0.6,
-                                ),
+                                fontWeight: FontWeight.w500,
+                                color: theme.colorScheme.onSurfaceVariant
+                                    .withOpacity(0.4),
                               ),
                             ),
                           ],

@@ -3,22 +3,22 @@ class User {
   final String? role;
   final String? alias; // alias 필드 추가
   final String? profileImageUrl;
-  final String? selfIntroduction;
   final List<String>? links; // 🎯 프로필 링크 목록
   final Map<String, String>? linkTitles; // 🎯 링크 타이틀 (URL -> 타이틀)
   final Map<String, String>? linkThumbnails; // 🎯 링크 썸네일 (URL -> thumbnailUrl)
   final int? friendCount;
+  final bool? onboardingCompleted; // 🎯 서버에서 온보딩 완료 여부
 
   User({
     required this.username,
     this.role,
     this.alias,
     this.profileImageUrl,
-    this.selfIntroduction,
     this.links,
     this.linkTitles,
     this.linkThumbnails,
     this.friendCount,
+    this.onboardingCompleted,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -75,11 +75,12 @@ class User {
       alias: json['alias']?.toString(),
       profileImageUrl:
           json['profileImageUrl']?.toString() ?? json['imageUrl']?.toString(),
-      selfIntroduction: json['selfIntroduction']?.toString(),
+
       links: links,
       linkTitles: linkTitles,
       linkThumbnails: linkThumbnails,
       friendCount: (json['friendCount'] as num?)?.toInt(),
+      onboardingCompleted: json['onboardingCompleted'] as bool?,
     );
   }
 
@@ -94,17 +95,19 @@ class User {
     Map<String, String>? linkTitles,
     Map<String, String>? linkThumbnails,
     int? friendCount,
+    bool? onboardingCompleted,
   }) {
     return User(
       username: username ?? this.username,
       role: role ?? this.role,
       alias: alias ?? this.alias,
       profileImageUrl: profileImageUrl ?? this.profileImageUrl,
-      selfIntroduction: selfIntroduction ?? this.selfIntroduction,
+
       links: links ?? this.links,
       linkTitles: linkTitles ?? this.linkTitles,
       linkThumbnails: linkThumbnails ?? this.linkThumbnails,
       friendCount: friendCount ?? this.friendCount,
+      onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
     );
   }
 }

@@ -1,0 +1,423 @@
+import 'dart:async';
+
+import 'package:doppy/data/models/system_category_keys.dart';
+import 'package:doppy/data/services/draft_service.dart';
+import 'package:doppy/editor/component/clip_component.dart'
+    show cleanupAllVideoPlayers;
+import 'package:doppy/editor/publish/service/post_publish_service.dart'
+    show PostExporter, PostPublishService;
+import 'package:doppy/image/utils/edit_image_cache_manager.dart';
+import 'package:doppy/utils/error_handler.dart';
+import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/main.dart' show navigatorKey;
+import 'package:doppy/pages/components/retry_cancel_bottom_sheet.dart';
+import 'package:doppy/pages/components/share_post_overlay.dart';
+import 'package:doppy/pages/screens/home_screen.dart';
+import 'package:doppy/pages/screens/splash_screen.dart';
+import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/editor/service/sticker_service.dart';
+import 'package:doppy/data/services/user_service.dart';
+import 'package:doppy/providers/user_provider.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:doppy/data/services/auth_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+enum PublishFlowStatus { idle, publishing, success, failure }
+
+class PublishLogEntry {
+  final DateTime at;
+  final String message;
+
+  PublishLogEntry(this.message) : at = DateTime.now();
+}
+
+class PublishRequest {
+  final Map<String, dynamic> exportedBase;
+  final String title;
+  final String thumbnailImageUrl;
+  final String accessLevel;
+  final int? year;
+  final int? nthWeek;
+  final String? sessionKey;
+  final bool isOnboardingMode; // 🎯 온보딩 모드 여부
+
+  const PublishRequest({
+    required this.exportedBase,
+    required this.title,
+    required this.thumbnailImageUrl,
+    required this.accessLevel,
+    required this.year,
+    required this.nthWeek,
+    required this.sessionKey,
+    this.isOnboardingMode = false, // 🎯 기본값은 false
+  });
+}
+
+/// 🎯 전역 발행 상태/사이드이펙트를 담당하는 Provider
+/// - PostExportScreen/PostwriteScreen은 "요청만 던지고 즉시 pop" 한다.
+/// - 업로드/피드갱신/실패 다이얼로그/완료 ShareOverlay 표시를 여기서 처리한다.
+class PublishProvider extends ChangeNotifier {
+  PublishFlowStatus _status = PublishFlowStatus.idle;
+  PublishFlowStatus get status => _status;
+
+  Object? _lastError;
+  Object? get lastError => _lastError;
+
+  Map<String, dynamic>? _lastUploadResult;
+  Map<String, dynamic>? get lastUploadResult => _lastUploadResult;
+
+  final List<PublishLogEntry> _logs = <PublishLogEntry>[];
+  List<PublishLogEntry> get logs => List.unmodifiable(_logs);
+
+  PublishRequest? _lastRequest;
+  PublishRequest? get lastRequest => _lastRequest;
+
+  void _log(String message) {
+    _logs.add(PublishLogEntry(message));
+    // 로그는 테스트용이므로 메모리 무한 증가 방지
+    if (_logs.length > 50) {
+      _logs.removeRange(0, _logs.length - 50);
+    }
+    notifyListeners();
+  }
+
+  /// UI에서 호출: 요청을 던지고 바로 return (fire-and-forget)
+  void startPublish(PublishRequest request) {
+    // 동시에 여러 발행을 허용하지 않는다.
+    if (_status == PublishFlowStatus.publishing) {
+      _log('⚠️ 이미 발행 중: 중복 요청 무시');
+      return;
+    }
+
+    _lastRequest = request;
+    _lastError = null;
+    _lastUploadResult = null;
+    _status = PublishFlowStatus.publishing;
+    _log('🚀 발행 시작');
+
+    // ✅ 발행 중일 때 모든 비디오 플레이어 정리 (UI와 분리)
+    try {
+      cleanupAllVideoPlayers();
+    } catch (_) {}
+
+    // 🎯 발행 중 스낵바 표시 (모든 경우 3초 유지)
+    _showPublishingSnackBar();
+
+    // 🎯 온보딩 모드: 즉시 스플래시로 이동 (업로드는 스플래시에서 대기)
+    if (request.isOnboardingMode) {
+      _navigateToSplashForOnboardingPublish();
+    }
+
+    unawaited(_runPublish(request));
+  }
+
+  void _navigateToSplashForOnboardingPublish() {
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+
+    // 스낵바는 띄우지 않지만, 혹시 남아있다면 정리
+    try {
+      ScaffoldMessenger.of(ctx).hideCurrentSnackBar();
+    } catch (_) {}
+
+    Navigator.of(ctx).pushAndRemoveUntil(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const SplashScreen(skipOnboarding: true),
+        transitionDuration: const Duration(milliseconds: 250),
+        reverseTransitionDuration: const Duration(milliseconds: 250),
+        transitionsBuilder: (_, animation, __, child) {
+          return FadeTransition(
+            opacity: CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeInOut,
+            ),
+            child: child,
+          );
+        },
+      ),
+      (route) => false,
+    );
+  }
+
+  void _showPublishingSnackBar() {
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+
+    final theme = Theme.of(ctx);
+    final surfaceColor = theme.colorScheme.surface;
+    final onSurfaceColor = theme.colorScheme.onSurface;
+
+    ScaffoldMessenger.of(ctx).hideCurrentSnackBar();
+
+    ErrorHandler.showInfo(
+      ctx,
+      ctx.tr('uploading'),
+      duration: const Duration(seconds: 3),
+      bgColor: onSurfaceColor,
+      fgColor: surfaceColor,
+      leading: SizedBox(
+        width: 20,
+        height: 20,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation<Color>(surfaceColor),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _runPublish(PublishRequest request) async {
+    final context = navigatorKey.currentContext;
+    if (context == null) {
+      _lastError = 'navigatorKey.currentContext is null';
+      _status = PublishFlowStatus.failure;
+      _log('❌ 발행 실패: context 없음');
+      notifyListeners();
+      return;
+    }
+
+    try {
+      final publishService = PostPublishService();
+
+      _log('🧱 payload 생성 중…');
+      final payload = await publishService.buildFinalPayload(
+        exportedBase: request.exportedBase,
+        title: request.title,
+        thumbnailImageUrl: request.thumbnailImageUrl,
+        privateOnly: request.accessLevel == SystemCategoryKeys.private,
+        publicOnly: request.accessLevel == SystemCategoryKeys.public,
+        friendsOnly: request.accessLevel == SystemCategoryKeys.friends,
+        year: request.year,
+        nthWeek: request.nthWeek,
+      );
+
+      _log('☁️ 업로드 중…');
+      final uploadResult = await publishService.publishPost(payload: payload);
+      _lastUploadResult = uploadResult;
+
+      // ✅ 온보딩 모드면: 완료 플래그를 "success 상태 전환 전"에 확실히 저장한다.
+      // - SplashScreen(skipOnboarding)는 publishProvider.status가 publishing에서 벗어나는 순간
+      //   RootShell로 전환을 진행하므로, 그 전에 SharedPreferences 플래그가 있어야
+      //   홈의 특별 인삿말이 타이밍 이슈 없이 표시된다.
+      if (request.isOnboardingMode) {
+        await _markOnboardingCompleted();
+      }
+
+      _status = PublishFlowStatus.success;
+      _log('✅ 발행 완료: id=${uploadResult['id'] ?? ''}');
+      notifyListeners();
+
+      // ✅ 홈 그리드/인삿말 즉시 갱신
+      try {
+        HomeScreenState.globalKey.currentState?.notifyPostPublished();
+      } catch (_) {}
+
+      // 🎯 발행 성공 후 임시저장 삭제 및 편집 디스크 캐시 삭제 (백그라운드)
+      unawaited(_cleanupAfterSuccess(payload: payload, request: request));
+
+      // 🎯 피드 새로고침/정렬은 Provider의 몫
+      unawaited(_refreshMyFeed(uploadResult: uploadResult));
+
+      // 🎯 일반 모드: 완료 스낵바 표시 (공유하기 버튼 포함)
+      if (!request.isOnboardingMode) {
+        // 🎯 완료 스낵바 표시 (공유하기 버튼 포함)
+        _showSuccessSnackBar();
+      }
+    } catch (e) {
+      _lastError = e;
+      _status = PublishFlowStatus.failure;
+      _log('❌ 발행 실패: $e');
+      notifyListeners();
+
+      // 🎯 실패 스낵바 닫기
+      final ctx = navigatorKey.currentContext;
+      if (ctx != null) {
+        ScaffoldMessenger.of(ctx).hideCurrentSnackBar();
+      }
+
+      await _showFailureDialogAndMaybeRetry();
+    }
+  }
+
+  Future<void> _cleanupAfterSuccess({
+    required Map<String, dynamic> payload,
+    required PublishRequest request,
+  }) async {
+    try {
+      // 스티커 캔버스 청소
+      try {
+        final ctx = navigatorKey.currentContext;
+        if (ctx != null) {
+          ctx.read<StickerService>().removeAll();
+        }
+      } catch (_) {}
+
+      final sessionKey = request.sessionKey;
+      if (sessionKey != null && sessionKey.startsWith('draft_')) {
+        final draftId = sessionKey;
+        final thumbnailUrl = request.thumbnailImageUrl;
+
+        final usedImageUrls = PostExporter.collectUsedMediaUrls(payload);
+        if (thumbnailUrl.isNotEmpty) {
+          usedImageUrls.add(thumbnailUrl);
+        }
+
+        if (usedImageUrls.isNotEmpty) {
+          await EditImageCacheManager.instance.removeCachesForUrls(
+            usedImageUrls,
+          );
+        }
+
+        final draftService = DraftService();
+        await draftService.deleteDraft(draftId);
+        await draftService.clearAutoDraft();
+      } else {
+        // 임시저장이 아니어도 자동저장은 삭제
+        final draftService = DraftService();
+        await draftService.clearAutoDraft();
+      }
+    } catch (e) {
+      _log('⚠️ 후처리 중 오류(무시): $e');
+    }
+  }
+
+  Future<void> _refreshMyFeed({
+    required Map<String, dynamic> uploadResult,
+  }) async {
+    try {
+      final ctx = navigatorKey.currentContext;
+      if (ctx == null) return;
+
+      final feedProvider = ctx.read<MyProfileFeedProvider>();
+      final newPostId = uploadResult['id']?.toString();
+
+      await feedProvider.refresh().catchError((_) {});
+      if (newPostId != null && newPostId.isNotEmpty) {
+        await feedProvider.moveNewPostToFront(newPostId).catchError((_) {});
+      }
+      _log('🔄 내 피드 갱신 완료');
+    } catch (e) {
+      _log('⚠️ 피드 갱신 실패(무시): $e');
+    }
+  }
+
+  void _showSuccessSnackBar() {
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+
+    final theme = Theme.of(ctx);
+    final surfaceColor = theme.colorScheme.surface;
+    final onSurfaceColor = theme.colorScheme.onSurface;
+
+    ScaffoldMessenger.of(ctx).hideCurrentSnackBar();
+
+    ErrorHandler.showInfo(
+      ctx,
+      ctx.tr('upload_complete'),
+      duration: const Duration(seconds: 3),
+      bgColor: onSurfaceColor,
+      fgColor: surfaceColor,
+      action: SnackBarAction(
+        label: ctx.tr('share'),
+        textColor: surfaceColor,
+        onPressed: () {
+          ScaffoldMessenger.of(ctx).hideCurrentSnackBar();
+          _showShareOverlay();
+        },
+      ),
+    );
+  }
+
+  void _showShareOverlay() {
+    if (_lastUploadResult == null) return;
+
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final safeCtx = navigatorKey.currentContext;
+      if (safeCtx == null) return;
+
+      try {
+        SharePostOverlay.show(
+          safeCtx,
+          postId: _lastUploadResult!['id']?.toString() ?? '',
+          title: _lastUploadResult!['title']?.toString() ?? '',
+          summary: '',
+          authorUsername: _lastUploadResult!['author']?.toString() ?? '',
+          authorProfileImageUrl:
+              _lastUploadResult!['authorProfileImageUrl']?.toString(),
+          thumbnailUrl: _lastUploadResult!['thumbnailImageUrl']?.toString(),
+          readTime: (_lastUploadResult!['readTime'] as int?) ?? 1,
+          isNewPost: true,
+          uploadedData: _lastUploadResult,
+          useReplacement: false,
+        );
+      } catch (e) {
+        _log('⚠️ ShareOverlay 표시 실패(무시): $e');
+      }
+    });
+  }
+
+  Future<void> _showFailureDialogAndMaybeRetry() async {
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+
+    // 화면이 이미 pop된 상태여야 하므로 root context에서 띄운다.
+    final action = await RetryCancelBottomSheet.show(
+      ctx,
+      title: ctx.tr('publish_failed_title'),
+      error: _lastError,
+    );
+
+    if (action == RetryCancelAction.retry && _lastRequest != null) {
+      _log('🔁 재시도 선택');
+      startPublish(_lastRequest!);
+    } else {
+      _log('🛑 재시도 취소');
+      // 실패 후에도 로그는 유지하되 overlay는 사용자가 닫을 수 있게 둔다.
+    }
+  }
+
+  Future<void> _markOnboardingCompleted() async {
+    try {
+      final authService = AuthService();
+      final accountKey = await authService.getAccountKeyFromToken();
+      if (accountKey == null) {
+        _log('⚠️ 첫 홈 진입 플래그 저장 스킵: accountKey null');
+        return;
+      }
+
+      // ✅ 1) 서버에 온보딩 완료 상태 반영 (PATCH /api/users/onboarding)
+      // - 서버 스펙: onboardingCompleted null/미포함이면 true로 처리
+      bool? updated;
+      try {
+        updated = await UserService().updateOnboardingCompleted(
+          onboardingCompleted: true,
+        );
+        _log('✅ 서버 온보딩 완료 업데이트: ${updated ?? true}');
+      } catch (e) {
+        // 서버 업데이트 실패는 UX를 막지 않는다. (다음 번들 로드 시 다시 판단)
+        _log('⚠️ 서버 온보딩 완료 업데이트 실패(무시): $e');
+      }
+
+      // ✅ 2) 같은 세션에서 온보딩 루프 방지: UserProvider 메모리도 즉시 갱신
+      final ctx = navigatorKey.currentContext;
+      if (ctx != null) {
+        try {
+          ctx.read<UserProvider>().setOnboardingCompleted(updated ?? true);
+        } catch (_) {}
+      }
+
+      // ✅ 3) 첫 홈 진입 시 특별 그리팅 메시지 표시를 위한 플래그만 로컬로 설정
+      final prefs = await SharedPreferences.getInstance();
+      final firstHomeVisitKey = 'onboarding_first_home_visit_$accountKey';
+      await prefs.setBool(firstHomeVisitKey, true);
+
+      _log('🏁 첫 홈 진입 플래그 설정 완료 (온보딩 완료는 서버에서 관리)');
+    } catch (e) {
+      _log('⚠️ 첫 홈 진입 플래그 저장 실패(무시): $e');
+    }
+  }
+}

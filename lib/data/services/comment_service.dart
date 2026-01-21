@@ -249,6 +249,27 @@ class CommentService extends ChangeNotifier {
   String? _currentPostAuthorUsername; // 🎯 현재 포스트 작성자 username
   String? _cachedCurrentUsername; // 🎯 현재 사용자명 캐시 (성능 최적화)
 
+  Future<List<String>> _buildMentionedUsernames({
+    required String content,
+    List<String>? explicitMentionedUsernames,
+  }) async {
+    // ✅ 1) 직접 타이핑 멘션(파싱) + 2) 오버레이 선택 멘션(명시적) 병합
+    final parsed = MentionParser.extractMentions(content);
+    final explicit =
+        (explicitMentionedUsernames ?? const <String>[])
+            .where((u) => MentionParser.isMentioned(content, u))
+            .toList();
+
+    final merged = <String>{...parsed, ...explicit};
+
+    // ✅ 본인 언급 제외 (명세서: 본인을 언급해도 알림이 가지 않음)
+    final currentUsername = await _getCurrentUsername();
+    if (currentUsername != null) {
+      merged.remove(currentUsername);
+    }
+    return merged.toList();
+  }
+
   /// 현재 사용자명 가져오기 (캐싱 적용)
   Future<String?> _getCurrentUsername() async {
     // 🎯 1순위: 인스턴스 캐시 확인
@@ -1517,6 +1538,7 @@ class CommentService extends ChangeNotifier {
   Future<void> addCommentWithImageUrl({
     required String tempCommentId,
     required String imageUrl,
+    List<String>? explicitMentionedUsernames,
   }) async {
     if (_currentPostId == null || imageUrl.isEmpty) return;
 
@@ -1560,13 +1582,10 @@ class CommentService extends ChangeNotifier {
 
     // 🎯 서버에 댓글 전송
     try {
-      // 🎯 언급 파싱
-      var mentionedUsernames = MentionParser.extractMentions(finalContent);
-      final currentUsername = await _getCurrentUsername();
-      if (currentUsername != null) {
-        mentionedUsernames =
-            mentionedUsernames.where((u) => u != currentUsername).toList();
-      }
+      final mentionedUsernames = await _buildMentionedUsernames(
+        content: finalContent,
+        explicitMentionedUsernames: explicitMentionedUsernames,
+      );
 
       // 🎯 postId를 정수로 변환
       final postIdInt = int.tryParse(_currentPostId!);
@@ -1688,6 +1707,7 @@ class CommentService extends ChangeNotifier {
   Future<void> addCommentWithImageUrls({
     required String tempCommentId,
     required List<String> imageUrls,
+    List<String>? explicitMentionedUsernames,
   }) async {
     if (_currentPostId == null || imageUrls.isEmpty) return;
 
@@ -1740,13 +1760,10 @@ class CommentService extends ChangeNotifier {
 
     // 🎯 서버에 댓글 전송
     try {
-      // 🎯 언급 파싱
-      var mentionedUsernames = MentionParser.extractMentions(finalContent);
-      final currentUsername = await _getCurrentUsername();
-      if (currentUsername != null) {
-        mentionedUsernames =
-            mentionedUsernames.where((u) => u != currentUsername).toList();
-      }
+      final mentionedUsernames = await _buildMentionedUsernames(
+        content: finalContent,
+        explicitMentionedUsernames: explicitMentionedUsernames,
+      );
 
       // 🎯 postId를 정수로 변환
       final postIdInt = int.tryParse(_currentPostId!);
@@ -1873,21 +1890,17 @@ class CommentService extends ChangeNotifier {
     List<String>? imageUrls, // 🎯 여러 이미지 URL 목록
     List<String>? localImagePaths, // 🎯 여러 로컬 이미지 파일 경로
     String? visibleToUsername, // 🎯 비밀 메시지 대상 사용자 (1:1)
+    List<String>? explicitMentionedUsernames, // ✅ 오버레이 선택 기반 멘션(정확)
     // 🎯 하위 호환성을 위한 단일 이미지 파라미터 (deprecated)
     @Deprecated('Use imageUrls instead') String? imageUrl,
     @Deprecated('Use localImagePaths instead') String? localImagePath,
   }) async {
     if (_currentPostId == null) return;
 
-    // 🎯 언급 파싱 (엣지 케이스 모두 고려)
-    var mentionedUsernames = MentionParser.extractMentions(content);
-
-    // 🎯 본인 언급 제외 (명세서: 본인을 언급해도 알림이 가지 않음)
-    final currentUsername = await _getCurrentUsername();
-    if (currentUsername != null) {
-      mentionedUsernames =
-          mentionedUsernames.where((u) => u != currentUsername).toList();
-    }
+    final mentionedUsernames = await _buildMentionedUsernames(
+      content: content,
+      explicitMentionedUsernames: explicitMentionedUsernames,
+    );
 
     // 1️⃣ 임시 ID 생성 (pending 댓글 식별용)
     final tempId = 'temp_${DateTime.now().millisecondsSinceEpoch}';
