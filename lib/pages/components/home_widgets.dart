@@ -7,6 +7,7 @@ import 'package:doppy/pages/screens/date_picker_screen.dart'
 import 'package:doppy/pages/screens/my_friends_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:doppy/utils/text_bold_utils.dart';
 import 'package:doppy/providers/weekly_contribution_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
@@ -1548,6 +1549,15 @@ class _UnlockedPostCardSectionState extends State<UnlockedPostCardSection>
                     );
                   }
 
+                  final dpr = MediaQuery.of(context).devicePixelRatio;
+                  final isAndroid =
+                      defaultTargetPlatform == TargetPlatform.android;
+                  final multiplier = isAndroid ? 1.5 : 2.0;
+                  final maxDecodeWidthPx = isAndroid ? 2048 : 3072;
+                  final memCacheWidth = (screenWidth * 0.74 * dpr * multiplier)
+                      .round()
+                      .clamp(1, maxDecodeWidthPx);
+
                   return RepaintBoundary(
                     child: CachedNetworkImage(
                       imageUrl: thumbnailUrl,
@@ -1558,6 +1568,8 @@ class _UnlockedPostCardSectionState extends State<UnlockedPostCardSection>
                       fadeInDuration: Duration.zero, // ✅ 페이드 애니메이션 제거
                       fadeOutDuration: Duration.zero, // ✅ 페이드 애니메이션 제거
                       useOldImageOnUrlChange: true, // ✅ URL 변경 시 이전 이미지 유지
+                      // ✅ 디코드 폭 제한(안드로이드 프레임 드롭 완화)
+                      memCacheWidth: memCacheWidth,
                       placeholder:
                           (context, url) => Container(
                             color: Theme.of(context).colorScheme.surfaceVariant,
@@ -1974,11 +1986,24 @@ class _LockedPostCardSectionState extends State<LockedPostCardSection>
                     );
                   }
 
+                  final dpr = MediaQuery.of(context).devicePixelRatio;
+                  final isAndroid =
+                      defaultTargetPlatform == TargetPlatform.android;
+                  final multiplier = isAndroid ? 1.5 : 2.0;
+                  final maxDecodeWidthPx = isAndroid ? 2048 : 3072;
+                  final memCacheWidth = (screenWidth *
+                          sizeFactor *
+                          dpr *
+                          multiplier)
+                      .round()
+                      .clamp(1, maxDecodeWidthPx);
+
                   return RepaintBoundary(
                     child: CachedNetworkImage(
                       imageUrl: thumbnailUrl,
                       cacheKey: thumbnailUrl, // ✅ 명시적 캐시 키 지정
-                      memCacheWidth: 400,
+                      // ✅ 디코드 폭 제한(안드로이드 프레임 드롭 완화)
+                      memCacheWidth: memCacheWidth,
                       cacheManager:
                           ReadImageCacheManager.instance, // ✅ 읽기 전용 캐시 매니저 사용
                       fit: BoxFit.cover,
@@ -2049,7 +2074,10 @@ class _PostFillSectionState extends State<PostFillSection>
   late final PageController _pageController;
   int _currentPage = 0;
   late List<Map<String, dynamic>> _uniquePostsCache;
-  static const int _kMaxDecodeWidthPx = 3072; // ✅ iOS 디코드 안정성용 상한
+  // ✅ 홈 썸네일 디코드 상한
+  // - Android: 디코드/메모리 비용이 커서 더 보수적으로
+  static int get _kMaxDecodeWidthPx =>
+      defaultTargetPlatform == TargetPlatform.android ? 2048 : 3072;
 
   @override
   bool get wantKeepAlive => true;
@@ -2125,7 +2153,9 @@ class _PostFillSectionState extends State<PostFillSection>
     final screenW = MediaQuery.of(context).size.width;
     final dpr = MediaQuery.of(context).devicePixelRatio;
     // ✅ CachedNetworkImage의 memCacheWidth와 동일 기준으로 맞춤(=캐시 히트 핵심)
-    return (screenW * dpr * 2).round().clamp(1, _kMaxDecodeWidthPx);
+    final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+    final multiplier = isAndroid ? 1.5 : 2.0;
+    return (screenW * dpr * multiplier).round().clamp(1, _kMaxDecodeWidthPx);
   }
 
   void _preloadAround({required int page}) {

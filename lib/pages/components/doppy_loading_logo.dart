@@ -19,7 +19,7 @@ class DoppyLoadingLogo extends StatelessWidget {
   static const double _dTextSize = 40.0;
   static const double _ppyTextSize = 40.0;
   static const double _spinnerSize = 36.0;
-  static const double _spinnerStrokeWidth = 6.0;
+  static const double _spinnerStrokeWidth = 5.5;
 
   /// 로고 투명도 (0.0 ~ 1.0)
   final double opacity;

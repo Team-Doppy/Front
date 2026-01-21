@@ -499,6 +499,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
         debugPrint('[ClipComponent] UploadService 확인 실패: $e');
       }
     }
+    // 🎯 압축(FFmpeg)/처리 중 상태도 드래그 차단 대상
+    final bool isCompressing = _isCompressing(context);
+    final bool isBusyForDrag = isUploading || isCompressing;
 
     // 🎯 성능 최적화: context.watch → context.select로 변경
     final isSelected = context.select<NodeComponentService, bool>(
@@ -663,7 +666,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                             }
                             : null,
                     onLongPressStart:
-                        widget.isEditing && widget.dragService != null
+                        widget.isEditing &&
+                                widget.dragService != null &&
+                                !isBusyForDrag
                             ? (details) {
                               // 🎯 키보드 내리기 + 포커스 해제 (드래그 시작 시)
                               FocusManager.instance.primaryFocus?.unfocus();
@@ -677,7 +682,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                             }
                             : null,
                     onLongPressMoveUpdate:
-                        widget.isEditing && widget.dragService != null
+                        widget.isEditing &&
+                                widget.dragService != null &&
+                                !isBusyForDrag
                             ? (details) {
                               // 드래그 업데이트
                               widget.dragService?.updateDrag(
@@ -687,7 +694,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                             }
                             : null,
                     onLongPressEnd:
-                        widget.isEditing && widget.dragService != null
+                        widget.isEditing &&
+                                widget.dragService != null &&
+                                !isBusyForDrag
                             ? (_) {
                               // 드래그 종료
                               widget.dragService?.endDrag();
@@ -732,7 +741,8 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                     ),
                   ),
                   // ✅ 드롭라인: dragService 변경 시 자동 rebuild (싱글 이미지와 동일한 방식)
-                  if (widget.dragService != null && !isUploading)
+                  // 🎯 업로드/압축(처리) 중에는 드롭라인도 숨김 (드래그 자체가 막혀야 함)
+                  if (widget.dragService != null && !isBusyForDrag)
                     Positioned.fill(
                       child: ListenableBuilder(
                         listenable: widget.dragService!,

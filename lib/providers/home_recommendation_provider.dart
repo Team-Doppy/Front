@@ -1,4 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../data/models/home_recommendation_model.dart';
 import '../data/services/blog_service.dart';
@@ -132,83 +136,95 @@ class HomeRecommendationProvider with ChangeNotifier {
       '[HomeRecommendationProvider] 🚀 홈 화면 이미지/영상 프리캐싱 시작: ${urls.length}개',
     );
 
-    // 비동기로 프리캐싱 (화면 진입을 막지 않음)
-    Future.microtask(() async {
-      final screenWidth = MediaQuery.of(context).size.width;
-      final dpr = MediaQuery.of(context).devicePixelRatio;
-      // ✅ 실제 렌더링 memCacheWidth와 동일 기준(=캐시 히트 핵심)
-      const maxDecodeWidthPx = 3072; // ✅ 과도한 디코드는 실패/지연 방지
-      final memCacheWidth = (screenWidth * dpr * 2).round().clamp(
-        1,
-        maxDecodeWidthPx,
-      );
+    // ✅ 성능: 안드로이드에서 특히 프리캐시(다운로드+디코드)가 메인 스레드를 오래 점유할 수 있어
+    // - "즉시 microtask" 대신, 최소 1프레임 이후에 시작
+    // - 동시 디코드 개수/디코드 폭을 줄여서 프레임 드롭 완화
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) return;
 
-      // 배치로 나누어 처리 (한 번에 너무 많이 하면 메모리 부족)
-      const batchSize = 10;
-      for (int i = 0; i < urls.length; i += batchSize) {
-        if (!context.mounted) break;
+      unawaited(() async {
+        // 홈 첫 렌더/애니메이션이 안정화될 시간을 조금 준다 (안드로이드에서 체감 큼)
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        if (!context.mounted) return;
 
-        final batch = urls.skip(i).take(batchSize).toList();
-        await Future.wait(
-          batch.map((url) async {
-            if (!context.mounted) return;
+        final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+        final screenWidth = MediaQuery.of(context).size.width;
+        final dpr = MediaQuery.of(context).devicePixelRatio;
 
-            try {
-              // 이미지인지 영상인지 확인
-              final urlLower = url.toLowerCase();
-              final isVideo =
-                  urlLower.endsWith('.mp4') ||
-                  urlLower.endsWith('.mov') ||
-                  urlLower.endsWith('.m4v') ||
-                  urlLower.contains('/videos/') ||
-                  urlLower.contains('video');
-
-              if (isVideo) {
-                // 영상은 썸네일만 프리캐싱 (실제 비디오는 나중에 로드)
-                // 썸네일 URL이 따로 있으면 사용, 없으면 스킵
-                debugPrint(
-                  '[HomeRecommendationProvider] 영상 프리캐싱 스킵 (썸네일만): $url',
-                );
-                return;
-              }
-
-              // 이미지 프리캐싱
-              final provider = CachedNetworkImageProvider(
-                url,
-                cacheManager: ReadImageCacheManager.instance,
-              );
-              final resizedProvider = ResizeImage(
-                provider,
-                width: memCacheWidth,
-              );
-              await precacheImage(resizedProvider, context);
-
-              debugPrint('[HomeRecommendationProvider] ✅ 이미지 프리캐싱 완료: $url');
-            } catch (e) {
-              if (e.toString().contains('dispose') ||
-                  e.toString().contains('mounted')) {
-                debugPrint(
-                  '[HomeRecommendationProvider] ⚠️ context dispose로 인한 중단: $url',
-                );
-                return;
-              }
-              debugPrint(
-                '[HomeRecommendationProvider] ❌ 이미지 프리캐싱 실패: $url - $e',
-              );
-            }
-          }),
-          eagerError: false, // 하나 실패해도 계속 진행
+        // ✅ 홈 썸네일은 "완전한 2x"가 꼭 필요하지 않음.
+        // Android는 디코드 비용이 커서 1.5x로 낮춰 프레임 드롭을 줄인다.
+        final double multiplier = isAndroid ? 1.5 : 2.0;
+        final int maxDecodeWidthPx = isAndroid ? 2048 : 3072;
+        final memCacheWidth = (screenWidth * dpr * multiplier).round().clamp(
+          1,
+          maxDecodeWidthPx,
         );
 
-        // 배치 간 짧은 딜레이 (메모리 부담 완화)
-        if (i + batchSize < urls.length) {
-          await Future.delayed(const Duration(milliseconds: 50));
-        }
-      }
+        // ✅ 동시 프리캐시 제한 (안드로이드는 더 보수적으로)
+        final int concurrency = isAndroid ? 2 : 4;
+        final int yieldMs = isAndroid ? 16 : 4; // 프레임 양보
 
-      debugPrint(
-        '[HomeRecommendationProvider] ✅ 홈 화면 이미지/영상 프리캐싱 완료: ${urls.length}개',
-      );
+        debugPrint(
+          '[HomeRecommendationProvider] ⚙️ precache cfg: '
+          'platform=${defaultTargetPlatform.name}, '
+          'concurrency=$concurrency, memCacheWidth=$memCacheWidth',
+        );
+
+        Future<void> precacheOne(String url) async {
+          if (!context.mounted) return;
+
+          final urlLower = url.toLowerCase();
+          final isVideo =
+              urlLower.endsWith('.mp4') ||
+              urlLower.endsWith('.mov') ||
+              urlLower.endsWith('.m4v') ||
+              urlLower.contains('/videos/') ||
+              urlLower.contains('video');
+          if (isVideo) return; // 비디오는 여기서 이미지 precache 하지 않음
+
+          final provider = CachedNetworkImageProvider(
+            url,
+            cacheManager: ReadImageCacheManager.instance,
+          );
+          final resizedProvider = ResizeImage(provider, width: memCacheWidth);
+          await precacheImage(resizedProvider, context);
+        }
+
+        // ✅ 배치(=동시성) 단위로 쪼개서, 배치 사이에 프레임을 양보한다.
+        for (int i = 0; i < urls.length; i += concurrency) {
+          if (!context.mounted) break;
+          final batch = urls.skip(i).take(concurrency).toList();
+          try {
+            await Future.wait(
+              batch.map((u) async {
+                try {
+                  await precacheOne(u);
+                } catch (e) {
+                  // best-effort
+                  if (kDebugMode) {
+                    debugPrint(
+                      '[HomeRecommendationProvider] ⚠️ precache 실패(무시): $u - $e',
+                    );
+                  }
+                }
+              }),
+              eagerError: false,
+            );
+          } catch (_) {
+            // batch 자체 실패도 best-effort
+          }
+
+          // 🎯 메인 스레드 양보: UI가 먼저 그려지게 함 (안드로이드 프레임 드롭 완화)
+          if (i + concurrency < urls.length) {
+            // endOfFrame은 너무 느릴 수 있어 짧은 delay로 타협
+            await Future<void>.delayed(Duration(milliseconds: yieldMs));
+          }
+        }
+
+        debugPrint(
+          '[HomeRecommendationProvider] ✅ 홈 화면 이미지 프리캐싱 완료: ${urls.length}개',
+        );
+      }());
     });
   }
 }

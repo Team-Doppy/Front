@@ -447,12 +447,12 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                       altText: node.altText,
                       metadata: updatedMetadata,
                     );
-                    editorService.editor.execute([
-                      ReplaceNodeRequest(
-                        existingNodeId: nodeId,
-                        newNode: updatedNode,
-                      ),
-                    ]);
+                    // ✅ IMPORTANT:
+                    // ReplaceNodeRequest는 내부적으로 remove+insert로 처리되어
+                    // 업로드 중인 노드가 "삭제된 것"처럼 인식되어 업로드가 취소될 수 있다.
+                    // padding 토글은 nodeId 유지 + metadata만 변경이므로
+                    // document.replaceNodeById로 NodeChangeEvent 흐름을 타게 한다.
+                    editorService.document.replaceNodeById(nodeId, updatedNode);
                     // 🎯 padding 변경을 히스토리에 저장
                     editorService.saveHistoryNow();
                   } else if (node is ClipNode) {
@@ -471,12 +471,8 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                       thumbnailPath: node.thumbnailPath,
                       metadata: updatedMetadata,
                     );
-                    editorService.editor.execute([
-                      ReplaceNodeRequest(
-                        existingNodeId: nodeId,
-                        newNode: updatedNode,
-                      ),
-                    ]);
+                    // ✅ Same reason as ImageNode: avoid remove+insert.
+                    editorService.document.replaceNodeById(nodeId, updatedNode);
                     // 🎯 padding 변경을 히스토리에 저장
                     editorService.saveHistoryNow();
                   } else if (node is LinkNode) {
@@ -494,12 +490,8 @@ class _SelectedToolbarState extends State<SelectedToolbar> {
                       thumbnailUrl: node.thumbnailUrl,
                       metadata: updatedMetadata,
                     );
-                    editorService.editor.execute([
-                      ReplaceNodeRequest(
-                        existingNodeId: nodeId,
-                        newNode: updatedNode,
-                      ),
-                    ]);
+                    // ✅ Same reason as ImageNode: avoid remove+insert.
+                    editorService.document.replaceNodeById(nodeId, updatedNode);
                     // 🎯 padding 변경을 히스토리에 저장
                     editorService.saveHistoryNow();
                   }

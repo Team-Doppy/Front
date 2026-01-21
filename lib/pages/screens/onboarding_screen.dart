@@ -83,7 +83,7 @@ class _LoginScreenState extends State<LoginScreen>
     // 키보드가 올라왔는지 확인
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
     final isKeyboardVisible = keyboardHeight > 0;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    bool isDark = Theme.of(context).brightness == Brightness.dark;
     final theme = Theme.of(context);
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -141,7 +141,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 fontWeight: FontWeight.w500,
                                 color: Theme.of(
                                   context,
-                                ).colorScheme.onSurface.withOpacity(0.88),
+                                ).colorScheme.onSurface.withOpacity(0.8),
                               ),
                             ),
                           ],
@@ -411,6 +411,8 @@ class _LoginScreenState extends State<LoginScreen>
                                       _passwordController.text.isNotEmpty &&
                                       !_isLoggingIn)
                                   ? Theme.of(context).colorScheme.onSurface
+                                  : isDark
+                                  ? theme.colorScheme.surface
                                   : Colors.grey[400],
                           foregroundColor: Colors.white,
                           elevation: 0,

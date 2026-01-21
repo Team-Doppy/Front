@@ -905,6 +905,9 @@ class _ImageRowComponentState extends State<ImageRowComponent>
                     widget.isEditing && widget.dragService != null
                         ? (_) {
                           widget.dragService?.endDrag();
+                          // 🎯 드래그 종료 시 선택 해제
+                          context.read<NodeComponentService>().selectNode(null);
+                          widget.dragService?.invalidateNodeRectCache();
                         }
                         : null,
                 child: Padding(

@@ -75,6 +75,7 @@ class _SplashScreenState extends State<SplashScreen>
   late final Future<_BootstrapResult> _bootstrapFuture;
   bool _showRootShell = false;
   bool _hideSplashOverlay = false;
+  bool _didStartHomeMediaPrecache = false; // ✅ 홈 프리캐시 1회만
   bool _shouldForceOnboardingFlow = false; // 🎯 온보딩 미완료 계정이면 강제 진입 (서버 플래그 기반)
   bool _isMonitoringOnboardingPublish = false;
   VoidCallback? _onboardingPublishListener;
@@ -214,9 +215,6 @@ class _SplashScreenState extends State<SplashScreen>
       // - CachedNetworkImage가 memCacheWidth로 리사이즈 디코드를 하므로,
       //   precache도 동일한 ResizeImage(width)로 해야 회색 placeholder가 사라진다.
       await _preloadHomeFillSectionCriticalImages();
-
-      // ✅ 홈 화면의 모든 이미지/영상을 비동기로 프리캐싱 시작 (화면 진입을 막지 않음)
-      _precacheAllHomeMedia();
 
       // MyProfileFeed 로드 완료 후 WeeklyContributions 로드 (totalPosts 사용을 위해)
       await _loadWeeklyContributions();
@@ -758,12 +756,28 @@ class _SplashScreenState extends State<SplashScreen>
       setState(() {
         _hideSplashOverlay = true;
       });
+
+      // ✅ 홈이 실제로 보이기 시작한 뒤(스플래시 제거 후) 프리캐시 시작
+      // - 스플래시 단계에서 대량 precache를 시작하면 안드로이드에서 프레임 드롭이 심해질 수 있음
+      _startHomeMediaPrecacheAfterSplash();
     } else {
       // 로그인 화면으로 전환 (스택 초기화)
       await _fadeOutController.forward();
       if (!mounted) return;
       Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
     }
+  }
+
+  void _startHomeMediaPrecacheAfterSplash() {
+    if (!mounted) return;
+    if (_didStartHomeMediaPrecache) return;
+    _didStartHomeMediaPrecache = true;
+
+    // 홈 첫 렌더 안정화 후 백그라운드에서 시작
+    Future<void>.delayed(const Duration(milliseconds: 800), () {
+      if (!mounted) return;
+      _precacheAllHomeMedia();
+    });
   }
 
   void _startMonitoringOnboardingPublish() {
