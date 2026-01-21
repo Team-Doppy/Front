@@ -231,10 +231,15 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         });
       } else if (newIndex == 3) {
         // 3번 인덱스 진입: 0.5초 지연 후 애니메이션 시작
-        Future.delayed(const Duration(milliseconds: 300), () {
+        Future.delayed(const Duration(milliseconds: 500), () {
           if (mounted && _currentIndex == 3) {
-            if (!_isDragging && !_snapController.isAnimating) {
-              _index3HintController.repeat(reverse: true);
+            if (!_isDragging) {
+              // ✅ 애니메이션 완료 후 시작하도록 약간 추가 지연
+              Future.delayed(const Duration(milliseconds: 100), () {
+                if (mounted && _currentIndex == 3 && !_isDragging) {
+                  _index3HintController.repeat(reverse: true);
+                }
+              });
             }
           }
         });
@@ -350,11 +355,12 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     _snapController.value = next;
   }
 
-  Widget _buildBg(int idx) {
+  Widget _buildBg(BuildContext context, int idx) {
     // ✅ 전환 중(Index2 BG의 반복 애니메이션/이미지 디코딩 등) 부하 완화
     final pauseIndex2Animation = _isDragging || _snapController.isAnimating;
+    final username = context.read<UserProvider>().currentUser?.username ?? '';
     return switch (idx) {
-      0 => Index0Background(name: 'affection_jh'),
+      0 => Index0Background(name: username),
       1 => Index1Background(
         nicknameController: _index1NicknameController,
         onNicknameSubmitted: () => _handleNicknameSubmit(),
@@ -437,7 +443,12 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     } catch (e) {
       debugPrint('[OnboardingFlow] 별명 저장 실패: $e');
       if (mounted) {
-        ErrorHandler.showError(context, context.tr('nickname_save_failed'));
+        // ✅ 서버 에러 메시지가 있으면 표시, 없으면 기본 메시지
+        final errorMessage =
+            e.toString().contains('400')
+                ? '별명 저장에 실패했습니다. 별명 형식을 확인해주세요.'
+                : context.tr('nickname_save_failed');
+        ErrorHandler.showError(context, errorMessage);
       }
     }
   }
@@ -506,7 +517,11 @@ class _OnboardingFlowState extends State<OnboardingFlow>
           if ((_snapController.value - 3.0).abs() < 0.001 &&
               _currentIndex == 3 &&
               !_isDragging) {
-            _index3HintController.repeat(reverse: true);
+            Future.delayed(const Duration(milliseconds: 100), () {
+              if (mounted && _currentIndex == 3 && !_isDragging) {
+                _index3HintController.repeat(reverse: true);
+              }
+            });
           }
         });
   }
@@ -796,7 +811,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                     return RepaintBoundary(
                       child: KeyedSubtree(
                         key: ValueKey('bg-$from'),
-                        child: _buildBg(from),
+                        child: _buildBg(context, from),
                       ),
                     );
                   }
@@ -817,7 +832,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                           opacity: outOpacity,
                           child: KeyedSubtree(
                             key: ValueKey('bg-$from'),
-                            child: _buildBg(from),
+                            child: _buildBg(context, from),
                           ),
                         ),
                       ),
@@ -827,7 +842,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                             opacity: inOpacity,
                             child: KeyedSubtree(
                               key: ValueKey('bg-$to'),
-                              child: _buildBg(to),
+                              child: _buildBg(context, to),
                             ),
                           ),
                         ),

@@ -1308,6 +1308,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
             borderColor: theme.colorScheme.onSurface.withOpacity(0.3),
             adjustmentFilter: _buildAdjustmentColorFilter(),
             rotation: _imageRotation,
+            context: context,
           ),
         ),
       ),
@@ -1484,6 +1485,7 @@ class _UnifiedImagePainter extends CustomPainter {
   final Color borderColor;
   final ColorFilter? adjustmentFilter;
   final double rotation;
+  final BuildContext context;
 
   _UnifiedImagePainter({
     required this.image,
@@ -1492,6 +1494,7 @@ class _UnifiedImagePainter extends CustomPainter {
     required this.borderColor,
     this.adjustmentFilter,
     this.rotation = 0.0,
+    required this.context,
   });
 
   @override
@@ -1509,7 +1512,7 @@ class _UnifiedImagePainter extends CustomPainter {
     // 원형 영역을 제외한 나머지 영역에만 그리기
     final backgroundPaint =
         Paint()
-          ..color = Colors.white.withOpacity(0.3)
+          ..color = Theme.of(context).colorScheme.surface.withOpacity(0.3)
           ..isAntiAlias = true
           ..filterQuality = FilterQuality.high
           ..colorFilter = adjustmentFilter;
@@ -1560,12 +1563,11 @@ class _UnifiedImagePainter extends CustomPainter {
           ..addOval(cropRect)
           ..fillType = PathFillType.evenOdd;
     canvas.clipPath(blurPath);
-    // 블러 효과 적용
-    final blurPaint =
-        Paint()
-          ..color = Colors.black.withOpacity(0.6)
-          ..maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, 20.0);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), blurPaint);
+
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      backgroundPaint,
+    );
     canvas.restore();
 
     // 3. 원형 테두리 그리기

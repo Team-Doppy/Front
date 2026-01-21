@@ -446,7 +446,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
         children: [
           Icon(
             Icons.favorite_border,
-            size: 80,
+            size: 40,
             color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
           ),
           const SizedBox(height: 16),
@@ -456,14 +456,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               fontSize: 18,
               fontWeight: FontWeight.w600,
               color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            context.tr('no_favorite_posts_subtitle'),
-            style: TextStyle(
-              fontSize: 14,
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
             ),
           ),
         ],

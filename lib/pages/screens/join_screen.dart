@@ -94,6 +94,7 @@ class _JoinScreenState extends State<JoinScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
         leading:
             _isCompleteStep()
                 ? null
@@ -202,6 +203,7 @@ class _JoinScreenState extends State<JoinScreen> {
                 widget.emailVerificationOnly
                     ? 'UPDATE'
                     : 'REGISTER', // emailVerificationOnly 모드면 UPDATE 모드 사용
+            showResendButton: false, // ✅ 재발송 버튼 제거
             onVerified: (email) async {
               if (!mounted) return;
 
@@ -807,7 +809,7 @@ class _JoinScreenState extends State<JoinScreen> {
             width: 20,
             height: 20,
             child: CircularProgressIndicator(
-              strokeWidth: 2,
+              strokeWidth: 3,
               valueColor: AlwaysStoppedAnimation<Color>(
                 Theme.of(context).colorScheme.onSurface,
               ),

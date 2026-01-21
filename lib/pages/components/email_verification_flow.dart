@@ -15,6 +15,7 @@ class EmailVerificationFlow extends StatefulWidget {
   final String? initialEmail;
   final bool enabledEmailEdit;
   final String mode; // 'REGISTER' 또는 'FIND'
+  final bool showResendButton; // ✅ 재발송 버튼 표시 여부
   final Future<void> Function(String verifiedEmail) onVerified;
 
   const EmailVerificationFlow({
@@ -25,6 +26,7 @@ class EmailVerificationFlow extends StatefulWidget {
     this.initialEmail,
     this.enabledEmailEdit = true,
     this.mode = 'REGISTER', // 기본값은 회원가입 모드
+    this.showResendButton = false, // ✅ 기본값: 표시
     required this.onVerified,
   });
 
@@ -514,64 +516,71 @@ class _EmailVerificationFlowState extends State<EmailVerificationFlow> {
                       if (canVerify) _verifyCode();
                     },
                   ),
-                  const SizedBox(height: 12),
-                  // 재발송 버튼 - 10초 쿨다운 후 부드럽게 나타남
-                  AnimatedOpacity(
-                    opacity: _resendRemaining == Duration.zero ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child:
-                          _sending && _codeSent
-                              ? Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                ),
-                                child: SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      theme.colorScheme.onSurfaceVariant
+                  // ✅ 재발송 버튼 (showResendButton이 true일 때만 표시)
+                  if (widget.showResendButton) ...[
+                    const SizedBox(height: 12),
+                    // 재발송 버튼 - 10초 쿨다운 후 부드럽게 나타남
+                    AnimatedOpacity(
+                      opacity: _resendRemaining == Duration.zero ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child:
+                            _sending && _codeSent
+                                ? Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                  ),
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        theme.colorScheme.onSurfaceVariant
+                                            .withOpacity(0.5),
+                                      ),
+                                    ),
+                                  ),
+                                )
+                                : TextButton(
+                                  onPressed:
+                                      (!_sending &&
+                                              _remaining == Duration.zero &&
+                                              _resendRemaining == Duration.zero)
+                                          ? () {
+                                            // 재발송 시 다시 10초 쿨다운 시작
+                                            _resendCooldownUntil =
+                                                DateTime.now().add(
+                                                  const Duration(seconds: 10),
+                                                );
+                                            _resendRemaining = const Duration(
+                                              seconds: 10,
+                                            );
+                                            _tick();
+                                            _timer ??= Timer.periodic(
+                                              const Duration(seconds: 1),
+                                              (_) => _tick(),
+                                            );
+                                            _sendCode();
+                                          }
+                                          : null,
+                                  child: Text(
+                                    context.tr(
+                                      'email_verification_resend_code',
+                                    ),
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onSurfaceVariant
                                           .withOpacity(0.5),
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                 ),
-                              )
-                              : TextButton(
-                                onPressed:
-                                    (!_sending &&
-                                            _remaining == Duration.zero &&
-                                            _resendRemaining == Duration.zero)
-                                        ? () {
-                                          // 재발송 시 다시 10초 쿨다운 시작
-                                          _resendCooldownUntil = DateTime.now()
-                                              .add(const Duration(seconds: 10));
-                                          _resendRemaining = const Duration(
-                                            seconds: 10,
-                                          );
-                                          _tick();
-                                          _timer ??= Timer.periodic(
-                                            const Duration(seconds: 1),
-                                            (_) => _tick(),
-                                          );
-                                          _sendCode();
-                                        }
-                                        : null,
-                                child: Text(
-                                  context.tr('email_verification_resend_code'),
-                                  style: TextStyle(
-                                    color: theme.colorScheme.onSurfaceVariant
-                                        .withOpacity(0.5),
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
 
                 // 하단 여백 (키보드가 올라올 때 버튼과 겹치지 않도록)

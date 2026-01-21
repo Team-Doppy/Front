@@ -232,6 +232,66 @@ class WeeklyContributionProvider extends ChangeNotifier {
     }
   }
 
+  /// ✅ 특정 연도의 기여도 데이터를 "기존 UI는 유지한 채" 서버와 재동기화한다.
+  /// - 기존 clearCache() 방식은 잠깐 데이터가 비면서(=null/empty) UI 색/레이아웃이 깜빡일 수 있음
+  /// - 홈 진입 직후/온보딩 직후처럼 리빌드가 많을 때 특히 눈에 띔
+  Future<void> reloadContributions(int year) async {
+    if (_loadingByYear[year] == true) return;
+
+    _loadingByYear[year] = true;
+    notifyListeners();
+
+    try {
+      final response = await _userService.getWeeklyContributions(year: year);
+      final contributionResponse = WeeklyContributionResponse.fromJson(
+        response,
+      );
+
+      final contributions =
+          contributionResponse.weeks.map((week) {
+            return WeeklyContributionData(
+              year: year,
+              weekNumber: week.weekNumber,
+              hasPost: week.myPosts.isNotEmpty,
+              postCount: week.myPosts.length,
+            );
+          }).toList();
+
+      // 프리뷰 데이터 캐싱 (title과 thumbnailUrl만)
+      _previewByYearAndWeek[year] = {};
+      for (final week in contributionResponse.weeks) {
+        if (week.myPosts.isNotEmpty) {
+          final firstPost = week.myPosts.first;
+          _previewByYearAndWeek[year]![week.weekNumber] = {
+            'title': firstPost['title'] as String?,
+            'thumbnailUrl':
+                firstPost['thumbnailUrl'] as String? ??
+                firstPost['thumbnailImageUrl'] as String?,
+          };
+        } else {
+          _previewByYearAndWeek[year]![week.weekNumber] = {
+            'title': null,
+            'thumbnailUrl': null,
+          };
+        }
+      }
+
+      // 캐싱(덮어쓰기)
+      _contributionsByYear[year] = contributions;
+      _greetingsByYear[year] = contributionResponse.greeting;
+
+      debugPrint(
+        '[WeeklyContributionProvider] $year년 데이터 re-load 완료: ${contributions.length}주차',
+      );
+    } catch (e) {
+      debugPrint('[WeeklyContributionProvider] $year년 데이터 re-load 실패: $e');
+      rethrow;
+    } finally {
+      _loadingByYear[year] = false;
+      notifyListeners();
+    }
+  }
+
   /// 특정 연도의 캐시 삭제 (강제 새로고침용)
   void clearCache(int year) {
     _contributionsByYear.remove(year);
@@ -292,16 +352,14 @@ class WeeklyContributionProvider extends ChangeNotifier {
         try {
           // UI에 먼저 로컬 업데이트를 반영한 뒤 서버 동기화
           await Future.delayed(const Duration(milliseconds: 500));
-          clearCache(year);
-          await loadContributions(year);
+          await reloadContributions(year);
         } catch (e) {
           debugPrint('[WeeklyContributionProvider] 백그라운드 동기화 실패 (무시): $e');
         }
       });
     } else {
       // 🔄 서버에서 다시 로드 (안전하지만 느림)
-      clearCache(year);
-      await loadContributions(year);
+      await reloadContributions(year);
       onPostRegister?.call();
     }
   }
@@ -364,15 +422,13 @@ class WeeklyContributionProvider extends ChangeNotifier {
       // - 백그라운드에서 실행하되, 완료되면 그리팅과 스트릭 정보가 업데이트됨
       unawaited(() async {
         try {
-          clearCache(year);
-          await loadContributions(year);
+          await reloadContributions(year);
         } catch (e) {
           debugPrint('[WeeklyContributionProvider] 삭제 후 서버 동기화 실패 (무시): $e');
         }
       }());
     } else {
-      clearCache(year);
-      await loadContributions(year);
+      await reloadContributions(year);
       onPostRegister?.call();
     }
   }

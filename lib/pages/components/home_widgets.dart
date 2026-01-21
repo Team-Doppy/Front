@@ -367,6 +367,10 @@ class LockedHomeWidget extends StatelessWidget {
         final contributions = contributionProvider.getContributions(year);
         final totalPostCount = contributionProvider.totalPostCount;
         final posts = feedProvider.posts.take(3).toList();
+        // ✅ 그리드 쉬머는 "초기 로드(데이터 없음)"일 때만 표시 (백그라운드 재동기화는 UI 유지)
+        final bool isGridInitialLoading =
+            contributionProvider.isLoading(year) &&
+            ((contributions == null) || contributions.isEmpty);
 
         // ✅ 친구 포스트는 FriendProvider에서 가져오기
         final friendPosts = friendProvider.friendPosts;
@@ -451,20 +455,21 @@ class LockedHomeWidget extends StatelessWidget {
             ),
 
             // 활동 그리드
-            if (contributions != null)
-              Container(
-                key: gridKey, // ✅ 가이드용 GlobalKey
-                child: WeeklyContributionGrid(
-                  year: year,
-                  signupAt: signupAt,
-                  asOf: asOf,
-                  selectedWeek: selectedWeek,
-                  onWeekSelected: onWeekSelected,
-                  contributions: contributions,
-                  isLoading: contributionProvider.isLoading(year),
-                  onLongPress: onWeekLongPress,
-                ),
+            Container(
+              key: gridKey, // ✅ 가이드용 GlobalKey
+              child: WeeklyContributionGrid(
+                year: year,
+                signupAt: signupAt,
+                asOf: asOf,
+                selectedWeek: selectedWeek,
+                onWeekSelected: onWeekSelected,
+                // ✅ null이면 하드코딩 데이터로 바뀌면서 색/레이아웃이 흔들릴 수 있어 빈 리스트로 고정
+                contributions:
+                    contributions ?? const <WeeklyContributionData>[],
+                isLoading: isGridInitialLoading,
+                onLongPress: onWeekLongPress,
               ),
+            ),
             SizedBox(height: HomeSectionSpacing.sectionLarge),
 
             // ✅ 네트워크 오프라인 상태 표시 (그리드 밑에)
@@ -847,8 +852,15 @@ class _UnlockedHomeWidgetState extends State<UnlockedHomeWidget>
                     asOf: widget.asOf,
                     selectedWeek: widget.selectedWeek,
                     onWeekSelected: widget.onWeekSelected,
-                    contributions: widget.contributions,
-                    isLoading: widget.isLoading,
+                    // ✅ null이면 하드코딩 데이터로 바뀌면서 색/레이아웃이 흔들릴 수 있어 빈 리스트로 고정
+                    contributions:
+                        widget.contributions ??
+                        const <WeeklyContributionData>[],
+                    // ✅ 그리드 쉬머는 "초기 로드(데이터 없음)"일 때만 표시
+                    isLoading:
+                        widget.isLoading &&
+                        ((widget.contributions == null) ||
+                            widget.contributions!.isEmpty),
                     onLongPress: widget.onWeekLongPress,
                   ),
                 ),
@@ -1065,6 +1077,30 @@ class GreetingSection extends StatefulWidget {
 
 class _GreetingSectionState extends State<GreetingSection> {
   String? _lastMessage; // 🎯 이전 메시지 저장
+  late final Future<bool>
+  _onboardingFirstVisitFuture; // ✅ build마다 Future 재생성 방지
+  Future<String?>? _messageFuture; // ✅ build마다 Future 재생성 방지
+  int? _messageKeyHash;
+
+  @override
+  void initState() {
+    super.initState();
+    _onboardingFirstVisitFuture = _checkOnboardingFirstHomeVisit();
+  }
+
+  @override
+  void didUpdateWidget(covariant GreetingSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 로딩이 끝나고 입력(연도/그리팅/컨텍스트)이 바뀌면 메시지 Future를 새로 만든다.
+    // 로딩 중에는 이전 메시지/이전 Future를 유지해서 깜빡임을 막는다.
+    if (!widget.isLoading &&
+        (oldWidget.greeting != widget.greeting ||
+            oldWidget.postPublishContext != widget.postPublishContext ||
+            oldWidget.year != widget.year)) {
+      _messageFuture = null;
+      _messageKeyHash = null;
+    }
+  }
 
   /// ✅ 메시지 위젯 빌드 헬퍼 메서드
   Widget _buildMessageWidget(BuildContext context, String? message) {
@@ -1199,90 +1235,84 @@ class _GreetingSectionState extends State<GreetingSection> {
 
   @override
   Widget build(BuildContext context) {
-    // ✅ 온보딩 완료 후 첫 홈 진입인지 확인
-    return FutureBuilder<bool>(
-      future: _checkOnboardingFirstHomeVisit(),
-      builder: (context, firstVisitSnapshot) {
-        final isOnboardingFirstVisit = firstVisitSnapshot.data ?? false;
+    // ✅ 높이 고정: 메시지 전환/로딩 중 레이아웃 요동 방지
+    return SizedBox(
+      height: 70.0,
+      child: FutureBuilder<bool>(
+        // ✅ Future 캐싱(한 번만 체크 + 한 번만 플래그 제거)
+        future: _onboardingFirstVisitFuture,
+        builder: (context, firstVisitSnapshot) {
+          final isOnboardingFirstVisit = firstVisitSnapshot.data ?? false;
 
-        // ✅ 온보딩 완료 후 첫 홈 진입이면 특별한 메시지 표시 (강제로 성공 메시지)
-        if (isOnboardingFirstVisit) {
-          final onSurface = Theme.of(context).colorScheme.onSurface;
-          final displayOpacity = widget.isLoading ? 0.0 : 1.0;
-
-          return AnimatedSwitcher(
-            duration: const Duration(milliseconds: 400),
-            switchInCurve: Curves.easeInOut,
-            switchOutCurve: Curves.easeInOut,
-            transitionBuilder: (child, animation) {
-              return FadeTransition(opacity: animation, child: child);
-            },
-            child: AnimatedOpacity(
+          // ✅ 온보딩 완료 후 첫 홈 진입이면 특별한 메시지 표시
+          // - 성공: onboarding_first_post_success
+          // - 실패: onboarding_first_post_failed (향후 사용 가능)
+          if (isOnboardingFirstVisit) {
+            // ✅ _buildMessageWidget()를 사용하여 일반 그리팅과 동일한 스타일 적용
+            // (1줄째 w300, 2줄째 w800 볼드)
+            return Align(
               key: const ValueKey('onboarding_first_visit'),
-              opacity: displayOpacity,
-              duration: const Duration(milliseconds: 300),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  context.tr('onboarding_first_post_success'),
-                  style: LocaleTypography.style(
-                    context: context,
-                    color: onSurface,
-                    fontSize: 26,
-                    fontWeight: FontWeight.w300,
-                    letterSpacing: -1,
-                    height: 1.4,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.left,
-                  softWrap: true,
-                ),
+              alignment: Alignment.centerLeft,
+              child: _buildMessageWidget(
+                context,
+                context.tr('onboarding_first_post_success'),
               ),
-            ),
-          );
-        }
-
-        // 메시지 가져오기 (FutureBuilder로 비동기 처리)
-        return FutureBuilder<String?>(
-          future: WeeklyContributionGreeting.getMessage(
-            context: context,
-            greeting: widget.greeting,
-            postPublishContext: widget.postPublishContext,
-            year: widget.year,
-          ),
-          builder: (context, snapshot) {
-            // 🎯 로딩 중이 아닐 때만 메시지 업데이트
-            // 로딩 중일 때는 이전 메시지 유지
-            if (!widget.isLoading &&
-                snapshot.hasData &&
-                snapshot.data != null) {
-              _lastMessage = snapshot.data;
-            }
-
-            final displayMessage = _lastMessage;
-
-            // ✅ 단일 AnimatedSwitcher만 사용 (애니메이션 중첩 제거)
-            // 메시지 변경만 AnimatedSwitcher로 처리
-            return AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              switchInCurve: Curves.easeInOut,
-              switchOutCurve: Curves.easeInOut,
-              transitionBuilder: (child, animation) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-              child:
-                  displayMessage != null
-                      ? Align(
-                        key: ValueKey(displayMessage),
-                        alignment: Alignment.centerLeft,
-                        child: _buildMessageWidget(context, displayMessage),
-                      )
-                      : const SizedBox.shrink(key: ValueKey('empty')),
             );
-          },
-        );
-      },
+          }
+
+          // 메시지 가져오기 (FutureBuilder로 비동기 처리)
+          final keyHash = Object.hash(
+            widget.greeting,
+            widget.postPublishContext,
+            widget.year,
+            Localizations.localeOf(context),
+          );
+          if (!widget.isLoading &&
+              (_messageFuture == null || _messageKeyHash != keyHash)) {
+            _messageKeyHash = keyHash;
+            _messageFuture = WeeklyContributionGreeting.getMessage(
+              context: context,
+              greeting: widget.greeting,
+              postPublishContext: widget.postPublishContext,
+              year: widget.year,
+            );
+          }
+          return FutureBuilder<String?>(
+            // ✅ 로딩 중엔 Future를 새로 만들지 않고 이전 것을 유지
+            future: _messageFuture,
+            builder: (context, snapshot) {
+              // 🎯 로딩 중이 아닐 때만 메시지 업데이트
+              // 로딩 중일 때는 이전 메시지 유지
+              if (!widget.isLoading &&
+                  snapshot.hasData &&
+                  snapshot.data != null) {
+                _lastMessage = snapshot.data;
+              }
+
+              final displayMessage = _lastMessage ?? snapshot.data;
+
+              // ✅ 단일 AnimatedSwitcher만 사용 (애니메이션 중첩 제거)
+              // 메시지 변경만 AnimatedSwitcher로 처리
+              return AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                switchInCurve: Curves.easeInOut,
+                switchOutCurve: Curves.easeInOut,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+                child:
+                    displayMessage != null
+                        ? Align(
+                          key: ValueKey(displayMessage),
+                          alignment: Alignment.centerLeft,
+                          child: _buildMessageWidget(context, displayMessage),
+                        )
+                        : const SizedBox.shrink(key: ValueKey('empty')),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
@@ -2007,8 +2037,12 @@ class _LockedPostCardSectionState extends State<LockedPostCardSection>
                       cacheManager:
                           ReadImageCacheManager.instance, // ✅ 읽기 전용 캐시 매니저 사용
                       fit: BoxFit.cover,
-                      fadeInDuration: Duration.zero, // ✅ 페이드 애니메이션 제거
-                      fadeOutDuration: Duration.zero, // ✅ 페이드 애니메이션 제거
+                      fadeInDuration: Duration(
+                        milliseconds: 200,
+                      ), // ✅ 페이드 애니메이션 제거
+                      fadeOutDuration: Duration(
+                        milliseconds: 200,
+                      ), // ✅ 페이드 애니메이션 제거
                       useOldImageOnUrlChange: true, // ✅ URL 변경 시 이전 이미지 유지
                       placeholder:
                           (context, url) => Container(

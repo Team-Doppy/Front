@@ -388,8 +388,8 @@ class _AccountDeletionSheetState extends State<AccountDeletionSheet> {
     final reasonKey = _selectedReason!;
     final detail = reasonKey == 'other' ? _detailController.text.trim() : null;
 
-    // ✅ 2. 짧은 딜레이 후 즉시 화면 전환 (백그라운드 처리 시작 전)
-    await Future.delayed(const Duration(milliseconds: 200));
+    // ✅ 2. 약 2초 대기 후 onboardingScreen으로 이동
+    await Future.delayed(const Duration(seconds: 2));
 
     if (!mounted) return;
 
