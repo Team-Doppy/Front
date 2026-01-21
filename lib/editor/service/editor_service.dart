@@ -4561,7 +4561,8 @@ class EditorService extends ChangeNotifier {
     if (rowIndex == -1) return null;
 
     // 분리할 이미지의 새 ID 생성
-    final newImageId = 'image_${DateTime.now().millisecondsSinceEpoch}';
+    // ✅ ID 충돌 방지: 짧은 시간에 연속 생성 시에도 유니크 보장
+    final newImageId = 'image_${DateTime.now().microsecondsSinceEpoch}';
     final newImageNode = AppImageNode(
       id: newImageId,
       imageUrl: imageUrl,
@@ -4721,7 +4722,8 @@ class EditorService extends ChangeNotifier {
     if (pageViewIndex == -1) return null;
 
     // 분리할 이미지의 새 ID 생성
-    final newImageId = 'image_${DateTime.now().millisecondsSinceEpoch}';
+    // ✅ ID 충돌 방지: 짧은 시간에 연속 생성 시에도 유니크 보장
+    final newImageId = 'image_${DateTime.now().microsecondsSinceEpoch}';
     final newImageNode = AppImageNode(
       id: newImageId,
       imageUrl: imageUrl,
@@ -4807,7 +4809,8 @@ class EditorService extends ChangeNotifier {
   /// 🎯 media_upload_handler 호환: String 반환 (nodeId)
   String addImageNode(String thumbnailImageUrl) {
     try {
-      final id = 'image_${DateTime.now().millisecondsSinceEpoch}';
+      // ✅ ID 충돌 방지: 연속 생성(다중 선택/그리드)에서 중복 방지
+      final id = 'image_${DateTime.now().microsecondsSinceEpoch}';
       final imageNode = AppImageNode(
         id: id,
         imageUrl: thumbnailImageUrl,
@@ -4828,7 +4831,9 @@ class EditorService extends ChangeNotifier {
     required GroupImageLayout layout,
     Map<String, dynamic>? metadata,
   }) {
-    final id = 'group_${DateTime.now().millisecondsSinceEpoch}';
+    // ✅ 핵심: 다중 선택(예: 6장)에서 빠르게 여러 그룹 노드를 만들면 ms 단위 ID가 충돌할 수 있음
+    // 충돌 시 같은 노드에 여러 그룹이 합쳐져 "이미지가 2번씩 보임" 같은 증상이 발생한다.
+    final id = 'group_${DateTime.now().microsecondsSinceEpoch}';
     DocumentNode node;
     if (layout == GroupImageLayout.pageview) {
       node = PageViewImageNode(

@@ -885,7 +885,17 @@ class UserSearchBottomSheetState extends State<UserSearchBottomSheet> {
                             },
                           )
                           : accounts.isEmpty
-                          ? Center(child: Container())
+                          ? Center(
+                            child: Text(
+                              context.tr('no_search_results_short'),
+                              style: TextStyle(
+                                fontSize: 15,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.7),
+                              ),
+                            ),
+                          )
                           : ListView.builder(
                             controller: scrollController,
                             itemCount: accounts.length,

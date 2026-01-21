@@ -2037,12 +2037,8 @@ class _LockedPostCardSectionState extends State<LockedPostCardSection>
                       cacheManager:
                           ReadImageCacheManager.instance, // ✅ 읽기 전용 캐시 매니저 사용
                       fit: BoxFit.cover,
-                      fadeInDuration: Duration(
-                        milliseconds: 200,
-                      ), // ✅ 페이드 애니메이션 제거
-                      fadeOutDuration: Duration(
-                        milliseconds: 200,
-                      ), // ✅ 페이드 애니메이션 제거
+                      fadeInDuration: Duration.zero,
+                      fadeOutDuration: Duration.zero, // ✅ 페이드 애니메이션 제거
                       useOldImageOnUrlChange: true, // ✅ URL 변경 시 이전 이미지 유지
                       placeholder:
                           (context, url) => Container(

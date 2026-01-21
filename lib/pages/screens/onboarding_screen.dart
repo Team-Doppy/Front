@@ -165,7 +165,8 @@ class _LoginScreenState extends State<LoginScreen>
                       cursorColor: Theme.of(context).colorScheme.onSurface,
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.onSurface,
-                        fontSize: 18,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
                       ),
                       textInputAction: TextInputAction.next,
                       decoration: InputDecoration(
@@ -249,7 +250,8 @@ class _LoginScreenState extends State<LoginScreen>
                       cursorColor: Theme.of(context).colorScheme.onSurface,
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.onSurface,
-                        fontSize: 18,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
                       ),
                       textInputAction: TextInputAction.done,
                       decoration: InputDecoration(

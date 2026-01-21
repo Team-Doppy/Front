@@ -430,20 +430,13 @@ class PostExporter {
                   '이미지 업로드가 완료될 때까지 기다려주세요. '
                   '(노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
                 );
-              } else if (allowPartialUpload) {
-                // 🎯 allowPartialUpload이 true이면 로컬 경로 유지 (발행 시에만 사용)
-                debugPrint(
-                  '[PostExporter] 🎯 임시저장: ImageRow 일부 이미지 로컬 경로 유지 (노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
-                );
-                // 변환된 URL과 실패한 URL을 모두 포함
-                imageUrls = convertedUrls + failedUrls;
               } else {
-                // 🚀 변환 실패: 업로드되지 않은 이미지 (발행/임시저장 불가)
-                throw StateError(
-                  '${allowPartialUpload ? "임시저장" : "발행"} 불가: 이미지 행의 일부 이미지가 업로드되지 않았습니다. '
-                  '모든 이미지 업로드가 완료될 때까지 기다려주세요. '
-                  '(노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
+                // ✅ 요청: 막지 말고 진행
+                // - 업로드가 끝난 것만 포함(=convertedUrls)하고, 매핑되지 않은 로컬 URL은 드롭한다.
+                debugPrint(
+                  '[PostExporter] ⚠️ ImageRow 업로드 미완료 URL 무시하고 진행: nodeId=${node.id}, drop=${failedUrls.join(", ")}',
                 );
+                imageUrls = convertedUrls;
               }
             } else {
               imageUrls = convertedUrls;
@@ -465,13 +458,21 @@ class PostExporter {
                 '[PostExporter] 🎯 임시저장: ImageRow 로컬 경로 유지 (노드 ID: ${node.id})',
               );
             } else {
-              // 🚀 변환 실패: 업로드되지 않은 이미지 (발행/임시저장 불가)
-              throw StateError(
-                '${allowPartialUpload ? "임시저장" : "발행"} 불가: 이미지 행에 업로드되지 않은 이미지가 있습니다. '
-                '이미지 업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id})',
+              // ✅ 요청: 막지 말고 진행 (로컬 URL은 드롭)
+              debugPrint(
+                '[PostExporter] ⚠️ ImageRow uploadedUrls 없음 + 로컬 포함: 로컬 이미지는 무시하고 진행 (nodeId=${node.id})',
               );
+              imageUrls = node.imageUrls.where(_isNetworkUrl).toList();
             }
           }
+        }
+
+        // ✅ 업로드/변환 결과로 남은 이미지가 없으면 노드를 드롭(진행은 계속)
+        if (imageUrls.isEmpty) {
+          debugPrint(
+            '[PostExporter] ⚠️ ImageRow export 스킵: 남은 이미지가 없음 (nodeId=${node.id})',
+          );
+          continue;
         }
 
         final nodeMap = <String, dynamic>{
@@ -610,13 +611,11 @@ class PostExporter {
                   '임시저장 불가: 페이지뷰 이미지가 업로드 중입니다. '
                   '업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
                 );
-              } else if (allowPartialUpload) {
-                imageUrls = convertedUrls + failedUrls;
               } else {
-                throw StateError(
-                  '${allowPartialUpload ? "임시저장" : "발행"} 불가: 페이지뷰 이미지 중 업로드되지 않은 이미지가 있습니다. '
-                  '업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id}, 실패한 URL: ${failedUrls.join(", ")})',
+                debugPrint(
+                  '[PostExporter] ⚠️ PageView 업로드 미완료 URL 무시하고 진행: nodeId=${node.id}, drop=${failedUrls.join(", ")}',
                 );
+                imageUrls = convertedUrls;
               }
             } else {
               imageUrls = convertedUrls;
@@ -628,13 +627,21 @@ class PostExporter {
                 '임시저장 불가: 페이지뷰 이미지가 업로드 중입니다. '
                 '업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id})',
               );
-            } else if (!allowPartialUpload) {
-              throw StateError(
-                '${allowPartialUpload ? "임시저장" : "발행"} 불가: 페이지뷰 이미지에 업로드되지 않은 이미지가 있습니다. '
-                '업로드가 완료될 때까지 기다려주세요. (노드 ID: ${node.id})',
+            } else {
+              debugPrint(
+                '[PostExporter] ⚠️ PageView uploadedUrls 없음 + 로컬 포함: 로컬 이미지는 무시하고 진행 (nodeId=${node.id})',
               );
+              imageUrls = node.imageUrls.where(_isNetworkUrl).toList();
             }
           }
+        }
+
+        // ✅ 업로드/변환 결과로 남은 이미지가 없으면 노드를 드롭(진행은 계속)
+        if (imageUrls.isEmpty) {
+          debugPrint(
+            '[PostExporter] ⚠️ PageView export 스킵: 남은 이미지가 없음 (nodeId=${node.id})',
+          );
+          continue;
         }
 
         final hasComments = (meta['hasComments'] ?? false) == true;

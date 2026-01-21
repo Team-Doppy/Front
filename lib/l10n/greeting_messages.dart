@@ -153,7 +153,7 @@ class GreetingMessages {
     'greeting.growing.weekActive.3': '이번 주도 기록했어요\n흐름을 만들어나가고 있어요',
     'greeting.growing.weekActive.4': '이번 주도 채웠어요\n잘하고 있어요 점점 쌓일거에요',
     'greeting.growing.weekActive.5': '이번 주도 기록했어요\n멋진 페이스인데요?',
-    'greeting.growing.weekActive.6': '이번 주도 기록했어요\n꾸준히 하면서 1년뒤를 기대해봐요',
+    'greeting.growing.weekActive.6': '이번 주도 기록했어요\n꾸준히 쌓아나가요!',
 
     'greeting.growing.weekQuiet': '이번 주는 고요하네요\n흐름을 한 번만 이어가면 쌓일거에요',
     'greeting.growing.weekQuiet.1': '이번 주는 조용해요\n조용한 나름의 여유가 있죠',

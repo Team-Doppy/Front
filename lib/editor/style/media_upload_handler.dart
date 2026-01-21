@@ -136,7 +136,15 @@ class MediaUploadHandler {
     UploadService upload,
   ) async {
     final layout = result.groupLayout!;
-    final files = result.files;
+    // ✅ 안전장치: 동일 경로가 중복으로 들어오면(플러그인/편집 플로우/임시파일 재사용 등)
+    // row/grid에서 같은 이미지가 2번씩 보이거나 업로드 매핑이 꼬일 수 있어 dedupe 한다.
+    final files = <File>[];
+    final seen = <String>{};
+    for (final f in result.files) {
+      final p = f.path;
+      if (p.isEmpty) continue;
+      if (seen.add(p)) files.add(f);
+    }
     final preDimensions = result.imageDimensions;
 
     // 🎯 개별 이미지: 그룹 노드 생성 없이 일반 이미지로 업로드
