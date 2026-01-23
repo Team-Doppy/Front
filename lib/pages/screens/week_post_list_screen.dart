@@ -193,8 +193,19 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
       color: colorScheme.background,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.start,
-
         children: [
+          // ✅ 상단 뒤로가기 아이콘
+          Row(
+            children: [
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  color: colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
           Spacer(),
           // ✅ 글자 부분: 먼저 사라지도록 별도 AnimatedSwitcher로 감싸기
           AnimatedSwitcher(
@@ -292,8 +303,6 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.error_outline, size: 48, color: colorScheme.error),
-          const SizedBox(height: 16),
           Text(
             context.tr('failed_to_load_posts'),
             style: TextStyle(
@@ -316,11 +325,6 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
               ),
             ),
           ],
-          const SizedBox(height: 24),
-          ElevatedButton(
-            onPressed: _loadWeekPosts,
-            child: Text(context.tr('retry')),
-          ),
         ],
       ),
     );

@@ -649,12 +649,16 @@ class VideoViewer extends StatelessWidget {
             }
 
             // Blur
-            final blurSigma = ((spec?.blur ?? 0.0) / 100.0) * 20.0;
+            // ✅ 프리뷰 블러는 "노드/저장 결과" 기준으로 보정한다.
+            // - export/노드는 원본 해상도(px) 좌표계에서 blur가 적용되므로,
+            //   프리뷰에서는 displayWidth/sourceWidth 비율만큼 sigma를 낮춘다.
+            final sigma = AdjustmentUtils.blurSigmaForPreview(
+              blur: (spec?.blur ?? 0.0),
+              sourceWidthPx: videoSize.width,
+              displayWidthPx: imageRect.width,
+            );
             videoWidget = ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(
-                sigmaX: blurSigma,
-                sigmaY: blurSigma,
-              ),
+              imageFilter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
               child: videoWidget,
             );
 
@@ -2225,11 +2229,55 @@ class _TrimEditorState extends State<TrimEditor> {
       child: Column(
         children: [
           // 타임라인
-          Container(
-            height: 120,
-            color: colorScheme.surfaceContainerHighest,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: _buildTimeline(),
+          Stack(
+            children: [
+              Container(
+                height: 120,
+                color: colorScheme.surfaceContainerHighest,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: _buildTimeline(),
+              ),
+              // ✅ 재생 중이 아닐 때 effectiveRelative를 타임라인 위에 표시
+              ValueListenableBuilder<double>(
+                valueListenable: widget.trimmer.currentPositionNotifier,
+                builder: (context, currentPos, _) {
+                  if (widget.trimmer.isPlaying) {
+                    return const SizedBox.shrink();
+                  }
+
+                  final start = widget.trimmer.startValue;
+                  final end = widget.trimmer.endValue;
+                  final rawTrimLength = (end - start).clamp(0.0, 86400.0);
+                  final rawRelative = (currentPos - start).clamp(
+                    0.0,
+                    rawTrimLength,
+                  );
+
+                  final speed = widget.trimmer.playbackSpeed;
+                  final effectiveRelative =
+                      speed > 0 ? (rawRelative / speed) : rawRelative;
+
+                  return Positioned(
+                    top: 4,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: Text(
+                        _formatDurationMMSS(effectiveRelative),
+                        style: TextStyle(
+                          color: colorScheme.onSurface.withOpacity(0.7),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
           // 시간 표시
           Container(
@@ -2257,29 +2305,40 @@ class _TrimEditorState extends State<TrimEditor> {
                     child: ValueListenableBuilder<double>(
                       valueListenable: widget.trimmer.currentPositionNotifier,
                       builder: (context, currentPos, _) {
-                        // ✅ "잘린 결과 기준" 현재 시킹/재생 시점:
-                        // - (현재 원본 포지션 - startHandle) 을 기준으로 0..trimLength로 클램프
-                        // - 속도(2x/0.5x 등)가 있으면 최종 결과물 타임라인으로 환산 (÷ speed)
                         final start = widget.trimmer.startValue;
                         final end = widget.trimmer.endValue;
                         final rawTrimLength = (end - start).clamp(0.0, 86400.0);
-                        final rawRelative = (currentPos - start).clamp(
-                          0.0,
-                          rawTrimLength,
-                        );
 
-                        final speed = widget.trimmer.playbackSpeed;
-                        final effectiveRelative =
-                            speed > 0 ? (rawRelative / speed) : rawRelative;
+                        // ✅ 재생 중일 때만 effectiveRelative 표시, 아니면 잘린 시간 표시
+                        if (widget.trimmer.isPlaying) {
+                          final rawRelative = (currentPos - start).clamp(
+                            0.0,
+                            rawTrimLength,
+                          );
 
-                        return Text(
-                          _formatDurationMMSS(effectiveRelative),
-                          style: TextStyle(
-                            color: colorScheme.onSurface,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        );
+                          final speed = widget.trimmer.playbackSpeed;
+                          final effectiveRelative =
+                              speed > 0 ? (rawRelative / speed) : rawRelative;
+
+                          return Text(
+                            _formatDurationMMSS(effectiveRelative),
+                            style: TextStyle(
+                              color: colorScheme.onSurface,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          );
+                        } else {
+                          // 재생 중이 아닐 때: 잘린 시간 표시
+                          return Text(
+                            _formatDurationMMSS(rawTrimLength),
+                            style: TextStyle(
+                              color: colorScheme.onSurface,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          );
+                        }
                       },
                     ),
                   ),

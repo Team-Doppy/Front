@@ -36,6 +36,8 @@ class WeeklyContributionGrid extends StatefulWidget {
   )?
   onLongPress; // 길게 누르기 콜백 (위치 + 셀 중심 포함)
   final bool isLoading; // 로딩 중일 때 쉬머 효과 표시
+  // ✅ 코치마크 등을 위해 각 주차 셀에 GlobalKey를 부여하고 외부로 노출
+  final void Function(int year, int weekNumber, GlobalKey key)? onCellKey;
 
   const WeeklyContributionGrid({
     super.key,
@@ -47,6 +49,7 @@ class WeeklyContributionGrid extends StatefulWidget {
     this.contributions,
     this.onLongPress,
     this.isLoading = false,
+    this.onCellKey,
   });
 
   @override
@@ -56,7 +59,12 @@ class WeeklyContributionGrid extends StatefulWidget {
 class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
   static const int _columns = 7; // 주 7일
   Timer? _tickTimer;
-  DateTime _liveNow = DateTime.now();
+  DateTime _liveNow = WeekUtils.getCurrentDate(); // ✅ 테스트 모드 지원
+  final Map<int, GlobalKey> _cellKeysByWeek = {};
+
+  GlobalKey _keyForWeek(int weekNumber) {
+    return _cellKeysByWeek.putIfAbsent(weekNumber, () => GlobalKey());
+  }
 
   @override
   void initState() {
@@ -64,16 +72,17 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
 
     // ✅ 앱을 켜둔 채로 시간이 흘러도(특히 주차가 바뀌는 시점) 그리드가 자동 확장되도록
     // "현재 연도일 때만" 주차 변화를 감지해서 리빌드한다.
+    // ✅ 테스트 모드에서는 Timer 비활성화 (테스트 날짜는 고정)
     _tickTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!mounted) return;
-      final now = DateTime.now();
+      final now = WeekUtils.getCurrentDate(); // ✅ 테스트 모드 지원
       if (widget.year != now.year) return;
 
       final prevWeek = WeekUtils.getWeekNumber(_liveNow);
       final nextWeek = WeekUtils.getWeekNumber(now);
       if (prevWeek != nextWeek) {
         setState(() {
-          _liveNow = now;
+          _liveNow = now; // ✅ 테스트 모드에서는 변경되지 않음
         });
       }
     });
@@ -93,7 +102,7 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(height: 12),
+        SizedBox(height: 4),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: _buildGrid(contributions),
@@ -293,6 +302,9 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                       }
 
                       final weekNumber = renderWeeks[index];
+                      // ✅ 셀 GlobalKey 등록 (코치마크 타겟으로 사용)
+                      final cellKey = _keyForWeek(weekNumber);
+                      widget.onCellKey?.call(widget.year, weekNumber, cellKey);
                       final data = byWeek[weekNumber];
                       final postCount = data?.postCount ?? 0;
 
@@ -313,6 +325,15 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                           (todayWeek != null && weekNumber > todayWeek);
 
                       // 🎯 포스트가 있는 경우 또는 오늘 주차의 빈 셀은 클릭 가능
+                      // 🎯 가입한지 7일 안되었고 현재주보다 이전인 빈 셀도 클릭 가능
+                      final isPastWeek =
+                          todayWeek != null && weekNumber < todayWeek;
+                      final canClickEmptyPastWeek =
+                          isPastWeek &&
+                          postCount == 0 &&
+                          signupAt != null &&
+                          WeekUtils.isWithin7DaysAfterSignup(signupAt);
+
                       final isClickable =
                           !isBeforeSignup &&
                           !isFutureYear &&
@@ -323,7 +344,8 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                           (postCount > 0 || // 포스트가 있으면 클릭 가능
                               (todayWeek != null &&
                                   weekNumber == todayWeek &&
-                                  postCount == 0)); // 오늘 주차의 빈 셀도 클릭 가능
+                                  postCount == 0) || // 오늘 주차의 빈 셀도 클릭 가능
+                              canClickEmptyPastWeek); // 가입한지 7일 안되었고 현재주보다 이전인 빈 셀도 클릭 가능
 
                       // 🎯 롱프레스는 포스트 유무와 관계없이 가능 (단, 가입 전/미래는 제외)
                       final isLongPressable =
@@ -336,38 +358,42 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                           isClickable && widget.selectedWeek == weekNumber;
 
                       // 마지막 열은 right padding 제거하여 오버플로우 방지
-                      return Padding(
-                        key: ValueKey('week-${widget.year}-$weekNumber'),
-                        padding: EdgeInsets.only(
-                          right: isLastColumn ? 0 : cellSpacing,
-                        ),
-                        child: _buildCell(
-                          weekNumber: weekNumber,
-                          data: data,
-                          size: cellSize,
-                          radius: radius,
-                          isSelected: isSelected,
-                          isBeforeSignup: isBeforeSignup,
-                          isFuturePreview: isFuturePreview,
-                          isClickable: isClickable,
-                          isLongPressable: isLongPressable,
-                          todayWeek: todayWeek,
-                          maxPostCount: maxPostCount,
-                          grayOpacity:
-                              (() {
-                                // 일괄적인 규칙만 적용: 보라 사이 100%, 바깥쪽 80/60/40/20/10/0
-                                return grayOpacityByIndex[index].clamp(
-                                  0.0,
-                                  1.0,
-                                );
-                              })(),
-                          isFirstRow: isFirstRow,
-                          isLastRow: isLastRow,
-                          isFirstColumn: colIndex == 0,
-                          isLastColumn: isLastColumn,
-                          isFirstRowFull: isFirstRowFull,
-                          isLastRowFull: isLastRowFull,
-                          isLoading: widget.isLoading,
+                      return KeyedSubtree(
+                        key: cellKey,
+                        child: Padding(
+                          key: ValueKey('week-${widget.year}-$weekNumber'),
+                          padding: EdgeInsets.only(
+                            right: isLastColumn ? 0 : cellSpacing,
+                          ),
+                          child: _buildCell(
+                            weekNumber: weekNumber,
+                            data: data,
+                            size: cellSize,
+                            radius: radius,
+                            isSelected: isSelected,
+                            isBeforeSignup: isBeforeSignup,
+                            isFuturePreview: isFuturePreview,
+                            isClickable: isClickable,
+                            isLongPressable: isLongPressable,
+                            todayWeek: todayWeek,
+                            maxPostCount: maxPostCount,
+                            grayOpacity:
+                                (() {
+                                  // 일괄적인 규칙만 적용: 보라 사이 100%, 바깥쪽 80/60/40/20/10/0
+                                  return grayOpacityByIndex[index].clamp(
+                                    0.0,
+                                    1.0,
+                                  );
+                                })(),
+                            isFirstRow: isFirstRow,
+                            isLastRow: isLastRow,
+                            isFirstColumn: colIndex == 0,
+                            isLastColumn: isLastColumn,
+                            isFirstRowFull: isFirstRowFull,
+                            isLastRowFull: isLastRowFull,
+                            isLoading: widget.isLoading,
+                            postCount: postCount, // 🎯 빈 셀 판단을 위해 postCount 전달
+                          ),
                         ),
                       );
                     }),
@@ -401,6 +427,7 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
     required bool isFirstRowFull,
     required bool isLastRowFull,
     required bool isLoading,
+    required int postCount, // 🎯 빈 셀 판단을 위해 postCount 전달
   }) {
     // 로딩 중일 때는 모든 셀을 회색으로 표시
     final fillColor =
@@ -505,7 +532,7 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
         }
 
         // 로딩 중일 때는 쉬머 효과 적용
-        final cellContent = Ink(
+        Widget cellContent = Ink(
           width: size,
           height: size * 0.9,
           decoration: BoxDecoration(
@@ -589,9 +616,10 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                       ),
                       splashColor: primary.withOpacity(0.4),
                       highlightColor: primary.withOpacity(0.0),
-                      // 🎯 포스트가 있는 경우에만 클릭 가능
+                      // 🎯 빈 셀이면 무조건 리플 효과 표시 (7일 판단은 home_screen에서 처리)
+                      // 🎯 포스트가 있는 셀도 클릭 가능
                       onTap:
-                          isClickable
+                          (postCount == 0 || isClickable)
                               ? () {
                                 widget.onWeekSelected?.call(
                                   widget.year,
@@ -609,7 +637,7 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
                 IgnorePointer(
                   child: Center(
                     child: Text(
-                      monthText,
+                      '$monthText월',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -687,9 +715,11 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
   }
 
   DateTime get _asOf {
+    // ✅ 테스트 모드 지원: WeekUtils.getCurrentDate() 사용
+    final currentDate = WeekUtils.getCurrentDate();
     // 현재 연도는 "실시간"으로 따라가야 그리드가 자연스럽게 확장된다.
-    if (widget.year == _liveNow.year) return _liveNow;
-    return widget.asOf ?? _liveNow;
+    if (widget.year == currentDate.year) return currentDate;
+    return widget.asOf ?? currentDate;
   }
 
   /// 선택 연도에서 "시작 주"를 결정한다.
@@ -718,7 +748,8 @@ class _WeeklyContributionGridState extends State<WeeklyContributionGrid> {
     final todayWeek = _getTodayWeekIfCurrentYear();
 
     // ✅ 과거/현재/미래 연도 분리 (todayWeek == null 로 과거/미래가 섞이는 문제 방지)
-    final currentYear = _liveNow.year;
+    // ✅ 테스트 모드 지원: WeekUtils.getCurrentYear() 사용
+    final currentYear = WeekUtils.getCurrentYear();
     final isPastYear = widget.year < currentYear;
     final isFutureYear = widget.year > currentYear;
 

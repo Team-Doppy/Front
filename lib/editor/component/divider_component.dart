@@ -99,41 +99,11 @@ class DividerComponentBuilder implements ComponentBuilder {
     DocumentNode node,
   ) {
     if (node is DividerNode) {
-      // 인접 문단 정렬 값을 추론하여 정렬 적용
-      MainAxisAlignment align = MainAxisAlignment.center;
-      final int idx = document.getNodeIndexById(node.id);
-      String? alignStr;
-      // 이전 문단 우선
-      for (int i = idx - 1; i >= 0; i--) {
-        final prev = document.getNodeAt(i);
-        if (prev is ParagraphNode) {
-          alignStr = prev.metadata['textAlign'] as String?;
-          break;
-        }
-      }
-      // 다음 문단 보조
-      if (alignStr == null) {
-        for (int i = idx + 1; i < document.length; i++) {
-          final next = document.getNodeAt(i);
-          if (next is ParagraphNode) {
-            alignStr = next.metadata['textAlign'] as String?;
-            break;
-          }
-        }
-      }
-      switch (alignStr) {
-        case 'left':
-          align = MainAxisAlignment.start;
-          break;
-        case 'right':
-          align = MainAxisAlignment.end;
-          break;
-        case 'center':
-        default:
-          align = MainAxisAlignment.center;
-      }
-
-      return DividerComponentViewModel(nodeId: node.id, mainAxis: align);
+      // ✅ 디바이더는 항상 가운데 정렬만 유지
+      return DividerComponentViewModel(
+        nodeId: node.id,
+        mainAxis: MainAxisAlignment.center,
+      );
     }
     return null;
   }
@@ -170,33 +140,23 @@ class _DividerComponentState extends State<_DividerComponent>
     final pillContent = Container(
       padding: const EdgeInsets.symmetric(vertical: 4),
       margin: const EdgeInsets.symmetric(vertical: 8),
-      child: Builder(
-        builder: (context) {
-          final CrossAxisAlignment cross =
-              widget.mainAxis == MainAxisAlignment.start
-                  ? CrossAxisAlignment.start
-                  : widget.mainAxis == MainAxisAlignment.end
-                  ? CrossAxisAlignment.end
-                  : CrossAxisAlignment.center;
-          return Column(
-            crossAxisAlignment: cross,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Container(
-                  width: 150,
-                  height: 1.5,
-                  color: AppColors.darkTextSecondary,
-                ),
-              ),
-            ],
-          );
-        },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Container(
+              width: 150,
+              height: 1.5,
+              color: AppColors.darkTextSecondary,
+            ),
+          ),
+        ],
       ),
     );
 
     final aligned = Row(
-      mainAxisAlignment: widget.mainAxis,
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [pillContent],
     );
 

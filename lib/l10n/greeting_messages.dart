@@ -93,13 +93,13 @@ class GreetingMessages {
     // ============================================================================
     // tier: early (1~4 posts)
     // ============================================================================
-    'greeting.early.weekActive': '이번 주도 기록했어요\n이대로만 이어가면 쌓일거에요',
+    'greeting.early.weekActive': '이번 주도 기록했어요\n이어가면 쌓일거에요',
     'greeting.early.weekActive.1': '이번 주도 채웠어요\n계속 이어가면 쌓일거에요',
-    'greeting.early.weekActive.2': '이번 주도 기록했어요\n흐름을 유지하고 있어요',
-    'greeting.early.weekActive.3': '이번 주도 기록했어요\n흐름을 만들어나가고 있어요',
-    'greeting.early.weekActive.4': '이번 주도 채웠어요\n잘하고 있어요 점점 쌓일거에요',
-    'greeting.early.weekActive.5': '이번 주도 기록했어요\n멋진 기록이에요',
-    'greeting.early.weekActive.6': '이번 주도 기록했어요\n꾸준히 하면서 1년뒤를 기대해봐요',
+    'greeting.early.weekActive.2': '이번 주도 기록했어요\n앞으로 쌓일 기록을 기대해봐요',
+    'greeting.early.weekActive.3': '이번 주도 기록했어요\n흐름을 만들기 시작했어요',
+    'greeting.early.weekActive.4': '이번 주도 채웠어요\n점점 쌓일거에요',
+    'greeting.early.weekActive.5': '이번 주도 기록했어요\n앞으로 쌓일 기록을 기대해봐요',
+    'greeting.early.weekActive.6': '이번 주도 기록했어요\n앞으로 쌓일 기록을 기대해봐요',
 
     'greeting.early.weekQuiet': '이번 주는 고요하네요\n흐름을 한 번만 이어가면 쌓일거에요',
     'greeting.early.weekQuiet.1': '이번 주는 조용해요\n어떤 일이 있나요?',

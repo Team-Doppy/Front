@@ -2,9 +2,12 @@ import 'package:doppy/pages/components/week_long_press_preview.dart';
 import 'package:doppy/pages/components/weekly_contribution_grid.dart';
 import 'package:doppy/pages/components/home_widgets.dart';
 import 'package:doppy/pages/screens/week_post_list_screen.dart';
+import 'package:doppy/pages/screens/date_picker_screen.dart';
 import 'package:doppy/data/models/weekly_contribution_greeting.dart';
+import 'package:doppy/data/services/user_service.dart';
 import 'package:doppy/providers/weekly_contribution_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/utils/week_utils.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -50,6 +53,13 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // ignore: unused_field
   bool _showSampleData = true;
 
+  // ✅ 디버그용: 코치마크 리스타트마다 표시 (플래그 제거)
+
+  // ✅ 코치마크: 첫 회원가입 후 온보딩 완료 → 첫 홈 진입에서만 1회 표시
+  // 서버의 onboardingCompleted 값(명시적으로 false)만으로 트리거한다.
+  bool _coachmarkStartScheduled = false;
+  int _coachmarkStartNonce = 0;
+
   // ✅ "글 쓰자마자" 홈 인삿말 보상 스왑을 위한 로컬 오버라이드
   // - 현재 서버/포스트 로딩이 비어있는 상태에서도, 방금 작성한 주차는 즉시 채워진 것으로 처리
   // - 앱이 종료될 때까지 보상 멘트 유지
@@ -79,6 +89,8 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+
+    // ✅ 코치마크는 build에서 Consumer<UserProvider>로 실시간 체크
 
     // 미리보기 애니메이션 컨트롤러 초기화
     _previewAnimationController = AnimationController(
@@ -149,6 +161,119 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
       };
     });
+  }
+
+  void _maybeScheduleCoachmarkStart({
+    required WeeklyContributionProvider contributionProvider,
+    required UserProvider userProvider,
+    required int currentYear,
+  }) {
+    if (!mounted) return;
+    if (_isTestMode) return;
+    if (_coachmarkStartScheduled) return;
+
+    // ✅ 새로 가입한 사용자의 경우 onboardingCompleted가 null 또는 false일 수 있다.
+    // - null: 서버에서 아직 설정되지 않음 (새로 가입한 사용자)
+    // - false: 명시적으로 false로 설정됨
+    // - true: 이미 온보딩을 완료한 사용자 (코치마크 스킵)
+    final completed = userProvider.onboardingCompleted;
+    debugPrint('[HomeScreen] 코치마크 체크: onboardingCompleted=$completed');
+
+    // ✅ true가 아닐 때만 코치마크 시작 (null 또는 false)
+    if (completed == true) {
+      debugPrint('[HomeScreen] 코치마크 스킵: onboardingCompleted=true (이미 완료)');
+      return;
+    }
+
+    // ✅ null인 경우는 서버 데이터가 아직 로드되지 않았을 수 있으므로
+    // UserProvider의 currentUser가 있는지 확인
+    if (completed == null && userProvider.currentUser == null) {
+      debugPrint('[HomeScreen] 코치마크 스킵: currentUser가 null (아직 로드 중)');
+      return;
+    }
+
+    // 코치마크는 현재 연도 홈에서만
+    if (currentYear != WeekUtils.getCurrentYear()) {
+      debugPrint('[HomeScreen] 코치마크 스킵: 현재 연도가 아님 (currentYear=$currentYear)');
+      return;
+    }
+
+    if (contributionProvider.showAnyOverlay) {
+      debugPrint('[HomeScreen] 코치마크 스킵: 이미 오버레이 표시 중');
+      return;
+    }
+
+    debugPrint('[HomeScreen] ✅ 코치마크 시작 예약 (onboardingCompleted=false)');
+    _coachmarkStartScheduled = true;
+    final int nonce = ++_coachmarkStartNonce;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // ✅ build 중 setState 금지. 프레임 이후에만 시작 시도.
+      if (!mounted || nonce != _coachmarkStartNonce) return;
+
+      debugPrint('[HomeScreen] 코치마크 시작: 프레임 대기 시작');
+
+      // 1) 레이아웃/키 등록이 끝날 때까지 명시적으로 대기
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || nonce != _coachmarkStartNonce) return;
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || nonce != _coachmarkStartNonce) return;
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      if (!mounted || nonce != _coachmarkStartNonce) return;
+
+      debugPrint('[HomeScreen] 코치마크 시작: 키/데이터 준비 확인 시작');
+
+      // 2) 키/데이터 준비 확인 (명시적 재시도, 확률게임 X)
+      const maxAttempts = 12;
+      for (int attempt = 0; attempt < maxAttempts; attempt++) {
+        if (!mounted || nonce != _coachmarkStartNonce) return;
+
+        final keys = contributionProvider.getWeekCellKeysForYear(currentYear);
+        final hasKeys = keys.isNotEmpty;
+        final hasData =
+            contributionProvider.getContributions(currentYear) != null;
+
+        debugPrint(
+          '[HomeScreen] 코치마크 체크 (attempt ${attempt + 1}/$maxAttempts): hasKeys=$hasKeys, hasData=$hasData, showAnyOverlay=${contributionProvider.showAnyOverlay}',
+        );
+
+        if (hasKeys && hasData && !contributionProvider.showAnyOverlay) {
+          debugPrint('[HomeScreen] ✅ 코치마크 시작!');
+          contributionProvider.startWeeklyStreakCoachmark(
+            year: currentYear,
+            now: DateTime.now(),
+          );
+
+          // ✅ 코치마크 시작 후 서버에 onboardingCompleted 업데이트
+          // ignore: discarded_futures
+          _consumeOnboardingCoachmarkFlag();
+          return;
+        }
+
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+
+      debugPrint('[HomeScreen] ⚠️ 코치마크 시작 실패: 키/데이터 준비 안됨 (maxAttempts 도달)');
+
+      // 실패했으면 다음 프레임에서 다시 시도할 수 있게 풀어둔다.
+      if (mounted && nonce == _coachmarkStartNonce) {
+        _coachmarkStartScheduled = false;
+      }
+    });
+  }
+
+  Future<void> _consumeOnboardingCoachmarkFlag() async {
+    // ✅ 코치마크를 표시한 후에는 서버에 온보딩 완료 상태를 업데이트
+    // 이렇게 하면 다음 번에는 코치마크가 표시되지 않음
+    try {
+      await UserService().updateOnboardingCompleted(onboardingCompleted: true);
+      // UserProvider 메모리도 즉시 갱신
+      if (mounted) {
+        context.read<UserProvider>().setOnboardingCompleted(true);
+      }
+    } catch (e) {
+      debugPrint('[HomeScreen] 온보딩 완료 업데이트 실패: $e');
+    }
   }
 
   @override
@@ -363,6 +488,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return SafeArea(
       child: CustomScrollView(
         controller: _scrollController,
+        physics: const ClampingScrollPhysics(),
         slivers: [
           // AppBar
           SliverAppBar(
@@ -434,12 +560,19 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
 
           // ✅ isLocked에 따라 조건부 UI 표시
-          Consumer<WeeklyContributionProvider>(
-            builder: (context, contributionProvider, _) {
+          Consumer2<WeeklyContributionProvider, UserProvider>(
+            builder: (context, contributionProvider, userProvider, _) {
               final isLocked = contributionProvider.isLocked;
               // 🎯 전해로 갈 때는 무조건 _selectedYear 사용 (null이 아니면)
               final currentYear = _selectedYear ?? WeekUtils.getCurrentYear();
               final contributions = _isTestMode ? _testContributions : null;
+
+              // ✅ 코치마크 시작 조건 체크 (빌드 중 setState 금지)
+              _maybeScheduleCoachmarkStart(
+                contributionProvider: contributionProvider,
+                userProvider: userProvider,
+                currentYear: currentYear,
+              );
 
               if (isLocked) {
                 // 락용 UI
@@ -563,9 +696,9 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _selectedYear = year;
         _selectedWeek = null; // 연도 변경 시 주차 선택 초기화
       });
-      // 연도 변경 시 해당 연도의 기여도 데이터 로드
+      // ✅ 연도 변경 시: 항상 서버에서 새로 로드
       final provider = context.read<WeeklyContributionProvider>();
-      provider.loadContributions(year);
+      provider.reloadContributions(year);
       return;
     }
 
@@ -577,53 +710,101 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _selectedWeek = weekNumber;
     });
 
-    // 🎯 오늘 주차이고 포스트가 없는 경우 → PostwriteScreen으로 이동
+    // 🎯 미래 주차 클릭 시: 조용히 무시 (스낵바 없이)
     final currentYear = WeekUtils.getCurrentYear();
     final currentWeek = WeekUtils.getWeekNumber(DateTime.now());
+    final isFutureWeek =
+        (year > currentYear) ||
+        (year == currentYear && weekNumber > currentWeek);
+
+    if (isFutureWeek) {
+      debugPrint('[HomeScreen] 미래 주차($year년 $weekNumber주차) 클릭 → 무시');
+      return;
+    }
+
+    // ✅ 최우선: postCount > 0이면 무조건 주차 조회 화면으로 이동
+    final provider = context.read<WeeklyContributionProvider>();
+    final contributions = provider.getContributions(year);
+    int postCount = 0;
+    if (contributions != null) {
+      final weekData = contributions.firstWhere(
+        (c) => c.weekNumber == weekNumber,
+        orElse:
+            () => WeeklyContributionData(
+              year: year,
+              weekNumber: weekNumber,
+              hasPost: false,
+              postCount: 0,
+            ),
+      );
+      postCount = weekData.postCount;
+    }
+
+    if (postCount > 0) {
+      debugPrint(
+        '[HomeScreen] 주차($year년 $weekNumber주차)에 포스트 있음 → WeekPostListScreen으로 이동',
+      );
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder:
+              (context) =>
+                  WeekPostListScreen(year: year, weekNumber: weekNumber),
+        ),
+      );
+      return;
+    }
+
+    // 🎯 오늘 주차이고 포스트가 없는 경우 → PostwriteScreen으로 이동
     final isTodayWeek = year == currentYear && weekNumber == currentWeek;
 
     if (isTodayWeek) {
-      final provider = context.read<WeeklyContributionProvider>();
-      final contributions = provider.getContributions(year);
-      int postCount = 0;
-      if (contributions != null) {
-        final weekData = contributions.firstWhere(
-          (c) => c.weekNumber == weekNumber,
-          orElse:
-              () => WeeklyContributionData(
-                year: year,
-                weekNumber: weekNumber,
-                hasPost: false,
-                postCount: 0,
-              ),
-        );
-        postCount = weekData.postCount;
-      }
+      debugPrint(
+        '[HomeScreen] 오늘 주차($weekNumber) 빈 셀 클릭 → PostwriteScreen으로 이동',
+      );
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => PostwriteScreen(isEditingMode: false),
+        ),
+      );
+      return;
+    }
 
-      // 오늘 주차이고 포스트가 없으면 작성 화면으로 이동
-      if (postCount == 0) {
+    // 🎯 최후순위: 지나간 주차 클릭 시: 가입 후 7일 이내이면 DatePickerScreen으로 이동
+    final isPastWeek =
+        (year < currentYear) ||
+        (year == currentYear && weekNumber < currentWeek);
+
+    if (isPastWeek) {
+      final userProvider = context.read<UserProvider>();
+      final createdAt = userProvider.createdAt;
+
+      // 가입 후 7일 이내인지 확인
+      if (WeekUtils.isWithin7DaysAfterSignup(createdAt)) {
         debugPrint(
-          '[HomeScreen] 오늘 주차($weekNumber) 빈 셀 클릭 → PostwriteScreen으로 이동',
+          '[HomeScreen] 지나간 주차($year년 $weekNumber주차) 빈 셀 클릭 → DatePickerScreen으로 이동 (7일 이내, 최후순위)',
         );
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (context) => PostwriteScreen(isEditingMode: false),
+            builder:
+                (context) => DatePickerScreen(
+                  initialYear: year,
+                  initialWeek: weekNumber,
+                  createdAt: createdAt,
+                ),
           ),
         );
         return;
       }
     }
 
-    // ✅ 실제 API 호출은 WeekPostListScreen에서 처리
+    // ✅ 포스트가 없는 경우에도 WeekPostListScreen으로 이동 (빈 리스트 표시)
+    debugPrint(
+      '[HomeScreen] 주차($year년 $weekNumber주차) 빈 셀 클릭 → WeekPostListScreen으로 이동',
+    );
     Navigator.of(context).push(
       MaterialPageRoute(
         builder:
-            (context) => WeekPostListScreen(
-              year: year,
-              weekNumber: weekNumber,
-              // postIds는 선택적: 그리드 셀에서 이미 알고 있는 경우에만 전달
-              // postIds: null, // 필요시 추가
-            ),
+            (context) => WeekPostListScreen(year: year, weekNumber: weekNumber),
       ),
     );
   }

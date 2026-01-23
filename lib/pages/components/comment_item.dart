@@ -143,7 +143,7 @@ class CommentItem extends StatelessWidget {
     }
   }
 
-  /// 🎯 @username 언급이 포함된 텍스트를 파싱하여 RichText로 변환
+  /// 🎯 @username 언급을 파싱하여 RichText로 변환 (전체 덩어리에 밑줄)
   Widget _buildTextWithMentions(BuildContext context, bool isMe) {
     final text = comment.content;
     final baseStyle = TextStyle(
@@ -162,8 +162,8 @@ class CommentItem extends StatelessWidget {
               : Theme.of(context).colorScheme.primary.withOpacity(0.8),
     );
 
-    // @username 패턴 찾기 (정규식: @ 다음에 공백이나 줄바꿈 전까지의 문자)
-    final mentionRegex = RegExp(r'@(\w+)');
+    // 🎯 @username 패턴 찾기 (점 포함 username 지원)
+    final mentionRegex = RegExp(r'@([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)');
     final matches = mentionRegex.allMatches(text);
 
     if (matches.isEmpty) {
@@ -186,14 +186,14 @@ class CommentItem extends StatelessWidget {
         );
       }
 
-      // 언급 텍스트 (@username)
+      // 🎯 멘션 텍스트 (@username 전체) - 전체 덩어리에 밑줄
       final username = match.group(1)!;
       final mentionText = match.group(0)!; // @username 전체
 
       spans.add(
         TextSpan(
           text: mentionText,
-          style: mentionStyle,
+          style: mentionStyle, // 전체 덩어리에 밑줄 적용
           recognizer:
               TapGestureRecognizer()
                 ..onTap = () {

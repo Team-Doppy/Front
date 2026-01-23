@@ -45,6 +45,7 @@ class _JoinScreenState extends State<JoinScreen> {
   bool _isCheckingDuplicate = false;
   bool _isIdLengthChecked = false; // ID 길이 체크 시도 여부
   String? _verifiedEmail;
+  bool _hideCompleteText = false; // 완료 단계 텍스트 숨김 여부
 
   // 비밀번호 표시 여부
   bool _obscurePassword = true;
@@ -436,7 +437,7 @@ class _JoinScreenState extends State<JoinScreen> {
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                  Theme.of(context).colorScheme.surface,
+                                  Theme.of(context).colorScheme.onSurface,
                                 ),
                               ),
                             )
@@ -770,7 +771,7 @@ class _JoinScreenState extends State<JoinScreen> {
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                  Theme.of(context).colorScheme.surface,
+                                  Theme.of(context).colorScheme.onSurface,
                                 ),
                               ),
                             )
@@ -798,23 +799,13 @@ class _JoinScreenState extends State<JoinScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            context.tr('join_complete_title'),
-            style: Theme.of(
-              context,
-            ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 48),
-          SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              strokeWidth: 3,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                Theme.of(context).colorScheme.onSurface,
-              ),
+          if (!_hideCompleteText)
+            Text(
+              context.tr('join_complete_title'),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
-          ),
         ],
       ),
     );
@@ -941,8 +932,15 @@ class _JoinScreenState extends State<JoinScreen> {
         // 🎯 서버에서 온보딩 플래그를 관리하므로 로컬 플래그 저장 제거
         _nextStep(); // 완료 화면으로 이동
 
-        // 1초 후 스플래시 화면으로 부드럽게 페이드 전환 (로그인 성공 시와 동일)
-        await Future.delayed(const Duration(seconds: 1));
+        // 완료 단계로 이동한 후 텍스트 숨기기
+        if (mounted) {
+          setState(() {
+            _hideCompleteText = true;
+          });
+        }
+
+        // 0.2초 대기 후 스플래시 화면으로 부드럽게 페이드 전환
+        await Future.delayed(const Duration(milliseconds: 200));
 
         if (mounted) {
           // 🎯 회원가입 후 스플래시로 부드럽게 페이드 전환 (로그인 성공 시와 동일)
@@ -970,14 +968,9 @@ class _JoinScreenState extends State<JoinScreen> {
         });
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                context.tr('signup_failed_try_again'),
-                style: TextStyle(color: Theme.of(context).colorScheme.onError),
-              ),
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
+          ErrorHandler.showError(
+            context,
+            context.tr('signup_failed_try_again'),
           );
         }
       }
@@ -987,16 +980,9 @@ class _JoinScreenState extends State<JoinScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context
-                  .tr('signup_error_with_message')
-                  .replaceAll('{error}', '$e'),
-              style: TextStyle(color: Theme.of(context).colorScheme.onError),
-            ),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
+        ErrorHandler.showError(
+          context,
+          context.tr('signup_error_with_message').replaceAll('{error}', '$e'),
         );
       }
     }

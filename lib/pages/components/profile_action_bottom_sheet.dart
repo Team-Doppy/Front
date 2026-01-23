@@ -85,7 +85,7 @@ class ProfileActionBottomSheet extends StatelessWidget {
   ) {
     final l10n = AppLocalizations.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
       decoration: BoxDecoration(color: Colors.transparent),
       child: Stack(
         children: [

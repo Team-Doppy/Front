@@ -4,7 +4,6 @@ import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/image/media_picker_screen.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:doppy/image/simple_image_editor_screen.dart';
-import 'package:doppy/image/trimmer/video_trim_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/editor/utils/video_upload_utils.dart';
@@ -17,6 +16,11 @@ import 'package:http/http.dart' as http;
 import 'package:doppy/editor/publish/component/thumbnail_edit_bottom_sheet.dart';
 import 'package:doppy/image/utils/editor_image_provider.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
+import 'package:doppy/editor/component/clip_component.dart'
+    show
+        pauseAllVideoPlayers,
+        registerExternalVideoController,
+        unregisterExternalVideoController;
 
 /// 🎯 2줄 제한 TextInputFormatter
 class _TwoLineTextInputFormatter extends TextInputFormatter {
@@ -93,6 +97,15 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   String get _nsKey => widget.sessionKey;
   String get _thumbRefId => 'thumb_${widget.sessionKey}';
 
+  // ✅ 미디어 피커 진입 전, 썸네일 비디오 재생 상태 저장(닫히면 복원)
+  _VideoPlaybackSnapshot? _prePickerPlaybackSnapshot;
+
+  /// ✅ 썸네일이 "영상"인지 판별
+  /// - thumbnail URL(jpg/png)로는 영상 여부를 알 수 없는 케이스가 있어(서버 비디오 포스터 등)
+  ///   실제 영상 소스(컨트롤러/로컬 파일) 존재 여부로 판단한다.
+  bool get _isVideoThumb =>
+      widget.localVideoFile != null || widget.videoController != null;
+
   // 🎯 업로드 태스크 추적 (썸네일 변경 시 취소용)
   UploadTask? _currentImageUploadTask;
 
@@ -150,7 +163,10 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     if (!_isMounted()) return;
     try {
       final upload = context.read<UploadService>();
-      upload.cancelByRef(_thumbRefId);
+      // ✅ 썸네일 "교체/변경" 플로우에서는 refId를 recently-cancelled로 마킹하면,
+      // 같은 refId로 시작된 새 업로드 성공이 10초간 무시되어(UploadService) 로딩이 영구적으로 남을 수 있음.
+      // 따라서 Replace 시나리오에서는 markRefCancelled=false로 취소한다.
+      upload.cancelByRef(_thumbRefId, markRefCancelled: false);
       if (_currentImageUploadTask != null) {
         upload.cancel(_currentImageUploadTask!.id);
         _currentImageUploadTask?.removeListener(() {});
@@ -181,6 +197,17 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   @override
   void didUpdateWidget(covariant Step1ThumbnailEdit oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    // ✅ 전역 일시정지에서 잡히도록 외부 컨트롤러 registry 동기화
+    if (oldWidget.videoController != widget.videoController) {
+      if (oldWidget.videoController != null) {
+        unregisterExternalVideoController(oldWidget.videoController!);
+      }
+      if (widget.videoController != null) {
+        registerExternalVideoController(widget.videoController!);
+      }
+    }
+
     if (oldWidget.videoController != widget.videoController) {
       // 🎯 dispose 체크: 새 컨트롤러 유효성 확인
       if (widget.videoController != null) {
@@ -246,6 +273,11 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   @override
   void dispose() {
     widget.titleFocusNode.removeListener(_onTextFocusChanged);
+
+    // ✅ 외부 컨트롤러 registry 정리
+    if (widget.videoController != null) {
+      unregisterExternalVideoController(widget.videoController!);
+    }
 
     _detachPosterListener();
 
@@ -955,9 +987,7 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   }
 
   Widget _buildEditButton() {
-    final bool isVideo =
-        widget.localVideoFile != null ||
-        _isVideoUrl(widget.exportedThumbnailImageUrl);
+    final bool isVideo = _isVideoThumb;
     final String buttonText =
         isVideo
             ? AppLocalizations.of(context).t('change_thumbnail')
@@ -991,6 +1021,16 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
   }
 
   Future<void> _openGalleryPicker() async {
+    // ✅ 피커 진입 전: 현재 썸네일 비디오 재생 상태 스냅샷 저장
+    _prePickerPlaybackSnapshot = _captureCurrentThumbnailVideoPlayback();
+
+    // 🎯 미디어피커로 들어가기 전에 모든 비디오 재생 중지 (비파괴 전역 일시정지)
+    try {
+      await pauseAllVideoPlayers(seekToStart: true, mute: true);
+    } catch (e) {
+      debugPrint('[Step1ThumbnailEdit] 비디오 정리 실패: $e');
+    }
+
     if (_isMounted()) {
       setState(() => _suppressEmptyPlaceholder = true);
     }
@@ -1005,6 +1045,54 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       if (_isMounted()) {
         setState(() => _suppressEmptyPlaceholder = false);
       }
+      // ✅ 피커 종료 후: (변경이 없으면) 썸네일 비디오만 원래 재생 상태로 복원
+      await _restoreThumbnailVideoPlaybackIfNeeded();
+    }
+  }
+
+  _VideoPlaybackSnapshot? _captureCurrentThumbnailVideoPlayback() {
+    try {
+      final c = widget.videoController;
+      if (c == null) return null;
+      final v = c.value;
+      if (!v.isInitialized) return null;
+      if (!_isVideoThumb) return null;
+
+      return _VideoPlaybackSnapshot(
+        controller: c,
+        wasPlaying: v.isPlaying,
+        position: v.position,
+        volume: v.volume,
+      );
+    } catch (e) {
+      debugPrint('[Step1ThumbnailEdit] playback snapshot 실패(무시): $e');
+      return null;
+    }
+  }
+
+  Future<void> _restoreThumbnailVideoPlaybackIfNeeded() async {
+    if (!_isMounted()) return;
+
+    final snap = _prePickerPlaybackSnapshot;
+    _prePickerPlaybackSnapshot = null; // 1회성
+    if (snap == null) return;
+
+    // ✅ 피커 동안 썸네일이 변경되었으면(컨트롤러 변경/비디오 아님) 복원하지 않는다.
+    final current = widget.videoController;
+    if (!identical(current, snap.controller)) return;
+    if (!_isVideoThumb) return;
+    if (!snap.wasPlaying) return;
+
+    try {
+      final v = snap.controller.value;
+      if (!v.isInitialized) return;
+
+      // pauseAllVideoPlayers가 seekToStart/mute를 걸었을 수 있으므로 원복
+      await snap.controller.setVolume(snap.volume);
+      await snap.controller.seekTo(snap.position);
+      await snap.controller.play();
+    } catch (e) {
+      debugPrint('[Step1ThumbnailEdit] playback restore 실패(무시): $e');
     }
   }
 
@@ -1385,13 +1473,11 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
     widget.controller.reverse();
     FocusScope.of(context).unfocus();
 
-    final isVideoThumb =
-        widget.localVideoFile != null ||
-        _isVideoUrl(widget.exportedThumbnailImageUrl);
+    final isVideoThumb = _isVideoThumb;
 
-    // ✅ 비디오 썸네일이면: 이미지 편집기가 아니라 영상 편집기로 들어간다.
+    // ✅ 비디오 썸네일이면: 수정 모드가 아닌 바로 변경 모드(갤러리)로 진입
     if (isVideoThumb) {
-      await _editThumbnailVideo();
+      await _openGalleryPicker();
       return;
     }
 
@@ -1497,63 +1583,6 @@ class _Step1ThumbnailEditState extends State<Step1ThumbnailEdit> {
       }
     }
   }
-
-  Future<void> _editThumbnailVideo() async {
-    // ✅ 로컬 비디오가 있어야 “영상 편집기”로 들어갈 수 있다.
-    // 서버 비디오 URL만 있는 경우는 안전하게 “변경(갤러리)”로 유도한다.
-    final file = widget.localVideoFile;
-    if (file == null) {
-      await _openGalleryPicker();
-      return;
-    }
-
-    try {
-      // VideoTrimScreen은 videoDuration이 필요하므로 file로 duration을 얻는다.
-      final probe = VideoPlayerController.file(file);
-      await probe.initialize();
-      final duration = probe.value.duration;
-      await probe.dispose();
-
-      if (!_isMounted()) return;
-
-      final trimResult = await Navigator.push<VideoTrimResult>(
-        context,
-        PageRouteBuilder(
-          pageBuilder:
-              (context, animation, secondaryAnimation) =>
-                  VideoTrimScreen(videoFile: file, videoDuration: duration),
-          transitionDuration: const Duration(milliseconds: 200),
-          reverseTransitionDuration: const Duration(milliseconds: 200),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-        ),
-      );
-
-      if (trimResult == null || !_isMounted()) return;
-
-      // ✅ 트림 화면에서 생성된 썸네일(포스터)을 반영
-      final thumbPath = trimResult.thumbnailPath;
-      if (thumbPath != null && thumbPath.isNotEmpty) {
-        final thumbFile = File(thumbPath);
-        if (thumbFile.existsSync()) {
-          widget.onLocalThumbnailChanged(thumbFile);
-          // 세션 스코프에 썸네일 경로 저장 (복원/발행 플로우에서 사용)
-          NodeComponentService().setTempVideoThumbnail(_nsKey, thumbPath);
-        }
-      }
-    } catch (e) {
-      debugPrint('[Step1ThumbnailEdit] 비디오 편집 진입 실패: $e');
-      if (_isMounted()) {
-        DialogUtils.showInfoDialog(
-          context,
-          title: AppLocalizations.of(context).t('video_load_failed'),
-          message: AppLocalizations.of(context).t('upload_error_occurred'),
-          buttonText: AppLocalizations.of(context).t('ok'),
-        );
-      }
-    }
-  }
 }
 
 /// 상태 스냅샷 클래스
@@ -1570,6 +1599,20 @@ class _ThumbnailStateSnapshot {
     required this.videoController,
     required this.thumbnailUrl,
     required this.isUploading,
+  });
+}
+
+class _VideoPlaybackSnapshot {
+  final VideoPlayerController controller;
+  final bool wasPlaying;
+  final Duration position;
+  final double volume;
+
+  const _VideoPlaybackSnapshot({
+    required this.controller,
+    required this.wasPlaying,
+    required this.position,
+    required this.volume,
   });
 }
 

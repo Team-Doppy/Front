@@ -55,8 +55,8 @@ class Index3Background extends StatelessWidget {
                     style: LocaleTypography.setStyle(
                       context: context,
                       fontSize: 30,
-                      color: AppColors.darkSurfaceVariant.withOpacity(0.9),
-                      fontWeight: FontWeight.w300,
+                      color: AppColors.lightSurfaceVariant.withOpacity(0.7),
+                      fontWeight: FontWeight.w400,
                       height: 1.4,
                     ),
                   ),
@@ -65,8 +65,8 @@ class Index3Background extends StatelessWidget {
                     style: LocaleTypography.setStyle(
                       context: context,
                       fontSize: 30,
-                      color: AppColors.darkSurfaceVariant.withOpacity(0.9),
-                      fontWeight: FontWeight.w300,
+                      color: AppColors.lightSurfaceVariant.withOpacity(0.7),
+                      fontWeight: FontWeight.w400,
                       height: 1.4,
                     ),
                   ),

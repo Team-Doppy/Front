@@ -9,7 +9,6 @@ import 'package:doppy/pages/onbording/steps/index2_bg.dart';
 import 'package:doppy/pages/onbording/steps/index3_step.dart';
 import 'package:doppy/pages/onbording/steps/index4_bg.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:provider/provider.dart';
 
@@ -96,29 +95,6 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         });
       }
     });
-
-    // ✅ 온보딩 진입 시: 화이트 테마가 아니면 화이트 테마로 변경
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _applyOnboardingTheme();
-      }
-    });
-  }
-
-  /// ✅ 온보딩 모드에서 화이트 테마 적용 (화이트가 아닌 경우에만)
-  void _applyOnboardingTheme() {
-    try {
-      final themeProvider = context.read<ThemeProvider>();
-      final currentTheme = themeProvider.themeMode;
-
-      // 화이트 테마가 아니면 화이트 테마로 변경
-      if (currentTheme != ThemeMode.light) {
-        themeProvider.setThemeMode(ThemeMode.light);
-        debugPrint('[OnboardingFlow] 테마를 화이트로 변경 (원래: ${currentTheme.name})');
-      }
-    } catch (e) {
-      debugPrint('[OnboardingFlow] 테마 적용 실패: $e');
-    }
   }
 
   @override
@@ -576,7 +552,9 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                                 RepaintBoundary(
                                   child: BackCard(
                                     progress: t01,
-                                    color: const Color(0xFFFAFAFA),
+                                    color:
+                                        AppColors
+                                            .darkSurface, // 🎯 index 0: 검(surface)
                                     stackAlignY: _stackAlignY,
                                   ),
                                 ),
@@ -605,7 +583,12 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                                       child: RepaintBoundary(
                                         child: FrontCard(
                                           progress: t01,
-                                          color: const Color(0xFF5B7FFF),
+                                          color: const Color.fromARGB(
+                                            255,
+                                            108,
+                                            140,
+                                            255,
+                                          ),
                                           child: Opacity(
                                             opacity: ((t01 - 0.5).abs() * 2)
                                                 .clamp(0.0, 1.0),
@@ -621,7 +604,9 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                                 RepaintBoundary(
                                   child: BackCard(
                                     progress: t01,
-                                    color: const Color(0xFFFAFAFA),
+                                    color:
+                                        AppColors
+                                            .darkSurface, // 🎯 index 0: 검(surface)
                                     stackAlignY: _stackAlignY,
                                   ),
                                 ),
@@ -646,7 +631,8 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                             children: [
                               const RepaintBoundary(
                                 child: _StaticDeckCard(
-                                  color: Color(0xFFFAFAFA),
+                                  color:
+                                      AppColors.darkBackground, // 🎯 index 2:
                                   rotate: 0.10,
                                   translate: Offset(50, 14),
                                   scale: 0.90,
@@ -656,7 +642,9 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                                 child: BackCard(
                                   progress: (1.0 - t23).clamp(0.0, 1.0),
                                   stackAlignY: _stackAlignY,
-                                  color: AppColors.darkSurface,
+                                  color:
+                                      AppColors
+                                          .darkBackground, // 🎯 index 2: 검(background)
                                   restTranslateX: -40,
                                   restTranslateY: 14,
                                   restRotate: -0.15,
@@ -693,7 +681,9 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                               if (atIndex3) ...[
                                 const RepaintBoundary(
                                   child: _StaticDeckCard(
-                                    color: Color(0xFFFAFAFA),
+                                    color:
+                                        AppColors
+                                            .darkSurface, // 🎯 index 3: 검(surface)
                                     rotate: 0.10,
                                     translate: Offset(50, 14),
                                     scale: 0.90,
@@ -701,7 +691,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                                 ),
                                 const RepaintBoundary(
                                   child: _StaticDeckCard(
-                                    color: AppColors.darkSurface,
+                                    color: AppColors.darkBackground,
                                     rotate: -0.15,
                                     translate: Offset(-40, 14),
                                     scale: 0.88,
@@ -747,7 +737,9 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                                     child: BackCard(
                                       progress: t34,
                                       stackAlignY: _stackAlignY,
-                                      color: const Color(0xFFFAFAFA),
+                                      color:
+                                          AppColors
+                                              .darkSurface, // 🎯 index 3/4: 검(background)
                                     ),
                                   ),
                                 IgnorePointer(
@@ -782,7 +774,9 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                                     child: BackCard(
                                       progress: t34,
                                       stackAlignY: _stackAlignY,
-                                      color: const Color(0xFFFAFAFA),
+                                      color:
+                                          AppColors
+                                              .darkSurface, // 🎯 index 3 -> 4: push 직전까지 surface 유지
                                     ),
                                   ),
                               ],
@@ -955,15 +949,17 @@ class _HorizontalSlideMode extends StatelessWidget {
     final width = MediaQuery.of(context).size.width;
     return Stack(
       children: [
-        const Positioned.fill(
-          child: ColoredBox(color: Color(0xFFFAFAFA)), // 1단계 화면
+        Positioned.fill(
+          child: ColoredBox(
+            color: AppColors.darkSurface,
+          ), // 🎯 index 1: 검(background)
         ),
         Positioned.fill(
           child: Transform.translate(
             offset: Offset(width * (1.0 - t), 0),
             child: const ColoredBox(
-              color: AppColors.darkSurface,
-            ), // 2단계 화면  AppColors.darkSurface
+              color: AppColors.darkBackground, // 🎯 index 2:
+            ),
           ),
         ),
       ],
@@ -1112,13 +1108,6 @@ class BackCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: color,
               borderRadius: BorderRadius.circular(radius),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 30,
-                  offset: const Offset(0, 20),
-                ),
-              ],
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(radius),
@@ -1170,13 +1159,6 @@ class _StaticDeckCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: color,
               borderRadius: BorderRadius.circular(32),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.18),
-                  blurRadius: 26,
-                  offset: const Offset(0, 12),
-                ),
-              ],
             ),
           ),
         ),

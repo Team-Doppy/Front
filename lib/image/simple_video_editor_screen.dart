@@ -2501,7 +2501,16 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
 
     // ColorFilter, Blur 적용
     Widget videoWidget = baseVideo;
-    final blurSigma = (state.blur / 100.0) * 20.0;
+    // ✅ 프리뷰 블러는 "노드/저장 결과" 기준으로 보정한다.
+    // - export/노드는 원본 해상도(px) 좌표계에서 blur가 적용되므로,
+    //   프리뷰에서는 displayWidth/sourceWidth 비율만큼 sigma를 낮춘다.
+    final srcW = controller.value.size.width;
+    final displayW = imageRectForCrop.width.abs();
+    final blurSigma = AdjustmentUtils.blurSigmaForPreview(
+      blur: state.blur,
+      sourceWidthPx: srcW > 0 ? srcW : displayW,
+      displayWidthPx: displayW > 0 ? displayW : srcW,
+    );
 
     if (_getColorFilter(state) != null) {
       videoWidget = ColorFiltered(
@@ -2597,7 +2606,18 @@ class _SimpleVideoEditorScreenState extends State<SimpleVideoEditorScreen>
 
     // ✅ 조정 모드일 때는 key를 고정하여 위젯 재생성 방지 (비디오 크기 고정)
     // ✅ blur도 항상 적용하여 위젯 트리 구조를 일정하게 유지 (깜빡임 방지)
-    final blurSigma = (state.blur / 100.0) * 20.0;
+    final srcW = controller.value.size.width;
+    // ✅ imageRectForCrop이 null이거나 유효하지 않으면 currentImageRect 사용
+    final effectiveImageRect = imageRectForCrop ?? currentImageRect;
+    final displayW = (effectiveImageRect?.width ?? 0).abs();
+    // ✅ displayW가 0이면 MediaQuery로 화면 크기 사용 (최후의 fallback)
+    final finalDisplayW =
+        displayW > 0 ? displayW : MediaQuery.of(context).size.width;
+    final blurSigma = AdjustmentUtils.blurSigmaForPreview(
+      blur: state.blur,
+      sourceWidthPx: srcW > 0 ? srcW : finalDisplayW,
+      displayWidthPx: finalDisplayW > 0 ? finalDisplayW : srcW,
+    );
 
     Widget videoWidget = baseVideo;
 

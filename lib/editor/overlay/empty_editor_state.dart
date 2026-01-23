@@ -21,7 +21,8 @@ class EmptyEditorState extends StatelessWidget {
     final userProvider = context.watch<UserProvider>();
     final currentUser = userProvider.currentUser;
     final profileImageUrl = currentUser?.profileImageUrl;
-    final username = currentUser?.username ?? '';
+    final alias = currentUser?.alias ?? '';
+    final username = currentUser?.username ?? ''; // CommonProfileAvatar용으로 유지
     final hasProfileImage =
         profileImageUrl != null && profileImageUrl.isNotEmpty;
 
@@ -38,7 +39,7 @@ class EmptyEditorState extends StatelessWidget {
                     imageUrl: profileImageUrl,
                     username: username,
                     size: 120,
-                    borderWidth: 0,
+                    borderWidth: 1.5,
                   )
                   : Container(
                     width: 120,
@@ -49,7 +50,11 @@ class EmptyEditorState extends StatelessWidget {
                     ),
                     child: Center(
                       child: Text(
-                        username.isNotEmpty ? username[0].toUpperCase() : '?',
+                        alias.isNotEmpty
+                            ? alias[0].toUpperCase()
+                            : (username.isNotEmpty
+                                ? username[0].toUpperCase()
+                                : '?'),
                         style: TextStyle(
                           fontSize: 24,
                           color: Theme.of(
@@ -61,7 +66,7 @@ class EmptyEditorState extends StatelessWidget {
                   ),
               const SizedBox(height: 16),
               Text(
-                customMessage ?? context.tr('tap_to_start_writing'),
+                context.tr('tap_to_start_writing'),
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -73,11 +78,7 @@ class EmptyEditorState extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                username.isNotEmpty
-                    ? context
-                        .tr('username_dopy')
-                        .replaceAll('{username}', username)
-                    : context.tr('dopy'),
+                context.tr('tap_to_start_writing_hint'),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Theme.of(

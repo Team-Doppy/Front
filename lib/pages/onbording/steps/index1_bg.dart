@@ -69,7 +69,7 @@ class _Index1BackgroundState extends State<Index1Background> {
                         Text(
                           context.tr('onboarding_my_nickname'),
                           style: TextStyle(
-                            color: AppColors.darkSurfaceVariant,
+                            color: AppColors.lightSurfaceVariant,
                             fontSize: 20,
                             fontWeight: FontWeight.w600,
                             letterSpacing: -0.5,
@@ -82,10 +82,10 @@ class _Index1BackgroundState extends State<Index1Background> {
                         TextField(
                           controller: widget.nicknameController,
                           enabled: !_isLoading,
-                          cursorColor: AppColors.darkSurface,
+                          cursorColor: AppColors.lightSurface,
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: AppColors.darkSurfaceVariant,
+                            color: AppColors.lightSurfaceVariant,
                             fontSize: 18,
                             fontWeight: FontWeight.w600,
                           ),
@@ -95,14 +95,14 @@ class _Index1BackgroundState extends State<Index1Background> {
                               'onboarding_tap_to_enter_nickname',
                             ),
                             hintStyle: TextStyle(
-                              color: AppColors.darkSurfaceVariant.withOpacity(
+                              color: AppColors.lightSurfaceVariant.withOpacity(
                                 0.5,
                               ),
                               fontSize: 18,
                               fontWeight: FontWeight.w500,
                             ),
                             filled: true,
-                            fillColor: AppColors.lightSurfaceVariant, // 어두운 회색
+                            fillColor: AppColors.darkSurfaceVariant, // 어두운 회색
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 20,
                               vertical: 30,
@@ -135,8 +135,8 @@ class _Index1BackgroundState extends State<Index1Background> {
               // 완료 버튼 (키보드 위에 고정)
               Positioned(
                 bottom: keyboardHeight + 16,
-                left: 24,
-                right: 24,
+                left: 32,
+                right: 32,
                 child: ValueListenableBuilder<TextEditingValue>(
                   valueListenable: widget.nicknameController,
                   builder: (context, value, child) {
@@ -167,14 +167,17 @@ class _Index1BackgroundState extends State<Index1Background> {
                                     ? _handleSubmit
                                     : null,
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.darkSurfaceVariant,
-                              foregroundColor: Colors.white,
+                              backgroundColor: AppColors.lightSurfaceVariant,
+                              foregroundColor: AppColors.darkSurface,
                               disabledBackgroundColor:
-                                  AppColors.lightSurfaceVariant,
+                                  AppColors.darkSurfaceVariant,
 
-                              padding: const EdgeInsets.symmetric(vertical: 18),
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 18,
+                                horizontal: 20,
+                              ),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(30),
+                                borderRadius: BorderRadius.circular(24),
                               ),
                             ),
                             child:
@@ -186,7 +189,7 @@ class _Index1BackgroundState extends State<Index1Background> {
                                         strokeWidth: 2,
                                         valueColor:
                                             AlwaysStoppedAnimation<Color>(
-                                              AppColors.darkSurfaceVariant,
+                                              AppColors.lightSurface,
                                             ),
                                       ),
                                     )

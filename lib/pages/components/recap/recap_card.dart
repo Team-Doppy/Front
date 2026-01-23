@@ -1,7 +1,6 @@
 import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/image/utils/read_image_cache_manager.dart';
 import 'package:doppy/pages/components/home_widgets.dart';
 import 'package:doppy/pages/components/recap/recap_loading.dart';
@@ -10,7 +9,6 @@ import 'package:doppy/utils/text_bold_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class RecapCard extends StatefulWidget {
   const RecapCard({super.key});
@@ -28,8 +26,8 @@ class _RecapCardState extends State<RecapCard>
     required BuildContext context,
     required List<String> previewThumbnails,
   }) async {
-    // ✅ 리캡을 봤다는 플래그 설정
-    await _markInsightContentAsViewed();
+    // ✅ 리캡을 봤다는 플래그는 서버에서 성공적으로 로드했을 때만 설정
+    // (RecapLoadingScreen에서 처리)
 
     Navigator.push(
       context,
@@ -37,23 +35,6 @@ class _RecapCardState extends State<RecapCard>
         builder: (_) => RecapLoadingScreen(thumbnailUrls: previewThumbnails),
       ),
     );
-  }
-
-  /// ✅ 리캡을 봤다는 타임스탬프를 SharedPreferences에 저장
-  Future<void> _markInsightContentAsViewed() async {
-    try {
-      final accountKey = await AuthService().getAccountKeyFromToken();
-      if (accountKey == null || accountKey.isEmpty) return;
-
-      final prefs = await SharedPreferences.getInstance();
-      final key = 'insight_content_viewed_$accountKey';
-      // ✅ 현재 시간을 ISO 8601 형식으로 저장 (3일 후 다시 표시하기 위함)
-      final timestamp = DateTime.now().toIso8601String();
-      await prefs.setString(key, timestamp);
-      debugPrint('[RecapCard] 리캡을 봤다는 타임스탬프 저장 완료: $key = $timestamp');
-    } catch (e) {
-      debugPrint('[RecapCard] 타임스탬프 저장 실패: $e');
-    }
   }
 
   @override
@@ -139,7 +120,7 @@ class _RecapCardState extends State<RecapCard>
                 ),
             child: ClipRRect(
               child: SizedBox(
-                height: 500, // 명시적 높이 설정
+                height: 400, // 명시적 높이 설정
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -154,8 +135,12 @@ class _RecapCardState extends State<RecapCard>
                               ReadImageCacheManager
                                   .instance, // ✅ 읽기 전용 캐시 매니저 사용
                           fit: BoxFit.cover,
-                          fadeInDuration: Duration.zero, // ✅ 페이드 애니메이션 제거
-                          fadeOutDuration: Duration.zero, // ✅ 페이드 애니메이션 제거
+                          fadeInDuration: Duration(
+                            milliseconds: 300,
+                          ), // ✅ 페이드 애니메이션 제거
+                          fadeOutDuration: Duration(
+                            milliseconds: 300,
+                          ), // ✅ 페이드 애니메이션 제거
                           useOldImageOnUrlChange: true, // ✅ URL 변경 시 이전 이미지 유지
                           errorWidget:
                               (context, url, error) => Container(
@@ -169,8 +154,8 @@ class _RecapCardState extends State<RecapCard>
                     ),
                     // 블러 오버레이
                     BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-                      child: Container(color: Colors.black.withOpacity(0.5)),
+                      filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                      child: Container(color: Colors.black.withOpacity(0.3)),
                     ),
 
                     // 텍스트 오버레이

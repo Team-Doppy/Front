@@ -1153,12 +1153,15 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
     // 3) 필터/보정(밝기/대비/채도)은 화면 렌더링만 되므로 마지막에 굽는다.
     final matrix = _getCombinedColorMatrix(state);
-    if (matrix == null) return bytes;
+    final blurSigma = state.blur > 0.01 ? (state.blur / 100.0) * 20.0 : 0.0;
+
+    // ColorMatrix와 블러가 모두 없으면 원본 반환
+    if (matrix == null && blurSigma == 0.0) return bytes;
 
     try {
-      return await _applyColorMatrixToBytes(bytes, matrix);
+      return await _applyColorMatrixAndBlurToBytes(bytes, matrix, blurSigma);
     } catch (e) {
-      debugPrint('[SimpleImageEditor] 필터/보정 export 실패: $e');
+      debugPrint('[SimpleImageEditor] 필터/보정/블러 export 실패: $e');
       return bytes;
     }
   }
@@ -1176,15 +1179,25 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     return filterMatrix ?? adjustmentMatrix;
   }
 
-  Future<Uint8List> _applyColorMatrixToBytes(
+  Future<Uint8List> _applyColorMatrixAndBlurToBytes(
     Uint8List imageBytes,
-    List<double> matrix,
+    List<double>? matrix,
+    double blurSigma,
   ) async {
     final src = await _loadImage(imageBytes);
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
 
-    final paint = Paint()..colorFilter = ColorFilter.matrix(matrix);
+    final paint = Paint();
+    if (matrix != null) {
+      paint.colorFilter = ColorFilter.matrix(matrix);
+    }
+    if (blurSigma > 0.0) {
+      paint.imageFilter = ui.ImageFilter.blur(
+        sigmaX: blurSigma,
+        sigmaY: blurSigma,
+      );
+    }
     canvas.drawImage(src, Offset.zero, paint);
 
     final picture = recorder.endRecording();
@@ -1867,6 +1880,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
     _ImageEditState state,
     Rect? cropRectScreen,
     Rect? imageRectForCrop,
+    Rect? currentImageRect,
   ) {
     final totalRotationDeg = state.rotation + (state.rotationQuarterTurns * 90);
     final rotationRadians = totalRotationDeg * (3.14159265359 / 180.0);
@@ -1882,11 +1896,26 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
 
     // ✅ 조정 모드일 때는 key를 고정하여 위젯 재생성 방지 (이미지 크기 고정)
     // ✅ blur도 항상 적용하여 위젯 트리 구조를 일정하게 유지 (깜빡임 방지)
-    final blurSigma = (state.blur / 100.0) * 20.0;
+    // ✅ 프리뷰 블러는 "노드/저장 결과" 기준으로 보정한다.
+    // - export는 원본 해상도 좌표계에서 sigma가 적용되므로,
+    //   프리뷰에서는 displayWidth/sourceWidth 비율만큼 sigma를 낮춘다.
+    final srcW = (_uiImageCache[index]?.width ?? 0).toDouble();
+    // ✅ imageRectForCrop이 null이거나 유효하지 않으면 currentImageRect 사용
+    final effectiveImageRect = imageRectForCrop ?? currentImageRect;
+    final displayW = (effectiveImageRect?.width ?? 0).abs();
+    // ✅ displayW가 0이면 MediaQuery로 화면 크기 사용 (최후의 fallback)
+    final finalDisplayW =
+        displayW > 0 ? displayW : MediaQuery.of(context).size.width;
+    final blurSigma = AdjustmentUtils.blurSigmaForPreview(
+      blur: state.blur,
+      sourceWidthPx: srcW > 0 ? srcW : finalDisplayW,
+      displayWidthPx: finalDisplayW > 0 ? finalDisplayW : srcW,
+    );
 
     Widget imageWidget = basePaint;
 
-    // ColorFilter 적용 (blur 제외)
+    // ✅ ColorMatrix와 Blur를 함께 적용하여 화면과 저장 시 동일한 순서 보장
+    // ✅ ColorMatrix를 먼저 적용하고 그 다음 Blur를 적용 (저장 시와 동일한 순서)
     if (_getColorFilter(state) != null) {
       imageWidget = ColorFiltered(
         key:
@@ -1900,7 +1929,8 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
       );
     }
 
-    // Blur 적용 (항상 적용하되, blur가 0이면 sigma도 0으로 설정)
+    // ✅ Blur 적용 (항상 적용하되, blur가 0이면 sigma도 0으로 설정)
+    // ✅ ColorMatrix 적용 후 Blur를 적용하여 저장 시와 동일한 순서 보장
     imageWidget = ImageFiltered(
       imageFilter: ui.ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
       child: imageWidget,
@@ -2126,36 +2156,66 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                   state.cropState.isCropRectInitialized &&
                                   state.cropState.cropRectImage != null &&
                                   _uiImageCache[index] != null)
-                              ? (_getColorFilter(state) != null
-                                  ? ColorFiltered(
+                              ? (() {
+                                // ✅ 크롭 커밋 프리뷰는 CustomPaint 경로로 렌더되는데,
+                                // 이 경로에 blur가 없으면 "다른 편집(크롭)이 있으면 블러가 안 먹는" 현상이 발생한다.
+                                // 따라서 ColorFilter/Blur 모두 동일하게 감싸서 경로를 통일한다.
+                                final cs =
+                                    (_isClosingAfterCropApply &&
+                                            _closingCropContainerSizes[index] !=
+                                                null)
+                                        ? _closingCropContainerSizes[index]!
+                                        : containerSize;
+
+                                final uiImage = _uiImageCache[index]!;
+                                final imgSize = Size(
+                                  uiImage.width.toDouble(),
+                                  uiImage.height.toDouble(),
+                                );
+
+                                // 프리뷰 sigma 보정용 display width 계산
+                                final displayRect =
+                                    ImageRectUtils.computeImageRectForCrop(
+                                      containerSize: cs,
+                                      imageSize: imgSize,
+                                      scale: state.imageScale,
+                                      offset: state.imageOffset,
+                                    );
+
+                                final blurSigma =
+                                    AdjustmentUtils.blurSigmaForPreview(
+                                      blur: state.blur,
+                                      sourceWidthPx: imgSize.width,
+                                      displayWidthPx: displayRect.width,
+                                    );
+
+                                Widget w = CustomPaint(
+                                  painter: _CommittedCropPreviewPainter(
+                                    image: uiImage,
+                                    state: state,
+                                    containerSize: cs,
+                                  ),
+                                  size: Size.infinite,
+                                );
+
+                                if (_getColorFilter(state) != null) {
+                                  w = ColorFiltered(
                                     colorFilter: _getColorFilter(state)!,
-                                    child: CustomPaint(
-                                      painter: _CommittedCropPreviewPainter(
-                                        image: _uiImageCache[index]!,
-                                        state: state,
-                                        containerSize:
-                                            (_isClosingAfterCropApply &&
-                                                    _closingCropContainerSizes[index] !=
-                                                        null)
-                                                ? _closingCropContainerSizes[index]!
-                                                : containerSize,
-                                      ),
-                                      size: Size.infinite,
-                                    ),
-                                  )
-                                  : CustomPaint(
-                                    painter: _CommittedCropPreviewPainter(
-                                      image: _uiImageCache[index]!,
-                                      state: state,
-                                      containerSize:
-                                          (_isClosingAfterCropApply &&
-                                                  _closingCropContainerSizes[index] !=
-                                                      null)
-                                              ? _closingCropContainerSizes[index]!
-                                              : containerSize,
-                                    ),
-                                    size: Size.infinite,
-                                  ))
+                                    child: w,
+                                  );
+                                }
+
+                                // ✅ Blur도 동일하게 적용 (0이면 sigma=0)
+                                w = ImageFiltered(
+                                  imageFilter: ui.ImageFilter.blur(
+                                    sigmaX: blurSigma,
+                                    sigmaY: blurSigma,
+                                  ),
+                                  child: w,
+                                );
+
+                                return w;
+                              })()
                               : _buildRotatedImage(
                                 context,
                                 index,
@@ -2163,6 +2223,7 @@ class _SimpleImageEditorScreenState extends State<SimpleImageEditorScreen>
                                 state,
                                 cropRectScreen,
                                 imageRectForCrop,
+                                currentImageRect,
                               ),
                     ),
                   ),

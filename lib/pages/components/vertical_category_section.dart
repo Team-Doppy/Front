@@ -1,5 +1,6 @@
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/card_view.dart';
+import 'package:doppy/pages/components/post_action_bottom_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/models/post_data.dart';
@@ -8,7 +9,6 @@ import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/components/image_view.dart';
-import 'package:doppy/pages/components/post_action_sheet.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
@@ -71,13 +71,15 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
                 return GestureDetector(
                   onTap: () => _openPost(context, post),
                   onLongPress: () {
-                    PostActionSheet.show(
+                    PostActionBottomSheet.show(
                       context,
-                      post: post,
-                      onDelete: () => _deletePost(context, post),
-                      onMoveCategory: () {}, // 카테고리 이동 제거
-                      onChangeAccessLevel:
-                          () => _changePostAccessLevel(context, post),
+                      postId: post.id,
+                      postTitle: post.title,
+                      authorUsername: post.author,
+                      authorProfileImageUrl: post.authorProfileImageUrl,
+                      thumbnailImageUrl: post.thumbnailImageUrl,
+                      likeCount: post.likeCount,
+                      hideProfileOption: true, // 프로필 화면에서 호출되므로 프로필 방문 옵션 숨김
                     );
                   },
                   child:

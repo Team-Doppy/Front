@@ -12,6 +12,8 @@ import 'package:doppy/utils/dialog_utils.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:doppy/editor/component/clip_component.dart'
+    show pauseAllVideoPlayers;
 
 /// 에디터의 미디어(이미지/영상) 업로드를 담당하는 핸들러
 class MediaUploadHandler {
@@ -31,6 +33,13 @@ class MediaUploadHandler {
   /// 이미지 업로드 처리
   Future<void> handleImageUpload() async {
     if (!context.mounted) return;
+
+    // 🎯 미디어피커로 들어가기 전에 모든 비디오 재생 중지
+    try {
+      await pauseAllVideoPlayers(seekToStart: true, mute: true);
+    } catch (e) {
+      debugPrint('[MediaUploadHandler] 비디오 정리 실패: $e');
+    }
 
     final upload = context.read<UploadService>();
 
@@ -72,6 +81,13 @@ class MediaUploadHandler {
   /// 영상 업로드 처리
   Future<void> handleVideoUpload() async {
     if (!context.mounted) return;
+
+    // 🎯 미디어피커로 들어가기 전에 모든 비디오 재생 중지
+    try {
+      await pauseAllVideoPlayers(seekToStart: true, mute: true);
+    } catch (e) {
+      debugPrint('[MediaUploadHandler] 비디오 정리 실패: $e');
+    }
 
     final upload = context.read<UploadService>();
 

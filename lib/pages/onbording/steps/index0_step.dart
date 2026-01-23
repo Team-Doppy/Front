@@ -49,8 +49,8 @@ class Index0Background extends StatelessWidget {
                     style: LocaleTypography.setStyle(
                       context: context,
                       fontSize: 30,
-                      color: AppColors.darkSurfaceVariant.withOpacity(0.9),
-                      fontWeight: FontWeight.w300,
+                      color: AppColors.lightSurfaceVariant.withOpacity(0.7),
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -59,8 +59,8 @@ class Index0Background extends StatelessWidget {
                     style: LocaleTypography.setStyle(
                       context: context,
                       fontSize: 30,
-                      color: AppColors.darkSurfaceVariant.withOpacity(0.9),
-                      fontWeight: FontWeight.w300,
+                      color: AppColors.lightSurfaceVariant.withOpacity(0.7),
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
                 ],

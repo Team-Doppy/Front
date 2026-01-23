@@ -223,13 +223,19 @@ class SearchService extends ChangeNotifier {
         return null;
       }
 
+      // ✅ 현재 로그인된 유저의 username 가져오기
+      final currentUsername = AuthService().currentUsernameSync;
+
       final usernames = <String>[];
       if (status == 200) {
         if (body is List) {
           for (final e in body) {
             if (e is Map<String, dynamic>) {
               final u = e['username']?.toString();
-              if (u != null && u.isNotEmpty) usernames.add(u);
+              // ✅ 현재 로그인된 유저는 제외
+              if (u != null && u.isNotEmpty && u != currentUsername) {
+                usernames.add(u);
+              }
             }
           }
         } else {

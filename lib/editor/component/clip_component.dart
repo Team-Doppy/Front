@@ -26,6 +26,21 @@ import 'package:doppy/pages/components/search_video_widgets.dart'
 /// VideoPlayer 컨트롤러를 저장하는 맵
 final videoPlayerControllers = <String, VideoPlayerControllerProxy>{};
 
+/// ✅ 프록시 맵에 등록되지 않은 "외부" VideoPlayerController 추적용 (예: 썸네일 편집/발행 Step 등)
+/// - 전역 일시정지 시 예외 없이 멈추기 위함
+final Set<VideoPlayerController> _externalVideoControllers =
+    <VideoPlayerController>{};
+
+/// 외부 컨트롤러 등록 (중복 등록 안전)
+void registerExternalVideoController(VideoPlayerController controller) {
+  _externalVideoControllers.add(controller);
+}
+
+/// 외부 컨트롤러 해제 (중복 해제 안전)
+void unregisterExternalVideoController(VideoPlayerController controller) {
+  _externalVideoControllers.remove(controller);
+}
+
 /// VideoPlayerControllerProxy의 key를 생성한다.
 ///
 /// - URL이 비어있는 로컬 영상(업로드 완료 후에도 로컬 컨트롤러 유지)에서 `url.hashCode` 기반 키가
@@ -58,29 +73,72 @@ class VideoPlayerControllerProxy {
   VideoPlayerController? controller; // ✅ 실제 컨트롤러 저장
 }
 
-/// 모든 비디오 플레이어 정리
-void cleanupAllVideoPlayers() {
-  debugPrint('[ClipComponent] 모든 비디오 플레이어 정리 시작');
+/// ✅ 전역: 가능한 모든 비디오를 "예외 없이" 일시정지한다. (비파괴)
+/// - videoPlayerControllers(클립/리더) 프록시
+/// - 외부 VideoPlayerController(발행 Step 등)
+/// - ThumbnailVideoPlayer 풀(홈/검색 썸네일)
+Future<void> pauseAllVideoPlayers({
+  bool seekToStart = true,
+  bool mute = true,
+}) async {
+  debugPrint('[ClipComponent] pauseAllVideoPlayers 시작');
 
-  // 🎯 모든 비디오 일시정지 및 리스너 제거 (setState 방지)
-  for (final entry in videoPlayerControllers.entries) {
-    final controller = entry.value;
-    controller.pause?.call();
-    // ✅ 프록시에 실제 컨트롤러가 연결된 경우도 강제 pause
+  // 1) 프록시 기반 컨트롤러들
+  final proxies = videoPlayerControllers.values.toList(growable: false);
+  for (final proxy in proxies) {
+    // 프록시 pause 콜백 (state 내부 _controller.pause 등)
     try {
-      final c = controller.controller;
-      if (c != null && c.value.isInitialized) {
-        c.pause();
+      proxy.pause?.call();
+    } catch (_) {}
+
+    // 실제 컨트롤러가 연결된 경우는 await로 확실하게 멈춘다.
+    final c = proxy.controller;
+    if (c == null) continue;
+    try {
+      if (c.value.isInitialized) {
+        await c.pause();
+        if (seekToStart) {
+          await c.seekTo(Duration.zero);
+        }
+        if (mute) {
+          await c.setVolume(0.0);
+        }
       }
     } catch (_) {}
   }
-  videoPlayerControllers.clear();
 
-  // ✅ 홈/검색 썸네일 풀 컨트롤러도 전역 pause (MediaPicker 진입 시 백그라운드 재생 방지)
+  // 2) 외부 컨트롤러들 (등록된 것만)
+  final externals = _externalVideoControllers.toList(growable: false);
+  for (final c in externals) {
+    try {
+      if (c.value.isInitialized) {
+        await c.pause();
+        if (seekToStart) {
+          await c.seekTo(Duration.zero);
+        }
+        if (mute) {
+          await c.setVolume(0.0);
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 3) 홈/검색 썸네일 풀 컨트롤러
+  try {
+    await ThumbnailVideoPlayer.pauseAll(seekToStart: seekToStart, mute: mute);
+  } catch (_) {}
+
+  debugPrint('[ClipComponent] pauseAllVideoPlayers 완료');
+}
+
+/// 모든 비디오 플레이어 정리 (파괴적: 프록시 맵 clear)
+/// - 화면 종료/세션 종료 등 "복구가 필요 없는" 시점에만 사용 권장
+void cleanupAllVideoPlayers() {
+  debugPrint('[ClipComponent] cleanupAllVideoPlayers 시작');
   // ignore: discarded_futures
-  ThumbnailVideoPlayer.pauseAll(seekToStart: true, mute: true);
-
-  debugPrint('[ClipComponent] 모든 비디오 플레이어 정리 완료');
+  pauseAllVideoPlayers(seekToStart: true, mute: true);
+  videoPlayerControllers.clear();
+  debugPrint('[ClipComponent] cleanupAllVideoPlayers 완료');
 }
 
 /// 주어진 key를 제외한 모든 비디오를 일시정지한다

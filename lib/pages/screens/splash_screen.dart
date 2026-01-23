@@ -13,9 +13,6 @@ import 'package:doppy/utils/deep_link_handler.dart';
 import 'package:doppy/utils/week_utils.dart';
 import 'package:doppy/pages/screens/join_screen.dart';
 import 'package:doppy/pages/onbording/onbording_flow.dart';
-import 'package:doppy/data/models/home_recommendation_model.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:doppy/pages/components/search_video_widgets.dart';
 import 'package:doppy/providers/publish_provider.dart';
 import 'package:doppy/pages/components/retry_cancel_bottom_sheet.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -75,7 +72,6 @@ class _SplashScreenState extends State<SplashScreen>
   late final Future<_BootstrapResult> _bootstrapFuture;
   bool _showRootShell = false;
   bool _hideSplashOverlay = false;
-  bool _didStartHomeMediaPrecache = false; // ✅ 홈 프리캐시 1회만
   bool _shouldForceOnboardingFlow = false; // 🎯 온보딩 미완료 계정이면 강제 진입 (서버 플래그 기반)
   bool _isMonitoringOnboardingPublish = false;
   VoidCallback? _onboardingPublishListener;
@@ -211,11 +207,6 @@ class _SplashScreenState extends State<SplashScreen>
         _loadHomeRecommendations(), // ✅ 홈용 추천 카드 로드
       ]);
 
-      // ✅ 홈(FillSection) "첫 화면" 이미지는 스플래시가 사라지기 전에 동기 프리로드
-      // - CachedNetworkImage가 memCacheWidth로 리사이즈 디코드를 하므로,
-      //   precache도 동일한 ResizeImage(width)로 해야 회색 placeholder가 사라진다.
-      await _preloadHomeFillSectionCriticalImages();
-
       // MyProfileFeed 로드 완료 후 WeeklyContributions 로드 (totalPosts 사용을 위해)
       await _loadWeeklyContributions();
 
@@ -270,15 +261,21 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   /// 🎯 서버에서 온보딩 완료 여부 확인
-  bool _isOnboardingCompleted() {
+  ///
+  /// 반환값:
+  /// - true: 온보딩 완료
+  /// - false: 온보딩 미완료 (서버에서 명시적으로 false로 응답)
+  /// - null: 서버에서 값이 오지 않음 (온보딩 플로우로 가지 않음)
+  bool? _isOnboardingCompleted() {
     try {
       final userProvider = context.read<UserProvider>();
       final completed = userProvider.onboardingCompleted;
-      // null이면 false로 간주 (온보딩 미완료)
-      return completed ?? false;
+      // ✅ null이면 null 반환 (서버에서 값이 오지 않았음을 의미)
+      // 절대 false로 판단하지 않음
+      return completed;
     } catch (e) {
       debugPrint('[SplashScreen] 온보딩 완료 여부 확인 실패(스킵): $e');
-      return true; // 체크 실패로 앱 진입을 막지 않는다.
+      return null; // 체크 실패 시 null 반환 (온보딩 플로우로 가지 않음)
     }
   }
 
@@ -346,14 +343,18 @@ class _SplashScreenState extends State<SplashScreen>
       await userProvider.fetchUserBundle(throwOnAuthError: true);
 
       // 🎯 서버에서 온보딩 완료 여부 확인
+      // ✅ null이면 서버에서 값이 오지 않았음을 의미하므로 온보딩 플로우로 가지 않음
       final completed = _isOnboardingCompleted();
-      if (!completed) {
+      if (completed == false) {
+        // ✅ 명시적으로 false인 경우에만 온보딩 플로우로 이동
         if (mounted) {
           setState(() {
             _shouldForceOnboardingFlow = true;
           });
         }
         debugPrint('[SplashScreen] 온보딩 미완료 계정 감지됨 (서버 플래그) - 온보딩 플로우로 이동 예정');
+      } else if (completed == null) {
+        debugPrint('[SplashScreen] 온보딩 완료 여부 값이 서버에서 오지 않음 - 온보딩 플로우로 이동하지 않음');
       }
     } catch (e) {
       // ✅ 401, 502 등 모든 에러는 다시 throw하여 부트스트랩에서 처리
@@ -469,133 +470,6 @@ class _SplashScreenState extends State<SplashScreen>
       }
       // 데이터 로드 실패는 앱 시작을 막지 않음 (401 제외)
       debugPrint('[SplashScreen] 홈용 추천 카드 로드 실패 (무시): $e');
-    }
-  }
-
-  /// 홈의 FillSection(큰 이미지 PageView)에서 "첫 장"이 즉시 보이도록 동기 프리로드한다.
-  ///
-  /// 핵심:
-  /// - `PostFillSection` 내부가 `CachedNetworkImage(memCacheWidth: screenWidth*dpr*2)`를 쓰므로
-  ///   precache도 `ResizeImage(width: screenWidth*dpr*2)`로 맞춰야 한다.
-  Future<void> _preloadHomeFillSectionCriticalImages() async {
-    try {
-      if (!mounted) return;
-
-      final screenWidth = MediaQuery.of(context).size.width;
-      final dpr = MediaQuery.of(context).devicePixelRatio;
-      const maxDecodeWidthPx = 3072; // ✅ 과도한 디코드는 실패/지연 방지
-      final memCacheWidth = (screenWidth * dpr * 2).round().clamp(
-        1,
-        maxDecodeWidthPx,
-      );
-
-      final urls = <String>[];
-
-      // LockedHomeWidget: PostFillSection은 "최근 포스트"에서 posts.skip(1) 첫 장이 가장 빨리 보임
-      try {
-        final myFeed = context.read<MyProfileFeedProvider>();
-        if (myFeed.posts.length >= 2) {
-          final u = myFeed.posts[1]['thumbnailImageUrl'] as String?;
-          if (u != null && u.trim().isNotEmpty) urls.add(u);
-        }
-      } catch (_) {}
-
-      // UnlockedHomeWidget: EVENT_EMOTION(PostFillSection) 각 섹션의 첫 장만
-      try {
-        final recProvider = context.read<HomeRecommendationProvider>();
-        final emotionBased = recProvider.getRecommendationsByType(
-          RecCardType.EVENT_EMOTION,
-        );
-        for (final rec in emotionBased) {
-          if (rec.posts.isEmpty) continue;
-          final u = rec.posts.first['thumbnailImageUrl'] as String?;
-          if (u != null && u.trim().isNotEmpty) urls.add(u);
-        }
-      } catch (_) {}
-
-      final uniqueUrls = urls.toSet().toList();
-      if (uniqueUrls.isEmpty) return;
-
-      // ✅ "동기 프리로드": 첫 화면에 필요한 것만 await
-      // (너무 많이 await하면 스플래시가 길어지므로 3개 정도로 제한)
-      final critical = uniqueUrls.take(3).toList();
-
-      debugPrint(
-        '[SplashScreen] 🚀 홈 FillSection 동기 프리로드 시작: ${critical.length}개',
-      );
-
-      await Future.wait(
-        critical.map((url) async {
-          if (!mounted) return;
-          try {
-            final base = CachedNetworkImageProvider(url);
-            final effective = ResizeImage(base, width: memCacheWidth);
-            await precacheImage(effective, context);
-            debugPrint('[SplashScreen] ✅ FillSection 프리로드 완료: $url');
-          } catch (e) {
-            if (e.toString().contains('dispose') ||
-                e.toString().contains('mounted')) {
-              debugPrint('[SplashScreen] ⚠️ context dispose로 인한 중단: $url');
-              return;
-            }
-            debugPrint('[SplashScreen] ❌ FillSection 프리로드 실패: $url - $e');
-          }
-        }),
-        eagerError: false,
-      );
-
-      debugPrint('[SplashScreen] ✅ 홈 FillSection 동기 프리로드 완료');
-    } catch (e) {
-      debugPrint('[SplashScreen] 홈 FillSection 프리로드 실패(무시): $e');
-    }
-  }
-
-  /// ✅ 홈 화면의 모든 이미지/영상을 비동기로 프리캐싱
-  /// 홈 데이터 로드 후 호출하여 백그라운드에서 프리캐싱 시작
-  void _precacheAllHomeMedia() {
-    if (!mounted) return;
-
-    try {
-      final recommendationProvider = context.read<HomeRecommendationProvider>();
-      final friendProvider = context.read<FriendProvider>();
-      final myFeedProvider = context.read<MyProfileFeedProvider>();
-
-      final recommendations = recommendationProvider.recommendations;
-      final friendPosts = friendProvider.friendPosts;
-      final myProfilePosts = myFeedProvider.posts;
-      final userInfo = myFeedProvider.userInfo;
-      final profileImageUrl = userInfo?['profileImageUrl'] as String?;
-
-      // 비동기로 프리캐싱 시작 (화면 진입을 막지 않음)
-      HomeRecommendationProvider.precacheAllHomeMedia(
-        context: context,
-        recommendations: recommendations,
-        friendPosts: friendPosts,
-        myProfilePosts: myProfilePosts,
-        profileImageUrl: profileImageUrl,
-      );
-
-      // ✅ 비디오 URL은 컨트롤러 프리로드 (이미지 precache로는 효과 없음)
-      final urls = HomeRecommendationProvider.collectAllHomeMediaUrls(
-        recommendations: recommendations,
-        friendPosts: friendPosts,
-        myProfilePosts: myProfilePosts,
-        profileImageUrl: profileImageUrl,
-      );
-      for (final url in urls) {
-        final u = url.toLowerCase();
-        final isVideo =
-            u.endsWith('.mp4') ||
-            u.endsWith('.mov') ||
-            u.endsWith('.m4v') ||
-            u.contains('/videos/') ||
-            u.contains('video');
-        if (isVideo) {
-          ThumbnailVideoPlayer.preload(url);
-        }
-      }
-    } catch (e) {
-      debugPrint('[SplashScreen] 홈 미디어 프리캐싱 시작 실패(무시): $e');
     }
   }
 
@@ -756,28 +630,12 @@ class _SplashScreenState extends State<SplashScreen>
       setState(() {
         _hideSplashOverlay = true;
       });
-
-      // ✅ 홈이 실제로 보이기 시작한 뒤(스플래시 제거 후) 프리캐시 시작
-      // - 스플래시 단계에서 대량 precache를 시작하면 안드로이드에서 프레임 드롭이 심해질 수 있음
-      _startHomeMediaPrecacheAfterSplash();
     } else {
       // 로그인 화면으로 전환 (스택 초기화)
       await _fadeOutController.forward();
       if (!mounted) return;
       Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
     }
-  }
-
-  void _startHomeMediaPrecacheAfterSplash() {
-    if (!mounted) return;
-    if (_didStartHomeMediaPrecache) return;
-    _didStartHomeMediaPrecache = true;
-
-    // 홈 첫 렌더 안정화 후 백그라운드에서 시작
-    Future<void>.delayed(const Duration(milliseconds: 800), () {
-      if (!mounted) return;
-      _precacheAllHomeMedia();
-    });
   }
 
   void _startMonitoringOnboardingPublish() {
@@ -944,13 +802,15 @@ class _SplashScreenState extends State<SplashScreen>
           request?.nthWeek ?? WeekUtils.getWeekNumber(DateTime.now());
 
       final weekly = context.read<WeeklyContributionProvider>();
+      // ✅ 온보딩 직후 첫 홈 진입에서는 "백그라운드 리로드"로 UI가 흔들리면 안 된다.
+      // - optimisticUpdate=true는 500ms 후 reloadContributions가 한 번 더 돌면서
+      //   그리드(보라색 셀) + 그리팅 메시지가 실시간으로 바뀌는 현상을 만든다.
+      // - 따라서 여기서는 서버 기반으로 1회 동기화(=optimisticUpdate:false)만 수행한다.
       await weekly.refreshAfterPostPublished(
         year,
         weekNumber: weekNumber,
-        optimisticUpdate: true,
+        optimisticUpdate: false,
       );
-
-      await _preloadHomeFillSectionCriticalImages();
     } catch (e) {
       debugPrint('[SplashScreen] 온보딩 게시 후 데이터 재로드 실패(무시): $e');
     }

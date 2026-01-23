@@ -99,6 +99,32 @@ class AdjustmentState {
 class AdjustmentUtils {
   const AdjustmentUtils._();
 
+  /// ✅ 블러(0~100)를 "저장/노드 결과" 기준 sigma(px)로 변환한다.
+  /// - 현재 저장(이미지) 및 FFmpeg(비디오) 모두 0~20 범위를 기준으로 사용 중
+  static double blurSigmaForExport(double blur) {
+    if (blur <= 0.01) return 0.0;
+    return (blur / 100.0) * 20.0;
+  }
+
+  /// ✅ 프리뷰(화면 렌더)에서 "노드에 굽혀진 결과"와 동일하게 보이도록 sigma를 보정한다.
+  ///
+  /// 배경:
+  /// - 저장/노드: 원본 해상도(px) 좌표계에서 sigma가 적용됨
+  /// - 프리뷰: 화면에 축소된 좌표계에서 sigma가 적용되면 체감이 과해짐
+  ///
+  /// 따라서 \(sigma_{preview} = sigma_{export} * (displayWidth / sourceWidth)\) 로 스케일 보정한다.
+  static double blurSigmaForPreview({
+    required double blur,
+    required double sourceWidthPx,
+    required double displayWidthPx,
+  }) {
+    final sigmaExport = blurSigmaForExport(blur);
+    if (sigmaExport <= 0.0) return 0.0;
+    if (sourceWidthPx <= 0 || displayWidthPx <= 0) return sigmaExport;
+    final s = (displayWidthPx / sourceWidthPx).clamp(0.0, 1.0);
+    return (sigmaExport * s).clamp(0.0, sigmaExport);
+  }
+
   /// 조정 상태를 ColorMatrix로 변환
   ///
   /// [brightness]: -100 ~ 100 (밝기)
@@ -154,10 +180,8 @@ class AdjustmentUtils {
         1.0,
         0.0,
       ];
-      resultMatrix =
-          resultMatrix != null
-              ? _multiplyMatrices(resultMatrix, brightnessMatrix)
-              : brightnessMatrix;
+      // ✅ 첫 연산이므로 그대로 초기화 (flow 상 resultMatrix는 항상 null)
+      resultMatrix = brightnessMatrix;
     }
 
     // 2. 대비 (contrast)
@@ -753,9 +777,11 @@ class _AdjustmentRulerSliderState extends State<_AdjustmentRulerSlider> {
 
     final deltaX = details.localPosition.dx - _dragStartX!;
     final range = widget.max - widget.min;
-    // ✅ 필터 편집기와 동일한 감도: range / 1.5
+    // ✅ 블러는 더 빠른 감도 적용: range / 0.8 (다른 조정보다 빠르게)
+    // ✅ 일반 조정은 range / 1.5
+    final sensitivity = widget.min == 0.0 ? (range / 0.8) : (range / 1.5);
     // ✅ 슬라이더 방향 반전: deltaX를 반대로 계산
-    final deltaValue = (-deltaX / width) * (range / 1.5);
+    final deltaValue = (-deltaX / width) * sensitivity;
     final newValue = (_dragStartValue! + deltaValue).clamp(
       widget.min,
       widget.max,

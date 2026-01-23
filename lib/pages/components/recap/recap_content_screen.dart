@@ -6,8 +6,10 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/pages/components/recap/recap_doc.dart';
 import 'package:doppy/pages/components/recap/recap_dummy.dart';
 import 'package:doppy/pages/components/recap/recap_renderer.dart';
+import 'package:doppy/providers/home_recommendation_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 class RecapContentScreen extends StatefulWidget {
   const RecapContentScreen({
@@ -60,6 +62,24 @@ class _RecapContentScreenState extends State<RecapContentScreen> {
       });
     }
 
+    // ✅ 리캡을 보고 있는 동안 백그라운드에서 홈 섹션 데이터 미리 로드
+    // (홈 화면으로 돌아갔을 때 새로운 데이터가 표시되도록)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = this.context;
+      if (context.mounted) {
+        try {
+          final recommendationProvider =
+              context.read<HomeRecommendationProvider>();
+          // ✅ 백그라운드에서 실행 (에러는 무시)
+          recommendationProvider.loadHomeRecommendations().catchError((e) {
+            debugPrint('[RecapContentScreen] 홈 섹션 데이터 미리 로드 실패 (무시): $e');
+          });
+        } catch (e) {
+          debugPrint('[RecapContentScreen] 홈 섹션 데이터 미리 로드 실패 (무시): $e');
+        }
+      }
+    });
+
     // 🎯 서버 응답 구조 처리: {success, data: {...}} 또는 직접 {hero, blocks} 구조 모두 지원
     Map<String, dynamic> jsonToParse;
     if (widget.docJson != null) {
@@ -87,19 +107,8 @@ class _RecapContentScreenState extends State<RecapContentScreen> {
       debugPrint('[RecapContentScreen] 더미 데이터 사용');
     }
 
-    debugPrint(
-      '[RecapContentScreen] 파싱할 JSON keys: ${jsonToParse.keys.toList()}',
-    );
-    debugPrint('[RecapContentScreen] hero: ${jsonToParse['hero']}');
-    debugPrint('[RecapContentScreen] blocks: ${jsonToParse['blocks']}');
-    debugPrint(
-      '[RecapContentScreen] blocks 개수: ${(jsonToParse['blocks'] as List?)?.length ?? 0}',
-    );
-
     _doc = RecapDoc.fromJson(jsonToParse);
 
-    debugPrint('[RecapContentScreen] 파싱 완료 - hero.title: ${_doc.hero.title}');
-    debugPrint('[RecapContentScreen] 파싱 완료 - blocks 개수: ${_doc.blocks.length}');
     for (int i = 0; i < _doc.blocks.length; i++) {
       debugPrint(
         '[RecapContentScreen] block[$i]: type=${_doc.blocks[i].type}, motion=${_doc.blocks[i].motion}',

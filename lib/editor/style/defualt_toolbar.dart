@@ -19,7 +19,6 @@ import 'package:doppy/editor/style/text_attributions.dart';
 import 'package:doppy/editor/style/text_styling_service.dart';
 import 'package:doppy/utils/week_utils.dart';
 import 'package:doppy/pages/screens/date_picker_screen.dart';
-
 // TextStylingService는 lib/editor/style/text_styling_service.dart 로 분리됨
 // (font overlay moved to editor/overlay/font_overlay.dart)
 
@@ -650,7 +649,7 @@ class _DefaultToolbarState extends State<DefaultToolbar> {
 
   @override
   Widget build(BuildContext context) {
-    final Color background = Theme.of(context).colorScheme.background;
+    final Color background = Theme.of(context).colorScheme.surface;
 
     return Stack(
       clipBehavior: Clip.none,

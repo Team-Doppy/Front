@@ -272,10 +272,25 @@ class UserService {
   }
 
   /// 회원 탈퇴 (DELETE /api/users/account)
+  /// 탈퇴는 시간이 오래 걸릴 수 있으므로 1분 타임아웃 적용
   Future<String> deleteAccount() async {
     try {
       debugPrint('[UserService] DELETE /api/users/account');
-      final response = await _dio.delete('/api/users/account');
+      // 탈퇴 요청은 1분 타임아웃 적용
+      final baseOptions = _dio.options;
+      final dioWithTimeout = Dio(
+        BaseOptions(
+          baseUrl: baseOptions.baseUrl,
+          connectTimeout: const Duration(minutes: 1),
+          receiveTimeout: const Duration(minutes: 1),
+          sendTimeout: const Duration(minutes: 1),
+          headers: baseOptions.headers,
+        ),
+      );
+      // 인터셉터 복사 (토큰 인증 등)
+      dioWithTimeout.interceptors.addAll(_dio.interceptors);
+
+      final response = await dioWithTimeout.delete('/api/users/account');
       if (response.statusCode == 200) {
         final responseData = response.data;
         final username = responseData['username']?.toString() ?? '';

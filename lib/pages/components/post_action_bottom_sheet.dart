@@ -22,7 +22,7 @@ class PostActionBottomSheet extends StatelessWidget {
   final String? authorProfileImageUrl;
   final String? thumbnailImageUrl;
   final int likeCount;
-  final VoidCallback? onShowLikedUsers;
+  final bool hideProfileOption; // 프로필 방문 옵션 숨기기 (프로필 화면에서 호출 시)
 
   const PostActionBottomSheet({
     super.key,
@@ -33,7 +33,7 @@ class PostActionBottomSheet extends StatelessWidget {
     this.authorProfileImageUrl,
     this.thumbnailImageUrl,
     required this.likeCount,
-    this.onShowLikedUsers,
+    this.hideProfileOption = false,
   });
 
   static void show(
@@ -46,6 +46,7 @@ class PostActionBottomSheet extends StatelessWidget {
     String? thumbnailImageUrl,
     required int likeCount,
     VoidCallback? onShowLikedUsers,
+    bool hideProfileOption = false, // 프로필 방문 옵션 숨기기
   }) {
     showModalBottomSheet(
       context: context,
@@ -60,7 +61,7 @@ class PostActionBottomSheet extends StatelessWidget {
             authorProfileImageUrl: authorProfileImageUrl,
             thumbnailImageUrl: thumbnailImageUrl,
             likeCount: likeCount,
-            onShowLikedUsers: onShowLikedUsers,
+            hideProfileOption: hideProfileOption,
           ),
     );
   }
@@ -71,7 +72,7 @@ class PostActionBottomSheet extends StatelessWidget {
     final l10n = AppLocalizations.of(context);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
       decoration: BoxDecoration(color: Colors.transparent),
       child: Stack(
         children: [
@@ -149,21 +150,24 @@ class PostActionBottomSheet extends StatelessWidget {
                       textColor: theme.colorScheme.onSurface,
                       onTap: () => _handleShowLikedUsers(context),
                     ),
-                    // 디바이더
-                    Divider(
-                      height: 1,
-                      thickness: 0.5,
-                      indent: 0,
-                      endIndent: 0,
-                      color: theme.colorScheme.onSurface.withOpacity(0.05),
-                    ),
-                    // 작성자 프로필 보기 버튼
-                    _buildActionItem(
-                      context,
-                      label: l10n.t('view_author_profile'),
-                      textColor: theme.colorScheme.onSurface,
-                      onTap: () => _handleViewAuthorProfile(context),
-                    ),
+                    // 작성자 프로필 보기 버튼 (프로필 화면에서 호출된 경우 숨김)
+                    if (!hideProfileOption) ...[
+                      // 디바이더
+                      Divider(
+                        height: 1,
+                        thickness: 0.5,
+                        indent: 0,
+                        endIndent: 0,
+                        color: theme.colorScheme.onSurface.withOpacity(0.05),
+                      ),
+                      // 작성자 프로필 보기 버튼
+                      _buildActionItem(
+                        context,
+                        label: l10n.t('view_author_profile'),
+                        textColor: theme.colorScheme.onSurface,
+                        onTap: () => _handleViewAuthorProfile(context),
+                      ),
+                    ],
                     const SizedBox(height: 24),
                     // 취소 버튼
                     SizedBox(
@@ -338,11 +342,7 @@ class PostActionBottomSheet extends StatelessWidget {
 
   void _handleShowLikedUsers(BuildContext context) {
     Navigator.of(context).pop();
-    if (onShowLikedUsers != null) {
-      onShowLikedUsers!();
-    } else {
-      LikedUsersBottomSheet.show(context, postId: postId, likeCount: likeCount);
-    }
+    LikedUsersBottomSheet.show(context, postId: postId, likeCount: likeCount);
   }
 
   void _handleViewAuthorProfile(BuildContext context) {

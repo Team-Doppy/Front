@@ -212,18 +212,77 @@ class _ImageGridState extends State<_ImageGrid> {
   final Map<int, GlobalKey> _itemKeys = {};
   Map<int, double> _fadeProgress = {}; // 0..1, 순차 등장 진행도
   final GlobalKey _gridKey = GlobalKey();
+  final Map<int, VideoPlayerController?> _videoControllers = {};
+  final Map<int, bool> _isVideo = {}; // 각 아이템이 비디오인지 여부
+  final Map<int, bool> _isVideoInitialized = {}; // 각 비디오 초기화 완료 여부
 
   @override
   void initState() {
     super.initState();
     widget.scrollController.addListener(_onScroll);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _updateFade());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _updateFade();
+      _initializeVideos();
+    });
   }
 
   @override
   void dispose() {
     widget.scrollController.removeListener(_onScroll);
+    for (final controller in _videoControllers.values) {
+      controller?.dispose();
+    }
+    _videoControllers.clear();
     super.dispose();
+  }
+
+  void _initializeVideos() {
+    final items =
+        (widget.block.data['items'] as List? ?? []).whereType<Map>().toList();
+    for (int i = 0; i < items.length; i++) {
+      final url = items[i]['imageUrl']?.toString() ?? '';
+      if (url.toLowerCase().endsWith('.mp4') && url.isNotEmpty) {
+        _isVideo[i] = true;
+        _isVideoInitialized[i] = false;
+        _initializeVideo(i, url);
+      } else {
+        _isVideo[i] = false;
+      }
+    }
+  }
+
+  Future<void> _initializeVideo(int index, String url) async {
+    try {
+      final controller = VideoPlayerController.networkUrl(
+        Uri.parse(url),
+        httpHeaders: const {'Accept': 'video/*', 'Connection': 'keep-alive'},
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
+      );
+
+      await controller.initialize();
+
+      if (mounted && _videoControllers[index] == null) {
+        _videoControllers[index] = controller;
+        await controller.setVolume(0.0); // 음소거
+        await controller.setLooping(true); // 루프
+        await controller.play(); // 자동 재생
+        if (mounted) {
+          setState(() => _isVideoInitialized[index] = true);
+        }
+      } else {
+        controller.dispose();
+      }
+    } catch (e) {
+      debugPrint('[RecapRenderer] 비디오 초기화 실패 (index $index): $e');
+      if (mounted) {
+        setState(() {
+          _isVideo[index] = false; // 실패 시 이미지로 폴백
+        });
+      }
+    }
   }
 
   void _onScroll() {
@@ -321,6 +380,9 @@ class _ImageGridState extends State<_ImageGrid> {
         // 페이드 인 + 약간의 스케일 효과
         final opacity = curved;
         final scale = 0.4 + curved * 0.6;
+        final isVideo = _isVideo[index] ?? false;
+        final isVideoInitialized = _isVideoInitialized[index] ?? false;
+        final videoController = _videoControllers[index];
 
         return AnimatedOpacity(
           opacity: opacity,
@@ -333,16 +395,25 @@ class _ImageGridState extends State<_ImageGrid> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  CachedNetworkImage(
-                    imageUrl: url,
-                    fit: BoxFit.cover,
-                    fadeInDuration: Duration.zero,
-                    fadeOutDuration: Duration.zero,
-                    errorWidget:
-                        (context, u, e) => Container(
-                          color: Theme.of(context).colorScheme.surfaceVariant,
-                        ),
-                  ),
+                  // ✅ 비디오 또는 이미지 렌더링
+                  if (isVideo && isVideoInitialized && videoController != null)
+                    VideoPlayer(videoController)
+                  else if (isVideo && !isVideoInitialized)
+                    Container(
+                      color: Theme.of(context).colorScheme.surfaceVariant,
+                      child: const Center(child: CircularProgressIndicator()),
+                    )
+                  else
+                    CachedNetworkImage(
+                      imageUrl: url,
+                      fit: BoxFit.cover,
+                      fadeInDuration: Duration.zero,
+                      fadeOutDuration: Duration.zero,
+                      errorWidget:
+                          (context, u, e) => Container(
+                            color: Theme.of(context).colorScheme.surfaceVariant,
+                          ),
+                    ),
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -596,6 +667,7 @@ class _ImageSingleState extends State<_ImageSingle> {
                   VideoPlayer(_videoController!)
                 else if (_isVideo && !_isVideoInitialized)
                   Container(
+                    key: _imageKey,
                     color: Theme.of(context).colorScheme.surfaceVariant,
                     child: const Center(child: CircularProgressIndicator()),
                   )

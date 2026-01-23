@@ -1708,10 +1708,10 @@ class _CommentInputSectionState extends State<CommentInputSection> {
       // @ 위치 찾기
       final lastAtIndex = beforeCursor.lastIndexOf('@');
       if (lastAtIndex != -1) {
-        // 🎯 @부터 커서 위치까지를 @username으로 교체 (전체 username 보장)
+        // 🎯 @부터 커서 위치까지를 @username으로 교체
         // 예: @jang 입력 후 jang.jaebim 선택 시 -> @jang.jaebim 으로 교체
         final beforeAt = text.substring(0, lastAtIndex);
-        // 🎯 멘션 오버레이에서 선택한 전체 username을 그대로 사용 (점 포함)
+        // 🎯 명시적으로 선택한 멘션은 @username 형식으로 저장
         final token = '@$username ';
         final newText = '$beforeAt$token$afterCursor';
         final newCursorPosition =
@@ -1724,7 +1724,7 @@ class _CommentInputSectionState extends State<CommentInputSection> {
         );
         _suppressTextListener = false;
 
-        // ✅ “탭으로 삽입된 멘션” 범위를 기록 (이 멘션만 백스페이스 1회에 통삭제)
+        // ✅ "탭으로 삽입된 멘션" 범위를 기록 (이 멘션만 백스페이스 1회에 통삭제)
         // 🎯 전체 username을 token에 포함하여 정확한 범위 기록
         _lastTapInsertedMention = _TapInsertedMention(
           username: username, // 전체 username (jang.jaebim)

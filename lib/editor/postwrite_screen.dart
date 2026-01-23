@@ -1227,6 +1227,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       child: Stack(
         children: [
           Scaffold(
+            backgroundColor: Theme.of(context).colorScheme.surface,
             resizeToAvoidBottomInset: false,
             appBar: PreferredSize(
               preferredSize: Size.fromHeight(appBarHeight),
@@ -1278,7 +1279,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
               clipBehavior: Clip.none,
               children: [
                 Theme(
-                  data: AppTheme.lightTheme,
+                  data: AppTheme.lightTheme.copyWith(
+                    scaffoldBackgroundColor:
+                        AppColors.darkSurface, // 🎯 배경색을 darkSurface로 오버라이드
+                    colorScheme: AppTheme.lightTheme.colorScheme.copyWith(
+                      background:
+                          AppColors.darkSurface, // 🎯 배경색을 darkSurface로 오버라이드
+                    ),
+                  ),
                   child: RawScrollbar(
                     controller: scrollController,
                     thumbColor: Theme.of(
@@ -2185,7 +2193,7 @@ class _BottomBar extends StatelessWidget {
             final theme = Theme.of(context);
 
             final Widget bar = Container(
-              color: theme.colorScheme.background,
+              color: theme.colorScheme.surface,
               child: Padding(
                 padding: EdgeInsets.only(bottom: bottomPadding),
                 child: Selector<NodeComponentService, String?>(

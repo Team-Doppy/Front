@@ -46,6 +46,7 @@ import 'utils/deep_link_ingress.dart';
 import 'utils/deep_link_store.dart';
 import 'data/services/deep_link_service.dart';
 import 'package:doppy/image/media_picker_screen.dart';
+import 'package:doppy/pages/components/coachmark/weekly_streak_coachmark_overlay.dart';
 
 // Global NavigatorKey for accessing context from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -868,7 +869,10 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
           // 🎯 View.of로 실제 물리적 화면 크기 가져오기 (adjustResize 영향을 받지 않음)
           final view = View.of(context);
           final viewSize = view.physicalSize / view.devicePixelRatio;
-          final bottomBarHeight = 72.0; // CustomBottomNavigationBar의 고정 높이
+          // 🎯 시스템 내비게이션 바 높이를 고려한 바텀 바 높이 계산
+          final systemNavBarHeight = MediaQuery.of(context).viewPadding.bottom;
+          final baseHeight = 50.0;
+          final bottomBarHeight = baseHeight + systemNavBarHeight;
 
           return Stack(
             children: [
@@ -892,36 +896,86 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
               // 🎯 블러 오버레이 + 연도 선택 UI (페이드 애니메이션)
               Consumer<WeeklyContributionProvider>(
                 builder: (context, provider, _) {
-                  if (!provider.showBlurOverlay) {
-                    return const SizedBox.shrink();
-                  }
-                  return Positioned.fill(
-                    child: AnimatedOpacity(
-                      opacity: provider.showBlurOverlay ? 1.0 : 0.0,
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeInOut,
-                      child: Stack(
-                        children: [
-                          // 블러 배경
-                          BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                            child: Container(
-                              color: Colors.black.withOpacity(0.8),
+                  // ✅ 연도 피커 오버레이 (블러 + opacity 0.6)
+                  if (provider.showBlurOverlay &&
+                      provider.yearPickerYears != null &&
+                      provider.yearPickerSelectedYear != null) {
+                    return Positioned.fill(
+                      child: AnimatedOpacity(
+                        opacity: 1.0,
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                        child: Stack(
+                          children: [
+                            // ✅ 연도 피커용: 블러 + opacity 0.7
+                            BackdropFilter(
+                              filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                              child: Container(
+                                color: Colors.black.withOpacity(0.8),
+                              ),
                             ),
-                          ),
-                          // 연도 선택 UI (date_picker_screen 스타일)
-                          if (provider.yearPickerYears != null &&
-                              provider.yearPickerSelectedYear != null)
                             _YearPickerOverlay(
                               years: provider.yearPickerYears!,
                               selectedYear: provider.yearPickerSelectedYear!,
                               onConfirm: provider.yearPickerOnConfirm,
                               onCancel: () => provider.closeYearPicker(),
                             ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  );
+                    );
+                  }
+
+                  // ✅ 코치마크 오버레이 (블러 없음 + opacity 0.9)
+                  if (provider.showCoachmarkOverlay &&
+                      provider.currentCoachmarkStep != null) {
+                    return Positioned.fill(
+                      child: AnimatedOpacity(
+                        opacity: 1.0,
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                        child: Stack(
+                          children: [
+                            // ✅ 코치마크용: 블러 없음 + opacity 0.9
+                            Container(color: Colors.black.withOpacity(0.9)),
+                            WeeklyStreakCoachmarkOverlay(
+                              targetKey: provider.getWeekCellKey(
+                                provider.currentCoachmarkStep!.year,
+                                provider.currentCoachmarkStep!.weekNumber,
+                              ),
+                              allCellKeys: provider.getWeekCellKeysForYear(
+                                provider.currentCoachmarkStep!.year,
+                              ),
+                              contributions: provider.getContributions(
+                                provider.currentCoachmarkStep!.year,
+                              ),
+                              year: provider.currentCoachmarkStep!.year,
+                              kind: provider.currentCoachmarkStep!.kind.name,
+                              message: provider.currentCoachmarkStep!.message,
+                              colorSubstrings:
+                                  provider
+                                      .currentCoachmarkStep!
+                                      .colorSubstrings,
+                              progressText:
+                                  '${provider.coachmarkStepIndex + 1}/${provider.coachmarkTotalSteps}',
+                              primaryText:
+                                  (provider.coachmarkStepIndex + 1 ==
+                                          provider.coachmarkTotalSteps)
+                                      ? '완료'
+                                      : '다음',
+                              onNext: provider.nextCoachmarkStep,
+                              onPrevious:
+                                  provider
+                                      .previousCoachmarkStep, // ✅ 뒤로가기 함수 추가
+                              onClose: provider.closeCoachmark,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+
+                  return const SizedBox.shrink();
                 },
               ),
             ],

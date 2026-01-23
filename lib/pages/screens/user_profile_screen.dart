@@ -158,22 +158,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         // 타인 프로필일 때만 Feed Provider의 username 동기화 및 로드
         if (isOther && targetUsername != null) {
           final otherProvider = _feedProvider as OtherProfileFeedProvider;
-          if (otherProvider.username != targetUsername) {
-            // username이 다르면 강제로 새로 로드
-            await otherProvider.loadInitial(
-              username: targetUsername,
-              force: true,
-            );
-          } else {
-            // username이 같으면 캐시 확인 후 로드
-            final bool hasCachedData = _feedProvider.posts.isNotEmpty;
-            if (!hasCachedData) {
-              await _feedProvider.loadInitial(
-                username: targetUsername,
-                force: false,
-              );
-            }
-          }
+          await otherProvider.loadInitial(
+            username: targetUsername,
+            force: true, // 항상 강제 새로고침
+          );
 
           // ✅ loadInitial 후 userInfo를 사용해서 viewedUser 설정
           final userInfo = _feedProvider.userInfo;
@@ -181,9 +169,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             try {
               final viewedUser = User.fromJson(userInfo);
               context.read<UserProvider>().setViewedUser(viewedUser);
-              debugPrint(
-                '[UserProfileScreen] viewedUser 설정 완료: ${viewedUser.username}',
-              );
             } catch (e) {
               debugPrint('[UserProfileScreen] viewedUser 설정 실패: $e');
             }
@@ -315,6 +300,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     if (_profileUploadTask != null && _profileTaskListener != null) {
       _profileUploadTask!.removeListener(_profileTaskListener!);
     }
+
+    // 🎯 남의 프로필일 때 provider 정리 (다음 사람의 프로필을 위해)
+    if (!_isOwnProfile) {
+      try {
+        _feedProvider.clearInMemory(); // dispose 중에는 알림 없이 정리
+        debugPrint('[UserProfileScreen] OtherProfileFeedProvider 정리 완료');
+      } catch (e) {
+        debugPrint('[UserProfileScreen] OtherProfileFeedProvider 정리 실패: $e');
+      }
+    }
+
     super.dispose();
   }
 
@@ -829,7 +825,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                 child: Column(
                                   children: [
                                     Text(
-                                      _displayAlias ?? _displayUsername,
+                                      // ✅ username은 절대 노출하지 않음
+                                      // 내 프로필: alias가 있으면 alias, 없으면 username
+                                      // 타인 프로필: alias가 있으면 alias, 없으면 빈 문자열
+                                      _isOwnProfile
+                                          ? (_displayAlias ?? _displayUsername)
+                                          : (_displayAlias ?? ''),
                                       style: TextStyle(
                                         color:
                                             Theme.of(

@@ -560,12 +560,6 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         widget.profileImageUrl != null &&
         widget.profileImageUrl!.isNotEmpty;
 
-    // UserProfileScreen과 동일한 보더 스타일 적용
-    final borderColor =
-        theme.brightness == Brightness.dark
-            ? Colors.grey.shade500
-            : Colors.grey.shade400;
-
     return Material(
       color: Colors.transparent,
       // ✅ Hero child는 Transform/placeholder 애니메이션과 독립적인 "정적" 위젯이어야
@@ -578,7 +572,7 @@ class _ProfileImageViewScreenState extends State<ProfileImageViewScreen>
         username: widget.username,
         size: _cropSize,
         borderWidth: 3.0,
-        borderColor: borderColor,
+        borderColor: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
         backgroundColor: theme.colorScheme.surfaceVariant,
       ),
     );

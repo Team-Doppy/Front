@@ -9,7 +9,6 @@ import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/editor/component/clip_component.dart' show muteAllVideos;
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/utils/dialog_utils.dart';
-import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -17,6 +16,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:convert';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/postwrite_screen.dart' show PostWriteMode;
+import 'package:doppy/theme/app_colors.dart';
 
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
@@ -60,7 +60,8 @@ class _EditModeAppBarState extends State<EditModeAppBar> {
   Widget build(BuildContext context) {
     // ✅ 표준 앱바 높이: Flutter 기본 toolbar 높이(kToolbarHeight=56)를 사용한다.
     // ✅ 상태바 배경도 앱바 자체에서 칠한다(외부 TopPadding 의존 제거).
-    final bgColor = Theme.of(context).colorScheme.background.withOpacity(1);
+    final bgColor =
+        Theme.of(context).colorScheme.surface; // 🎯 배경색을 darkSurface로 설정
     return Container(
       color: bgColor,
       child: SafeArea(
@@ -388,7 +389,7 @@ class EditorAppBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // ✅ 상태바 배경도 앱바 자체에서 칠한다(외부 TopPadding 의존 제거).
-    final bgColor = Theme.of(context).colorScheme.background.withOpacity(1);
+    final bgColor = Theme.of(context).colorScheme.surface;
     return Container(
       color: bgColor,
       child: SafeArea(
@@ -513,15 +514,8 @@ class EditorAppBar extends StatelessWidget {
                         offset: const Offset(45, 45),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withOpacity(0.1),
-                          ),
                         ),
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.background.withOpacity(1),
+                        color: Theme.of(context).colorScheme.surface,
 
                         onSelected: (value) async {
                           if (value == 'load') {

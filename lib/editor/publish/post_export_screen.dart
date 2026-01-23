@@ -69,6 +69,8 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   // 더미 데이터
   String _exportedThumbnailImageUrl = '';
+  // ✅ 썸네일(특히 영상)을 선택/변경했는데, URL 비교 타이밍 때문에 "변경사항 없음"으로 떨어지는 케이스 방지용
+  bool _thumbnailTouchedInSession = false;
   String _firstBodyImageUrl = '';
   String _title = '';
   late final TextEditingController _titleController = TextEditingController();
@@ -302,92 +304,100 @@ class _PostExportScreenState extends State<PostExportScreen>
       }
     }
 
-    // 영상 파일만 복원 (persist 사용)
-    final svc = NodeComponentService();
-    final persistedVideoPath = svc.getTempVideoFilePath(_nsKey);
-    final persistedVideoThumbnailPath = svc.getTempVideoThumbnailPath(_nsKey);
+    // ✅ 수정 모드에서는 영상 파일/썸네일 복원을 하지 않음 (서버 원본 사용)
+    if (widget.isEditMode) {
+      // 수정 모드: 로컬 임시 파일 복원 스킵
+      debugPrint('[PostExport] 수정 모드: 영상 파일/썸네일 복원 스킵');
+    } else {
+      // 영상 파일만 복원 (persist 사용)
+      final svc = NodeComponentService();
+      final persistedVideoPath = svc.getTempVideoFilePath(_nsKey);
+      final persistedVideoThumbnailPath = svc.getTempVideoThumbnailPath(_nsKey);
 
-    // 영상 파일 복원 (있다면)
-    if (persistedVideoPath != null && persistedVideoPath.isNotEmpty) {
-      final videoFile = File(persistedVideoPath);
-      if (videoFile.existsSync()) {
-        _localVideoFile = videoFile;
+      // 영상 파일 복원 (있다면)
+      if (persistedVideoPath != null && persistedVideoPath.isNotEmpty) {
+        final videoFile = File(persistedVideoPath);
+        if (videoFile.existsSync()) {
+          _localVideoFile = videoFile;
 
-        // 🎯 기존 컨트롤러 안전하게 dispose
-        _disposeVideoController(context: '_hydrateFromExported');
+          // 🎯 기존 컨트롤러 안전하게 dispose
+          _disposeVideoController(context: '_hydrateFromExported');
 
-        // 🎯 로컬 비디오는 직접 관리 (VideoCacheService 불필요)
-        try {
-          final controller = VideoPlayerController.file(videoFile);
-
-          // 🎯 컨트롤러 참조 저장 (비동기 콜백에서 dispose 체크용)
-          final controllerRef = controller;
-
-          _videoController = controller;
-
-          // 🎯 dispose 체크: 리스너 추가 전 컨트롤러 유효성 확인
+          // 🎯 로컬 비디오는 직접 관리 (VideoCacheService 불필요)
           try {
-            controller.addListener(_onVideoControllerInitialized);
-          } catch (e) {
-            debugPrint('[PostExport] 리스너 추가 오류 (dispose됨): $e');
-            _videoController = null;
-            return;
-          }
+            final controller = VideoPlayerController.file(videoFile);
 
-          controller
-              .initialize()
-              .then((_) {
-                // 🎯 dispose 체크 강화: mounted, controller 유효성, 참조 일치 확인
-                if (!mounted || _videoController != controllerRef) {
-                  try {
-                    controllerRef.dispose();
-                  } catch (_) {}
-                  return;
-                }
+            // 🎯 컨트롤러 참조 저장 (비동기 콜백에서 dispose 체크용)
+            final controllerRef = controller;
 
-                try {
-                  // 🎯 dispose 체크: 컨트롤러 유효성 확인
-                  if (controllerRef.value.isInitialized) {
-                    controllerRef.play();
-                    controllerRef.setLooping(true);
-                    if (mounted) {
-                      setState(() {});
-                    }
+            _videoController = controller;
+
+            // 🎯 dispose 체크: 리스너 추가 전 컨트롤러 유효성 확인
+            try {
+              controller.addListener(_onVideoControllerInitialized);
+            } catch (e) {
+              debugPrint('[PostExport] 리스너 추가 오류 (dispose됨): $e');
+              _videoController = null;
+              return;
+            }
+
+            controller
+                .initialize()
+                .then((_) {
+                  // 🎯 dispose 체크 강화: mounted, controller 유효성, 참조 일치 확인
+                  if (!mounted || _videoController != controllerRef) {
+                    try {
+                      controllerRef.dispose();
+                    } catch (_) {}
+                    return;
                   }
-                } catch (e) {
-                  debugPrint('[PostExport] 비디오 재생 오류 (dispose됨): $e');
-                }
-              })
-              .catchError((error) {
-                debugPrint('[PostExport] 비디오 컨트롤러 초기화 실패: $error');
-                if (!mounted) return;
 
-                // 🎯 컨트롤러가 여전히 유효한지 확인
-                if (_videoController == controllerRef) {
-                  _disposeVideoController(
-                    context: '_hydrateFromExported.catchError',
-                  );
-                  setState(() {});
-                }
-              });
-        } catch (e) {
-          debugPrint('[PostExport] 비디오 컨트롤러 생성 오류: $e');
-          _videoController = null;
-        }
-        debugPrint('[PostExport] 영상 파일 복원: $persistedVideoPath');
+                  try {
+                    // 🎯 dispose 체크: 컨트롤러 유효성 확인
+                    if (controllerRef.value.isInitialized) {
+                      controllerRef.play();
+                      controllerRef.setLooping(true);
+                      if (mounted) {
+                        setState(() {});
+                      }
+                    }
+                  } catch (e) {
+                    debugPrint('[PostExport] 비디오 재생 오류 (dispose됨): $e');
+                  }
+                })
+                .catchError((error) {
+                  debugPrint('[PostExport] 비디오 컨트롤러 초기화 실패: $error');
+                  if (!mounted) return;
 
-        // 영상 로컬 썸네일도 복원
-        if (persistedVideoThumbnailPath != null &&
-            persistedVideoThumbnailPath.isNotEmpty) {
-          final thumbnailFile = File(persistedVideoThumbnailPath);
-          if (thumbnailFile.existsSync()) {
-            _localThumbnailFile = thumbnailFile;
-            debugPrint('[PostExport] 영상 썸네일 복원: $persistedVideoThumbnailPath');
+                  // 🎯 컨트롤러가 여전히 유효한지 확인
+                  if (_videoController == controllerRef) {
+                    _disposeVideoController(
+                      context: '_hydrateFromExported.catchError',
+                    );
+                    setState(() {});
+                  }
+                });
+          } catch (e) {
+            debugPrint('[PostExport] 비디오 컨트롤러 생성 오류: $e');
+            _videoController = null;
           }
+          debugPrint('[PostExport] 영상 파일 복원: $persistedVideoPath');
+
+          // 영상 로컬 썸네일도 복원
+          if (persistedVideoThumbnailPath != null &&
+              persistedVideoThumbnailPath.isNotEmpty) {
+            final thumbnailFile = File(persistedVideoThumbnailPath);
+            if (thumbnailFile.existsSync()) {
+              _localThumbnailFile = thumbnailFile;
+              debugPrint(
+                '[PostExport] 영상 썸네일 복원: $persistedVideoThumbnailPath',
+              );
+            }
+          }
+        } else {
+          debugPrint('[PostExport] 영상 파일이 존재하지 않음: $persistedVideoPath');
+          svc.clearTempVideoFile(_nsKey);
         }
-      } else {
-        debugPrint('[PostExport] 영상 파일이 존재하지 않음: $persistedVideoPath');
-        svc.clearTempVideoFile(_nsKey);
       }
     }
 
@@ -673,6 +683,25 @@ class _PostExportScreenState extends State<PostExportScreen>
       debugPrint(
         '[PostExportScreen] 변경 감지: content=$contentChanged, title=$titleChanged, thumbnail=$thumbnailChanged, accessLevel=$accessLevelChanged',
       );
+
+      // ✅ 썸네일을 "선택/변경"했는데도 URL 비교상 동일해서 '변경사항 없음'으로 떨어지는 케이스 방지
+      // - 특히 영상 썸네일은 로컬 상태(영상/포스터) 변화가 먼저 일어나고, URL 반영은 약간 늦을 수 있음
+      final hasLocalThumbState =
+          _localVideoFile != null || _localThumbnailFile != null;
+      if (!hasAnyChange &&
+          _thumbnailTouchedInSession &&
+          hasLocalThumbState &&
+          !thumbnailChanged) {
+        final ctx = navigatorKey.currentContext;
+        if (ctx != null) {
+          ErrorHandler.showInfo(
+            ctx,
+            '썸네일 업로드/반영이 아직 완료되지 않았어요.\n잠시 후 다시 시도해 주세요.',
+            duration: const Duration(seconds: 2),
+          );
+        }
+        return;
+      }
 
       if (!hasAnyChange) {
         if (!mounted) return;
@@ -979,16 +1008,19 @@ class _PostExportScreenState extends State<PostExportScreen>
                     onThumbnailUrlChanged: (url) {
                       setState(() {
                         _exportedThumbnailImageUrl = url;
+                        _thumbnailTouchedInSession = true;
                       });
                     },
                     onLocalThumbnailChanged: (file) {
                       setState(() {
                         _localThumbnailFile = file;
+                        if (file != null) _thumbnailTouchedInSession = true;
                       });
                     },
                     onLocalVideoChanged: (file) {
                       setState(() {
                         _localVideoFile = file;
+                        if (file != null) _thumbnailTouchedInSession = true;
                       });
                     },
                     onVideoControllerChanged: (controller) {

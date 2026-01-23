@@ -326,8 +326,15 @@ class UploadService with ChangeNotifier {
   }
 
   /// refId(예: 노드ID)로 모든 태스크 취소
-  void cancelByRef(String refId) {
-    _markRefCancelled(refId);
+  ///
+  /// - [markRefCancelled]가 true면 "유저가 의도적으로 제거/undo 해서 취소된 refId"로 짧게 기록하여
+  ///   이후 동일 refId의 늦게 도착한 성공 응답을 무시한다(UX: 삭제했는데 성공 토스트/반영되는 것 방지).
+  /// - 반대로 "교체/변경(Replace)" 시나리오에서는 같은 refId로 곧바로 새 업로드가 시작되므로
+  ///   markRefCancelled=false로 호출해야 정상 완료 콜백이 무시되지 않는다.
+  void cancelByRef(String refId, {bool markRefCancelled = true}) {
+    if (markRefCancelled) {
+      _markRefCancelled(refId);
+    }
 
     assert(() {
       final q = _queue.where((t) => t.refId == refId).length;
@@ -343,7 +350,7 @@ class UploadService with ChangeNotifier {
               .length;
       final hasComp = _refIdCompressionTokens[refId] != null;
       debugPrint(
-        '[CancelDbg] cancelByRef: refId=$refId queue=$q tasks=$all active=$uploading hasCompressionToken=$hasComp',
+        '[CancelDbg] cancelByRef: refId=$refId markRefCancelled=$markRefCancelled queue=$q tasks=$all active=$uploading hasCompressionToken=$hasComp',
       );
       return true;
     }());

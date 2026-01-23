@@ -7,6 +7,40 @@ import 'package:flutter/material.dart';
 class WeekUtils {
   WeekUtils._(); // private constructor (static only)
 
+  // ✅ 테스트 모드용 오버라이드 날짜
+  static DateTime? _testCurrentDate;
+  static DateTime? _testSignupDate;
+
+  /// 테스트 모드: 현재 날짜를 오버라이드합니다.
+  /// null을 전달하면 실제 DateTime.now()를 사용합니다.
+  static void setTestCurrentDate(DateTime? date) {
+    _testCurrentDate = date;
+  }
+
+  /// 테스트 모드: 가입일을 오버라이드합니다.
+  /// null을 전달하면 실제 가입일을 사용합니다.
+  static void setTestSignupDate(DateTime? date) {
+    _testSignupDate = date;
+  }
+
+  /// 테스트 모드 초기화 (모든 오버라이드 제거)
+  static void resetTestMode() {
+    _testCurrentDate = null;
+    _testSignupDate = null;
+  }
+
+  /// 현재 날짜를 반환합니다 (테스트 모드 지원).
+  /// 외부에서 직접 사용 가능하도록 public으로 제공
+  static DateTime getCurrentDate() {
+    return _testCurrentDate ?? DateTime.now();
+  }
+
+  /// 가입일을 반환합니다 (테스트 모드 지원).
+  /// [actualSignupDate]는 실제 가입일입니다.
+  static DateTime? _getSignupDate(DateTime? actualSignupDate) {
+    return _testSignupDate ?? actualSignupDate;
+  }
+
   /// 월 기준 "주차"를 계산합니다. (한국 달력 UX에 맞춘 규칙)
   ///
   /// 규칙(기본):
@@ -149,23 +183,23 @@ class WeekUtils {
 
   /// 현재 날짜의 연도를 반환합니다.
   ///
-  /// 반환: 현재 연도
+  /// 반환: 현재 연도 (테스트 모드 지원)
   static int getCurrentYear() {
-    return DateTime.now().year;
+    return getCurrentDate().year;
   }
 
   /// 현재 날짜의 주차 번호를 반환합니다.
   ///
-  /// 반환: 현재 주차 번호 (1-53)
+  /// 반환: 현재 주차 번호 (1-53) (테스트 모드 지원)
   static int getCurrentWeekNumber() {
-    return getWeekNumber(DateTime.now());
+    return getWeekNumber(getCurrentDate());
   }
 
   /// 현재 날짜의 연도와 주차를 반환합니다.
   ///
-  /// 반환: (연도, 주차) 튜플
+  /// 반환: (연도, 주차) 튜플 (테스트 모드 지원)
   static ({int year, int weekNumber}) getCurrentYearAndWeek() {
-    final now = DateTime.now();
+    final now = getCurrentDate();
     return (year: now.year, weekNumber: getWeekNumber(now));
   }
 
@@ -233,12 +267,21 @@ class WeekUtils {
   ///
   /// 이 메서드는 포스트 발행 시 서버로 전송할 year와 nthWeek 값을 제공합니다.
   ///
-  /// 반환: (year, nthWeek) 튜플
+  /// 반환: (year, nthWeek) 튜플 (테스트 모드 지원)
   static ({int year, int nthWeek}) getCurrentYearAndWeekForPublish() {
-    final now = DateTime.now();
+    final now = getCurrentDate();
     final year = now.year;
     final weekNumber = getWeekNumber(now);
     return (year: year, nthWeek: weekNumber);
+  }
+
+  /// 가입일을 반환합니다 (테스트 모드 지원).
+  ///
+  /// [actualSignupDate]는 실제 가입일입니다.
+  /// 테스트 모드에서 가입일이 설정되어 있으면 그것을 반환하고,
+  /// 없으면 실제 가입일을 반환합니다.
+  static DateTime? getSignupDate(DateTime? actualSignupDate) {
+    return _getSignupDate(actualSignupDate);
   }
 
   /// 특정 UTC DateTime에 대한 연도와 주차를 반환합니다 (포스트 발행용).
@@ -252,5 +295,24 @@ class WeekUtils {
     final year = localDateTime.year;
     final weekNumber = getWeekNumber(localDateTime);
     return (year: year, nthWeek: weekNumber);
+  }
+
+  /// 가입 후 7일 이내인지 확인합니다 (테스트 모드 지원).
+  ///
+  /// [createdAt] - 가입일 (UTC DateTime)
+  /// 반환: 가입 후 7일 이내이면 true, 그렇지 않으면 false
+  static bool isWithin7DaysAfterSignup(DateTime? createdAt) {
+    // createdAt이 없으면 false
+    if (createdAt == null) {
+      return false;
+    }
+
+    final now = getCurrentDate(); // ✅ 테스트 모드 지원
+    final createdAtLocal = createdAt.toLocal();
+    final daysSinceSignup = now.difference(createdAtLocal).inDays;
+    final daysRemaining = 7 - daysSinceSignup;
+
+    // 7일이 지났거나, 0일 이하로 남았으면 false
+    return daysRemaining > 0;
   }
 }

@@ -1603,7 +1603,7 @@ class CommentService extends ChangeNotifier {
       }
 
       final requestBody = <String, dynamic>{
-        'content': finalContent, // 🎯 "[IMAGE] https://image-url" 형식
+        'content': finalContent,
         'postId': postIdInt,
         if (parentIdInt != null) 'parentId': parentIdInt,
         'visibility': tempComment.visibility,
@@ -1781,7 +1781,7 @@ class CommentService extends ChangeNotifier {
       }
 
       final requestBody = <String, dynamic>{
-        'content': finalContent, // 🎯 "[IMAGES:url1,url2,url3]" 형식
+        'content': finalContent,
         'postId': postIdInt,
         if (parentIdInt != null) 'parentId': parentIdInt,
         'visibility': tempComment.visibility,
@@ -2032,7 +2032,7 @@ class CommentService extends ChangeNotifier {
       }
 
       final requestBody = <String, dynamic>{
-        'content': finalContent, // 명세서: content 필드 사용
+        'content': finalContent,
         'postId': postIdInt, // 포스트 ID (정수)
         if (parentIdInt != null) 'parentId': parentIdInt, // 대댓글인 경우
         'visibility':

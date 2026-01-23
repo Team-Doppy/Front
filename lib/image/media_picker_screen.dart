@@ -84,7 +84,8 @@ class MediaPickerResult {
 
 enum MediaType { video, image }
 
-class _MediaPickerScreenState extends State<MediaPickerScreen> {
+class _MediaPickerScreenState extends State<MediaPickerScreen>
+    with WidgetsBindingObserver {
   static const Duration _kFadeRouteDuration = Duration(milliseconds: 180);
 
   Widget _buildUnifiedSpinner() {
@@ -100,6 +101,7 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   List<AssetEntity> _media = [];
   bool _isLoading = true;
   bool _hasPermission = false;
+  bool _hasLimitedAccess = false; // ✅ 제한된 액세스 상태 (선택한 사진만 접근 가능)
   bool _permissionChecked = false; // ✅ 권한 확인 전에는 안내 UI 대신 로딩을 보여준다
   final List<String> _selectedMediaIds = []; // 선택된 미디어 ID들 (선택 순서 유지)
   // ✅ 선택된 AssetEntity 캐시 (리오더/프리뷰에서 안정적으로 썸네일 렌더링하기 위함)
@@ -183,7 +185,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     // (피커 진입 중에도 백그라운드에서 영상이 재생되면 UX가 망가짐)
     // ✅ 재생 토글이 꼬여도 "피커가 최상단"인 동안은 풀 자체가 play를 시도하지 않게 가드한다.
     ThumbnailVideoPlayer.setGlobalPaused(true);
-    cleanupAllVideoPlayers();
+    // ✅ 비파괴 전역 일시정지 (프록시 맵을 clear 하지 않음)
+    // ignore: discarded_futures
+    pauseAllVideoPlayers(seekToStart: true, mute: true);
     muteAllVideos();
     // 🎯 현재 인스턴스 등록
     _currentInstance = this;
@@ -207,6 +211,9 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
     // 🎯 스크롤 리스너 추가 (페이지네이션)
     _scrollController.addListener(_onScroll);
 
+    // ✅ 앱 라이프사이클 관찰자 등록 (포그라운드 복귀 시 권한 재확인)
+    WidgetsBinding.instance.addObserver(this);
+
     // ✅ 첫 프레임(전환 애니메이션)을 먼저 확보한 뒤 권한/앨범/첫 페이지를 로드한다.
     // 탭 직후의 "멈춤"을 줄이는 핵심 포인트.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -216,7 +223,19 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // ✅ 앱이 포그라운드로 돌아올 때 권한 상태 재확인 (설정에서 변경했을 수 있음)
+    if (state == AppLifecycleState.resumed && mounted) {
+      _requestPermissionAndLoadVideos();
+    }
+  }
+
+  @override
   void dispose() {
+    // ✅ 앱 라이프사이클 관찰자 해제
+    WidgetsBinding.instance.removeObserver(this);
+
     // 🎯 현재 인스턴스 해제
     if (_currentInstance == this) {
       _currentInstance = null;
@@ -259,39 +278,36 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       if (!mounted) return;
 
       if (ps.isAuth) {
+        // 전체 액세스 허용
         setState(() {
           _hasPermission = true;
+          _hasLimitedAccess = false;
           _permissionChecked = true;
         });
         await _loadMedia();
       } else if (ps == PermissionState.denied) {
-        // 권한이 거부된 경우 설정으로 이동
+        // ✅ 권한이 거부된 경우: 자동으로 설정을 열지 않고 배너만 표시
         setState(() {
           _hasPermission = false;
+          _hasLimitedAccess = false;
           _permissionChecked = true;
           _isLoading = false;
         });
-        if (mounted) {
-          // build 중이 아닐 때 호출
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              PhotoManager.openSetting();
-            }
-          });
-        }
       } else {
-        // 권한이 제한된 경우
+        // 권한이 제한된 경우 (선택한 사진만 접근 가능)
         setState(() {
-          _hasPermission = false;
+          _hasPermission = true; // 제한된 액세스여도 미디어는 로드 가능
+          _hasLimitedAccess = true;
           _permissionChecked = true;
-          _isLoading = false;
         });
+        await _loadMedia(); // 제한된 액세스여도 선택한 사진은 로드 가능
       }
     } catch (e) {
       debugPrint('권한 요청 오류: $e');
       if (mounted) {
         setState(() {
           _hasPermission = false;
+          _hasLimitedAccess = false;
           _permissionChecked = true;
           _isLoading = false;
         });
@@ -330,10 +346,20 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         size: _pageSize,
       );
 
+      // ✅ 제한된 접근 상태에서도 타입 필터링 보장 (이미지면 이미지만, 영상이면 영상만)
+      final filteredAssets =
+          pageAssets.where((asset) {
+            if (_mediaType == MediaType.video) {
+              return asset.type == AssetType.video;
+            } else {
+              return asset.type == AssetType.image;
+            }
+          }).toList();
+
       if (!mounted) return;
       setState(() {
-        _media = pageAssets;
-        _hasMoreMedia = pageAssets.length >= _pageSize;
+        _media = filteredAssets;
+        _hasMoreMedia = filteredAssets.length >= _pageSize;
         _isLoading = false;
       });
     } catch (e) {
@@ -374,16 +400,30 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         size: _pageSize,
       );
 
+      // ✅ 제한된 접근 상태에서도 타입 필터링 보장 (이미지면 이미지만, 영상이면 영상만)
+      final filteredNewPageAssets =
+          newPageAssets.where((asset) {
+            if (_mediaType == MediaType.video) {
+              return asset.type == AssetType.video;
+            } else {
+              return asset.type == AssetType.image;
+            }
+          }).toList();
+
       if (!mounted) return;
 
       // 🎯 기존 목록과 새 목록 비교하여 실제로 변경되었는지 확인
       bool hasChanges = false;
-      if (_media.length != newPageAssets.length) {
+      if (_media.length != filteredNewPageAssets.length) {
         hasChanges = true;
       } else {
         // 길이가 같으면 각 항목의 ID를 비교
-        for (int i = 0; i < _media.length && i < newPageAssets.length; i++) {
-          if (_media[i].id != newPageAssets[i].id) {
+        for (
+          int i = 0;
+          i < _media.length && i < filteredNewPageAssets.length;
+          i++
+        ) {
+          if (_media[i].id != filteredNewPageAssets[i].id) {
             hasChanges = true;
             break;
           }
@@ -392,14 +432,14 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
 
       if (hasChanges) {
         debugPrint(
-          '[MediaPicker] 새 미디어 감지: 기존 ${_media.length}개 → 새로운 ${newPageAssets.length}개',
+          '[MediaPicker] 새 미디어 감지: 기존 ${_media.length}개 → 새로운 ${filteredNewPageAssets.length}개',
         );
 
         // 기존 선택 상태 유지하면서 첫 페이지만 교체
         setState(() {
           // 기존 미디어 목록을 새 목록으로 교체
-          _media = newPageAssets;
-          _hasMoreMedia = newPageAssets.length >= _pageSize;
+          _media = filteredNewPageAssets;
+          _hasMoreMedia = filteredNewPageAssets.length >= _pageSize;
           // 페이지는 0으로 유지 (첫 페이지만 새로고침)
           _currentPage = 0;
         });
@@ -436,10 +476,20 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
         size: _pageSize,
       );
 
+      // ✅ 제한된 접근 상태에서도 타입 필터링 보장 (이미지면 이미지만, 영상이면 영상만)
+      final filteredNextPage =
+          nextPage.where((asset) {
+            if (_mediaType == MediaType.video) {
+              return asset.type == AssetType.video;
+            } else {
+              return asset.type == AssetType.image;
+            }
+          }).toList();
+
       if (!mounted) return;
       setState(() {
-        _media.addAll(nextPage);
-        _hasMoreMedia = nextPage.length >= _pageSize;
+        _media.addAll(filteredNextPage);
+        _hasMoreMedia = filteredNextPage.length >= _pageSize;
         _isLoadingMore = false;
       });
     } catch (e) {
@@ -1437,7 +1487,187 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
             ],
           ),
         ),
-        child: Stack(children: [SafeArea(child: _buildBody())]),
+        child: Column(
+          children: [
+            // ✅ 권한 배너 (제한된 액세스 또는 권한 거부 시 상단 앱바 밑에 항상 표시)
+            if (_hasLimitedAccess || !_hasPermission)
+              _buildLimitedAccessBanner(),
+            Expanded(child: Stack(children: [SafeArea(child: _buildBody())])),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// ✅ 제한된 액세스 배너 (상단 앱바 밑에 표시)
+  Widget _buildLimitedAccessBanner() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final l10n = AppLocalizations.of(context);
+
+    return SafeArea(
+      bottom: false,
+      child: Material(
+        color: Colors.transparent,
+        child: GestureDetector(
+          onTap: () async {
+            // ✅ 배너 동작은 "상태별"로 분기한다.
+            // - 제한된 접근(iOS 14+): 액션 시트로 "추가 사진 선택" 또는 "설정에서 전체 허용" 옵션 제공
+            // - 권한 거부: 다이얼로그 없이 바로 설정으로 이동
+            if (_hasLimitedAccess) {
+              // ✅ iOS 표준 UX: 액션 시트로 두 가지 옵션 제공
+              final action = await showCupertinoModalPopup<String>(
+                context: context,
+                builder:
+                    (context) => CupertinoActionSheet(
+                      title: Text(
+                        _mediaType == MediaType.video
+                            ? l10n.t('limited_video_access_title')
+                            : l10n.t('limited_photo_access_title'),
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w400,
+                          color: colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                      message: Text(
+                        _mediaType == MediaType.video
+                            ? l10n.t('limited_video_access_message')
+                            : l10n.t('limited_photo_access_message'),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                      actions: [
+                        CupertinoActionSheetAction(
+                          onPressed: () {
+                            Navigator.of(context).pop('add_more');
+                          },
+                          child: Text(
+                            _mediaType == MediaType.video
+                                ? '추가 영상 선택'
+                                : '추가 사진 선택',
+                            style: TextStyle(
+                              color: colorScheme.primary,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                        CupertinoActionSheetAction(
+                          onPressed: () {
+                            Navigator.of(context).pop('open_settings');
+                          },
+                          child: Text(
+                            '설정에서 전체 허용',
+                            style: TextStyle(
+                              color: colorScheme.primary,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                      ],
+                      cancelButton: CupertinoActionSheetAction(
+                        isDefaultAction: true,
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                        },
+                        child: Text(
+                          AppLocalizations.of(context).t('cancel'),
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        ),
+                      ),
+                    ),
+              );
+
+              if (!mounted) return;
+
+              if (action == 'add_more') {
+                // 추가 사진 선택 피커 열기
+                final type =
+                    _mediaType == MediaType.image
+                        ? RequestType.image
+                        : RequestType.video;
+                await PhotoManager.presentLimited(type: type);
+                if (!mounted) return;
+                // 선택 범위가 바뀌었을 수 있으니 새로고침
+                await _requestPermissionAndLoadVideos();
+              } else if (action == 'open_settings') {
+                // 설정 앱으로 이동하여 전체 허용으로 변경
+                await PhotoManager.openSetting();
+                // 설정에서 돌아왔을 때 권한 상태 재확인
+                if (!mounted) return;
+                await Future.delayed(const Duration(milliseconds: 500));
+                if (!mounted) return;
+                await _requestPermissionAndLoadVideos();
+              }
+              return;
+            }
+
+            if (!_hasPermission) {
+              // ✅ 권한 거부 상태: 다이얼로그 없이 바로 설정으로 이동
+              await PhotoManager.openSetting();
+            }
+          },
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: colorScheme.primary.withOpacity(0.1),
+              border: Border(
+                bottom: BorderSide(
+                  color: colorScheme.onSurface.withOpacity(0.1),
+                  width: 0.5,
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _hasPermission
+                            ? (_mediaType == MediaType.video
+                                ? l10n.t('limited_video_access_title')
+                                : l10n.t('limited_photo_access_title'))
+                            : l10n.t('photo_library_permission_required'),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _hasPermission
+                            ? (_mediaType == MediaType.video
+                                ? l10n.t('limited_video_access_message')
+                                : l10n.t('limited_photo_access_message'))
+                            : l10n.t('open_permission_settings'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                          color: colorScheme.onSurface.withOpacity(0.7),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  CupertinoIcons.chevron_right,
+                  size: 16,
+                  color: colorScheme.onSurface.withOpacity(0.5),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1560,33 +1790,22 @@ class _MediaPickerScreenState extends State<MediaPickerScreen> {
       return const Center(child: CupertinoActivityIndicator());
     }
     if (!_hasPermission) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              CupertinoIcons.photo_on_rectangle,
-              size: 64,
-              color: CupertinoColors.systemGrey,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              AppLocalizations.of(
-                context,
-              ).t('photo_library_permission_required'),
-              style: const TextStyle(
-                fontSize: 17,
-                color: CupertinoColors.systemGrey,
+      return Material(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                AppLocalizations.of(
+                  context,
+                ).t('photo_library_permission_required'),
+                style: const TextStyle(
+                  fontSize: 15,
+                  color: CupertinoColors.systemGrey,
+                ),
               ),
-            ),
-            const SizedBox(height: 24),
-            CupertinoButton(
-              onPressed: _requestPermissionAndLoadVideos,
-              child: Text(
-                AppLocalizations.of(context).t('open_permission_settings'),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
     }

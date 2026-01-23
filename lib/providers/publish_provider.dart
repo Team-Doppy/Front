@@ -16,12 +16,8 @@ import 'package:doppy/pages/screens/home_screen.dart';
 import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
-import 'package:doppy/data/services/user_service.dart';
-import 'package:doppy/providers/user_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:doppy/data/services/auth_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 enum PublishFlowStatus { idle, publishing, success, failure }
 
@@ -150,10 +146,12 @@ class PublishProvider extends ChangeNotifier {
 
     ScaffoldMessenger.of(ctx).hideCurrentSnackBar();
 
+    // ✅ 업로드 완료될 때까지 표시되도록 매우 긴 duration 설정
+    // (실제로는 업로드 완료/실패 시 hideCurrentSnackBar()로 수동 닫기)
     ErrorHandler.showInfo(
       ctx,
       ctx.tr('uploading'),
-      duration: const Duration(seconds: 3),
+      duration: const Duration(days: 1), // ✅ 매우 긴 duration (수동으로 닫을 예정)
       bgColor: onSurfaceColor,
       fgColor: surfaceColor,
       leading: SizedBox(
@@ -196,13 +194,12 @@ class PublishProvider extends ChangeNotifier {
       final uploadResult = await publishService.publishPost(payload: payload);
       _lastUploadResult = uploadResult;
 
-      // ✅ 온보딩 모드면: 완료 플래그를 "success 상태 전환 전"에 확실히 저장한다.
-      // - SplashScreen(skipOnboarding)는 publishProvider.status가 publishing에서 벗어나는 순간
-      //   RootShell로 전환을 진행하므로, 그 전에 SharedPreferences 플래그가 있어야
-      //   홈의 특별 인삿말이 타이밍 이슈 없이 표시된다.
-      if (request.isOnboardingMode) {
-        await _markOnboardingCompleted();
-      }
+      // ✅ 온보딩 모드면: 코치마크를 위해 onboardingCompleted를 업데이트하지 않는다.
+      // - 코치마크는 홈 화면에서 onboardingCompleted == false일 때 표시된다.
+      // - 코치마크를 표시한 후에만 onboardingCompleted를 true로 업데이트한다.
+      // if (request.isOnboardingMode) {
+      //   await _markOnboardingCompleted();
+      // }
 
       _status = PublishFlowStatus.success;
       _log('✅ 발행 완료: id=${uploadResult['id'] ?? ''}');
@@ -218,6 +215,12 @@ class PublishProvider extends ChangeNotifier {
 
       // 🎯 피드 새로고침/정렬은 Provider의 몫
       unawaited(_refreshMyFeed(uploadResult: uploadResult));
+
+      // ✅ 업로드 중 스낵바 닫기
+      final ctx = navigatorKey.currentContext;
+      if (ctx != null) {
+        ScaffoldMessenger.of(ctx).hideCurrentSnackBar();
+      }
 
       // 🎯 일반 모드: 완료 스낵바 표시 (공유하기 버튼 포함)
       if (!request.isOnboardingMode) {
@@ -320,6 +323,7 @@ class PublishProvider extends ChangeNotifier {
       fgColor: surfaceColor,
       action: SnackBarAction(
         label: ctx.tr('share'),
+
         textColor: surfaceColor,
         onPressed: () {
           ScaffoldMessenger.of(ctx).hideCurrentSnackBar();
@@ -377,47 +381,6 @@ class PublishProvider extends ChangeNotifier {
     } else {
       _log('🛑 재시도 취소');
       // 실패 후에도 로그는 유지하되 overlay는 사용자가 닫을 수 있게 둔다.
-    }
-  }
-
-  Future<void> _markOnboardingCompleted() async {
-    try {
-      final authService = AuthService();
-      final accountKey = await authService.getAccountKeyFromToken();
-      if (accountKey == null) {
-        _log('⚠️ 첫 홈 진입 플래그 저장 스킵: accountKey null');
-        return;
-      }
-
-      // ✅ 1) 서버에 온보딩 완료 상태 반영 (PATCH /api/users/onboarding)
-      // - 서버 스펙: onboardingCompleted null/미포함이면 true로 처리
-      bool? updated;
-      try {
-        updated = await UserService().updateOnboardingCompleted(
-          onboardingCompleted: true,
-        );
-        _log('✅ 서버 온보딩 완료 업데이트: ${updated ?? true}');
-      } catch (e) {
-        // 서버 업데이트 실패는 UX를 막지 않는다. (다음 번들 로드 시 다시 판단)
-        _log('⚠️ 서버 온보딩 완료 업데이트 실패(무시): $e');
-      }
-
-      // ✅ 2) 같은 세션에서 온보딩 루프 방지: UserProvider 메모리도 즉시 갱신
-      final ctx = navigatorKey.currentContext;
-      if (ctx != null) {
-        try {
-          ctx.read<UserProvider>().setOnboardingCompleted(updated ?? true);
-        } catch (_) {}
-      }
-
-      // ✅ 3) 첫 홈 진입 시 특별 그리팅 메시지 표시를 위한 플래그만 로컬로 설정
-      final prefs = await SharedPreferences.getInstance();
-      final firstHomeVisitKey = 'onboarding_first_home_visit_$accountKey';
-      await prefs.setBool(firstHomeVisitKey, true);
-
-      _log('🏁 첫 홈 진입 플래그 설정 완료 (온보딩 완료는 서버에서 관리)');
-    } catch (e) {
-      _log('⚠️ 첫 홈 진입 플래그 저장 실패(무시): $e');
     }
   }
 }

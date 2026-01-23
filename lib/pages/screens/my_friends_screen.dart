@@ -780,7 +780,7 @@ class UserSearchBottomSheetState extends State<UserSearchBottomSheet> {
                 ),
                 // 검색창
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                   child: TextField(
                     controller: _searchController,
                     focusNode: _focusNode,
@@ -884,15 +884,21 @@ class UserSearchBottomSheetState extends State<UserSearchBottomSheet> {
                               );
                             },
                           )
-                          : accounts.isEmpty
+                          : accounts.isEmpty && query.isEmpty
                           ? Center(
-                            child: Text(
-                              context.tr('no_search_results_short'),
-                              style: TextStyle(
-                                fontSize: 15,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withOpacity(0.7),
+                            child: Padding(
+                              padding: EdgeInsets.only(
+                                bottom:
+                                    MediaQuery.of(context).viewInsets.bottom,
+                              ),
+                              child: Text(
+                                context.tr('no_search_results_short'),
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.7),
+                                ),
                               ),
                             ),
                           )

@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/pages/screens/favorites_screen.dart';
 import 'package:doppy/pages/screens/blocked_users_screen.dart';
+import 'package:doppy/pages/screens/test_mode_screen.dart';
 import 'package:doppy/pages/components/license_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -12,8 +14,10 @@ import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/pages/components/account_deletion_confirm.dart';
 import 'package:doppy/data/services/user_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
+import 'package:doppy/data/services/fcm_service.dart';
 import 'package:doppy/main.dart' show AppConstants;
 import 'package:doppy/utils/text_bold_utils.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
@@ -27,14 +31,110 @@ class SettingScreen extends StatefulWidget {
   State<SettingScreen> createState() => _SettingScreenState();
 }
 
-class _SettingScreenState extends State<SettingScreen> {
+class _SettingScreenState extends State<SettingScreen>
+    with WidgetsBindingObserver {
   final UserService _userService = UserService();
+  bool? _osNotificationPermissionGranted;
+  Timer? _osPermissionPoller;
 
   @override
   void initState() {
     super.initState();
-    // 🎯 앱 시작 시 이미 로드되었으므로 별도 로드 불필요
-    // UserProvider에서 값을 읽어옴
+    WidgetsBinding.instance.addObserver(this);
+    // 🎯 앱 시작 시 OS 권한 체크 및 동기화
+    _checkAndSyncNotificationPermission();
+
+    // ✅ 설정 화면이 떠있는 동안 "실시간"처럼 OS 권한을 계속 갱신
+    // - 서버 동기화는 _checkAndSyncNotificationPermission에서만 수행
+    _osPermissionPoller = Timer.periodic(const Duration(seconds: 1), (_) {
+      _refreshOsNotificationPermissionOnly();
+    });
+  }
+
+  @override
+  void dispose() {
+    _osPermissionPoller?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // 🎯 앱 포그라운드 복귀 시 OS 권한 재체크 및 동기화
+    if (state == AppLifecycleState.resumed) {
+      _checkAndSyncNotificationPermission();
+    }
+  }
+
+  Future<bool> _getOsNotificationPermissionGranted() async {
+    try {
+      // ✅ 앱 전역의 권한 판단 기준과 통일 (iOS: FirebaseMessaging 기반)
+      return await FcmService().isNotificationPermissionGranted();
+    } catch (_) {
+      final status = await Permission.notification.status;
+      return status.isGranted || status.isProvisional;
+    }
+  }
+
+  /// OS 권한만 갱신 (서버/앱 설정은 건드리지 않음)
+  Future<void> _refreshOsNotificationPermissionOnly() async {
+    try {
+      final osGranted = await _getOsNotificationPermissionGranted();
+      if (!mounted) return;
+      if (_osNotificationPermissionGranted != osGranted) {
+        setState(() {
+          _osNotificationPermissionGranted = osGranted;
+        });
+      }
+    } catch (e) {
+      debugPrint('[SettingScreen] OS 권한 갱신 실패(무시): $e');
+    }
+  }
+
+  /// OS 알림 권한 체크 및 앱 내 설정과 동기화
+  Future<void> _checkAndSyncNotificationPermission() async {
+    try {
+      // OS 권한 상태 체크 (앱 전역 기준으로 통일)
+      final osGranted = await _getOsNotificationPermissionGranted();
+
+      if (mounted) {
+        setState(() {
+          _osNotificationPermissionGranted = osGranted;
+        });
+      }
+
+      final userProvider = context.read<UserProvider>();
+      final appSetting = userProvider.notificationEnabled ?? true;
+
+      // 🎯 OS 권한과 앱 내 설정이 다르면 강제 동기화
+      if (osGranted != appSetting) {
+        debugPrint(
+          '[SettingScreen] OS 권한($osGranted)과 앱 설정($appSetting) 불일치 - 강제 동기화',
+        );
+
+        // OS 권한에 맞춰 앱 설정 및 서버 업데이트(필요할 때만)
+        if (mounted) {
+          userProvider.updateNotificationEnabled(osGranted);
+
+          // 서버도 동기화: 현재 서버 상태 확인 후 불일치할 때만 토글
+          try {
+            final settings = await _userService.getSettings();
+            final serverEnabled = settings['notificationEnabled'] ?? false;
+            if (serverEnabled != osGranted) {
+              await _userService.toggleNotificationEnabled();
+              debugPrint(
+                '[SettingScreen] 서버 notificationEnabled 동기화 완료 (기존=$serverEnabled → 목표=$osGranted)',
+              );
+            }
+          } catch (e) {
+            debugPrint('[SettingScreen] 서버 동기화 실패 (무시): $e');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[SettingScreen] OS 권한 체크 실패: $e');
+    }
   }
 
   Future<void> _toggleNotification() async {
@@ -109,36 +209,6 @@ class _SettingScreenState extends State<SettingScreen> {
       // 롤백 (UserProvider 업데이트)
       if (mounted) {
         userProvider.updateNotificationEnabled(oldValue);
-      }
-    }
-  }
-
-  Future<void> _toggleMarketing() async {
-    final userProvider = context.read<UserProvider>();
-    final currentValue = userProvider.marketingEnabled ?? false;
-    final oldValue = currentValue;
-
-    // 낙관적 업데이트 (UserProvider 업데이트)
-    userProvider.updateMarketingEnabled(!currentValue);
-
-    try {
-      final newValue = await _userService.toggleMarketingConsent();
-      // 서버 응답으로 최종 확인 (UserProvider 업데이트)
-      userProvider.updateMarketingEnabled(newValue);
-
-      // 🎯 스낵바로 상태 알림 (로케일 적용)
-      if (mounted) {
-        final message =
-            newValue
-                ? context.tr('marketing_enabled')
-                : context.tr('marketing_disabled');
-        ErrorHandler.showInfo(context, message);
-      }
-    } catch (e) {
-      debugPrint('[SettingScreen] 마케팅 토글 실패: $e');
-      // 롤백 (UserProvider 업데이트)
-      if (mounted) {
-        userProvider.updateMarketingEnabled(oldValue);
       }
     }
   }
@@ -237,37 +307,72 @@ class _SettingScreenState extends State<SettingScreen> {
                 builder: (context, userProvider, _) {
                   final notificationEnabled =
                       userProvider.notificationEnabled ?? true;
+
+                  // 🎯 OS 권한이 없으면 토글 비활성화
+                  final isOsPermissionGranted =
+                      _osNotificationPermissionGranted ?? true;
+                  final effectiveEnabled =
+                      notificationEnabled && isOsPermissionGranted;
+
                   return _SettingTile(
                     icon: Icons.notifications,
                     label: context.tr('notification_settings'),
-                    trailing: Text(
-                      notificationEnabled ? 'ON' : 'OFF',
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    trailing: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          effectiveEnabled ? 'ON' : 'OFF',
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (!isOsPermissionGranted) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            context.tr('notification_permission_required'),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.5),
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                    onTap: _toggleNotification,
-                  );
-                },
-              ),
-              Consumer<UserProvider>(
-                builder: (context, userProvider, _) {
-                  final marketingEnabled =
-                      userProvider.marketingEnabled ?? false;
-                  return _SettingTile(
-                    icon: Icons.campaign,
-                    label: context.tr('marketing_consent'),
-                    trailing: Text(
-                      marketingEnabled ? 'ON' : 'OFF',
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    onTap: _toggleMarketing,
+                    onTap:
+                        isOsPermissionGranted
+                            ? _toggleNotification
+                            : () async {
+                              // OS 권한이 없으면 설정으로 이동
+                              final l10n = AppLocalizations.of(context);
+                              final goToSettings =
+                                  await DialogUtils.showConfirmDialog(
+                                    context,
+                                    title: l10n.t(
+                                      'notification_permission_required_title',
+                                    ),
+                                    message: l10n.t(
+                                      'notification_permission_required_message',
+                                    ),
+                                    confirmText: l10n.t('open_settings'),
+                                    cancelText: l10n.t('cancel'),
+                                  );
+                              if (goToSettings == true) {
+                                await openAppSettings();
+                                // ✅ 설정에서 돌아오는 즉시(또는 거의 즉시) 다시 동기화
+                                if (context.mounted) {
+                                  await Future.delayed(
+                                    const Duration(milliseconds: 200),
+                                  );
+                                  _checkAndSyncNotificationPermission();
+                                }
+                              }
+                            },
                   );
                 },
               ),
@@ -324,6 +429,20 @@ class _SettingScreenState extends State<SettingScreen> {
             title: context.tr('others'),
             surfaceColor: surfaceColor,
             children: [
+              // ✅ 통합 테스트 모드 (개발용)
+              if (kDebugMode)
+                _SettingTile(
+                  icon: Icons.bug_report_outlined,
+                  label: '통합 테스트 모드',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const TestModeScreen(),
+                      ),
+                    );
+                  },
+                ),
               _SettingTile(
                 icon: Icons.article_outlined,
                 label: context.tr('license'),
@@ -442,6 +561,8 @@ class _SettingScreenState extends State<SettingScreen> {
                   );
                 },
               ),
+
+              SizedBox(height: 20),
             ],
           ),
         ],
@@ -514,44 +635,52 @@ class _SettingTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textColor = Theme.of(context).colorScheme.onSurface;
+    final isDisabled = onTap == null;
 
     return GestureDetector(
       onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                icon,
-                size: 20,
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.75),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: textColor,
-                  letterSpacing: -0.2,
+      child: Opacity(
+        opacity: isDisabled ? 0.5 : 1.0,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  icon,
+                  size: 20,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.primary.withOpacity(0.75),
                 ),
               ),
-            ),
-            if (trailing != null) ...[trailing!, const SizedBox(width: 12)],
-            if (showArrow)
-              Icon(
-                Icons.chevron_right,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
-                size: 20,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: textColor,
+                    letterSpacing: -0.2,
+                  ),
+                ),
               ),
-          ],
+              if (trailing != null) ...[trailing!, const SizedBox(width: 12)],
+              if (showArrow)
+                Icon(
+                  Icons.chevron_right,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.3),
+                  size: 20,
+                ),
+            ],
+          ),
         ),
       ),
     );

@@ -58,6 +58,7 @@ class AppLocalizations {
       'notification_permission_required_title': '알림 권한 필요',
       'notification_permission_required_message':
           '알림을 받으려면 설정에서 알림 권한을 허용해주세요.',
+      'notification_permission_required': '알림 권한 필요',
       'open_settings': '설정 열기',
       'marketing_consent': '마케팅 정보 수신',
       'notification_enabled': '알림이 켜졌습니다',
@@ -205,6 +206,7 @@ class AppLocalizations {
       'dopy': '도피',
       'username_dopy': '{username}의 도피',
       'tap_to_start_writing': '이번 주는 어떤 일이 있나요?',
+      'tap_to_start_writing_hint': '탭해서 작성 시작',
       'view_post': '글보러가기',
       'just_now': '방금',
       'just_now_with_ago': '방금 전',
@@ -486,8 +488,6 @@ class AppLocalizations {
       'onboarding_if_passed': '지나가면',
       'onboarding_wont_come_again': '다시 오지 않습니다',
       'onboarding_empty_state_message': '이번주는 어떤 일이 있나요?',
-      'onboarding_first_post_success': '첫 포스팅에 성공했어요!\n이렇게 매주 채워나갈거에요',
-      'onboarding_first_post_failed': '이번주부터 시작해봐요\n스트릭을 매주 채워나가주세요!',
       'nickname_save_failed': '별명 저장에 실패했습니다',
 
       // 회원가입 / 로그인 (JoinScreen)
@@ -639,7 +639,7 @@ class AppLocalizations {
       'content_load_failed': '본문을 불러오지 못했어요',
       'thumbnail_required': '썸네일 이미지를 먼저 선택하세요.',
       'thumbnail_upload_required': '썸네일 업로드가 완료된 후 발행해주세요.',
-      'image_uploading': '이미지 업로드 중입니다.',
+      'image_uploading': '미디어 업로드 중입니다.',
       'category_list_load_failed': '카테고리 목록을 불러올 수 없습니다.',
       'cannot_publish': '등록할 수 없습니다.',
       'upload_error_occurred': '업로드 중 오류가 발생했어요',
@@ -724,8 +724,12 @@ class AppLocalizations {
       'group_image': '그룹이미지',
       'edit_image': '이미지 편집',
       'edit_video': '영상 편집',
-      'photo_library_permission_required': '사진 라이브러리 접근 권한이 필요합니다',
+      'photo_library_permission_required': '라이브러리 접근 권한이 필요합니다',
       'open_permission_settings': '권한 설정 열기',
+      'limited_photo_access_title': '제한된 사진 접근',
+      'limited_photo_access_message': '탭해서 추가할 사진 선택하기',
+      'limited_video_access_title': '제한된 영상 접근',
+      'limited_video_access_message': '탭해서 추가할 영상 선택하기',
       'no_videos': '영상이 없습니다',
       'no_images': '이미지가 없습니다',
       'cannot_load_image': '이미지를 불러올 수 없습니다.',
@@ -788,6 +792,7 @@ class AppLocalizations {
           'Notification Permission Required',
       'notification_permission_required_message':
           'Please allow notification permissions in Settings to receive notifications.',
+      'notification_permission_required': 'Notification permission required',
       'open_settings': 'Open Settings',
       'marketing_consent': 'Marketing Consent',
       'notification_enabled': 'Notifications enabled',
@@ -942,6 +947,7 @@ class AppLocalizations {
       'dopy': 'Dopy',
       'username_dopy': '{username}\'s Dopy',
       'tap_to_start_writing': 'Tap to start writing',
+      'tap_to_start_writing_hint': 'Tap to start',
       'view_post': 'View Post',
       'just_now': 'just now',
       'just_now_with_ago': 'just now',
@@ -1218,10 +1224,6 @@ class AppLocalizations {
       'onboarding_if_passed': 'If it passes',
       'onboarding_wont_come_again': 'it won\'t come back',
       'onboarding_empty_state_message': 'What happened this week?',
-      'onboarding_first_post_success':
-          'First post successful!\nLet\'s fill it up every week',
-      'onboarding_first_post_failed':
-          'Let\'s start this week\nFill up your streak every week!',
       'nickname_save_failed': 'Failed to save nickname',
 
       // Auth / Join
@@ -1479,8 +1481,14 @@ class AppLocalizations {
       'edit_image': 'Edit Image',
       'edit_video': 'Edit Video',
       'photo_library_permission_required':
-          'Photo library access permission is required',
+          'Library access permission is required',
       'open_permission_settings': 'Open Permission Settings',
+      'limited_photo_access_title': 'Limited Photo Access',
+      'limited_photo_access_message':
+          'Tap to add more photos to your selection.',
+      'limited_video_access_title': 'Limited Video Access',
+      'limited_video_access_message':
+          'Tap to add more videos to your selection.',
       'no_videos': 'No videos',
       'no_images': 'No images',
       'cannot_load_image': 'Cannot load image.',

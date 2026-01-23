@@ -38,42 +38,44 @@ class CommonProfileAvatar extends StatelessWidget {
 
     return GestureDetector(
       onTap: onTap,
-      child: Stack(
-        children: [
-          Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color:
-                  backgroundColor ?? Theme.of(context).colorScheme.background,
-              border: Border.all(
-                color: borderColor ?? effectiveBorderColor,
-                width: effectiveBorderWidth,
-              ),
-            ),
-            child: ClipOval(
-              child:
-                  centerWidget != null
-                      ? Container(
-                        color: backgroundColor ?? Colors.transparent,
-                        child: Center(child: centerWidget),
-                      )
-                      : imageUrl != null && imageUrl!.isNotEmpty
-                      ? _buildImage(context, imageUrl!, isDarkMode)
-                      : _buildPlaceholder(context, isDarkMode),
-            ),
-          ),
-          if (isUploading)
-            Positioned.fill(
-              child: CircularProgressIndicator(
-                strokeWidth: 3,
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  Theme.of(context).colorScheme.primary,
+      child: RepaintBoundary(
+        child: Stack(
+          children: [
+            Container(
+              width: size,
+              height: size,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: borderColor ?? effectiveBorderColor,
+                  width: effectiveBorderWidth,
                 ),
               ),
+              child: ClipOval(
+                child:
+                    centerWidget != null
+                        ? Container(
+                          color:
+                              backgroundColor ??
+                              Theme.of(context).colorScheme.background,
+                          child: Center(child: centerWidget),
+                        )
+                        : imageUrl != null && imageUrl!.isNotEmpty
+                        ? _buildImage(context, imageUrl!, isDarkMode)
+                        : _buildPlaceholder(context, isDarkMode),
+              ),
             ),
-        ],
+            if (isUploading)
+              Positioned.fill(
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -125,7 +127,7 @@ class CommonProfileAvatar extends StatelessWidget {
     return Container(
       width: size,
       height: size,
-      decoration: BoxDecoration(shape: BoxShape.circle),
+      color: backgroundColor ?? Theme.of(context).colorScheme.background,
       child: Center(
         child: Text(
           firstLetter,
@@ -172,7 +174,6 @@ class StaticProfileAvatar extends StatelessWidget {
         height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: backgroundColor ?? Theme.of(context).colorScheme.background,
           border: Border.all(color: borderColor, width: borderWidth),
         ),
         child: ClipOval(
@@ -276,7 +277,6 @@ class _StaticAvatarPlaceholder extends StatelessWidget {
     return Container(
       width: size,
       height: size,
-      decoration: const BoxDecoration(shape: BoxShape.circle),
       alignment: Alignment.center,
       child: Text(
         firstLetter,

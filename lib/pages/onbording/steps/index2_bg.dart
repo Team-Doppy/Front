@@ -390,13 +390,12 @@ class _Index2BackgroundState extends State<Index2Background>
                                         width: 300,
                                         height: 300,
                                         decoration: BoxDecoration(
-                                          color: AppColors.darkSurfaceVariant,
+                                          color: AppColors.darkSurface,
                                           borderRadius: BorderRadius.circular(
                                             300,
                                           ),
                                           border: Border.all(
-                                            color: AppColors.lightBackground
-                                                .withOpacity(0.7),
+                                            color: AppColors.darkBorder,
                                             width: 2,
                                           ),
                                         ),

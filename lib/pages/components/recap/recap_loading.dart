@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
+// import 'dart:convert'; // ✅ 캐시 기능 주석처리로 인해 사용 안 함
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -11,6 +12,7 @@ import 'package:doppy/pages/components/recap/recap_content_screen.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/text_bold_utils.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class RecapLoadingScreen extends StatefulWidget {
@@ -30,7 +32,7 @@ class RecapLoadingScreen extends StatefulWidget {
 class _RecapLoadingScreenState extends State<RecapLoadingScreen>
     with SingleTickerProviderStateMixin {
   static const Color _darkSurface = AppColors.darkSurface;
-  static const String _cacheKeyPrefix = 'insight_content_preview_';
+  // static const String _cacheKeyPrefix = 'insight_content_preview_'; // ✅ 캐시 기능 주석처리로 인해 사용 안 함
   static const String _audioPath =
       'audio/copy_E40AB8B9-EA58-449C-8E26-B2560003CA3C.mp3';
 
@@ -94,6 +96,13 @@ class _RecapLoadingScreenState extends State<RecapLoadingScreen>
   Future<void> _initializeAudio() async {
     try {
       _audioPlayer = AudioPlayer();
+
+      // ✅ 안드로이드에서 명시적으로 PlayerMode 설정
+      if (!kIsWeb && Platform.isAndroid) {
+        await _audioPlayer!.setPlayerMode(PlayerMode.mediaPlayer);
+        debugPrint('[RecapLoadingScreen] 안드로이드 PlayerMode 설정 완료');
+      }
+
       _audioPlayer!.setReleaseMode(ReleaseMode.stop);
 
       // ✅ 오디오 완료 리스너
@@ -103,15 +112,63 @@ class _RecapLoadingScreenState extends State<RecapLoadingScreen>
         }
       });
 
-      // ✅ 오디오 소스 설정 및 페이드인 시작
-      await _audioPlayer!.setSource(AssetSource(_audioPath));
+      // ✅ 오디오 소스 설정
+      debugPrint('[RecapLoadingScreen] 오디오 소스 설정 시작: $_audioPath');
+      try {
+        await _audioPlayer!.setSource(AssetSource(_audioPath));
+      } catch (sourceError) {
+        // ✅ iOS에서 asset 로드 실패 시에도 계속 진행 (오디오 없이 작동)
+        debugPrint('[RecapLoadingScreen] 오디오 소스 설정 실패 (무시하고 계속): $sourceError');
+        await _audioPlayer?.dispose();
+        _audioPlayer = null;
+        _playerCompleteSubscription?.cancel();
+        _playerCompleteSubscription = null;
+        return;
+      }
+
+      // ✅ 안드로이드에서 준비 완료 대기 (상태 확인)
+      if (!kIsWeb && Platform.isAndroid) {
+        // 상태가 playing 또는 completed가 될 때까지 대기 (최대 2초)
+        int retryCount = 0;
+        while (retryCount < 20) {
+          final state = _audioPlayer?.state;
+          if (state == null) break;
+          debugPrint(
+            '[RecapLoadingScreen] 오디오 상태 확인: $state (시도 ${retryCount + 1}/20)',
+          );
+          if (state == PlayerState.playing || state == PlayerState.completed) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          retryCount++;
+        }
+      }
+
+      if (_audioPlayer == null) return;
+
       await _audioPlayer!.setVolume(0.0); // 초기 볼륨 0
+      debugPrint('[RecapLoadingScreen] 오디오 재생 시작');
       await _audioPlayer!.resume();
 
+      // ✅ 재생 상태 확인
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final finalState = _audioPlayer?.state;
+      debugPrint('[RecapLoadingScreen] 오디오 최종 상태: $finalState');
+
       // ✅ 페이드인 애니메이션 (1초 동안 0.0 -> 1.0)
-      _fadeInAudio();
-    } catch (e) {
+      if (_audioPlayer != null) {
+        _fadeInAudio();
+      }
+    } catch (e, stackTrace) {
       debugPrint('[RecapLoadingScreen] 오디오 초기화 실패: $e');
+      debugPrint('[RecapLoadingScreen] 스택 트레이스: $stackTrace');
+      // ✅ 오디오 실패 시에도 앱은 계속 작동
+      if (_audioPlayer != null) {
+        await _audioPlayer?.dispose();
+        _audioPlayer = null;
+      }
+      _playerCompleteSubscription?.cancel();
+      _playerCompleteSubscription = null;
     }
   }
 
@@ -158,53 +215,55 @@ class _RecapLoadingScreenState extends State<RecapLoadingScreen>
   }
 
   Future<void> _bootstrap() async {
-    // ✅ forceRefresh가 true면 캐시 무시하고 바로 서버 호출
-    if (widget.forceRefresh) {
-      // ✅ 백그라운드에서 실행 (화면을 닫아도 완료되면 캐시에 저장)
-      _requestAndNavigate();
-      return;
-    }
+    // ✅ 캐시 기능 주석처리: 매번 서버에서 불러오도록
+    // // ✅ forceRefresh가 true면 캐시 무시하고 바로 서버 호출
+    // if (widget.forceRefresh) {
+    //   // ✅ 백그라운드에서 실행 (화면을 닫아도 완료되면 캐시에 저장)
+    //   _requestAndNavigate();
+    //   return;
+    // }
 
-    // ✅ 안전장치: 혹시 여기까지 왔는데 캐시가 이미 있으면 서버 호출 없이 바로 전환
-    // 단, 최소 2초는 로딩 화면을 보여주기 위해 대기
-    try {
-      final cached = await _readCachedDocJson();
-      if (!mounted) return;
-      if (cached != null) {
-        // ✅ 최소 2초 대기 (로딩 화면을 충분히 보여주기 위해)
-        await Future<void>.delayed(const Duration(seconds: 2));
-        if (!mounted) return;
-        await _goToRenderer(cached);
-        return;
-      }
-    } catch (_) {
-      // 캐시 파싱 실패면 그냥 생성 시도
-    }
+    // // ✅ 안전장치: 혹시 여기까지 왔는데 캐시가 이미 있으면 서버 호출 없이 바로 전환
+    // // 단, 최소 2초는 로딩 화면을 보여주기 위해 대기
+    // try {
+    //   final cached = await _readCachedDocJson();
+    //   if (!mounted) return;
+    //   if (cached != null) {
+    //     // ✅ 최소 2초 대기 (로딩 화면을 충분히 보여주기 위해)
+    //     await Future<void>.delayed(const Duration(seconds: 2));
+    //     if (!mounted) return;
+    //     await _goToRenderer(cached);
+    //     return;
+    //   }
+    // } catch (_) {
+    //   // 캐시 파싱 실패면 그냥 생성 시도
+    // }
 
-    // ✅ 백그라운드에서 실행 (화면을 닫아도 완료되면 캐시에 저장)
+    // ✅ 매번 서버에서 불러오기
     _requestAndNavigate();
   }
 
-  Future<Map<String, dynamic>?> _readCachedDocJson() async {
-    final accountKey = await AuthService().getAccountKeyFromToken();
-    if (accountKey == null || accountKey.isEmpty) return null;
-
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_cacheKeyPrefix$accountKey');
-    if (raw == null || raw.isEmpty) return null;
-
-    final decoded = jsonDecode(raw);
-    if (decoded is Map<String, dynamic>) return decoded;
-    return null;
-  }
-
-  Future<void> _writeCachedDocJson(Map<String, dynamic> docJson) async {
-    final accountKey = await AuthService().getAccountKeyFromToken();
-    if (accountKey == null || accountKey.isEmpty) return;
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('$_cacheKeyPrefix$accountKey', jsonEncode(docJson));
-  }
+  // ✅ 리캡 캐시 기능 주석처리 (나중을 위해)
+  // Future<Map<String, dynamic>?> _readCachedDocJson() async {
+  //   final accountKey = await AuthService().getAccountKeyFromToken();
+  //   if (accountKey == null || accountKey.isEmpty) return null;
+  //
+  //   final prefs = await SharedPreferences.getInstance();
+  //   final raw = prefs.getString('$_cacheKeyPrefix$accountKey');
+  //   if (raw == null || raw.isEmpty) return null;
+  //
+  //   final decoded = jsonDecode(raw);
+  //   if (decoded is Map<String, dynamic>) return decoded;
+  //   return null;
+  // }
+  //
+  // Future<void> _writeCachedDocJson(Map<String, dynamic> docJson) async {
+  //   final accountKey = await AuthService().getAccountKeyFromToken();
+  //   if (accountKey == null || accountKey.isEmpty) return;
+  //
+  //   final prefs = await SharedPreferences.getInstance();
+  //   await prefs.setString('$_cacheKeyPrefix$accountKey', jsonEncode(docJson));
+  // }
 
   Future<void> _requestAndNavigate() async {
     // ✅ mounted 체크: 화면이 이미 닫혔으면 UI 업데이트 스킵
@@ -253,9 +312,13 @@ class _RecapLoadingScreenState extends State<RecapLoadingScreen>
         return;
       }
 
-      // ✅ 캐시 저장 (원본 그대로 저장: {success,data:{...}} 또는 {hero,blocks} 모두 지원)
-      // ✅ 화면이 닫혀도 캐시는 저장 (백그라운드 작업)
-      await _writeCachedDocJson(result);
+      // ✅ 캐시 저장 기능 주석처리 (나중을 위해)
+      // // ✅ 캐시 저장 (원본 그대로 저장: {success,data:{...}} 또는 {hero,blocks} 모두 지원)
+      // // ✅ 화면이 닫혀도 캐시는 저장 (백그라운드 작업)
+      // await _writeCachedDocJson(result);
+
+      // ✅ 서버에서 성공적으로 로드했을 때만 리캡을 봤다는 플래그 설정
+      await _markInsightContentAsViewed();
 
       // ✅ 화면이 닫혔으면 렌더러로 이동하지 않음
       if (!mounted) return;
@@ -269,6 +332,24 @@ class _RecapLoadingScreenState extends State<RecapLoadingScreen>
         _isContentNotReadyError = false;
         _isLoading = false;
       });
+    }
+  }
+
+  /// ✅ 리캡을 봤다는 타임스탬프를 SharedPreferences에 저장
+  /// 서버에서 성공적으로 로드했을 때만 호출
+  Future<void> _markInsightContentAsViewed() async {
+    try {
+      final accountKey = await AuthService().getAccountKeyFromToken();
+      if (accountKey == null || accountKey.isEmpty) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      final key = 'insight_content_viewed_$accountKey';
+      // ✅ 현재 시간을 ISO 8601 형식으로 저장
+      final timestamp = DateTime.now().toIso8601String();
+      await prefs.setString(key, timestamp);
+      debugPrint('[RecapLoadingScreen] 리캡을 봤다는 타임스탬프 저장 완료: $key = $timestamp');
+    } catch (e) {
+      debugPrint('[RecapLoadingScreen] 타임스탬프 저장 실패: $e');
     }
   }
 

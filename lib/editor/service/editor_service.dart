@@ -3457,9 +3457,15 @@ class EditorService extends ChangeNotifier {
     // 🎯 이미지 병합 작업 중에는 히스토리 추적 일시 중단
     _isExecutingHistory = true;
 
-    // ImageRowNode 삽입 (더 작은 인덱스 위치에)
-    final insertIndex =
-        draggingIndex < targetIndex ? draggingIndex : targetIndex;
+    // ✅ ImageRowNode 삽입 위치는 "타겟" 위치를 기준으로 한다.
+    // - 사용자가 image1을 image2로 드롭했으면, 결과 노드는 image2 자리에 생겨야 UX가 자연스럽다.
+    // - dragging이 target보다 위에 있으면, dragging을 먼저 삭제하면서 target의 인덱스가 1 줄어드므로 -1 보정.
+    int insertIndex = targetIndex;
+    if (draggingIndex < targetIndex) {
+      insertIndex = (targetIndex - 1).clamp(0, document.nodeCount);
+    } else {
+      insertIndex = targetIndex.clamp(0, document.nodeCount);
+    }
 
     try {
       // 기존 이미지들 삭제
@@ -3724,8 +3730,13 @@ class EditorService extends ChangeNotifier {
     // 🎯 이미지 병합 작업 중에는 히스토리 추적 일시 중단
     _isExecutingHistory = true;
 
-    // PageViewImageNode 삽입 (더 작은 인덱스 위치에)
-    final insertIdx = draggingIndex < targetIndex ? draggingIndex : targetIndex;
+    // ✅ PageViewImageNode 삽입 위치는 "타겟" 위치를 기준으로 한다. (mergeImagesIntoRow와 동일한 UX)
+    int insertIdx = targetIndex;
+    if (draggingIndex < targetIndex) {
+      insertIdx = (targetIndex - 1).clamp(0, document.nodeCount);
+    } else {
+      insertIdx = targetIndex.clamp(0, document.nodeCount);
+    }
 
     try {
       // 기존 이미지들 삭제

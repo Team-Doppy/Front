@@ -2,12 +2,18 @@ import 'dart:async';
 import 'package:doppy/data/models/weekly_contribution.dart';
 import 'package:doppy/data/models/weekly_contribution_greeting.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show GlobalKey, Color;
+import 'package:doppy/utils/week_utils.dart';
 import 'package:doppy/data/services/user_service.dart';
+import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/pages/components/weekly_contribution_grid.dart';
 
 /// 주차 기여도 프로바이더
 class WeeklyContributionProvider extends ChangeNotifier {
   final UserService _userService = UserService();
+
+  // ✅ 계정 변경 감지를 위한 현재 사용자명 추적
+  String? _currentUsername;
 
   // 연도별 기여도 데이터 캐싱
   final Map<int, List<WeeklyContributionData>> _contributionsByYear = {};
@@ -33,6 +39,18 @@ class WeeklyContributionProvider extends ChangeNotifier {
   // 블러 레이어 표시 여부 (연도 선택 시 사용)
   bool _showBlurOverlay = false;
 
+  // ==============================
+  // ✅ 코치마크 오버레이 (그리드 셀 타겟)
+  // ==============================
+
+  bool _showCoachmark = false;
+  int _coachmarkStepIndex = 0;
+  List<WeeklyCoachmarkStep> _coachmarkSteps = const [];
+  bool _wasDismissedByUser = false; // ✅ 사용자가 명시적으로 닫았는지 추적
+
+  // year -> weekNumber -> GlobalKey
+  final Map<int, Map<int, GlobalKey>> _weekCellKeys = {};
+
   // 연도 선택 관련 상태
   int? _yearPickerSelectedYear;
   List<int>? _yearPickerYears;
@@ -40,7 +58,26 @@ class WeeklyContributionProvider extends ChangeNotifier {
 
   /// 특정 연도의 기여도 데이터 가져오기
   List<WeeklyContributionData>? getContributions(int year) {
+    // ✅ 계정 변경 감지 및 캐시 초기화
+    _checkAndClearCacheIfUserChanged();
     return _contributionsByYear[year];
+  }
+
+  /// ✅ 계정 변경 감지 및 캐시 초기화 (보수적 캐싱)
+  void _checkAndClearCacheIfUserChanged() {
+    final currentUsername = AuthService().currentUsernameSync;
+    if (_currentUsername != null &&
+        currentUsername != null &&
+        _currentUsername != currentUsername) {
+      // 계정이 변경되었으면 모든 캐시 초기화
+      debugPrint(
+        '[WeeklyContributionProvider] 계정 변경 감지: $_currentUsername -> $currentUsername, 캐시 초기화',
+      );
+      clearAllCache();
+      _weekCellKeys.clear();
+      _wasDismissedByUser = false; // 코치마크도 리셋
+    }
+    _currentUsername = currentUsername;
   }
 
   /// 특정 연도의 greeting 데이터 가져오기
@@ -66,6 +103,152 @@ class WeeklyContributionProvider extends ChangeNotifier {
 
   /// 블러 레이어 표시 여부
   bool get showBlurOverlay => _showBlurOverlay;
+
+  /// 코치마크 모드 여부
+  bool get showCoachmarkOverlay => _showCoachmark;
+
+  /// ✅ 오버레이(연도피커/코치마크) 표시 여부 (main.dart에서 공용 딤 처리)
+  bool get showAnyOverlay => _showBlurOverlay || _showCoachmark;
+
+  WeeklyCoachmarkStep? get currentCoachmarkStep =>
+      (_coachmarkSteps.isEmpty || _coachmarkStepIndex >= _coachmarkSteps.length)
+          ? null
+          : _coachmarkSteps[_coachmarkStepIndex];
+
+  int get coachmarkStepIndex => _coachmarkStepIndex;
+  int get coachmarkTotalSteps => _coachmarkSteps.length;
+
+  void registerWeekCellKey(int year, int weekNumber, GlobalKey key) {
+    _weekCellKeys.putIfAbsent(year, () => {})[weekNumber] = key;
+  }
+
+  GlobalKey? getWeekCellKey(int year, int weekNumber) {
+    return _weekCellKeys[year]?[weekNumber];
+  }
+
+  void startCoachmark(List<WeeklyCoachmarkStep> steps) {
+    _coachmarkSteps = steps;
+    _coachmarkStepIndex = 0;
+    _showCoachmark = true;
+    notifyListeners();
+  }
+
+  void nextCoachmarkStep() {
+    if (!_showCoachmark) return;
+    if (_coachmarkStepIndex + 1 >= _coachmarkSteps.length) {
+      closeCoachmark();
+      return;
+    }
+    _coachmarkStepIndex++;
+    notifyListeners();
+  }
+
+  void previousCoachmarkStep() {
+    if (!_showCoachmark) return;
+    if (_coachmarkStepIndex <= 0) return; // 첫 번째 스텝이면 동작하지 않음
+    _coachmarkStepIndex--;
+    notifyListeners();
+  }
+
+  void closeCoachmark() {
+    // ✅ X 버튼 클릭 시 코치마크 모드 즉시 종료
+    _showCoachmark = false;
+    _coachmarkStepIndex = 0;
+    _coachmarkSteps = const [];
+    _wasDismissedByUser = true; // ✅ 사용자가 명시적으로 닫았음을 표시
+    notifyListeners();
+  }
+
+  /// 사용자가 명시적으로 닫았는지 확인
+  bool get wasDismissedByUser => _wasDismissedByUser;
+
+  Map<int, GlobalKey> getWeekCellKeysForYear(int year) {
+    return Map<int, GlobalKey>.unmodifiable(_weekCellKeys[year] ?? const {});
+  }
+
+  /// ✅ 요구사항 기반: 1/2/3 단계 스텝 자동 생성 후 시작 (테스트용)
+  void startWeeklyStreakCoachmark({required int year, DateTime? now}) {
+    final keys = _weekCellKeys[year];
+    if (keys == null || keys.isEmpty) return;
+    final n = now ?? DateTime.now();
+    final todayWeek = (n.year == year) ? WeekUtils.getWeekNumber(n) : null;
+
+    // postCount 맵 구성 (키가 없는 주는 제외)
+    final postCountByWeek = <int, int>{};
+    final contributions = _contributionsByYear[year];
+    if (contributions != null) {
+      for (final c in contributions) {
+        if (keys.containsKey(c.weekNumber)) {
+          postCountByWeek[c.weekNumber] = c.postCount;
+        }
+      }
+    }
+
+    int? latestPurpleWeek;
+    for (final w in keys.keys) {
+      final pc = postCountByWeek[w] ?? 0;
+      if (pc > 0) {
+        if (latestPurpleWeek == null || w > latestPurpleWeek) {
+          latestPurpleWeek = w;
+        }
+      }
+    }
+
+    if (latestPurpleWeek == null && keys.keys.isNotEmpty) {
+      final sorted = keys.keys.toList()..sort();
+      latestPurpleWeek = sorted.last;
+    }
+    if (latestPurpleWeek == null) return;
+
+    // 2단계: "이번 주" (보라색 fill 셀)을 타겟으로 함
+    // 오늘 이전의 "빈 셀" 최신순 (neighbors 찾기용)
+    int? latestPastEmpty;
+    if (todayWeek != null) {
+      for (final w in keys.keys) {
+        if (w >= todayWeek) continue;
+        final pc = postCountByWeek[w] ?? 0;
+        if (pc == 0) {
+          if (latestPastEmpty == null || w > latestPastEmpty) {
+            latestPastEmpty = w;
+          }
+        }
+      }
+    }
+    latestPastEmpty ??= latestPurpleWeek;
+
+    // ✅ 2단계 타겟: "이번 주" (todayWeek가 있으면 todayWeek, 없으면 latestPurpleWeek)
+    final step2TargetWeek = todayWeek ?? latestPurpleWeek;
+
+    startCoachmark([
+      WeeklyCoachmarkStep(
+        kind: WeeklyCoachmarkKind.intro,
+        year: year,
+        weekNumber: latestPurpleWeek,
+        message: '한 주에 한 칸씩 채워가요\n기록이 많을수록 색이 진해져요',
+        colorSubstrings: {
+          '한 주에 한 칸씩 채워가요': const Color.fromARGB(255, 138, 156, 255),
+        }, // ✅ 첫 줄 lightPrimary 색상으로 강조
+      ),
+      WeeklyCoachmarkStep(
+        kind: WeeklyCoachmarkKind.pastFill,
+        year: year,
+        weekNumber: step2TargetWeek, // ✅ "이번 주" (보라색 fill 셀)을 타겟으로
+        message: '가입 후 1주일만 자유롭게\n지나간 주의 기록을 채울 수 있어요',
+        colorSubstrings: {
+          '가입 후 1주일만 자유롭게': const Color.fromARGB(255, 138, 156, 255),
+        }, // ✅ 첫 줄 lightPrimary 색상으로 강조
+      ),
+      WeeklyCoachmarkStep(
+        kind: WeeklyCoachmarkKind.interaction,
+        year: year,
+        weekNumber: latestPurpleWeek,
+        message: '눌러서 그 주의 기록을 볼 수 있어요\n길게 누르면 미리보기가 나와요',
+        colorSubstrings: {
+          '눌러서 그 주의 기록': const Color.fromARGB(255, 138, 156, 255),
+        }, // ✅ 첫 줄 primary 색상으로 강조
+      ),
+    ]);
+  }
 
   /// 블러 레이어 표시 설정
   void setBlurOverlay(bool show) {
@@ -142,6 +325,9 @@ class WeeklyContributionProvider extends ChangeNotifier {
 
   /// 특정 연도의 기여도 데이터 로드
   Future<void> loadContributions(int year) async {
+    // ✅ 계정 변경 감지 및 캐시 초기화 (보수적 캐싱)
+    _checkAndClearCacheIfUserChanged();
+
     // 이미 로드 중이거나 캐시에 있으면 스킵
     if (_loadingByYear[year] == true ||
         _contributionsByYear.containsKey(year)) {
@@ -236,6 +422,9 @@ class WeeklyContributionProvider extends ChangeNotifier {
   /// - 기존 clearCache() 방식은 잠깐 데이터가 비면서(=null/empty) UI 색/레이아웃이 깜빡일 수 있음
   /// - 홈 진입 직후/온보딩 직후처럼 리빌드가 많을 때 특히 눈에 띔
   Future<void> reloadContributions(int year) async {
+    // ✅ 계정 변경 감지 및 캐시 초기화 (보수적 캐싱)
+    _checkAndClearCacheIfUserChanged();
+
     if (_loadingByYear[year] == true) return;
 
     _loadingByYear[year] = true;
@@ -308,8 +497,17 @@ class WeeklyContributionProvider extends ChangeNotifier {
     _previewByYearAndWeek.clear();
     _loadingByYear.clear();
     _totalPostCount = 0;
+    _weekCellKeys.clear(); // ✅ 셀 키도 초기화
+    _wasDismissedByUser = false; // ✅ 코치마크 상태도 리셋
     _updateLockedState(); // 0개면 locked=true로 동기화
     notifyListeners(); // 캐시 삭제는 lock 변경 여부와 무관하게 UI 갱신이 필요
+  }
+
+  /// ✅ 로그아웃/계정 변경 시 명시적으로 호출 (AuthProvider에서 사용)
+  void logout() {
+    clearAllCache();
+    _currentUsername = null; // 사용자명도 초기화
+    debugPrint('[WeeklyContributionProvider] 로그아웃 - 모든 캐시 초기화됨');
   }
 
   /// 포스트 발행 후 해당 연도 데이터 새로고침 및 상태 업데이트
@@ -437,4 +635,23 @@ class WeeklyContributionProvider extends ChangeNotifier {
   void _updateLockedState() {
     _isLocked = _totalPostCount <= 2;
   }
+}
+
+enum WeeklyCoachmarkKind { intro, pastFill, interaction }
+
+/// 코치마크 단계 모델
+class WeeklyCoachmarkStep {
+  final WeeklyCoachmarkKind kind;
+  final int year;
+  final int weekNumber;
+  final String message; // ✅ title 제거, message만 사용
+  final Map<String, Color>? colorSubstrings; // ✅ 색상으로 강조할 텍스트 부분들 (텍스트 -> 색상)
+
+  const WeeklyCoachmarkStep({
+    required this.kind,
+    required this.year,
+    required this.weekNumber,
+    required this.message,
+    this.colorSubstrings, // ✅ 선택적: 강조할 부분과 색상 지정
+  });
 }

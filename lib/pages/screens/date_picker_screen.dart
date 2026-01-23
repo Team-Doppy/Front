@@ -64,11 +64,11 @@ class _DatePickerScreenState extends State<DatePickerScreen> {
 
     // 현재 연도이고 현재 월인 경우: 현재 주차 이전만 선택 가능 (1-4 범위 내)
     if (_selectedYear == currentYear && _selectedMonth == currentMonth) {
-      final maxWeek = currentWeekOfMonth.clamp(1, 6);
+      final maxWeek = currentWeekOfMonth.clamp(1, 4);
       return List.generate(maxWeek, (i) => i + 1);
     }
-    // 그 외의 경우: 1~6주차(월별 최대 주차)까지 선택 가능
-    return [1, 2, 3, 4, 5, 6];
+    // 그 외의 경우: 1~4주차(월별 최대 주차)까지 선택 가능
+    return [1, 2, 3, 4];
   }
 
   @override
@@ -99,10 +99,10 @@ class _DatePickerScreenState extends State<DatePickerScreen> {
     // 주차 범위 검증: 현재 시점 이전만 허용
     if (_selectedYear == currentYear && _selectedMonth == now.month) {
       final currentWeek = WeekUtils.getWeekOfMonth(now);
-      final maxWeek = currentWeek.clamp(1, 6);
+      final maxWeek = currentWeek.clamp(1, 4);
       _selectedWeek = _selectedWeek.clamp(1, maxWeek);
     } else {
-      _selectedWeek = _selectedWeek.clamp(1, 6);
+      _selectedWeek = _selectedWeek.clamp(1, 4);
     }
 
     // 초기 인덱스 계산
@@ -248,8 +248,16 @@ class _DatePickerScreenState extends State<DatePickerScreen> {
                   ),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
-
-        centerTitle: false,
+        title: Text(
+          "지나간 주차 채우기",
+          style: LocaleTypography.style(
+            context: context,
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: colorScheme.onSurface,
+          ),
+        ),
+        centerTitle: widget.isEditting ? false : true,
       ),
       body: Column(
         children: [

@@ -23,10 +23,11 @@ class ShimmerBox extends StatelessWidget {
     final bool isDark =
         isDarkMode ??
         (Theme.of(context).colorScheme.brightness == Brightness.dark);
+    // 🎯 무광 느낌의 단순한 쉬머: 색상 대비를 최소화
     final Color baseColor =
         isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE8E8E8);
     final Color highlightColor =
-        isDark ? const Color(0xFF3A3A3A) : const Color(0xFFF3F3F3);
+        isDark ? const Color(0xFF2E2E2E) : const Color(0xFFEBEBEB);
 
     final BorderRadius resolvedRadius = borderRadius ?? BorderRadius.zero;
 
@@ -48,7 +49,7 @@ class ShimmerBox extends StatelessWidget {
     return Shimmer.fromColors(
       baseColor: baseColor,
       highlightColor: highlightColor,
-      period: const Duration(milliseconds: 1200),
+      period: const Duration(milliseconds: 2000), // 🎯 더 느린 애니메이션으로 부드럽게
       child: child,
     );
   }
