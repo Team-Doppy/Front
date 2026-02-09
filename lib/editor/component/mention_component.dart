@@ -327,7 +327,10 @@ class _MentionComponentState extends State<_MentionComponent>
                   child: IgnorePointer(
                     ignoring: true,
                     child: AnimatedDropLine(
-                      child: Container(height: 5, color: AppColors.primary),
+                      child: Container(
+                        height: 5,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                     ),
                   ),
                 ),
@@ -342,7 +345,10 @@ class _MentionComponentState extends State<_MentionComponent>
                   child: IgnorePointer(
                     ignoring: true,
                     child: AnimatedDropLine(
-                      child: Container(height: 5, color: AppColors.primary),
+                      child: Container(
+                        height: 5,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                     ),
                   ),
                 ),
@@ -391,7 +397,7 @@ class _MentionComponentState extends State<_MentionComponent>
                           : AppColors.lightTextPrimary;
                   final textColor =
                       shouldUsePrimaryColor
-                          ? AppColors.primary
+                          ? Theme.of(context).colorScheme.primary
                           : defaultTextColor;
                   return AnimatedDefaultTextStyle(
                     duration: const Duration(milliseconds: 200),

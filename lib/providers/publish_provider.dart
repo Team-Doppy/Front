@@ -12,9 +12,11 @@ import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/main.dart' show navigatorKey;
 import 'package:doppy/pages/components/retry_cancel_bottom_sheet.dart';
 import 'package:doppy/pages/components/share_post_overlay.dart';
-import 'package:doppy/pages/screens/home_screen.dart';
+import 'package:doppy/providers/military_grid_provider.dart';
 import 'package:doppy/pages/screens/splash_screen.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/profile_feed_sections_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -37,6 +39,13 @@ class PublishRequest {
   final int? nthWeek;
   final String? sessionKey;
   final bool isOnboardingMode; // 🎯 온보딩 모드 여부
+  final String?
+  lifePhase; // 🎯 작성 모드 (MILITARY_LIFE, LEAVE_OR_PRE_ENLISTMENT, GENERAL, LETTER, PROMISE)
+  final int? recipientUserId; // ✅ 편지 모드: 수신인 user id (API 명세)
+  final String? recipientUsername; // ✅ 편지 모드: 수신인 username (클라에서 확실히 보장되는 값)
+  final String?
+  writingType; // ✅ 글 타입 (LETTER, PROMISE, GENERAL, MILITARY_LIFE, LEAVE_OR_PRE_ENLISTMENT)
+  final String? phase; // ✅ 복무 단계 코드 (preEnlistment, training, private, etc.)
 
   const PublishRequest({
     required this.exportedBase,
@@ -47,6 +56,11 @@ class PublishRequest {
     required this.nthWeek,
     required this.sessionKey,
     this.isOnboardingMode = false, // 🎯 기본값은 false
+    this.lifePhase, // 🎯 기본값은 null
+    this.recipientUserId, // ✅ 편지 모드일 때만 설정
+    this.recipientUsername, // ✅ 편지 모드일 때만 설정
+    this.writingType, // ✅ Promise 모드일 때 PROMISE, 편지 모드일 때 LETTER (선택적)
+    this.phase, // ✅ MILITARY_LIFE일 때 필수
   });
 }
 
@@ -188,6 +202,11 @@ class PublishProvider extends ChangeNotifier {
         friendsOnly: request.accessLevel == SystemCategoryKeys.friends,
         year: request.year,
         nthWeek: request.nthWeek,
+        lifePhase: request.lifePhase, // 🎯 작성 모드 전달
+        recipientUserId: request.recipientUserId, // ✅ 편지 모드: 수신인 user id
+        recipientUsername: request.recipientUsername, // ✅ 편지 모드: 수신인 username
+        writingType: request.writingType, // ✅ 글 타입 (PROMISE, LETTER 등)
+        phase: request.phase, // ✅ 복무 단계 코드
       );
 
       _log('☁️ 업로드 중…');
@@ -205,9 +224,12 @@ class PublishProvider extends ChangeNotifier {
       _log('✅ 발행 완료: id=${uploadResult['id'] ?? ''}');
       notifyListeners();
 
-      // ✅ 홈 그리드/인삿말 즉시 갱신
+      // ✅ 홈 그리드 즉시 갱신
       try {
-        HomeScreenState.globalKey.currentState?.notifyPostPublished();
+        final ctx = navigatorKey.currentContext;
+        if (ctx != null) {
+          ctx.read<MilitaryGridProvider>().reloadGrid();
+        }
       } catch (_) {}
 
       // 🎯 발행 성공 후 임시저장 삭제 및 편집 디스크 캐시 삭제 (백그라운드)
@@ -292,14 +314,24 @@ class PublishProvider extends ChangeNotifier {
       final ctx = navigatorKey.currentContext;
       if (ctx == null) return;
 
-      final feedProvider = ctx.read<MyProfileFeedProvider>();
-      final newPostId = uploadResult['id']?.toString();
+      // ✅ 포스트 작성 시 "전체 & 모든 포스트 모드"로 재로드
+      // ProfileFeedSectionsProvider를 통해 sections 재로드 (필터 리셋)
+      try {
+        final sectionsProvider = ctx.read<ProfileFeedSectionsProvider>();
+        final userProvider = ctx.read<UserProvider>();
+        final currentUser = userProvider.currentUser;
+        final username = currentUser?.username;
 
-      await feedProvider.refresh().catchError((_) {});
-      if (newPostId != null && newPostId.isNotEmpty) {
-        await feedProvider.moveNewPostToFront(newPostId).catchError((_) {});
+        if (username != null && username.isNotEmpty) {
+          await sectionsProvider.loadSections(username: username, force: true);
+          _log('🔄 프로필 피드 sections 재로드 완료 (전체 모드)');
+        }
+      } catch (e) {
+        _log('⚠️ sections 재로드 실패(무시): $e');
+        // 폴백: 기존 방식으로 피드만 새로고침
+        final feedProvider = ctx.read<MyProfileFeedProvider>();
+        await feedProvider.refresh().catchError((_) {});
       }
-      _log('🔄 내 피드 갱신 완료');
     } catch (e) {
       _log('⚠️ 피드 갱신 실패(무시): $e');
     }

@@ -4,7 +4,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:doppy/utils/text_bold_utils.dart';
 import 'package:doppy/utils/week_utils.dart';
 import 'package:doppy/editor/postwrite_screen.dart';
-import 'package:doppy/utils/error_handler.dart';
 
 /// 연도/월/주차 선택 화면 (CupertinoPicker 스타일)
 class DatePickerScreen extends StatefulWidget {
@@ -13,7 +12,6 @@ class DatePickerScreen extends StatefulWidget {
   final int? initialWeek;
   final bool isEditting; // 수정 모드인지 여부
   final Function(int year, int yearOfWeek)? onDateSelected; // 날짜 선택 콜백
-  final DateTime? createdAt; // ✅ 가입일 (7일 제한 검증용)
 
   const DatePickerScreen({
     super.key,
@@ -22,7 +20,6 @@ class DatePickerScreen extends StatefulWidget {
     this.initialWeek,
     this.isEditting = false,
     this.onDateSelected,
-    this.createdAt,
   });
 
   @override
@@ -126,50 +123,6 @@ class _DatePickerScreenState extends State<DatePickerScreen> {
   }
 
   void _handleComplete() {
-    // ✅ createdAt 검증: 7일 제한 확인
-    if (widget.createdAt != null) {
-      final now = DateTime.now();
-      final createdAtLocal = widget.createdAt!.toLocal();
-      final daysSinceSignup = now.difference(createdAtLocal).inDays;
-
-      // 선택한 주차의 시작일
-      final weekStartDate = WeekUtils.getWeekStartDateOfMonth(
-        _selectedYear,
-        _selectedMonth,
-        _selectedWeek,
-      );
-      final weekStartDateLocal = weekStartDate.toLocal();
-
-      // 가입일로부터 7일 이내인 경우
-      if (daysSinceSignup <= 7) {
-        // 과거 아무 때나 포스팅 가능 (가입일 이전 포함, 현재 이전만)
-        // 현재 이후는 선택 불가 (미래 날짜)
-        if (weekStartDateLocal.isAfter(now)) {
-          ErrorHandler.showInfo(
-            context,
-            context.tr('signup_date_within_7_days_only'),
-            duration: const Duration(seconds: 2),
-          );
-          return;
-        }
-        // 가입일 이전도 선택 가능하므로 추가 검증 없음
-      } else {
-        // 가입일로부터 7일이 넘었으면: 이번 주에만 포스팅 가능
-        final currentYear = WeekUtils.getCurrentYear();
-        final currentWeek = WeekUtils.getCurrentWeekNumber();
-        final selectedYearOfWeek = WeekUtils.getWeekNumber(weekStartDateLocal);
-
-        if (_selectedYear != currentYear || selectedYearOfWeek != currentWeek) {
-          ErrorHandler.showInfo(
-            context,
-            context.tr('past_record_period_expired'),
-            duration: const Duration(seconds: 2),
-          );
-          return;
-        }
-      }
-    }
-
     // 선택한 year, month, week를 기반으로 yearOfWeek 계산
     // 해당 연도의 해당 주차에 해당하는 주의 시작일 계산
     final weekStartDate = WeekUtils.getWeekStartDateOfMonth(

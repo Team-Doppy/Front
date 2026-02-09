@@ -1,7 +1,7 @@
+import 'package:doppy/data/models/access_level.dart';
 import 'package:flutter/material.dart';
 import '../../data/services/blog_service.dart';
 import '../../data/services/auth_service.dart';
-import '../../data/models/post_data.dart';
 import '../../data/models/system_category_keys.dart';
 import '../../utils/network_utils.dart';
 
@@ -39,8 +39,14 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   BaseFilter _selectedBase = BaseFilter.all;
   bool _isReadOnly = false;
 
+  // 서버 필터 상태 (리뉴얼 명세: phase/lifePhase는 서버에서 필터링)
+  String? _serverPhase;
+  String? _serverLifePhase;
+  String? _serverAccessLevel;
+
   // 페이지네이션 (공통 설정)
-  int _pageSize = 20;
+  // 명세: 전용 탭은 size=100 권장
+  int _pageSize = 100;
   int get pageSize => _pageSize;
 
   // 추상 getters - 자식 클래스에서 구현
@@ -58,6 +64,9 @@ abstract class BaseFeedProvider extends ChangeNotifier {
   BaseFilter get selectedBase => _selectedBase;
   bool get isReadOnly => _isReadOnly;
   NetworkError? get networkError => _networkError;
+  String? get serverPhase => _serverPhase;
+  String? get serverLifePhase => _serverLifePhase;
+  String? get serverAccessLevel => _serverAccessLevel;
 
   /// 데이터 클리어
   void clearData() {
@@ -75,6 +84,35 @@ abstract class BaseFeedProvider extends ChangeNotifier {
 
   /// 새로고침
   Future<void> refresh() async => loadInitial(force: true);
+
+  /// 서버 필터 설정 (phase/lifePhase)
+  /// - phase: preEnlistment, training, private, ...
+  /// - lifePhase: LEAVE_OR_PRE_ENLISTMENT, MILITARY_LIFE, SUPPORT
+  @protected
+  void setServerFilter({
+    String? phase,
+    String? lifePhase,
+    String? accessLevel,
+  }) {
+    _serverPhase = (phase != null && phase.isNotEmpty) ? phase : null;
+    _serverLifePhase =
+        (lifePhase != null && lifePhase.isNotEmpty) ? lifePhase : null;
+    _serverAccessLevel =
+        (accessLevel != null && accessLevel.isNotEmpty) ? accessLevel : null;
+  }
+
+  /// UI에서 사용하는 공개 API
+  void configureServerFilter({
+    String? phase,
+    String? lifePhase,
+    String? accessLevel,
+  }) {
+    setServerFilter(
+      phase: phase,
+      lifePhase: lifePhase,
+      accessLevel: accessLevel,
+    );
+  }
 
   /// 네트워크 에러 설정
   void setNetworkError(NetworkError? error) {

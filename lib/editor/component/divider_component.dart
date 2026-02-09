@@ -4,13 +4,21 @@ import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/utils/animated_drop_line.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
+import 'package:doppy/editor/service/node_component_service.dart';
+import 'package:provider/provider.dart';
 
 // 언급 블록 노드
 class DividerNode extends BlockNode {
-  DividerNode({required this.id});
+  DividerNode({required this.id, Map<String, dynamic>? metadata})
+    : _metadata = metadata ?? {};
 
   @override
   final String id;
+
+  final Map<String, dynamic> _metadata;
+
+  @override
+  Map<String, dynamic> get metadata => _metadata;
 
   @override
   bool get isDeletable => true;
@@ -44,25 +52,35 @@ class DividerNode extends BlockNode {
 
   @override
   DocumentNode copyAndReplaceMetadata(Map<String, dynamic> newMetadata) =>
-      DividerNode(id: id);
+      DividerNode(id: id, metadata: newMetadata);
 
   @override
   String? copyContent(NodeSelection selection) => null;
 
   @override
   DocumentNode copyWithAddedMetadata(Map<String, dynamic> newProperties) =>
-      DividerNode(id: id);
+      DividerNode(id: id, metadata: {..._metadata, ...newProperties});
 }
 
 class DividerComponentViewModel extends SingleColumnLayoutComponentViewModel {
-  DividerComponentViewModel({required super.nodeId, required this.mainAxis})
-    : super(padding: EdgeInsets.zero, createdAt: DateTime.now());
+  DividerComponentViewModel({
+    required super.nodeId,
+    required this.mainAxis,
+    this.templateText,
+    this.textAlign,
+  }) : super(padding: EdgeInsets.zero, createdAt: DateTime.now());
 
   final MainAxisAlignment mainAxis;
+  final String? templateText;
+  final TextAlign? textAlign;
 
   @override
-  SingleColumnLayoutComponentViewModel copy() =>
-      DividerComponentViewModel(nodeId: nodeId, mainAxis: mainAxis);
+  SingleColumnLayoutComponentViewModel copy() => DividerComponentViewModel(
+    nodeId: nodeId,
+    mainAxis: mainAxis,
+    templateText: templateText,
+    textAlign: textAlign,
+  );
 }
 
 class DividerComponentBuilder implements ComponentBuilder {
@@ -85,6 +103,8 @@ class DividerComponentBuilder implements ComponentBuilder {
         componentKey: context.componentKey,
         nodeId: viewModel.nodeId,
         mainAxis: viewModel.mainAxis,
+        templateText: viewModel.templateText,
+        textAlign: viewModel.textAlign,
         dragService: dragService,
         editor: editor,
         focusNode: focusNode,
@@ -99,10 +119,58 @@ class DividerComponentBuilder implements ComponentBuilder {
     DocumentNode node,
   ) {
     if (node is DividerNode) {
+      // ✅ 템플릿 텍스트가 있으면 metadata에서 읽기
+      final templateText = node.metadata['templateText'] as String?;
+      // ✅ 텍스트 정렬 읽기 (템플릿 노드일 때만 적용)
+      TextAlign? textAlign;
+      if (templateText != null) {
+        // 1) node 자체 메타 우선
+        String? alignStr = node.metadata['textAlign'] as String?;
+
+        // 2) 없으면 주변 ParagraphNode의 정렬을 승계 (정렬 버튼이 Paragraph만 갱신하는 케이스 포함)
+        if (alignStr == null || alignStr.isEmpty) {
+          final int idx = document.getNodeIndexById(node.id);
+          if (idx != -1) {
+            // 이전 문단 우선
+            for (int i = idx - 1; i >= 0; i--) {
+              final prev = document.getNodeAt(i);
+              if (prev is ParagraphNode) {
+                alignStr = prev.metadata['textAlign'] as String?;
+                break;
+              }
+            }
+            // 다음 문단 보조
+            if (alignStr == null || alignStr.isEmpty) {
+              for (int i = idx + 1; i < document.length; i++) {
+                final next = document.getNodeAt(i);
+                if (next is ParagraphNode) {
+                  alignStr = next.metadata['textAlign'] as String?;
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // 3) 최종 파싱 (기본값 center)
+        switch (alignStr) {
+          case 'left':
+            textAlign = TextAlign.left;
+            break;
+          case 'right':
+            textAlign = TextAlign.right;
+            break;
+          case 'center':
+          default:
+            textAlign = TextAlign.center;
+        }
+      }
       // ✅ 디바이더는 항상 가운데 정렬만 유지
       return DividerComponentViewModel(
         nodeId: node.id,
         mainAxis: MainAxisAlignment.center,
+        templateText: templateText,
+        textAlign: textAlign,
       );
     }
     return null;
@@ -114,6 +182,8 @@ class _DividerComponent extends StatefulWidget {
     required GlobalKey componentKey,
     required this.nodeId,
     required this.mainAxis,
+    this.templateText,
+    this.textAlign,
     this.dragService,
     this.editor,
     this.focusNode,
@@ -123,6 +193,8 @@ class _DividerComponent extends StatefulWidget {
   final GlobalKey _componentKey;
   final String nodeId;
   final MainAxisAlignment mainAxis;
+  final String? templateText;
+  final TextAlign? textAlign;
   final DragService? dragService;
   final Editor? editor;
   final FocusNode? focusNode;
@@ -137,28 +209,64 @@ class _DividerComponentState extends State<_DividerComponent>
 
   @override
   Widget build(BuildContext context) {
-    final pillContent = Container(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Container(
-              width: 150,
-              height: 1.5,
-              color: AppColors.darkTextSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
+    // ✅ 템플릿 텍스트가 있으면 텍스트 표시, 없으면 구분선 표시
+    final Widget content;
+    if (widget.templateText != null) {
+      // ✅ 선택 상태 확인
+      final isSelected = context.select<NodeComponentService, bool>(
+        (service) => service.selectedImageId == widget.nodeId,
+      );
 
-    final aligned = Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [pillContent],
-    );
+      final colorScheme = Theme.of(context).colorScheme;
+      // ✅ 선택되었을 때는 primary 색상, 아니면 onSurface with opacity
+      final textColor =
+          isSelected
+              ? colorScheme.primary
+              : colorScheme.onSurface.withOpacity(0.6);
+
+      // ✅ 텍스트 정렬 적용 (템플릿 노드일 때만)
+      final textAlign = widget.textAlign ?? TextAlign.left;
+      content = Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+        child: Text(
+          widget.templateText!,
+          textAlign: textAlign,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w400,
+            color: textColor,
+            height: 1.5,
+          ),
+        ),
+      );
+    } else {
+      final pillContent = Container(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Container(
+                width: 150,
+                height: 1.5,
+                color: AppColors.darkTextSecondary,
+              ),
+            ),
+          ],
+        ),
+      );
+      content = pillContent;
+    }
+
+    final aligned =
+        widget.templateText != null
+            ? content
+            : Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [content],
+            );
 
     final tappable =
         widget.editor == null
@@ -183,7 +291,10 @@ class _DividerComponentState extends State<_DividerComponent>
                 left: 0,
                 right: 0,
                 child: AnimatedDropLine(
-                  child: Container(height: 3, color: AppColors.primary),
+                  child: Container(
+                    height: 3,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
               ),
             if (_shouldShowBottomDropLine())
@@ -192,7 +303,10 @@ class _DividerComponentState extends State<_DividerComponent>
                 left: 0,
                 right: 0,
                 child: AnimatedDropLine(
-                  child: Container(height: 3, color: AppColors.primary),
+                  child: Container(
+                    height: 3,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
               ),
           ],
@@ -205,7 +319,46 @@ class _DividerComponentState extends State<_DividerComponent>
     final editor = widget.editor;
     if (editor == null) return;
 
-    // ✅ Divider를 탭하면 "실제 caret"은 다음 문단(다운스트림)으로 이동시킨다.
+    // ✅ 템플릿 노드일 때는 특수 노드처럼 선택 처리
+    if (widget.templateText != null && widget.dragService != null) {
+      try {
+        final nodeService = context.read<NodeComponentService>();
+        final currentSelected = nodeService.selectedImageId;
+
+        if (currentSelected == widget.nodeId) {
+          // 같은 노드 재탭: 선택 해제
+          debugPrint('[DividerComponent] 템플릿 노드 선택 해제');
+          nodeService.selectNode(null);
+          widget.dragService?.invalidateNodeRectCache();
+        } else {
+          // 다른 노드 선택
+          debugPrint('[DividerComponent] 템플릿 노드 선택: ${widget.nodeId}');
+          nodeService.selectNode(widget.nodeId);
+          widget.dragService?.invalidateNodeRectCache();
+
+          // ✅ 선택 상태를 유지하기 위해 커서를 downstream으로 이동
+          widget.focusNode?.requestFocus();
+          editor.execute([
+            ChangeSelectionRequest(
+              DocumentSelection.collapsed(
+                position: DocumentPosition(
+                  nodeId: widget.nodeId,
+                  nodePosition:
+                      const UpstreamDownstreamNodePosition.downstream(),
+                ),
+              ),
+              SelectionChangeType.placeCaret,
+              SelectionReason.userInteraction,
+            ),
+          ]);
+        }
+        return;
+      } catch (e) {
+        debugPrint('[DividerComponent] 노드 선택 실패: $e');
+      }
+    }
+
+    // ✅ 일반 Divider를 탭하면 "실제 caret"은 다음 문단(다운스트림)으로 이동시킨다.
     // - 이러면 바로 Backspace로 divider를 지우는 UX를 만들기 쉽다.
     widget.focusNode?.requestFocus();
 

@@ -305,7 +305,10 @@ class PostReaderHeader extends StatelessWidget {
                 ),
                 const SizedBox(width: 5),
                 Text(
-                  postAuthor,
+                  // ✅ alias가 있으면 alias를 표시, 없으면 username 표시
+                  (exportedRoot['authorAlias']?.toString() ?? '').isNotEmpty
+                      ? exportedRoot['authorAlias'].toString()
+                      : postAuthor,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: nameStyle,

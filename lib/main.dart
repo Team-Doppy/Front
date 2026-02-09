@@ -1,6 +1,6 @@
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/data/models/friend_model.dart';
-import 'package:doppy/editor/postwrite_screen.dart';
+import 'package:doppy/pages/screens/post_mode_selection_screen.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
 import 'package:doppy/pages/screens/search_screen.dart';
@@ -24,10 +24,11 @@ import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/locale_provider.dart';
 // import 'package:doppy/providers/feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
-import 'package:doppy/providers/weekly_contribution_provider.dart';
-import 'package:doppy/providers/home_recommendation_provider.dart';
+import 'package:doppy/providers/feed_provider/profile_feed_sections_provider.dart';
+import 'package:doppy/providers/military_grid_provider.dart';
 import 'package:doppy/providers/search_provider.dart';
 import 'package:doppy/providers/publish_provider.dart';
+import 'package:doppy/providers/letter_provider.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
@@ -46,7 +47,10 @@ import 'utils/deep_link_ingress.dart';
 import 'utils/deep_link_store.dart';
 import 'data/services/deep_link_service.dart';
 import 'package:doppy/image/media_picker_screen.dart';
-import 'package:doppy/pages/components/coachmark/weekly_streak_coachmark_overlay.dart';
+import 'package:doppy/data/models/military_grid_model.dart';
+import 'package:doppy/data/models/military_info_model.dart';
+import 'package:doppy/data/models/girlfriend_request_model.dart';
+import 'package:doppy/l10n/military_grid_messages.dart';
 
 // Global NavigatorKey for accessing context from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -299,6 +303,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => FriendProvider()),
+        ChangeNotifierProvider(create: (_) => LetterProvider()),
         ChangeNotifierProvider(create: (_) => UserProvider()),
         ChangeNotifierProvider(
           create: (_) => OtherProfileFeedProvider(),
@@ -306,12 +311,10 @@ Future<void> main() async {
         ChangeNotifierProvider(
           create: (_) => MyProfileFeedProvider(),
         ), // 내 피드용 (싱글톤 인스턴스 사용)
+        ChangeNotifierProvider(create: (_) => ProfileFeedSectionsProvider()),
         ChangeNotifierProvider(
-          create: (_) => WeeklyContributionProvider(),
-        ), // 주차 기여도 관리
-        ChangeNotifierProvider(
-          create: (_) => HomeRecommendationProvider(),
-        ), // 홈용 추천 카드 관리
+          create: (_) => MilitaryGridProvider(),
+        ), // Military Grid 관리 (새로운 시스템)
         ChangeNotifierProvider(create: (_) => CategoryOverlayProvider()),
         ChangeNotifierProvider(create: (_) => PostDragDropService()),
 
@@ -416,7 +419,7 @@ class MyApp extends StatelessWidget {
             routes: {
               '/splash': (_) => const SplashScreen(),
               '/login': (_) => const LoginScreen(),
-              '/post-write': (_) => PostwriteScreen(isEditingMode: false),
+              '/post-write': (_) => const PostModeSelectionScreen(),
               '/email-verify':
                   (_) => const JoinScreen(emailVerificationOnly: true),
             },
@@ -539,6 +542,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     if (!mounted || _isCheckingRequests) return;
 
     final friendProvider = context.read<FriendProvider>();
+    final userProvider = context.read<UserProvider>();
 
     // 🎯 받은 요청 데이터가 아직 로드되지 않았을 수 있으므로, 먼저 로드 시도
     // 캐시가 있으면 즉시 반환되고, 없으면 서버에서 로드
@@ -550,8 +554,74 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
 
     if (!mounted) return;
 
-    final receivedRequests = friendProvider.receivedRequests;
-    debugPrint('[RootShell] 받은 요청 개수: ${receivedRequests.length}');
+    // 🎯 곰신 요청 필터링 (곰신이 보낸 커플 요청은 바텀시트에서 제외)
+    // 🎯 이미 짝궁인 사용자 제외 (곰신 요청 수락 완료)
+    final currentUser = userProvider.currentUser;
+    final connectedGirlfriendUsername =
+        currentUser?.connectedToMeByUser?.username;
+    final girlfriendRequest = currentUser?.girlfriendRequest;
+
+    // ✅ 디버그: 받은 요청 전체 로그
+    debugPrint(
+      '[RootShell] 받은 요청 전체 개수: ${friendProvider.receivedRequests.length}',
+    );
+    debugPrint(
+      '[RootShell] 현재 사용자 girlfriendRequest: ${girlfriendRequest?.requester.username}, status=${girlfriendRequest?.status}',
+    );
+    for (final request in friendProvider.receivedRequests) {
+      debugPrint(
+        '[RootShell] 요청: username=${request.username}, role=${request.role}, roleType=${request.role?.runtimeType}',
+      );
+    }
+
+    final receivedRequests =
+        friendProvider.receivedRequests.where((request) {
+          // 곰신 요청이고 이미 짝궁인 경우 제외
+          if (connectedGirlfriendUsername != null &&
+              request.username == connectedGirlfriendUsername) {
+            debugPrint('[RootShell] 필터링: 이미 짝궁인 사용자 제외 - ${request.username}');
+            return false;
+          }
+
+          // ✅ 곰신 요청(커플 요청)은 바텀시트에서 제외
+          // - 곰신이 보낸 요청은 이미 홈 화면의 "곰신 수락하기" CTA로 처리됨
+          // - 일반 친구 요청만 바텀시트에 표시
+          // 방법 1: role 필드 확인 (서버에서 제공하는 경우)
+          bool isCoupleRequest = false;
+          if (request.role != null) {
+            final userType = UserTypeExtension.fromServerRole(request.role);
+            debugPrint(
+              '[RootShell] 요청 분석: username=${request.username}, role=${request.role}, userType=$userType',
+            );
+            if (userType == UserType.girlfriend) {
+              isCoupleRequest = true;
+            }
+          }
+
+          // 방법 2: girlfriendRequest 필드 확인 (서버에서 role이 없을 때 대체)
+          if (!isCoupleRequest && girlfriendRequest != null) {
+            if (girlfriendRequest.requester.username == request.username &&
+                girlfriendRequest.status == GirlfriendRequestStatus.pending) {
+              debugPrint(
+                '[RootShell] 요청 분석: username=${request.username}, girlfriendRequest로 곰신 요청 확인',
+              );
+              isCoupleRequest = true;
+            }
+          }
+
+          if (isCoupleRequest) {
+            debugPrint('[RootShell] 필터링: 곰신 요청 제외 - ${request.username}');
+            return false; // 곰신 요청은 제외
+          } else {
+            debugPrint(
+              '[RootShell] 요청 분석: username=${request.username}, 일반 친구 요청',
+            );
+          }
+
+          return true;
+        }).toList();
+
+    debugPrint('[RootShell] 필터링 후 받은 요청 개수: ${receivedRequests.length}');
 
     // 받은 요청이 있으면 리스트로 한 번에 표시
     if (receivedRequests.isNotEmpty) {
@@ -583,10 +653,77 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
     if (!mounted || _isCheckingRequests) return;
 
     final friendProvider = context.read<FriendProvider>();
-    final receivedRequests = friendProvider.receivedRequests;
+    final userProvider = context.read<UserProvider>();
+
+    // 🎯 곰신 요청 필터링 (곰신이 보낸 커플 요청은 바텀시트에서 제외)
+    // 🎯 이미 짝궁인 사용자 제외 (곰신 요청 수락 완료)
+    final currentUser = userProvider.currentUser;
+    final connectedGirlfriendUsername =
+        currentUser?.connectedToMeByUser?.username;
+    final girlfriendRequest = currentUser?.girlfriendRequest;
+
+    // ✅ 디버그: 받은 요청 전체 로그
+    debugPrint(
+      '[RootShell] FriendProvider 변경 - 받은 요청 전체 개수: ${friendProvider.receivedRequests.length}',
+    );
+    debugPrint(
+      '[RootShell] 현재 사용자 girlfriendRequest: ${girlfriendRequest?.requester.username}, status=${girlfriendRequest?.status}',
+    );
+    for (final request in friendProvider.receivedRequests) {
+      debugPrint(
+        '[RootShell] 요청: username=${request.username}, role=${request.role}, roleType=${request.role?.runtimeType}',
+      );
+    }
+
+    final receivedRequests =
+        friendProvider.receivedRequests.where((request) {
+          // 곰신 요청이고 이미 짝궁인 경우 제외
+          if (connectedGirlfriendUsername != null &&
+              request.username == connectedGirlfriendUsername) {
+            debugPrint('[RootShell] 필터링: 이미 짝궁인 사용자 제외 - ${request.username}');
+            return false;
+          }
+
+          // ✅ 곰신 요청(커플 요청)은 바텀시트에서 제외
+          // - 곰신이 보낸 요청은 이미 홈 화면의 "곰신 수락하기" CTA로 처리됨
+          // - 일반 친구 요청만 바텀시트에 표시
+          // 방법 1: role 필드 확인 (서버에서 제공하는 경우)
+          bool isCoupleRequest = false;
+          if (request.role != null) {
+            final userType = UserTypeExtension.fromServerRole(request.role);
+            debugPrint(
+              '[RootShell] 요청 분석: username=${request.username}, role=${request.role}, userType=$userType',
+            );
+            if (userType == UserType.girlfriend) {
+              isCoupleRequest = true;
+            }
+          }
+
+          // 방법 2: girlfriendRequest 필드 확인 (서버에서 role이 없을 때 대체)
+          if (!isCoupleRequest && girlfriendRequest != null) {
+            if (girlfriendRequest.requester.username == request.username &&
+                girlfriendRequest.status == GirlfriendRequestStatus.pending) {
+              debugPrint(
+                '[RootShell] 요청 분석: username=${request.username}, girlfriendRequest로 곰신 요청 확인',
+              );
+              isCoupleRequest = true;
+            }
+          }
+
+          if (isCoupleRequest) {
+            debugPrint('[RootShell] 필터링: 곰신 요청 제외 - ${request.username}');
+            return false; // 곰신 요청은 제외
+          } else {
+            debugPrint(
+              '[RootShell] 요청 분석: username=${request.username}, 일반 친구 요청',
+            );
+          }
+
+          return true;
+        }).toList();
 
     debugPrint(
-      '[RootShell] FriendProvider 변경 - 받은 요청 개수: ${receivedRequests.length}',
+      '[RootShell] FriendProvider 변경 - 필터링 후 받은 요청 개수: ${receivedRequests.length}',
     );
 
     if (receivedRequests.isNotEmpty) {
@@ -784,13 +921,13 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   void _handleTabChange(int index) {
     if (!mounted) return;
 
-    // 글쓰기 탭(2)은 글쓰기 화면 열기
+    // 글쓰기 탭(2)은 모드 선택 화면 열기
     if (index == 2) {
       Navigator.of(context).push(
         PageRouteBuilder(
           pageBuilder:
               (context, animation, secondaryAnimation) =>
-                  PostwriteScreen(isEditingMode: false),
+                  const PostModeSelectionScreen(),
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
         ),
@@ -836,7 +973,7 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
         PageRouteBuilder(
           pageBuilder:
               (context, animation, secondaryAnimation) =>
-                  PostwriteScreen(isEditingMode: false),
+                  const PostModeSelectionScreen(),
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
         ),
@@ -893,13 +1030,13 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
                   isSearching: context.watch<SearchProvider>().isSearchActive,
                 ),
               ),
-              // 🎯 블러 오버레이 + 연도 선택 UI (페이드 애니메이션)
-              Consumer<WeeklyContributionProvider>(
-                builder: (context, provider, _) {
-                  // ✅ 연도 피커 오버레이 (블러 + opacity 0.6)
-                  if (provider.showBlurOverlay &&
-                      provider.yearPickerYears != null &&
-                      provider.yearPickerSelectedYear != null) {
+              // 🎯 블러 오버레이 + Phase 선택 UI (페이드 애니메이션)
+              Consumer2<MilitaryGridProvider, UserProvider>(
+                builder: (context, gridProvider, userProvider, _) {
+                  // ✅ Phase 선택 오버레이 (모든 유저 타입에서 표시: 군인/입대예정/곰신)
+                  if (gridProvider.showBlurOverlay &&
+                      gridProvider.phasePickerPhases != null &&
+                      gridProvider.phasePickerSelectedPhase != null) {
                     return Positioned.fill(
                       child: AnimatedOpacity(
                         opacity: 1.0,
@@ -907,67 +1044,19 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
                         curve: Curves.easeInOut,
                         child: Stack(
                           children: [
-                            // ✅ 연도 피커용: 블러 + opacity 0.7
+                            // ✅ Phase 피커용: 블러 + opacity 0.7
                             BackdropFilter(
                               filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
                               child: Container(
                                 color: Colors.black.withOpacity(0.8),
                               ),
                             ),
-                            _YearPickerOverlay(
-                              years: provider.yearPickerYears!,
-                              selectedYear: provider.yearPickerSelectedYear!,
-                              onConfirm: provider.yearPickerOnConfirm,
-                              onCancel: () => provider.closeYearPicker(),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }
-
-                  // ✅ 코치마크 오버레이 (블러 없음 + opacity 0.9)
-                  if (provider.showCoachmarkOverlay &&
-                      provider.currentCoachmarkStep != null) {
-                    return Positioned.fill(
-                      child: AnimatedOpacity(
-                        opacity: 1.0,
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeInOut,
-                        child: Stack(
-                          children: [
-                            // ✅ 코치마크용: 블러 없음 + opacity 0.9
-                            Container(color: Colors.black.withOpacity(0.9)),
-                            WeeklyStreakCoachmarkOverlay(
-                              targetKey: provider.getWeekCellKey(
-                                provider.currentCoachmarkStep!.year,
-                                provider.currentCoachmarkStep!.weekNumber,
-                              ),
-                              allCellKeys: provider.getWeekCellKeysForYear(
-                                provider.currentCoachmarkStep!.year,
-                              ),
-                              contributions: provider.getContributions(
-                                provider.currentCoachmarkStep!.year,
-                              ),
-                              year: provider.currentCoachmarkStep!.year,
-                              kind: provider.currentCoachmarkStep!.kind.name,
-                              message: provider.currentCoachmarkStep!.message,
-                              colorSubstrings:
-                                  provider
-                                      .currentCoachmarkStep!
-                                      .colorSubstrings,
-                              progressText:
-                                  '${provider.coachmarkStepIndex + 1}/${provider.coachmarkTotalSteps}',
-                              primaryText:
-                                  (provider.coachmarkStepIndex + 1 ==
-                                          provider.coachmarkTotalSteps)
-                                      ? '완료'
-                                      : '다음',
-                              onNext: provider.nextCoachmarkStep,
-                              onPrevious:
-                                  provider
-                                      .previousCoachmarkStep, // ✅ 뒤로가기 함수 추가
-                              onClose: provider.closeCoachmark,
+                            _PhasePickerOverlay(
+                              phases: gridProvider.phasePickerPhases!,
+                              selectedPhase:
+                                  gridProvider.phasePickerSelectedPhase!,
+                              onConfirm: gridProvider.phasePickerOnConfirm,
+                              onCancel: () => gridProvider.closePhasePicker(),
                             ),
                           ],
                         ),
@@ -986,149 +1075,287 @@ class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   }
 }
 
-/// 연도 선택 오버레이 위젯 (블러 위에 표시, date_picker_screen 스타일)
-class _YearPickerOverlay extends StatefulWidget {
-  final List<int> years;
-  final int selectedYear;
-  final Function(int)? onConfirm;
+/// Phase 선택 오버레이 위젯 (블러 위에 표시)
+class _PhasePickerOverlay extends StatefulWidget {
+  final List<Phase> phases;
+  final Phase selectedPhase;
+  final Function(Phase)? onConfirm;
   final VoidCallback onCancel;
 
-  const _YearPickerOverlay({
-    required this.years,
-    required this.selectedYear,
+  const _PhasePickerOverlay({
+    required this.phases,
+    required this.selectedPhase,
     this.onConfirm,
     required this.onCancel,
   });
 
   @override
-  State<_YearPickerOverlay> createState() => _YearPickerOverlayState();
+  State<_PhasePickerOverlay> createState() => _PhasePickerOverlayState();
 }
 
-class _YearPickerOverlayState extends State<_YearPickerOverlay> {
-  late FixedExtentScrollController _yearController;
-  late int _tempSelectedYear;
+class _PhasePickerOverlayState extends State<_PhasePickerOverlay> {
+  late FixedExtentScrollController _phaseController;
+  late Phase _tempSelectedPhase;
+
+  // ✅ 모든 Phase 순서 정의
+  static const List<String> _allPhaseOrder = [
+    'preEnlistment', // 입대전
+    'training', // 훈련병
+    'private', // 이병
+    'privateFirstClass', // 일병
+    'corporal', // 상병
+    'sergeant', // 병장
+  ];
 
   @override
   void initState() {
     super.initState();
-    _tempSelectedYear = widget.selectedYear;
-    final initialIndex = widget.years
-        .indexOf(widget.selectedYear)
-        .clamp(0, widget.years.length - 1);
-    _yearController = FixedExtentScrollController(initialItem: initialIndex);
+    _tempSelectedPhase = widget.selectedPhase;
+    final allPhases = _buildAllPhases();
+    final initialIndex = allPhases
+        .indexWhere((p) => p.phase == widget.selectedPhase.phase)
+        .clamp(0, allPhases.length - 1);
+    _phaseController = FixedExtentScrollController(initialItem: initialIndex);
   }
 
   @override
   void dispose() {
-    _yearController.dispose();
+    _phaseController.dispose();
     super.dispose();
+  }
+
+  String _getPhaseLabel(String phaseCode, String labelKey) {
+    return MilitaryGridMessages.getPhaseLabel(labelKey) ?? phaseCode;
+  }
+
+  /// ✅ 사용자의 최대 활성 Phase 결정
+  String? _getMaxActivePhaseCode(UserProvider userProvider) {
+    final currentUser = userProvider.currentUser;
+
+    if (currentUser == null) {
+      debugPrint('[PhasePicker] currentUser가 null');
+      return null;
+    }
+
+    // ✅ 곰신의 경우 연결된 남친의 militaryInfo 사용
+    MilitaryInfo? militaryInfo;
+    if (currentUser.connectedMilitaryUser != null) {
+      // 곰신: 연결된 남친의 정보 사용
+      militaryInfo = currentUser.connectedMilitaryUser?.militaryInfo;
+      debugPrint(
+        '[PhasePicker] 곰신 모드: 연결된 남친 정보 사용 '
+        '(connectedMilitaryUser=${currentUser.connectedMilitaryUser?.username})',
+      );
+    } else {
+      // 군인/입대예정: 자신의 militaryInfo 사용
+      militaryInfo = currentUser.militaryInfo;
+    }
+
+    if (militaryInfo == null) {
+      debugPrint('[PhasePicker] militaryInfo가 null');
+      return null;
+    }
+
+    final userStatus = militaryInfo.status;
+    final currentRank = militaryInfo.currentRank;
+
+    debugPrint(
+      '[PhasePicker] 사용자 상태 확인: '
+      'currentUser=${currentUser.username}, '
+      'userStatus=$userStatus, '
+      'currentRank=$currentRank',
+    );
+
+    if (userStatus == MilitaryStatus.beforeEnlistment) {
+      debugPrint('[PhasePicker] 입대 전 상태 → preEnlistment 활성화');
+      return 'preEnlistment';
+    } else if (userStatus == MilitaryStatus.afterEnlistment &&
+        currentRank != null) {
+      String? phaseCode;
+      switch (currentRank) {
+        case MilitaryRank.trainee:
+          phaseCode = 'training';
+          break;
+        case MilitaryRank.private:
+          phaseCode = 'private';
+          break;
+        case MilitaryRank.privateFirstClass:
+          phaseCode = 'privateFirstClass';
+          break;
+        case MilitaryRank.corporal:
+          phaseCode = 'corporal';
+          break;
+        case MilitaryRank.sergeant:
+          phaseCode = 'sergeant';
+          break;
+      }
+      debugPrint('[PhasePicker] 입대 후 상태 → $phaseCode 활성화');
+      return phaseCode;
+    }
+
+    debugPrint('[PhasePicker] 활성 Phase 없음 (userStatus=$userStatus)');
+    return null;
+  }
+
+  /// ✅ 모든 Phase 목록 생성 (순서대로)
+  List<Phase> _buildAllPhases() {
+    final allPhases = <Phase>[];
+
+    for (final phaseCode in _allPhaseOrder) {
+      // ✅ 서버에서 받은 phase 중에서 찾기
+      final existingPhase = widget.phases.firstWhere(
+        (p) => p.phase == phaseCode,
+        orElse:
+            () => Phase(
+              phase: phaseCode,
+              labelKey: 'phase.$phaseCode',
+              slotCount: 0,
+              cells: const [],
+            ),
+      );
+      allPhases.add(existingPhase);
+    }
+
+    return allPhases;
+  }
+
+  /// ✅ Phase가 활성화되어 있는지 확인
+  bool _isPhaseActive(String phaseCode, String? maxActivePhaseCode) {
+    if (maxActivePhaseCode == null) return false;
+
+    final maxIndex = _allPhaseOrder.indexOf(maxActivePhaseCode);
+    final currentIndex = _allPhaseOrder.indexOf(phaseCode);
+
+    // ✅ 현재 단계 이하만 활성화
+    return currentIndex >= 0 && currentIndex <= maxIndex;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leading: IconButton(
-          icon: Icon(Icons.close, color: AppColors.lightSurface),
-          onPressed: widget.onCancel,
-        ),
-        actions: [
-          // 확인 버튼 (오른쪽 상단, 작게)
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: TextButton(
-              onPressed: () {
-                widget.onConfirm?.call(_tempSelectedYear);
-              },
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(
-                '적용',
-                style: LocaleTypography.style(
-                  context: context,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.lightSurface,
-                ),
-              ),
+    return Consumer<UserProvider>(
+      builder: (context, userProvider, _) {
+        final allPhases = _buildAllPhases();
+        final maxActivePhaseCode = _getMaxActivePhaseCode(userProvider);
+
+        debugPrint(
+          '[PhasePicker] 빌드: maxActivePhaseCode=$maxActivePhaseCode, '
+          'allPhases=${allPhases.map((p) => p.phase).toList()}',
+        );
+
+        return Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            automaticallyImplyLeading: false,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            leading: IconButton(
+              icon: Icon(Icons.close, color: AppColors.lightSurface),
+              onPressed: widget.onCancel,
             ),
-          ),
-        ],
-        centerTitle: false,
-      ),
-      body: Center(
-        child: Stack(
-          children: [
-            SizedBox(
-              height: 500,
-              child: ClipRect(
-                clipBehavior: Clip.hardEdge,
-                child: CupertinoPicker(
-                  scrollController: _yearController,
-                  itemExtent: 100,
-                  diameterRatio: 1.0,
-                  useMagnifier: false,
-                  selectionOverlay: Container(),
-                  offAxisFraction: 0.0,
-                  onSelectedItemChanged: (index) {
-                    setState(() {
-                      _tempSelectedYear = widget.years[index];
-                    });
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: TextButton(
+                  onPressed: () {
+                    // ✅ 활성화된 phase만 적용 가능
+                    if (_isPhaseActive(
+                      _tempSelectedPhase.phase,
+                      maxActivePhaseCode,
+                    )) {
+                      widget.onConfirm?.call(_tempSelectedPhase);
+                    }
                   },
-                  children:
-                      widget.years.map((year) {
-                        return Center(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            child: Text(
-                              '$year',
-                              style: LocaleTypography.style(
-                                context: context,
-                                fontSize: 34,
-                                fontWeight: FontWeight.w900,
-                                color: AppColors.lightSurface,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(
+                    '적용',
+                    style: LocaleTypography.style(
+                      context: context,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color:
+                          _isPhaseActive(
+                                _tempSelectedPhase.phase,
+                                maxActivePhaseCode,
+                              )
+                              ? AppColors.lightSurface
+                              : AppColors.lightSurface.withOpacity(0.4),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            centerTitle: false,
+          ),
+          body: Padding(
+            padding: const EdgeInsets.only(bottom: 100),
+            child: Center(
+              child: SizedBox(
+                height: 600,
+                child: ClipRect(
+                  clipBehavior: Clip.hardEdge,
+                  child: CupertinoPicker(
+                    scrollController: _phaseController,
+                    itemExtent: 80,
+                    diameterRatio: 1.0,
+                    useMagnifier: false,
+                    selectionOverlay: Container(),
+                    offAxisFraction: 0.0,
+                    onSelectedItemChanged: (index) {
+                      final phase = allPhases[index];
+                      // ✅ 모든 phase 선택 가능 (회귀 없음)
+                      setState(() {
+                        _tempSelectedPhase = phase;
+                      });
+                    },
+                    children:
+                        allPhases.map((phase) {
+                          final label = _getPhaseLabel(
+                            phase.phase,
+                            phase.labelKey,
+                          );
+                          final isActive = _isPhaseActive(
+                            phase.phase,
+                            maxActivePhaseCode,
+                          );
+
+                          return Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              child: Text(
+                                label,
+                                style: LocaleTypography.style(
+                                  context: context,
+                                  fontSize: 34,
+                                  fontWeight: FontWeight.w900,
+                                  color:
+                                      isActive
+                                          ? AppColors.lightSurface
+                                          : AppColors.lightSurface.withOpacity(
+                                            0.3,
+                                          ),
+                                ),
                               ),
                             ),
-                          ),
-                        );
-                      }).toList(),
-                ),
-              ),
-            ),
-            // 고정된 "년" 텍스트
-            Positioned(
-              right: 20,
-              top: 0,
-              bottom: 0,
-              child: Center(
-                child: Text(
-                  '년',
-                  style: LocaleTypography.style(
-                    context: context,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w400,
-                    color: AppColors.lightSurface.withOpacity(0.6),
+                          );
+                        }).toList(),
                   ),
                 ),
               ),
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

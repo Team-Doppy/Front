@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/component/template_component.dart';
 import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -20,7 +21,7 @@ import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'dart:convert';
 import 'package:doppy/utils/mentioned_usernames_extractor.dart';
-import 'package:doppy/utils/week_utils.dart';
+// import 'package:doppy/utils/week_utils.dart'; // 새로운 시스템에서는 phase 기반으로 변경
 
 /// 간단 JSON 인코더 유틸리티
 /// - 앱 내에서 공통으로 JSON 문자열을 뽑을 때만 사용
@@ -246,6 +247,11 @@ class PostExporter {
     for (int i = 0; i < doc.length; i++) {
       final node = doc.getNodeAt(i);
       if (node == null) continue;
+
+      // ✅ 템플릿 노드는 export에서 제외
+      if (node is TemplateNode) {
+        continue;
+      }
 
       if (node is ParagraphNode) {
         final meta = node.metadata;
@@ -1182,13 +1188,27 @@ class PostExporter {
     required String thumbnailImageUrl,
     required Map<String, dynamic> base,
     DateTime? createdAt,
+    // 🎯 새로운 공개 범위 파라미터 (우선순위 높음)
+    String? accessLevel,
+    // 하위 호환성을 위한 기존 boolean 파라미터들
     bool? privateOnly = false,
     bool? publicOnly = false,
     bool? friendsOnly = false,
     // 그룹 기능 제거로 인해 selectedGroupIds 파라미터 제거
     bool skipValidation = false, // 임시저장용 검증 생략 플래그
-    int? year, // 🎯 연도 (새 포스트 발행 시 필수)
-    int? nthWeek, // 🎯 주차 번호 (새 포스트 발행 시 필수)
+    // 🎯 그리드 셀 지정 (우선순위: phase+slotIndex > year+weekOfYear > postedAt > 생략)
+    String? phase, // 복무 단계 코드 (preEnlistment, training, private, etc.)
+    int? slotIndex, // 단계 내 N주차 (1-based)
+    int? year, // 연도 (2020 ~ 현재+1)
+    int? nthWeek, // 주차 (1-53)
+    DateTime? postedAt, // 작성 시점 날짜
+    // 🎯 작성 모드
+    String? lifePhase, // MILITARY_LIFE, LEAVE_OR_PRE_ENLISTMENT, SUPPORT
+    // ✅ API 명세: 편지 및 Promise 모드
+    int? recipientUserId, // 편지 모드: 수신인 user id
+    String? recipientUsername, // 편지 모드: 수신인 username (id를 못 구하는 케이스 대응)
+    String?
+    writingType, // 글 타입 (LETTER, PROMISE, GENERAL, MILITARY_LIFE, LEAVE_OR_PRE_ENLISTMENT)
   }) {
     // 1. 필수 필드 검증
     final String title = base['title']?.toString() ?? '';
@@ -1202,26 +1222,33 @@ class PostExporter {
     }
 
     // 2. 공개 범위에 따른 필수 필드 설정
-    String accessLevel;
+    String finalAccessLevel;
 
     // 디버그 로깅: 파라미터 확인
     debugPrint('===== [composeFinalPayload] 파라미터 =====');
+    debugPrint('accessLevel: $accessLevel');
     debugPrint('privateOnly: $privateOnly');
     debugPrint('publicOnly: $publicOnly');
     debugPrint('friendsOnly: $friendsOnly');
 
-    if (privateOnly == true) {
-      accessLevel = SystemCategoryKeys.private;
+    // 🎯 accessLevel 파라미터가 있으면 우선 사용
+    if (accessLevel != null && accessLevel.isNotEmpty) {
+      finalAccessLevel = accessLevel.toUpperCase();
+      debugPrint(
+        '[composeFinalPayload] → accessLevel 파라미터 사용: $finalAccessLevel',
+      );
+    } else if (privateOnly == true) {
+      finalAccessLevel = SystemCategoryKeys.private;
       debugPrint('[composeFinalPayload] → PRIVATE 선택됨');
     } else if (publicOnly == true) {
-      accessLevel = SystemCategoryKeys.public;
+      finalAccessLevel = SystemCategoryKeys.public;
       debugPrint('[composeFinalPayload] → PUBLIC 선택됨');
     } else if (friendsOnly == true) {
-      accessLevel = SystemCategoryKeys.friends;
+      finalAccessLevel = SystemCategoryKeys.friends;
       debugPrint('[composeFinalPayload] → FRIENDS 선택됨');
     } else {
-      // 그룹 기능 제거로 인해 기본값은 PUBLIC
-      accessLevel = SystemCategoryKeys.public;
+      // 기본값은 PUBLIC
+      finalAccessLevel = SystemCategoryKeys.public;
       debugPrint('[composeFinalPayload] → 기본값 PUBLIC 선택됨');
     }
 
@@ -1233,17 +1260,71 @@ class PostExporter {
     result.remove('sharedGroupIds');
 
     // 4. 공개 범위 필수 필드 추가
-    result['accessLevel'] = accessLevel;
+    result['accessLevel'] = finalAccessLevel;
 
     // 그룹 기능 제거로 인해 sharedGroupIds는 제거된 상태 유지
 
-    // 🎯 6. 연도와 주차 정보 추가 (새 포스트 발행 시 필수)
-    if (year != null && nthWeek != null) {
+    // 🎯 6. 그리드 셀 지정 정보 추가 (우선순위: phase+slotIndex > phase만 > year+weekOfYear > postedAt)
+    // ✅ API 명세: writingType === "MILITARY_LIFE"일 때 phase 필수
+    // 1. phase + slotIndex (최우선)
+    if (phase != null && slotIndex != null) {
+      result['phase'] = phase;
+      result['slotIndex'] = slotIndex;
+      debugPrint(
+        '[composeFinalPayload] phase+slotIndex 추가: phase=$phase, slotIndex=$slotIndex',
+      );
+    }
+    // 1-1. phase만 (MILITARY_LIFE 모드에서 필수)
+    else if (phase != null && writingType == 'MILITARY_LIFE') {
+      result['phase'] = phase;
+      debugPrint(
+        '[composeFinalPayload] phase만 추가 (MILITARY_LIFE): phase=$phase',
+      );
+    }
+    // 2. year + weekOfYear
+    else if (year != null && nthWeek != null) {
       result['year'] = year;
       result['weekOfYear'] = nthWeek; // 서버 DTO: weekOfYear
       debugPrint(
-        '[composeFinalPayload] 연도와 주차 추가: year=$year, weekOfYear=$nthWeek',
+        '[composeFinalPayload] year+weekOfYear 추가: year=$year, weekOfYear=$nthWeek',
       );
+    }
+    // 3. postedAt
+    else if (postedAt != null) {
+      result['postedAt'] = postedAt.toIso8601String();
+      debugPrint(
+        '[composeFinalPayload] postedAt 추가: ${postedAt.toIso8601String()}',
+      );
+    }
+    // 4. 모두 없으면 서버가 현재 시각으로 유도 (필드 추가 안 함)
+    else {
+      debugPrint('[composeFinalPayload] 그리드 셀 지정 없음 → 서버가 현재 시각으로 유도');
+    }
+
+    // 🎯 7. 작성 모드 (lifePhase) 추가
+    if (lifePhase != null) {
+      result['lifePhase'] = lifePhase;
+      debugPrint('[composeFinalPayload] lifePhase 추가: $lifePhase');
+    }
+
+    // ✅ 8. API 명세: 편지 모드 - recipientUserId 추가
+    if (recipientUserId != null) {
+      result['recipientUserId'] = recipientUserId;
+      debugPrint('[composeFinalPayload] recipientUserId 추가: $recipientUserId');
+    }
+
+    // ✅ 8-1. 편지 모드 - recipientUsername 추가 (클라에서 확실히 보장되는 값)
+    if (recipientUsername != null && recipientUsername.trim().isNotEmpty) {
+      result['recipientUsername'] = recipientUsername.trim();
+      debugPrint(
+        '[composeFinalPayload] recipientUsername 추가: ${recipientUsername.trim()}',
+      );
+    }
+
+    // ✅ 9. API 명세: 글 타입 (writingType) 추가
+    if (writingType != null) {
+      result['writingType'] = writingType;
+      debugPrint('[composeFinalPayload] writingType 추가: $writingType');
     }
 
     // 7. 썸네일 필수 필드 검증 및 추가
@@ -1420,21 +1501,36 @@ class PostPublishService {
   /// [exportedBase] - exported 기본 데이터
   /// [title] - 제목
   /// [thumbnailImageUrl] - 썸네일 이미지 URL
-  /// [privateOnly] - 나만보기 여부
-  /// [publicOnly] - 전체공개 여부
-  /// [friendsOnly] - 친구공유 여부
+  /// [accessLevel] - 공개 범위 (우선순위 높음, 예: 'PUBLIC', 'PRIVATE', 'FRIENDS', 'GIRLFRIEND_TO_BOYFRIEND', etc.)
+  /// [privateOnly] - 나만보기 여부 (하위 호환성)
+  /// [publicOnly] - 전체공개 여부 (하위 호환성)
+  /// [friendsOnly] - 친구공유 여부 (하위 호환성)
   ///
   /// 반환: 최종 발행용 JSON 맵
   Future<Map<String, dynamic>> buildFinalPayload({
     required Map<String, dynamic> exportedBase,
     required String title,
     required String thumbnailImageUrl,
-    required bool privateOnly,
-    required bool publicOnly,
-    required bool friendsOnly,
+    // 🎯 새로운 공개 범위 파라미터 (우선순위 높음)
+    String? accessLevel,
+    // 하위 호환성을 위한 기존 boolean 파라미터들
+    bool privateOnly = false,
+    bool publicOnly = false,
+    bool friendsOnly = false,
     // 그룹 기능 제거로 인해 selectedGroupIds 파라미터 제거
-    int? year, // 🎯 연도 (지정된 경우 사용, 없으면 현재 주차 기준)
-    int? nthWeek, // 🎯 주차 (지정된 경우 사용, 없으면 현재 주차 기준)
+    // 🎯 그리드 셀 지정 (우선순위: phase+slotIndex > year+weekOfYear > postedAt > 생략)
+    String? phase, // 복무 단계 코드
+    int? slotIndex, // 단계 내 N주차
+    int? year, // 연도
+    int? nthWeek, // 주차
+    DateTime? postedAt, // 작성 시점 날짜
+    // 🎯 작성 모드
+    String? lifePhase, // MILITARY_LIFE, LEAVE_OR_PRE_ENLISTMENT, SUPPORT
+    // ✅ API 명세: 편지 및 Promise 모드
+    int? recipientUserId, // 편지 모드: 수신인 user id
+    String? recipientUsername, // 편지 모드: 수신인 username
+    String?
+    writingType, // 글 타입 (LETTER, PROMISE, GENERAL, MILITARY_LIFE, LEAVE_OR_PRE_ENLISTMENT)
   }) async {
     // ✅ 썸네일 URL 검증은 UI 레이어(_publish)에서 이미 수행됨
     // 여기서는 검증 없이 페이로드만 빌드
@@ -1452,33 +1548,25 @@ class PostPublishService {
     final usedUrls = _collectUsedImageUrls(editedBase, thumbnailImageUrl);
     editedBase['usedImageUrls'] = usedUrls.toList();
 
-    // 🎯 연도와 주차 정보 결정: 지정된 값이 있으면 사용, 없으면 현재 주차 기준
-    final int finalYear;
-    final int finalNthWeek;
-    if (year != null && nthWeek != null) {
-      finalYear = year;
-      finalNthWeek = nthWeek;
-      debugPrint(
-        '[PostPublishService] 지정된 연도/주차 사용: year=$finalYear, nthWeek=$finalNthWeek',
-      );
-    } else {
-      final currentYearAndWeek = WeekUtils.getCurrentYearAndWeekForPublish();
-      finalYear = currentYearAndWeek.year;
-      finalNthWeek = currentYearAndWeek.nthWeek;
-      debugPrint(
-        '[PostPublishService] 현재 주차 기준 사용: year=$finalYear, nthWeek=$finalNthWeek',
-      );
-    }
-
+    // 🎯 그리드 셀 지정 정보 전달 (우선순위: phase+slotIndex > year+weekOfYear > postedAt > 생략)
+    // 서버가 우선순위에 따라 처리하므로, 클라이언트는 전달만 함
     return PostExporter.composeFinalPayload(
       thumbnailImageUrl: thumbnailImageUrl,
       base: editedBase,
+      accessLevel: accessLevel,
       privateOnly: privateOnly,
       publicOnly: publicOnly,
       friendsOnly: friendsOnly,
       createdAt: DateTime.now().toUtc(),
-      year: finalYear,
-      nthWeek: finalNthWeek,
+      phase: phase,
+      slotIndex: slotIndex,
+      year: year,
+      nthWeek: nthWeek,
+      postedAt: postedAt,
+      lifePhase: lifePhase,
+      recipientUserId: recipientUserId, // ✅ 편지 모드: 수신인 user id
+      recipientUsername: recipientUsername, // ✅ 편지 모드: 수신인 username
+      writingType: writingType, // ✅ 글 타입
     );
   }
 

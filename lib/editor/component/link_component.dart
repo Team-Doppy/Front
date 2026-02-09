@@ -9,7 +9,6 @@ import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/utils/drop_line_config.dart';
 import 'package:doppy/editor/utils/animated_drop_line.dart';
-import 'package:doppy/theme/app_colors.dart';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -732,7 +731,9 @@ class _LinkComponentState extends State<_LinkComponent>
                             Positioned.fill(
                               child: IgnorePointer(
                                 child: Container(
-                                  color: AppColors.primary.withOpacity(0.4),
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withOpacity(0.4),
                                 ),
                               ),
                             ),
@@ -744,7 +745,10 @@ class _LinkComponentState extends State<_LinkComponent>
                                   child: Container(
                                     decoration: BoxDecoration(
                                       border: Border.all(
-                                        color: AppColors.primary,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
                                         width: 4,
                                       ),
                                     ),
@@ -774,7 +778,10 @@ class _LinkComponentState extends State<_LinkComponent>
                                     child: AnimatedDropLine(
                                       child: Container(
                                         height: 5,
-                                        color: AppColors.primary,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
                                       ),
                                     ),
                                   ),
@@ -789,7 +796,10 @@ class _LinkComponentState extends State<_LinkComponent>
                                     child: AnimatedDropLine(
                                       child: Container(
                                         height: 5,
-                                        color: AppColors.primary,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
                                       ),
                                     ),
                                   ),

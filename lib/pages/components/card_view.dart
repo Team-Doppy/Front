@@ -3,6 +3,7 @@ import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/common/widgets/image_error_placeholder.dart';
+import 'package:doppy/data/models/access_level.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:flutter/material.dart';
@@ -492,6 +493,7 @@ class _CardViewState extends State<CardView> {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              // ✅ 나만보기: 자물쇠 아이콘
                               if (widget.post.accessLevel ==
                                   AccessLevel.private)
                                 SvgPicture.asset(
@@ -503,6 +505,7 @@ class _CardViewState extends State<CardView> {
                                     BlendMode.srcIn,
                                   ),
                                 )
+                              // ✅ 그 외: 조회수
                               else
                                 Text(
                                   formatViewCount(widget.post.viewCount),

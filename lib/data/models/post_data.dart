@@ -1,9 +1,6 @@
 import 'dart:convert';
-import 'package:doppy/utils/access_level_parser.dart';
-import 'package:doppy/data/models/system_category_keys.dart';
+import 'package:doppy/data/models/access_level.dart';
 import 'package:flutter/material.dart';
-
-enum AccessLevel { public, private, friends, groups }
 
 class PostData {
   final String id;
@@ -88,16 +85,8 @@ class PostData {
   /// - summary가 있으면 summary로 미리보기 사용
   /// - content는 Map일 때 비우고, String일 때만 보존(서버가 이미 짧은 문자열을 내려주는 경우)
   factory PostData.fromServerMeta(Map<String, dynamic> data) {
-    final accessLevelStr = AccessLevelParser.parseAccessLevelString(
-      data['accessLevel'],
-    );
-    AccessLevel accessLevel = AccessLevel.public;
-    if (accessLevelStr == SystemCategoryKeys.private) {
-      accessLevel = AccessLevel.private;
-    } else if (accessLevelStr == SystemCategoryKeys.friends) {
-      accessLevel = AccessLevel.friends;
-    }
-    // 그룹 기능 제거로 인해 GROUPS 처리 제거
+    final accessLevelStr = data['accessLevel']?.toString() ?? 'PUBLIC';
+    final accessLevel = AccessLevelExtension.fromServerValue(accessLevelStr);
 
     final author =
         data['author']?.toString() ??
@@ -156,16 +145,9 @@ class PostData {
 
   // 서버 데이터에서 PostData 생성
   factory PostData.fromServer(Map<String, dynamic> data) {
-    // 🎯 공통 파싱 유틸리티 사용
-    final accessLevelStr = AccessLevelParser.parseAccessLevelString(
-      data['accessLevel'],
-    );
-    AccessLevel accessLevel = AccessLevel.public;
-    if (accessLevelStr == SystemCategoryKeys.private) {
-      accessLevel = AccessLevel.private;
-    } else if (accessLevelStr == SystemCategoryKeys.friends) {
-      accessLevel = AccessLevel.friends;
-    }
+    // 🎯 새로운 AccessLevel enum 사용
+    final accessLevelStr = data['accessLevel']?.toString() ?? 'PUBLIC';
+    final accessLevel = AccessLevelExtension.fromServerValue(accessLevelStr);
     // 그룹 기능 제거로 인해 GROUPS 처리 제거
 
     // content가 Map인 경우 JSON 문자열로 변환
@@ -315,7 +297,7 @@ class PostData {
       'content': content,
       'createdAt': createdAt,
       'updatedAt': updatedAt,
-      'accessLevel': accessLevel.name, // public/private/friends
+      'accessLevel': accessLevel.serverValue, // 서버 값 (PUBLIC, PRIVATE, etc.)
       // 그룹 기능 제거로 인해 sharedGroupIds, sharedGroupNames 제거
       'viewCount': viewCount,
       'likeCount': likeCount,
@@ -325,11 +307,8 @@ class PostData {
   }
 
   factory PostData.fromPrimitiveMap(Map<String, dynamic> data) {
-    final accessLevelName = data['accessLevel']?.toString() ?? 'public';
-    final accessLevel = AccessLevel.values.firstWhere(
-      (e) => e.name == accessLevelName,
-      orElse: () => AccessLevel.public,
-    );
+    final accessLevelStr = data['accessLevel']?.toString() ?? 'PUBLIC';
+    final accessLevel = AccessLevelExtension.fromServerValue(accessLevelStr);
 
     return PostData(
       id: data['id']?.toString() ?? '',

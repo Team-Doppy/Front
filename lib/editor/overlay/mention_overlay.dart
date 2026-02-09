@@ -841,7 +841,10 @@ class _CircleUser extends StatelessWidget {
                     shape: BoxShape.circle,
                     color: Theme.of(context).colorScheme.surface,
                     border: Border.all(
-                      color: selected ? AppColors.primary : Colors.transparent,
+                      color:
+                          selected
+                              ? Theme.of(context).colorScheme.primary
+                              : Colors.transparent,
                       width: selected ? 2 : 1,
                     ),
                   ),
@@ -850,7 +853,9 @@ class _CircleUser extends StatelessWidget {
                     size: 80,
                     borderWidth: 1,
                     borderColor:
-                        selected ? AppColors.primary : Colors.transparent,
+                        selected
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.transparent,
                     imageUrl: user.imageUrl,
                   ),
                 ),

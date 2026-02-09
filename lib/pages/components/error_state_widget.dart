@@ -84,7 +84,7 @@ class _ErrorStateWidgetState extends State<ErrorStateWidget> {
                     Text(
                       "doppy",
                       style: TextStyle(
-                        color: AppColors.primary,
+                        color: Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.bold,
                         fontSize: 24,
                       ),

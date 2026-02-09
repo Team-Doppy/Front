@@ -17,7 +17,9 @@ import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/paragraph_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/component/template_component.dart';
 import 'package:doppy/editor/component/mention_component.dart';
+import 'package:doppy/editor/template/post_write_template_config.dart';
 import 'package:doppy/editor/overlay/mention_overlay.dart';
 import 'package:doppy/editor/overlay/drag_overlay_widget.dart';
 import 'package:doppy/editor/overlay/selection_box_caret_overlay.dart';
@@ -48,7 +50,9 @@ import 'package:doppy/data/services/draft_service.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/utils/access_level_parser.dart';
 import 'package:doppy/providers/theme_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/data/models/system_category_keys.dart';
+import 'package:doppy/data/models/military_info_model.dart';
 import 'package:doppy/editor/publish/post_export_screen.dart';
 
 // 그룹 기능 제거로 인해 VisibilityOption enum 제거 - SystemCategoryKeys 사용
@@ -65,11 +69,39 @@ enum NodeType {
 
 /// PostWriteScreen의 모드를 정의하는 enum
 enum PostWriteMode {
-  /// 일반 글쓰기 모드
-  normal,
+  /// 부대에서의 기록 (MILITARY_LIFE)
+  militaryLife,
 
-  /// 온보딩 모드 (온보딩 플로우에서 진입)
-  onboarding,
+  /// 휴가 모드 - 사회에서의 글 (LEAVE_OR_PRE_ENLISTMENT)
+  leaveOrPreEnlistment,
+
+  /// 공개 글 모드 (GENERAL)
+  public,
+
+  /// 편지 모드 (LETTER)
+  letter,
+
+  /// 약속 모드 (PROMISE)
+  promise,
+}
+
+/// PostWriteMode를 서버 lifePhase로 변환하는 extension
+extension PostWriteModeToLifePhase on PostWriteMode {
+  /// 서버 lifePhase 문자열로 변환
+  String? toLifePhase() {
+    switch (this) {
+      case PostWriteMode.militaryLife:
+        return 'MILITARY_LIFE';
+      case PostWriteMode.leaveOrPreEnlistment:
+        return 'LEAVE_OR_PRE_ENLISTMENT';
+      case PostWriteMode.public:
+        return 'GENERAL';
+      case PostWriteMode.letter:
+        return 'LETTER';
+      case PostWriteMode.promise:
+        return 'PROMISE';
+    }
+  }
 }
 
 class PostwriteScreen extends StatefulWidget {
@@ -81,17 +113,25 @@ class PostwriteScreen extends StatefulWidget {
   final int? initialYearOfWeek; // 초기 주차 (1-53)
   final bool disableAutoFocus; // 🎯 키보드 자동 포커스 비활성화 (온보딩용)
   final String? emptyStateMessage; // 🎯 빈 상태 커스텀 메시지 (온보딩용)
+  final String? initialRecipientUsername; // ✅ letter 모드: 초기 수신인 (자동 선택용)
+  final List<String>?
+  initialRecipientUsernames; // ✅ letter 모드: 선택한 친구 목록 (하위 호환성)
+  final List<Map<String, dynamic>>?
+  initialRecipients; // ✅ letter 모드: 선택한 친구 전체 정보
 
   const PostwriteScreen({
     super.key,
     this.isEditingMode = false,
     this.exportedDataForEdit,
     this.postId,
-    this.mode = PostWriteMode.normal, // ✅ 기본값은 일반 모드
+    this.mode = PostWriteMode.militaryLife, // ✅ 기본값은 부대 기록 모드
     this.initialYear,
     this.initialYearOfWeek,
     this.disableAutoFocus = false, // 🎯 기본값은 자동 포커스 활성화
     this.emptyStateMessage, // 🎯 기본값은 null (기본 메시지 사용)
+    this.initialRecipientUsername, // ✅ letter 모드: 초기 수신인
+    this.initialRecipientUsernames, // ✅ letter 모드: 선택한 친구 목록 (하위 호환성)
+    this.initialRecipients, // ✅ letter 모드: 선택한 친구 전체 정보
   });
 
   @override
@@ -269,10 +309,21 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
   void initState() {
     super.initState();
 
+    // ✅ 자동 포커스가 비활성화된 모드에서는 "초기 진입" 상태를 즉시 해제해서
+    // 들어가자마자 empty state(커스텀 메시지 포함)가 보이도록 한다.
+    // (자동 포커스 모드에서는 키보드가 올라오기 전까지 empty overlay를 숨겨 깜빡임을 방지)
+    _isInitialEntry = !widget.disableAutoFocus;
+
     // 날짜 초기화
     _currentYear = widget.initialYear;
     _currentYearOfWeek = widget.initialYearOfWeek;
 
+    // 문서 초기화
+    _initializeDocument();
+  }
+
+  /// 문서 초기화 (편집 모드 또는 새 글 작성 모드)
+  void _initializeDocument() {
     // 편집 모드이면 전달된 exportedDataForEdit를 기반으로 문서를 복원
     // 새 글 작성 모드이면 빈 문서 생성
     if (widget.isEditingMode && widget.exportedDataForEdit != null) {
@@ -321,16 +372,58 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       }
     } else {
       debugPrint('🔄 새 글 작성 모드');
-      // 새 글 작성 모드 - 빈 문서 생성
-      document = MutableDocument(
-        nodes: [
-          ParagraphNode(
-            id: '2',
-            text: AttributedText(''),
-            metadata: {'textAlign': 'center'},
-          ),
-        ],
+      // 새 글 작성 모드 - 템플릿 노드 추가 (DividerNode 재활용)
+      final nodes = <DocumentNode>[];
+
+      // ✅ 사용자 타입 가져오기 (promise 모드용)
+      UserType? userType;
+      try {
+        final currentUser = context.read<UserProvider>().currentUser;
+        userType =
+            currentUser?.militaryInfo?.userType ??
+            (currentUser?.role != null
+                ? UserTypeExtension.fromServerRole(currentUser!.role!)
+                : null);
+      } catch (_) {
+        // UserProvider를 사용할 수 없는 경우 무시
+      }
+
+      // ✅ 모드별 템플릿 노드 추가 (TemplateNode 사용)
+      final templateTexts = PostWriteTemplateConfig.getTemplateTexts(
+        widget.mode,
+        userType: userType,
       );
+      if (templateTexts != null) {
+        for (final templateText in templateTexts) {
+          // ✅ 각 질문을 템플릿 노드로 추가
+          nodes.add(
+            TemplateNode(
+              id: Editor.createNodeId(),
+              templateText: templateText,
+              textAlign: TextAlign.center, // ✅ 첫 진입 기본 정렬값
+            ),
+          );
+          // ✅ 각 질문 뒤에 빈 텍스트 노드 추가 (사용자가 답변을 입력할 수 있도록)
+          nodes.add(
+            ParagraphNode(
+              id: Editor.createNodeId(),
+              text: AttributedText(''),
+              metadata: {'textAlign': 'center'},
+            ),
+          );
+        }
+      }
+
+      // ✅ 마지막에 빈 문단 추가 (추가 입력용)
+      nodes.add(
+        ParagraphNode(
+          id: Editor.createNodeId(),
+          text: AttributedText(''),
+          metadata: {'textAlign': 'center'},
+        ),
+      );
+
+      document = MutableDocument(nodes: nodes);
     }
     composer = MutableDocumentComposer();
 
@@ -393,6 +486,9 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 🎯 document listener 추가: 노드 구조 변경만 감지 (텍스트 입력은 skip)
     document.addListener(_onDocumentStructureChanged);
 
+    // ✅ 선택 변경 감지: 커서가 템플릿 노드에 위치하지 않도록 보장
+    composer.selectionNotifier.addListener(_onSelectionChanged);
+
     // 폰트 변경 감지
     textStylingService.addListener(_onEditorServiceChange);
 
@@ -451,10 +547,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
         // 첫 진입 포커스는 "첫 번째 편집 가능한 문단"을 찾아 커서를 둔다.
         ParagraphNode? targetNode;
 
-        targetNode ??=
-            document.getNodeAt(0) is ParagraphNode
-                ? document.getNodeAt(0) as ParagraphNode
-                : null;
+        // ✅ 템플릿 노드가 있을 수 있으므로 문서 전체를 순회하여 첫 번째 ParagraphNode 찾기
+        for (int i = 0; i < document.nodeCount; i++) {
+          final node = document.getNodeAt(i);
+          if (node is ParagraphNode) {
+            targetNode = node;
+            break;
+          }
+        }
 
         // 🎯 온보딩 모드에서는 키보드 자동 포커스 비활성화
         if (targetNode != null && !widget.disableAutoFocus) {
@@ -496,12 +596,21 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
   }
 
-  // 🎯 document 구조 변경 감지 (텍스트 입력은 skip)
+  // 🎯 document 구조 변경 감지
   void _onDocumentStructureChanged(DocumentChangeLog changeLog) {
     if (!mounted) return;
 
     final change = changeLog.changes[0];
-    // 🎯 노드 구조 변경 시에만 처리 (텍스트 입력은 skip)
+
+    // ✅ 텍스트 입력 감지: 커서가 템플릿 노드에 위치하면 다음 ParagraphNode로 이동
+    if (change is TextInsertionEvent) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _ensureCursorNotOnTemplateNode();
+      });
+    }
+
+    // 🎯 노드 구조 변경 시에만 처리
     if (change is NodeInsertedEvent ||
         change is NodeRemovedEvent ||
         change is NodeChangeEvent ||
@@ -533,6 +642,82 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     }
   }
 
+  // ✅ 커서가 템플릿 노드에 위치하지 않도록 보장
+  void _ensureCursorNotOnTemplateNode({bool keepNodeSelection = false}) {
+    if (!mounted) return;
+
+    final currentSelection = editor.composer.selection;
+    if (currentSelection == null) return;
+
+    final position = currentSelection.extent;
+    final node = document.getNodeById(position.nodeId);
+
+    // ✅ 커서가 템플릿 노드에 위치하면 다음 ParagraphNode로 이동
+    if (node is TemplateNode) {
+      // ✅ 템플릿 노드가 선택되어 있으면 선택 상태 유지
+      final templateNodeId = node.id;
+      final isTemplateSelected =
+          nodeComponentService.selectedNodeId == templateNodeId;
+      final templateIndex = document.getNodeIndexById(node.id);
+      if (templateIndex >= 0) {
+        // 다음 ParagraphNode 찾기
+        ParagraphNode? downstreamParagraph;
+        for (int i = templateIndex + 1; i < document.nodeCount; i++) {
+          final n = document.getNodeAt(i);
+          if (n is ParagraphNode) {
+            downstreamParagraph = n;
+            break;
+          }
+        }
+
+        if (downstreamParagraph != null) {
+          // 다음 ParagraphNode로 커서 이동 (템플릿 노드 선택은 유지)
+          editor.execute([
+            ChangeSelectionRequest(
+              DocumentSelection.collapsed(
+                position: DocumentPosition(
+                  nodeId: downstreamParagraph.id,
+                  nodePosition: const TextNodePosition(offset: 0),
+                ),
+              ),
+              SelectionChangeType.placeCaret,
+              SelectionReason.userInteraction,
+            ),
+          ]);
+          // ✅ 템플릿 노드가 선택되어 있으면 선택 상태 유지
+          if ((keepNodeSelection || isTemplateSelected) && isTemplateSelected) {
+            // 선택 상태는 이미 유지되고 있으므로 추가 작업 불필요
+            // 커서만 이동했으므로 선택은 그대로 유지됨
+          }
+        } else {
+          // 다음 ParagraphNode가 없으면 문서 끝에 빈 ParagraphNode 생성
+          final paragraphId = Editor.createNodeId();
+          final newParagraph = ParagraphNode(
+            id: paragraphId,
+            text: AttributedText(''),
+            metadata: {'textAlign': 'center'},
+          );
+          editor.execute([
+            InsertNodeAtIndexRequest(
+              nodeIndex: document.nodeCount,
+              newNode: newParagraph,
+            ),
+            ChangeSelectionRequest(
+              DocumentSelection.collapsed(
+                position: DocumentPosition(
+                  nodeId: paragraphId,
+                  nodePosition: const TextNodePosition(offset: 0),
+                ),
+              ),
+              SelectionChangeType.placeCaret,
+              SelectionReason.userInteraction,
+            ),
+          ]);
+        }
+      }
+    }
+  }
+
   void _onEditorServiceChange() {
     if (!mounted || !context.mounted) return;
     // ✅ autoDraft는 "저장됨"으로 치지 않는다.
@@ -558,6 +743,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 2. 문서 노드 체크
     // ✅ 최적화: 노드가 없으면 즉시 true 반환
     if (document.length == 0) return true;
+
+    // ✅ 템플릿 노드가 있으면 empty state를 표시하지 않음
+    bool hasTemplateNode = false;
+    for (int i = 0; i < document.length; i++) {
+      final node = document.getNodeAt(i);
+      if (node is TemplateNode) {
+        hasTemplateNode = true;
+        break;
+      }
+    }
+    if (hasTemplateNode) return false;
 
     // ✅ 최적화: 노드를 순회하면서 빠른 실패
     for (int i = 0; i < document.length; i++) {
@@ -593,6 +789,17 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
 
       // (빈 상태는 build()에서 derived state로 동기화하므로 별도 토글 불필요)
     }
+  }
+
+  // ✅ 선택 변경 감지: 커서가 템플릿 노드에 위치하지 않도록 보장
+  void _onSelectionChanged() {
+    if (!mounted) return;
+    // 텍스트 입력 중이 아닐 때만 체크 (성능 최적화)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // ✅ 템플릿 노드가 선택되어 있으면 커서만 이동하고 선택은 유지
+      _ensureCursorNotOnTemplateNode(keepNodeSelection: true);
+    });
   }
 
   // 🎯 노드 선택 변경 리스너: 노드가 선택되면 키보드 내리기
@@ -635,12 +842,6 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     debugPrint(
       '[PostwriteScreen][EXIT] _cleanupAndExit: isEditingMode=${widget.isEditingMode}',
     );
-
-    // ✅ 온보딩 모드일 때는 'back'을 반환하여 index 3으로 돌아가도록
-    if (widget.mode == PostWriteMode.onboarding) {
-      Navigator.of(context).pop('back');
-      return;
-    }
 
     // 🎯 제거됨: PostExportScreen에서 직접 처리
 
@@ -928,6 +1129,7 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     stickerService.removeListener(_onEditorServiceChange);
     stickerService.removeListener(_onStickerHistoryChange);
     nodeComponentService.removeListener(_onNodeSelectionChanged);
+    composer.selectionNotifier.removeListener(_onSelectionChanged);
     document.removeListener(_onDocumentStructureChanged);
     try {
       stickerService.resetSession(shouldNotify: false);
@@ -1035,13 +1237,11 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     // 오버레이가 남아있는 문제를 원천적으로 줄인다.
     //
     // 🎯 초기 진입 시 키보드가 올라오기 전까지는 오버레이를 숨김
-    // ✅ 온보딩 모드에서는 키보드가 자동으로 올라오지 않으므로 _isInitialEntry 체크를 건너뜀
     final shouldShowEmptyOverlay =
-        (widget.mode == PostWriteMode.onboarding || !_isInitialEntry)
-            ? (!isKeyboardVisible &&
-                composer.selection == null &&
-                _isDocumentEmpty())
-            : false;
+        !isKeyboardVisible &&
+        composer.selection == null &&
+        _isDocumentEmpty() &&
+        (widget.disableAutoFocus || !_isInitialEntry);
     if (_isEmptyNotifier.value != shouldShowEmptyOverlay) {
       _isEmptyNotifier.value = shouldShowEmptyOverlay;
     }
@@ -1056,6 +1256,16 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
       // 🎯 키보드가 올라오면 초기 진입 플래그 해제
       if (isKeyboardVisible && _isInitialEntry) {
         _isInitialEntry = false;
+      }
+
+      // ✅ disableAutoFocus가 true일 때는 초기 진입 플래그를 즉시 해제
+      // (키보드가 올라오지 않아도 empty state를 표시할 수 있도록)
+      if (widget.disableAutoFocus && _isInitialEntry) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _isInitialEntry = false;
+          }
+        });
       }
     }
 
@@ -1256,7 +1466,14 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                             _videoUploadIndicatorNotifier,
                         initialTitleForExport: _draftTitleOverride,
                         initialThumbnailUrlForExport: _draftThumbnailOverride,
-                        mode: widget.mode, // ✅ 온보딩 모드 전달
+                        mode: widget.mode, // ✅ 글쓰기 모드 전달
+                        initialRecipients:
+                            widget.initialRecipients ??
+                            (widget.initialRecipientUsernames != null
+                                ? widget.initialRecipientUsernames!
+                                    .map((u) => {'username': u})
+                                    .toList()
+                                : null), // ✅ letter 모드: 선택한 친구 전체 정보
                         initialYear: _currentYear,
                         initialYearOfWeek: _currentYearOfWeek,
                         onExportMetadataChanged: (title, thumbnailUrl) {
@@ -1274,219 +1491,247 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
                         },
                       ),
             ),
-            body: Stack(
-              key: _editorBodyStackKey,
-              clipBehavior: Clip.none,
+            body: Column(
               children: [
-                Theme(
-                  data: AppTheme.lightTheme.copyWith(
-                    scaffoldBackgroundColor:
-                        AppColors.darkSurface, // 🎯 배경색을 darkSurface로 오버라이드
-                    colorScheme: AppTheme.lightTheme.colorScheme.copyWith(
-                      background:
-                          AppColors.darkSurface, // 🎯 배경색을 darkSurface로 오버라이드
-                    ),
-                  ),
-                  child: RawScrollbar(
-                    controller: scrollController,
-                    thumbColor: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.3),
-                    thickness: 4,
-                    radius: const Radius.circular(12),
-                    child: Listener(
-                      behavior: HitTestBehavior.translucent,
-                      onPointerDown: (details) {
-                        _handleTapBelowLastSpecialNode(details.position);
-                      },
-                      child: Builder(
-                        builder: (context) {
-                          final screenWidth = MediaQuery.sizeOf(context).width;
-                          final isDarkMode =
-                              context.read<ThemeProvider>().themeMode ==
-                              ThemeMode.dark;
-                          return RepaintBoundary(
-                            child: SuperEditor(
-                              gestureMode:
-                                  Platform.isIOS
-                                      ? DocumentGestureMode.iOS
-                                      : DocumentGestureMode.android,
-                              editor: editor,
-                              focusNode: _editorFocusNode,
-                              stylesheet: _buildStylesheet(context),
-                              selectionStyle: SelectionStyles(
-                                selectionColor: AppColors.primary.withValues(
-                                  alpha: 0.3,
-                                ),
-                                highlightEmptyTextBlocks: false,
-                              ),
-                              documentLayoutKey: _documentLayoutKey,
-                              scrollController: scrollController,
-                              documentOverlayBuilders: [
-                                const SuperEditorIosToolbarFocalPointDocumentLayerBuilder(),
-                                const SuperEditorIosHandlesDocumentLayerBuilder(
-                                  caretWidth: 0,
-                                ),
-                                const SuperEditorAndroidToolbarFocalPointDocumentLayerBuilder(),
-                                const SuperEditorAndroidHandlesDocumentLayerBuilder(
-                                  caretWidth: 0,
-                                ),
-                                SelectionBoxCaretOverlayBuilder(
-                                  caretStyle: CaretStyle(
-                                    width: 2,
-                                    color: AppColors.primary,
+                // 에디터 본문
+                Expanded(
+                  child: Stack(
+                    key: _editorBodyStackKey,
+                    clipBehavior: Clip.none,
+                    children: [
+                      Theme(
+                        data: AppTheme.lightTheme.copyWith(
+                          scaffoldBackgroundColor:
+                              AppColors
+                                  .darkSurface, // 🎯 배경색을 darkSurface로 오버라이드
+                          colorScheme: AppTheme.lightTheme.colorScheme.copyWith(
+                            background:
+                                AppColors
+                                    .darkSurface, // 🎯 배경색을 darkSurface로 오버라이드
+                          ),
+                        ),
+                        child: RawScrollbar(
+                          controller: scrollController,
+                          thumbColor: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withOpacity(0.3),
+                          thickness: 4,
+                          radius: const Radius.circular(12),
+                          child: Listener(
+                            behavior: HitTestBehavior.translucent,
+                            onPointerDown: (details) {
+                              _handleTapBelowLastSpecialNode(details.position);
+                            },
+                            child: Builder(
+                              builder: (context) {
+                                final screenWidth =
+                                    MediaQuery.sizeOf(context).width;
+                                final isDarkMode =
+                                    context.read<ThemeProvider>().themeMode ==
+                                    ThemeMode.dark;
+                                return RepaintBoundary(
+                                  child: SuperEditor(
+                                    gestureMode:
+                                        Platform.isIOS
+                                            ? DocumentGestureMode.iOS
+                                            : DocumentGestureMode.android,
+                                    editor: editor,
+                                    focusNode: _editorFocusNode,
+                                    stylesheet: _buildStylesheet(context),
+                                    selectionStyle: SelectionStyles(
+                                      selectionColor: Theme.of(context)
+                                          .colorScheme
+                                          .primary
+                                          .withValues(alpha: 0.3),
+                                      highlightEmptyTextBlocks: false,
+                                    ),
+                                    documentLayoutKey: _documentLayoutKey,
+                                    scrollController: scrollController,
+                                    documentOverlayBuilders: [
+                                      const SuperEditorIosToolbarFocalPointDocumentLayerBuilder(),
+                                      const SuperEditorIosHandlesDocumentLayerBuilder(
+                                        caretWidth: 0,
+                                      ),
+                                      const SuperEditorAndroidToolbarFocalPointDocumentLayerBuilder(),
+                                      const SuperEditorAndroidHandlesDocumentLayerBuilder(
+                                        caretWidth: 0,
+                                      ),
+                                      SelectionBoxCaretOverlayBuilder(
+                                        caretStyle: CaretStyle(
+                                          width: 2,
+                                          color:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.primary,
+                                        ),
+                                        displayOnAllPlatforms: true,
+                                      ),
+                                    ],
+                                    componentBuilders: [
+                                      SingleImageComponentBuilder(
+                                        screenWidth: screenWidth,
+                                        dragService: dragService,
+                                        isDarkMode: isDarkMode,
+                                      ),
+                                      RowImageComponentBuilder(
+                                        screenWidth: screenWidth,
+                                        dragService: dragService,
+                                        isDarkMode: isDarkMode,
+                                      ),
+                                      PageViewImageComponentBuilder(
+                                        screenWidth: screenWidth,
+                                        dragService: dragService,
+                                        isDarkMode: isDarkMode,
+                                      ),
+                                      CustomParagraphComponentBuilder(
+                                        dragService: dragService,
+                                        editorService: editorService,
+                                      ),
+                                      DividerComponentBuilder(
+                                        dragService: dragService,
+                                        editor: editor,
+                                        focusNode: _editorFocusNode,
+                                      ),
+                                      TemplateComponentBuilder(
+                                        dragService: dragService,
+                                        editor: editor,
+                                        focusNode: _editorFocusNode,
+                                      ),
+                                      MentionComponentBuilder(
+                                        dragService: dragService,
+                                        editor: editor,
+                                        focusNode: _editorFocusNode,
+                                        isDarkMode: isDarkMode,
+                                      ),
+                                      LinkComponentBuilder(
+                                        dragService: dragService,
+                                        isDarkMode: isDarkMode,
+                                      ),
+                                      ClipComponentBuilder(
+                                        screenWidth: screenWidth,
+                                        dragService: dragService,
+                                        isEditing: true,
+                                        isDarkMode: isDarkMode,
+                                      ),
+                                      ...defaultComponentBuilders.where(
+                                        (builder) =>
+                                            builder.runtimeType.toString() !=
+                                            'ParagraphComponentBuilder',
+                                      ),
+                                    ],
                                   ),
-                                  displayOnAllPlatforms: true,
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // 드래그 오버레이 (키보드가 내려가 있을 때만 표시)
+                      //
+                      // ⚠️ 중요: DragOverlayWidget은 내부에서 Positioned를 반환한다.
+                      // 따라서 "화면 전체 크기의 Stack"을 기준으로 레이아웃되어야 한다.
+                      // AnimatedSwitcher 내부의 Stack(자식 크기 기반)으로 들어가면,
+                      // Stack 사이즈가 0으로 잡혀 오버레이가 (0,0) 근처(좌상단)에 고정되는 문제가 생길 수 있다.
+                      Positioned.fill(
+                        child: AnimatedBuilder(
+                          animation: dragService,
+                          builder: (context, _) {
+                            final keyboardVisible =
+                                MediaQuery.viewInsetsOf(context).bottom > 0;
+                            return AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 200),
+                              switchInCurve: Curves.easeOut,
+                              switchOutCurve: Curves.easeIn,
+                              transitionBuilder: (child, animation) {
+                                return FadeTransition(
+                                  opacity: animation,
+                                  child: child,
+                                );
+                              },
+                              child:
+                                  (dragService.draggingNodeId != null &&
+                                          !keyboardVisible)
+                                      ? Stack(children: [_buildDragOverlay()])
+                                      : const SizedBox.shrink(
+                                        key: ValueKey('empty'),
+                                      ),
+                            );
+                          },
+                        ),
+                      ),
+
+                      // 스티커 캔버스
+                      Positioned.fill(
+                        child: RepaintBoundary(
+                          child: StickerCanvas(
+                            scrollController: scrollController,
+                          ),
+                        ),
+                      ),
+
+                      // 🎯 빈 상태 UI (키보드가 내려가고 문서가 비어있을 때)
+                      // ✅ _isEmptyNotifier가 이미 모든 조건(키보드, 커서, 문서)을 체크한 최종 결과이므로
+                      // ValueListenableBuilder에서는 isEmpty만 확인하면 됨
+                      ValueListenableBuilder<bool>(
+                        valueListenable: _isEmptyNotifier,
+                        builder: (context, isEmpty, _) {
+                          // 🎯 처음 나올 때는 페이드 인 적용, 사라질 때는 페이드 아웃 없이 즉시 사라짐
+                          if (!isEmpty) {
+                            // 사라질 때는 즉시 제거 (페이드 아웃 없음)
+                            return const SizedBox.shrink();
+                          }
+
+                          // 나타날 때는 AnimatedOpacity 사용 (페이드 인만 적용)
+                          return Positioned.fill(
+                            child: IgnorePointer(
+                              ignoring: false,
+                              child: TweenAnimationBuilder<double>(
+                                tween: Tween<double>(begin: 0.0, end: 1.0),
+                                duration: const Duration(milliseconds: 200),
+                                curve: Curves.easeIn,
+                                builder: (context, opacity, child) {
+                                  return Opacity(
+                                    opacity: opacity,
+                                    child: child,
+                                  );
+                                },
+                                child: EmptyEditorState(
+                                  customMessage:
+                                      widget
+                                          .emptyStateMessage, // 🎯 온보딩용 커스텀 메시지 전달
+                                  onTap: () {
+                                    // 빈 상태 UI를 탭하면 첫 번째 문단에 포커스
+                                    if (document.isNotEmpty) {
+                                      final firstNode = document.getNodeAt(0);
+                                      if (firstNode is ParagraphNode) {
+                                        editor.execute([
+                                          ChangeSelectionRequest(
+                                            DocumentSelection.collapsed(
+                                              position: DocumentPosition(
+                                                nodeId: firstNode.id,
+                                                nodePosition:
+                                                    const TextNodePosition(
+                                                      offset: 0,
+                                                    ),
+                                              ),
+                                            ),
+                                            SelectionChangeType.placeCaret,
+                                            SelectionReason.userInteraction,
+                                          ),
+                                        ]);
+                                        _editorFocusNode.requestFocus();
+                                      }
+                                    }
+                                  },
                                 ),
-                              ],
-                              componentBuilders: [
-                                SingleImageComponentBuilder(
-                                  screenWidth: screenWidth,
-                                  dragService: dragService,
-                                  isDarkMode: isDarkMode,
-                                ),
-                                RowImageComponentBuilder(
-                                  screenWidth: screenWidth,
-                                  dragService: dragService,
-                                  isDarkMode: isDarkMode,
-                                ),
-                                PageViewImageComponentBuilder(
-                                  screenWidth: screenWidth,
-                                  dragService: dragService,
-                                  isDarkMode: isDarkMode,
-                                ),
-                                CustomParagraphComponentBuilder(
-                                  dragService: dragService,
-                                  editorService: editorService,
-                                ),
-                                DividerComponentBuilder(
-                                  dragService: dragService,
-                                  editor: editor,
-                                  focusNode: _editorFocusNode,
-                                ),
-                                MentionComponentBuilder(
-                                  dragService: dragService,
-                                  editor: editor,
-                                  focusNode: _editorFocusNode,
-                                  isDarkMode: isDarkMode,
-                                ),
-                                LinkComponentBuilder(
-                                  dragService: dragService,
-                                  isDarkMode: isDarkMode,
-                                ),
-                                ClipComponentBuilder(
-                                  screenWidth: screenWidth,
-                                  dragService: dragService,
-                                  isEditing: true,
-                                  isDarkMode: isDarkMode,
-                                ),
-                                ...defaultComponentBuilders.where(
-                                  (builder) =>
-                                      builder.runtimeType.toString() !=
-                                      'ParagraphComponentBuilder',
-                                ),
-                              ],
+                              ),
                             ),
                           );
                         },
                       ),
-                    ),
+                    ],
                   ),
-                ),
-
-                // 드래그 오버레이 (키보드가 내려가 있을 때만 표시)
-                //
-                // ⚠️ 중요: DragOverlayWidget은 내부에서 Positioned를 반환한다.
-                // 따라서 "화면 전체 크기의 Stack"을 기준으로 레이아웃되어야 한다.
-                // AnimatedSwitcher 내부의 Stack(자식 크기 기반)으로 들어가면,
-                // Stack 사이즈가 0으로 잡혀 오버레이가 (0,0) 근처(좌상단)에 고정되는 문제가 생길 수 있다.
-                Positioned.fill(
-                  child: AnimatedBuilder(
-                    animation: dragService,
-                    builder: (context, _) {
-                      final keyboardVisible =
-                          MediaQuery.viewInsetsOf(context).bottom > 0;
-                      return AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 200),
-                        switchInCurve: Curves.easeOut,
-                        switchOutCurve: Curves.easeIn,
-                        transitionBuilder: (child, animation) {
-                          return FadeTransition(
-                            opacity: animation,
-                            child: child,
-                          );
-                        },
-                        child:
-                            (dragService.draggingNodeId != null &&
-                                    !keyboardVisible)
-                                ? Stack(children: [_buildDragOverlay()])
-                                : const SizedBox.shrink(key: ValueKey('empty')),
-                      );
-                    },
-                  ),
-                ),
-
-                // 스티커 캔버스
-                Positioned.fill(
-                  child: RepaintBoundary(
-                    child: StickerCanvas(scrollController: scrollController),
-                  ),
-                ),
-
-                // 🎯 빈 상태 UI (키보드가 내려가고 문서가 비어있을 때)
-                // ✅ _isEmptyNotifier가 이미 모든 조건(키보드, 커서, 문서)을 체크한 최종 결과이므로
-                // ValueListenableBuilder에서는 isEmpty만 확인하면 됨
-                ValueListenableBuilder<bool>(
-                  valueListenable: _isEmptyNotifier,
-                  builder: (context, isEmpty, _) {
-                    // 🎯 처음 나올 때는 페이드 인 적용, 사라질 때는 페이드 아웃 없이 즉시 사라짐
-                    if (!isEmpty) {
-                      // 사라질 때는 즉시 제거 (페이드 아웃 없음)
-                      return const SizedBox.shrink();
-                    }
-
-                    // 나타날 때는 AnimatedOpacity 사용 (페이드 인만 적용)
-                    return Positioned.fill(
-                      child: IgnorePointer(
-                        ignoring: false,
-                        child: TweenAnimationBuilder<double>(
-                          tween: Tween<double>(begin: 0.0, end: 1.0),
-                          duration: const Duration(milliseconds: 200),
-                          curve: Curves.easeIn,
-                          builder: (context, opacity, child) {
-                            return Opacity(opacity: opacity, child: child);
-                          },
-                          child: EmptyEditorState(
-                            customMessage:
-                                widget.emptyStateMessage, // 🎯 온보딩용 커스텀 메시지 전달
-                            onTap: () {
-                              // 빈 상태 UI를 탭하면 첫 번째 문단에 포커스
-                              if (document.isNotEmpty) {
-                                final firstNode = document.getNodeAt(0);
-                                if (firstNode is ParagraphNode) {
-                                  editor.execute([
-                                    ChangeSelectionRequest(
-                                      DocumentSelection.collapsed(
-                                        position: DocumentPosition(
-                                          nodeId: firstNode.id,
-                                          nodePosition: const TextNodePosition(
-                                            offset: 0,
-                                          ),
-                                        ),
-                                      ),
-                                      SelectionChangeType.placeCaret,
-                                      SelectionReason.userInteraction,
-                                    ),
-                                  ]);
-                                  _editorFocusNode.requestFocus();
-                                }
-                              }
-                            },
-                          ),
-                        ),
-                      ),
-                    );
-                  },
                 ),
               ],
             ),
@@ -1724,6 +1969,65 @@ class _PostwriteScreenState extends State<PostwriteScreen> {
     );
 
     try {
+      // ✅ 삭제 전에 selection을 안전한 위치로 이동 (iOS IME 크래시 방지)
+      final currentSelection = editor.composer.selection;
+      if (currentSelection != null) {
+        final baseNodeId = currentSelection.base.nodeId;
+        final extentNodeId = currentSelection.extent.nodeId;
+
+        // selection이 삭제 대상 노드를 가리키고 있으면 안전한 위치로 이동
+        if (baseNodeId == selectedId || extentNodeId == selectedId) {
+          final nodeIndex = document.getNodeIndexById(selectedId);
+          if (nodeIndex >= 0) {
+            // ✅ 다음 문단 찾기
+            ParagraphNode? safeParagraph;
+            for (int i = nodeIndex + 1; i < document.nodeCount; i++) {
+              final n = document.getNodeAt(i);
+              if (n is ParagraphNode) {
+                safeParagraph = n;
+                break;
+              }
+            }
+
+            // ✅ 이전 문단 찾기 (다음 문단이 없을 때)
+            if (safeParagraph == null) {
+              for (int i = nodeIndex - 1; i >= 0; i--) {
+                final n = document.getNodeAt(i);
+                if (n is ParagraphNode) {
+                  safeParagraph = n;
+                  break;
+                }
+              }
+            }
+
+            if (safeParagraph != null) {
+              // ✅ 안전한 문단으로 커서 이동
+              editor.execute([
+                ChangeSelectionRequest(
+                  DocumentSelection.collapsed(
+                    position: DocumentPosition(
+                      nodeId: safeParagraph.id,
+                      nodePosition: const TextNodePosition(offset: 0),
+                    ),
+                  ),
+                  SelectionChangeType.placeCaret,
+                  SelectionReason.userInteraction,
+                ),
+              ]);
+            } else {
+              // ✅ 문단이 없으면 selection clear
+              editor.execute([
+                ChangeSelectionRequest(
+                  null,
+                  SelectionChangeType.clearSelection,
+                  SelectionReason.userInteraction,
+                ),
+              ]);
+            }
+          }
+        }
+      }
+
       nodeComponentService.selectNode(null);
 
       // ✅ 심각 버그 방지:

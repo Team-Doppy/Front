@@ -2,7 +2,7 @@ import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:doppy/image/utils/read_image_cache_manager.dart';
-import 'package:doppy/pages/components/home_widgets.dart';
+import 'package:doppy/pages/home/home_widgets.dart';
 import 'package:doppy/pages/components/recap/recap_loading.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/utils/text_bold_utils.dart';

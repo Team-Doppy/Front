@@ -508,9 +508,11 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                 left: 50,
                 right: 50,
                 child: AnimatedDropLine(
-                  child: const SizedBox(
+                  child: SizedBox(
                     height: 5,
-                    child: ColoredBox(color: AppColors.primary),
+                    child: ColoredBox(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
                   ),
                 ),
               ),
@@ -520,9 +522,11 @@ class _ParagraphWithDropLinesState extends State<_ParagraphWithDropLines>
                 left: 50,
                 right: 50,
                 child: AnimatedDropLine(
-                  child: const SizedBox(
+                  child: SizedBox(
                     height: 5,
-                    child: ColoredBox(color: AppColors.primary),
+                    child: ColoredBox(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
                   ),
                 ),
               ),

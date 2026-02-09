@@ -131,7 +131,7 @@ class AppLocalizations {
       'all_posts': '전체글',
 
       // 홈피드
-      'home_friend_recommend_header': '아는 친구인가요?',
+      'home_friend_recommend_header': '아닌 군인인가요?',
       'home_empty_s1_line1': '안 남기면 없어지는 순간,',
       'home_empty_s1_line2': '지금 기록하기',
       'all': '모든 포스트',

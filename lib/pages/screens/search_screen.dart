@@ -1,3 +1,4 @@
+import 'package:doppy/data/models/access_level.dart';
 import 'package:doppy/pages/components/search_result.dart';
 import 'package:doppy/pages/components/search_top_section.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
@@ -138,11 +139,8 @@ class _SearchScreenOverlayState extends State<SearchScreenOverlay> {
         // 🎯 추천 포스트가 없으면 로드 (스플래시에서 로드 실패했을 수 있음)
         if (searchService.recommendedPosts.isEmpty) {
           debugPrint('[SearchScreen] 추천 포스트가 없어서 다시 로드');
-          await searchService.fetchRecommendedPosts(
-            page: 0,
-            size: 20,
-            forceRefresh: true,
-          );
+          // forceRefresh로 매번 초기화하지 말고, 비어 있을 때만 1회 로드
+          await searchService.ensureRecommendedPosts();
         } else {
           debugPrint(
             '[SearchScreen] 초기화 완료 (검색 기록만 로드, 추천 포스트는 스플래시에서 로드한 것 사용: ${searchService.recommendedPosts.length}개)',

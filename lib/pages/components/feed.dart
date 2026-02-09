@@ -3,7 +3,7 @@ import 'package:doppy/data/models/system_category_keys.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/components/vertical_category_section.dart';
 import 'package:doppy/pages/components/grid_category_section.dart';
-import 'package:doppy/pages/components/card_view_shimmer.dart';
+import 'package:doppy/pages/components/feed_loading_shimmer_sliver.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/utils/network_utils.dart';
 import 'package:doppy/pages/components/error_state_widget.dart';
@@ -89,52 +89,98 @@ class Feed {
       builder: (context, data, _) {
         // 로딩 중이면 shimmer 표시
         if (data.isLoading) {
-          return _buildLoadingShimmer(context);
+          return const FeedLoadingShimmerSliver();
         }
 
         // userInfo에서 isOwnProfile 확인
         final isOwnProfile = data.userInfo?['isOwnProfile'] as bool? ?? true;
 
-        // 공개범위 필터링
+        // 공개범위 필터링 - systemCategoryMappings에 있는 실제 데이터만 표시
         List<PostData> filteredPosts = [];
         final feedProvider = context.read<BaseFeedProvider>();
         final allPosts = _mapRawToPosts(data.posts, feedProvider);
+        final systemMappings = data.systemCategoryMappings;
 
-        // 다른 유저 프로필일 때는 공개범위 필터링 제거 (서버에서 이미 필터링됨)
-        if (isOwnProfile && data.selectedBase != BaseFilter.all) {
-          // systemCategoryMappings를 사용하여 포스트 필터링
-          final systemKey = SystemCategoryKeys.fromBaseFilter(
-            data.selectedBase,
+        // ✅ API 명세: 서버에서 phase와 accessLevel 모두 필터링
+        // 서버에서 이미 필터링된 데이터를 그대로 사용
+        final selectedAccessLevel = feedProvider.serverAccessLevel;
+        final selectedPhase = feedProvider.serverPhase;
+        final selectedLifePhase = feedProvider.serverLifePhase;
+
+        if (selectedPhase != null ||
+            selectedLifePhase != null ||
+            selectedAccessLevel != null) {
+          // 서버에서 필터링된 데이터를 그대로 사용
+          filteredPosts = allPosts;
+          debugPrint(
+            '[Feed] 서버 필터 적용: phase=$selectedPhase, '
+            'lifePhase=$selectedLifePhase, accessLevel=$selectedAccessLevel, '
+            'filteredPosts=${filteredPosts.length}개',
           );
-          final systemMappings = data.systemCategoryMappings;
+        }
+        // 필터가 없으면 systemCategoryMappings로 클라이언트 필터링 (전체 탭)
+        else if (systemMappings == null || systemMappings.isEmpty) {
+          filteredPosts = [];
+        } else {
+          // 탭에서 선택한 공개범위 사용
+          String? targetAccessLevelKey;
+          if (data.selectedBase != BaseFilter.all) {
+            targetAccessLevelKey = SystemCategoryKeys.fromBaseFilter(
+              data.selectedBase,
+            );
+          }
 
-          if (systemMappings != null &&
-              systemKey != null &&
-              systemKey.isNotEmpty) {
-            final postIdList = systemMappings[systemKey] as List?;
+          // systemCategoryMappings에서 필터링할 키 목록
+          final targetKeys = <String>[];
+          if (targetAccessLevelKey != null &&
+              systemMappings.containsKey(targetAccessLevelKey)) {
+            // 특정 공개범위만 필터링
+            targetKeys.add(targetAccessLevelKey);
+          } else {
+            // 전체 공개범위 (모든 키)
+            targetKeys.addAll(systemMappings.keys);
+          }
+
+          // 선택된 키들에서 postId 수집 및 정렬
+          final allOrderedPosts = <Map<String, dynamic>>[];
+          for (final key in targetKeys) {
+            final postIdList = systemMappings[key] as List?;
             if (postIdList != null && postIdList.isNotEmpty) {
-              final Set<String> targetPostIds =
-                  postIdList
-                      .map((item) {
-                        if (item is Map) {
-                          return item['postId']?.toString();
-                        } else if (item is int) {
-                          return item.toString();
-                        }
-                        return item?.toString();
-                      })
-                      .whereType<String>()
-                      .toSet();
-
-              filteredPosts =
-                  allPosts
-                      .where((post) => targetPostIds.contains(post.id))
-                      .toList();
+              for (final item in postIdList) {
+                if (item is Map<String, dynamic>) {
+                  allOrderedPosts.add(item);
+                } else if (item is int) {
+                  allOrderedPosts.add({
+                    'postId': item,
+                    'order': allOrderedPosts.length,
+                  });
+                }
+              }
             }
           }
-        } else {
-          // 전체 탭: 모든 포스트 표시
-          filteredPosts = allPosts;
+
+          // order 순서대로 정렬
+          allOrderedPosts.sort((a, b) {
+            final orderA = (a['order'] as num?)?.toInt() ?? 0;
+            final orderB = (b['order'] as num?)?.toInt() ?? 0;
+            return orderA.compareTo(orderB);
+          });
+
+          // postId 추출
+          final orderedPostIds =
+              allOrderedPosts
+                  .map((m) => m['postId']?.toString())
+                  .whereType<String>()
+                  .toList();
+
+          // 실제 존재하는 포스트만 필터링 (플레이스홀더 제거)
+          final postMap = {for (var post in allPosts) post.id: post};
+          filteredPosts =
+              orderedPostIds
+                  .map((id) => postMap[id])
+                  .where((post) => post != null)
+                  .cast<PostData>()
+                  .toList();
         }
 
         // 아무런 글도 없을 때
@@ -171,10 +217,16 @@ class Feed {
               (context, displayMode, _) => SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 80),
-                  child: _buildPostSection(
-                    filteredPosts,
-                    displayMode,
-                    isOwnProfile,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // (리뉴얼 명세) 탭/타이틀은 UserProfileScreen에서 관리
+                      _buildPostSection(
+                        filteredPosts,
+                        displayMode,
+                        isOwnProfile,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -188,8 +240,18 @@ class Feed {
     FeedDisplayMode displayMode,
     bool isOwnProfile,
   ) {
+    Widget postSection;
+
     if (displayMode == FeedDisplayMode.card) {
-      return VerticalCategorySection(
+      postSection = VerticalCategorySection(
+        posts: posts,
+        displayMode: displayMode,
+        isLastSection: true,
+        mainScrollController: _mainScrollController,
+        isOwnProfile: isOwnProfile,
+      );
+    } else {
+      postSection = GridCategorySection(
         posts: posts,
         displayMode: displayMode,
         isLastSection: true,
@@ -198,55 +260,8 @@ class Feed {
       );
     }
 
-    return GridCategorySection(
-      posts: posts,
-      displayMode: displayMode,
-      isLastSection: true,
-      mainScrollController: _mainScrollController,
-      isOwnProfile: isOwnProfile,
-    );
+    return postSection;
   }
 
-  /// 로딩 중 shimmer 표시
-  Widget _buildLoadingShimmer(BuildContext context) {
-    final displayMode = FeedDisplayModeManager().value;
-    final isCardView = displayMode == FeedDisplayMode.card;
-
-    if (isCardView) {
-      // CardView 모드 shimmer
-      return SliverPadding(
-        padding: const EdgeInsets.symmetric(horizontal: 1.0),
-        sliver: SliverList(
-          delegate: SliverChildBuilderDelegate(
-            (context, index) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 2.0),
-                child: CardViewShimmer(),
-              );
-            },
-            childCount: 5, // 카드 5개
-          ),
-        ),
-      );
-    } else {
-      // ImageView (그리드) 모드 shimmer
-      return SliverPadding(
-        padding: const EdgeInsets.symmetric(horizontal: 4.0),
-        sliver: SliverGrid(
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            crossAxisSpacing: 2,
-            mainAxisSpacing: 2.5,
-            childAspectRatio: 4 / 5,
-          ),
-          delegate: SliverChildBuilderDelegate(
-            (context, index) {
-              return ImageViewShimmer(isFirst: index == 0, isLast: index == 8);
-            },
-            childCount: 9, // 9개의 shimmer 이미지 표시
-          ),
-        ),
-      );
-    }
-  }
+  // (리뉴얼 명세) phase/lifePhase 필터링은 서버에서 처리한다.
 }

@@ -156,6 +156,7 @@ class SearchService extends ChangeNotifier {
             alias: e.title?.isNotEmpty == true ? e.title! : e.username,
             profileImageUrl: e.imageUrl ?? '',
             followers: 0,
+            role: e.role, // 검색 기록에 저장된 role 정보 사용
           ),
         );
       }
@@ -673,12 +674,14 @@ class SearchService extends ChangeNotifier {
                           ? e['alias'].toString()
                           : username;
                   final imageUrl = e['profileImageUrl']?.toString() ?? '';
+                  final role = e['role']?.toString();
                   return SearchContentItem.account(
                     id: 'remote_$username',
                     username: username,
                     alias: alias,
                     profileImageUrl: imageUrl,
                     followers: 0,
+                    role: role,
                   );
                 } else {
                   final u = e?.toString() ?? '';
@@ -688,6 +691,7 @@ class SearchService extends ChangeNotifier {
                     alias: u,
                     profileImageUrl: '',
                     followers: 0,
+                    role: null,
                   );
                 }
               }).toList();
@@ -702,6 +706,7 @@ class SearchService extends ChangeNotifier {
                       alias: username,
                       profileImageUrl: '',
                       followers: 0,
+                      role: null,
                     ),
                   )
                   .toList();
@@ -956,6 +961,7 @@ class SearchService extends ChangeNotifier {
       username: account.username!,
       title: account.alias ?? account.username!,
       imageUrl: account.profileImageUrl,
+      role: account.role, // role 정보 저장
     );
 
     // 중복 제거 (username 기준)
@@ -973,7 +979,7 @@ class SearchService extends ChangeNotifier {
     notifyListeners();
 
     debugPrint(
-      '[SearchHistory] added(username=${entry.username}) total=${_searchHistory.length}',
+      '[SearchHistory] added(username=${entry.username}, role=${entry.role}) total=${_searchHistory.length}',
     );
   }
 
@@ -1264,6 +1270,8 @@ class SearchContentItem {
   final String? profileImageUrl;
   final String? alias;
   final int? followers;
+  final String?
+  role; // 서버 role (girlfriend, plannedEnlistment, military, discharged, discharged_with_partner, null)
 
   // 게시글 관련 필드
   final String? title;
@@ -1287,6 +1295,7 @@ class SearchContentItem {
     this.profileImageUrl,
     this.alias,
     this.followers,
+    this.role,
     this.title,
     this.author,
     this.imageUrl,
@@ -1304,6 +1313,7 @@ class SearchContentItem {
     required String alias,
     required String profileImageUrl,
     required int followers,
+    String? role,
   }) {
     return SearchContentItem._(
       id: id,
@@ -1312,6 +1322,7 @@ class SearchContentItem {
       profileImageUrl: profileImageUrl,
       alias: alias,
       followers: followers,
+      role: role,
     );
   }
 
@@ -1415,14 +1426,21 @@ class _SearchHistoryEntry {
   final String username;
   final String? title; // alias 또는 표시명
   final String? imageUrl;
+  final String? role; // 사용자 role (girlfriend, military, discharged 등)
 
-  _SearchHistoryEntry({required this.username, this.title, this.imageUrl});
+  _SearchHistoryEntry({
+    required this.username,
+    this.title,
+    this.imageUrl,
+    this.role,
+  });
 
   factory _SearchHistoryEntry.fromJson(Map<String, dynamic> json) {
     return _SearchHistoryEntry(
       username: json['username']?.toString() ?? '',
       title: json['title']?.toString(),
       imageUrl: json['imageUrl']?.toString(),
+      role: json['role']?.toString(),
     );
   }
 
@@ -1430,5 +1448,6 @@ class _SearchHistoryEntry {
     'username': username,
     'title': title,
     'imageUrl': imageUrl,
+    'role': role,
   };
 }

@@ -23,10 +23,26 @@ class SystemCategoryKeys {
   /// UI 표시: `context.tr('visibility_friends')` 또는 `context.tr('friends')` → "모든 친구"
   static const String friends = 'FRIENDS';
 
+  /// 곰신이 남친에게만 (서버 응답 키)
+  static const String girlfriendToBoyfriend = 'GIRLFRIEND_TO_BOYFRIEND';
+
+  /// 남친이 곰신에게만 (서버 응답 키)
+  static const String boyfriendToGirlfriend = 'BOYFRIEND_TO_GIRLFRIEND';
+
+  /// 친구 중 군인만 (서버 응답 키)
+  static const String soldiersOnly = 'SOLDIERS_ONLY';
+
   // 그룹 기능 제거로 인해 groups 상수 제거
 
-  /// 모든 시스템 카테고리 키 목록
-  static const List<String> allKeys = [public, private, friends];
+  /// 모든 시스템 카테고리 키 목록 (필터링용)
+  static const List<String> allKeys = [
+    public,
+    private,
+    friends,
+    girlfriendToBoyfriend,
+    boyfriendToGirlfriend,
+    soldiersOnly,
+  ];
 
   /// 특정 키가 유효한 시스템 카테고리 키인지 확인
   /// 대소문자 구분 없이 확인 (서버는 대문자지만 호환성을 위해)
@@ -105,6 +121,12 @@ class SystemCategoryKeys {
         return 'visibility_private'; // '나만보기'
       case 'FRIENDS':
         return 'visibility_friends'; // '모든 친구'
+      case 'GIRLFRIEND_TO_BOYFRIEND':
+        return 'visibility_girlfriend_to_boyfriend'; // '곰신이 남친에게만'
+      case 'BOYFRIEND_TO_GIRLFRIEND':
+        return 'visibility_boyfriend_to_girlfriend'; // '남친이 곰신에게만'
+      case 'SOLDIERS_ONLY':
+        return 'visibility_soldiers_only'; // '친구 중 군인만'
       // 그룹 기능 제거로 인해 'GROUPS' case 제거
       default:
         // 하위 호환성: 이전 한국어 키도 지원

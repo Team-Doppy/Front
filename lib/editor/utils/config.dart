@@ -3,6 +3,7 @@ import 'package:doppy/editor/component/link_component.dart';
 import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
+import 'package:doppy/editor/component/template_component.dart';
 import 'package:super_editor/super_editor.dart';
 
 class EditorConfig {
@@ -51,6 +52,7 @@ class EditorDragConfig {
 
 /// 특수 노드인지 확인하는 전역 함수
 /// 🎯 멘션 노드도 특수 노드로 처리 (마지막 노드 아래 빈 공간 클릭 시 빈 텍스트 추가 기능을 위해)
+/// 🎯 템플릿 노드도 특수 노드로 처리 (마지막 노드 아래 빈 공간 클릭 시 빈 텍스트 추가 기능을 위해)
 bool isSpecialNode(DocumentNode? node) {
   if (node == null) return false;
   return node is ImageNode ||
@@ -58,5 +60,6 @@ bool isSpecialNode(DocumentNode? node) {
       node is PageViewImageNode ||
       node is ClipNode ||
       node is LinkNode ||
-      node is MentionNode;
+      node is MentionNode ||
+      node is TemplateNode;
 }

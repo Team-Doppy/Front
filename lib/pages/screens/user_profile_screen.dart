@@ -1,7 +1,9 @@
 import 'package:doppy/pages/components/category_sheet.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
 import 'package:doppy/pages/components/feed.dart';
+import 'package:doppy/pages/components/profile_feed_sections_view.dart';
 import 'package:doppy/pages/components/custom_refresh_indicator.dart';
+import 'package:doppy/pages/components/feed_loading_shimmer_sliver.dart';
 import 'package:doppy/pages/components/share_profile_bottom_sheet.dart';
 import 'package:doppy/pages/components/profile_action_bottom_sheet.dart';
 import 'package:doppy/pages/screens/my_friends_screen.dart';
@@ -15,7 +17,6 @@ import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/data/services/friend_service.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/upload_service.dart';
@@ -23,12 +24,14 @@ import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/profile_feed_sections_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
+import 'package:doppy/data/models/military_info_model.dart';
+import 'package:doppy/data/models/profile_access_level.dart';
 import 'package:doppy/pages/components/profile_edit_sheet.dart';
-import 'package:doppy/pages/components/link_bottom_sheet.dart';
+import 'package:doppy/pages/screens/military_info_setting_screen.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:io';
-import 'dart:ui';
 import 'dart:async';
 
 class UserProfileScreen extends StatefulWidget {
@@ -50,6 +53,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   late ScrollController _scrollController;
   late final bool _isOwnProfile;
   late final BaseFeedProvider _feedProvider;
+  late final ProfileFeedSectionsProvider _sectionsProvider;
+  String? _selectedSectionPhaseKey; // null이면 "전체(sections)" 탭
+  String? _selectedAccessLevelKey; // null이면 accessLevel 전용탭 아님
 
   // 업로드 진행 상태
   UploadTask? _profileUploadTask;
@@ -89,6 +95,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     } else {
       _feedProvider = context.read<OtherProfileFeedProvider>();
     }
+    _sectionsProvider = context.read<ProfileFeedSectionsProvider>();
+    _selectedSectionPhaseKey = null;
 
     // 스크롤 리스너 추가: 페이지네이션 자동 로드
     _scrollController.addListener(_onScroll);
@@ -147,30 +155,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       try {
         final bool isOther = !_isOwnProfile;
         final String? targetUsername =
-            isOther ? widget.otherUser?.username : null;
+            isOther
+                ? widget.otherUser?.username
+                : context.read<UserProvider>().currentUser?.username;
 
-        // 🎯 내 프로필일 때는 로드 건너뛰기 (캐시된 데이터만 사용)
-        if (!isOther) {
-          // 내 프로필일 때는 로드를 건너뜀
-          return;
-        }
-
-        // 타인 프로필일 때만 Feed Provider의 username 동기화 및 로드
-        if (isOther && targetUsername != null) {
-          final otherProvider = _feedProvider as OtherProfileFeedProvider;
-          await otherProvider.loadInitial(
+        // ✅ 명세: 기본 진입은 "전체(sections)" 탭
+        if (targetUsername != null) {
+          await _sectionsProvider.loadSections(
             username: targetUsername,
-            force: true, // 항상 강제 새로고침
+            force: true,
           );
 
-          // ✅ loadInitial 후 userInfo를 사용해서 viewedUser 설정
-          final userInfo = _feedProvider.userInfo;
-          if (userInfo != null && mounted) {
-            try {
-              final viewedUser = User.fromJson(userInfo);
-              context.read<UserProvider>().setViewedUser(viewedUser);
-            } catch (e) {
-              debugPrint('[UserProfileScreen] viewedUser 설정 실패: $e');
+          // ✅ sections 응답의 userInfo로 viewedUser 설정 (타인 프로필일 때만)
+          if (isOther && mounted) {
+            final userInfo = _sectionsProvider.userInfo;
+            if (userInfo != null) {
+              try {
+                final viewedUser = User.fromJson(userInfo);
+                context.read<UserProvider>().setViewedUser(viewedUser);
+              } catch (e) {
+                debugPrint('[UserProfileScreen] viewedUser 설정 실패: $e');
+              }
             }
           }
         }
@@ -196,8 +201,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           }
         }
         // 자동 데이터 가져오기 시, 이미 내용이 있으면 추가 요청 보내지 않음
-        final bool hasFeedData = _feedProvider.posts.isNotEmpty;
-        if (!hasFeedData) {
+        final bool hasData =
+            _selectedSectionPhaseKey == null
+                ? _sectionsProvider.sections.isNotEmpty
+                : _feedProvider.posts.isNotEmpty;
+        if (!hasData) {
           await _handleRefresh();
         }
       },
@@ -243,14 +251,29 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         }
       }
 
-      await _feedProvider.loadInitial(
-        username: isOther ? widget.otherUser!.username : null,
-        force: true, // 강제로 새로 로드
-      );
+      final targetUsername =
+          isOther
+              ? widget.otherUser!.username
+              : (context.read<UserProvider>().currentUser?.username ?? '');
 
-      // ✅ loadInitial 후 userInfo를 사용해서 viewedUser 설정 (타인 프로필일 때만)
+      if (targetUsername.isNotEmpty && _selectedSectionPhaseKey == null) {
+        await _sectionsProvider.loadSections(
+          username: targetUsername,
+          force: true,
+        );
+      } else {
+        await _feedProvider.loadInitial(
+          username: isOther ? widget.otherUser!.username : null,
+          force: true, // 강제로 새로 로드
+        );
+      }
+
+      // ✅ refresh 후 userInfo를 사용해서 viewedUser 설정 (타인 프로필일 때만)
       if (isOther && mounted) {
-        final userInfo = _feedProvider.userInfo;
+        final userInfo =
+            _selectedSectionPhaseKey == null
+                ? _sectionsProvider.userInfo
+                : _feedProvider.userInfo;
         if (userInfo != null) {
           try {
             final viewedUser = User.fromJson(userInfo);
@@ -271,6 +294,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   /// 스크롤 리스너: 끝에 가까워지면 다음 페이지 로드
   void _onScroll() {
     if (!_scrollController.hasClients) return;
+    // 전체(sections) 탭은 페이지네이션 없음
+    if (_selectedSectionPhaseKey == null) return;
 
     final maxScroll = _scrollController.position.maxScrollExtent;
     final currentScroll = _scrollController.position.pixels;
@@ -309,6 +334,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       } catch (e) {
         debugPrint('[UserProfileScreen] OtherProfileFeedProvider 정리 실패: $e');
       }
+      try {
+        _sectionsProvider.clear();
+      } catch (_) {}
     }
 
     super.dispose();
@@ -346,39 +374,36 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     // 🎯 build 메서드에서도 username 동기화 확인 (더 확실하게)
     // didUpdateWidget이 호출되지 않는 경우를 대비
     if (isOther && other != null) {
-      final otherProvider = _feedProvider as OtherProfileFeedProvider;
       final targetUsername = other.username;
 
-      // username이 다르면 즉시 동기화
-      if (otherProvider.username != targetUsername &&
-          !otherProvider.isLoading) {
-        // 기존 데이터 클리어 (clearData 내부에서 notifyListeners 호출됨)
-        otherProvider.clearData();
-
-        // 즉시 새로 로드
+      // 타인 프로필이 바뀌면: 전체(sections) 탭으로 리셋 + sections 재로딩
+      if (_sectionsProvider.username != targetUsername &&
+          !_sectionsProvider.isLoading) {
         WidgetsBinding.instance.addPostFrameCallback((_) async {
-          if (mounted) {
-            await otherProvider.loadInitial(
-              username: targetUsername,
-              force: true,
-            );
+          if (!mounted) return;
 
-            // ✅ loadInitial 후 userInfo를 사용해서 viewedUser 설정
-            if (mounted) {
-              final userInfo = otherProvider.userInfo;
-              if (userInfo != null) {
-                try {
-                  final viewedUser = User.fromJson(userInfo);
-                  context.read<UserProvider>().setViewedUser(viewedUser);
-                  debugPrint(
-                    '[UserProfileScreen] viewedUser 설정 완료 (build): ${viewedUser.username}',
-                  );
-                } catch (e) {
-                  debugPrint(
-                    '[UserProfileScreen] viewedUser 설정 실패 (build): $e',
-                  );
-                }
-              }
+          setState(() {
+            _selectedSectionPhaseKey = null;
+          });
+          try {
+            _feedProvider.clearData(); // 전용 탭 데이터 정리
+          } catch (_) {}
+
+          await _sectionsProvider.loadSections(
+            username: targetUsername,
+            force: true,
+          );
+
+          final userInfo = _sectionsProvider.userInfo;
+          if (userInfo != null && mounted) {
+            try {
+              final viewedUser = User.fromJson(userInfo);
+              context.read<UserProvider>().setViewedUser(viewedUser);
+              debugPrint(
+                '[UserProfileScreen] viewedUser 설정 완료 (build): ${viewedUser.username}',
+              );
+            } catch (e) {
+              debugPrint('[UserProfileScreen] viewedUser 설정 실패 (build): $e');
             }
           }
         });
@@ -386,25 +411,25 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
 
     // 표시할 이미지 URL과 사용자명 결정
-    String _displayImageUrl = '';
-    String _displayUsername = '';
-    String? _displayAlias;
+    String displayImageUrl = '';
+    String displayUsername = '';
+    String? displayAlias;
 
     if (isOther) {
       // ✅ 타인 프로필: viewedUser 우선, 없으면 other 사용
       // other.profileImageUrl이 null이어도 viewedUser가 로드되면 자동으로 업데이트됨
       final displayUser = viewedUser ?? other;
       if (displayUser != null) {
-        _displayImageUrl = displayUser.profileImageUrl ?? '';
-        _displayUsername = displayUser.username;
-        _displayAlias = displayUser.alias;
+        displayImageUrl = displayUser.profileImageUrl ?? '';
+        displayUsername = displayUser.username;
+        displayAlias = displayUser.alias;
       }
     } else {
       // ✅ 내 프로필: me 사용
       if (me != null) {
-        _displayImageUrl = me.profileImageUrl ?? '';
-        _displayUsername = me.username;
-        _displayAlias = me.alias;
+        displayImageUrl = me.profileImageUrl ?? '';
+        displayUsername = me.username;
+        displayAlias = me.alias;
       }
     }
 
@@ -507,66 +532,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                     opacity: 1.0 - _pullProgress,
                                     child: Row(
                                       children: [
-                                        // 🎯 보낸 요청 아이콘 (내 프로필일 때만 표시)
-                                        if (_isOwnProfile)
-                                          Consumer<FriendProvider>(
-                                            builder: (
-                                              context,
-                                              friendProvider,
-                                              _,
-                                            ) {
-                                              final receivedCount =
-                                                  friendProvider
-                                                      .receivedRequests
-                                                      .length;
-                                              return Stack(
-                                                clipBehavior: Clip.none,
-                                                children: [
-                                                  if (receivedCount > 0)
-                                                    Positioned(
-                                                      right: 7,
-                                                      top: 9,
-                                                      child: Container(
-                                                        padding:
-                                                            const EdgeInsets.all(
-                                                              4,
-                                                            ),
-                                                        decoration: BoxDecoration(
-                                                          color:
-                                                              Theme.of(context)
-                                                                  .colorScheme
-                                                                  .error,
-                                                          shape:
-                                                              BoxShape.circle,
-                                                        ),
-                                                        constraints:
-                                                            const BoxConstraints(
-                                                              minWidth: 16,
-                                                              minHeight: 16,
-                                                            ),
-                                                        child: Text(
-                                                          receivedCount > 99
-                                                              ? '99+'
-                                                              : '$receivedCount',
-                                                          style:
-                                                              const TextStyle(
-                                                                color:
-                                                                    Colors
-                                                                        .white,
-                                                                fontSize: 10,
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .bold,
-                                                              ),
-                                                          textAlign:
-                                                              TextAlign.center,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                ],
-                                              );
-                                            },
-                                          ),
                                         if (_isOwnProfile) ...[
                                           SizedBox(width: 10),
                                           GestureDetector(
@@ -583,11 +548,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                               ),
                                             ),
                                             onTap: () {
-                                              me != null
-                                                  ? showProfileInfoEditBottomSheet(
-                                                    me,
-                                                  )
-                                                  : null;
+                                              if (me != null) {
+                                                _openMilitaryInfoSetting(me);
+                                              }
                                             },
                                           ),
                                           SizedBox(width: 18),
@@ -692,10 +655,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                   // ✅ key를 추가하여 otherUser가 변경될 때 위젯을 강제로 재생성
                                   final heroAvatar = StaticProfileAvatar(
                                     key: ValueKey(
-                                      'profile_avatar_${_displayUsername}_${_displayImageUrl}',
+                                      'profile_avatar_${displayUsername}_${displayImageUrl}',
                                     ),
-                                    imageUrl: _displayImageUrl,
-                                    username: _displayUsername,
+                                    imageUrl: displayImageUrl,
+                                    username: displayUsername,
                                     size: 180,
                                     borderWidth: isUploading ? 0 : 3,
                                     borderColor: Theme.of(
@@ -709,8 +672,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                     clipBehavior: Clip.none,
                                     children: [
                                       Hero(
-                                        tag:
-                                            'profile_image_${_displayUsername}',
+                                        tag: 'profile_image_${displayUsername}',
                                         createRectTween: (begin, end) {
                                           // ✅ 직선 경로(나갈 때처럼 자연스럽게)
                                           return RectTween(
@@ -750,66 +712,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                                 ),
                                           ),
                                         ),
-                                      // 🎯 링크 아이콘 (프로필 원형의 우측 하단에 배치)
-                                      if ((isOther &&
-                                              other?.links != null &&
-                                              other!.links!.isNotEmpty) ||
-                                          (!isOther &&
-                                              me?.links != null &&
-                                              me!.links!.isNotEmpty))
-                                        Positioned(
-                                          right: 5,
-                                          bottom: 5,
-                                          child: GestureDetector(
-                                            onTap: () {
-                                              final links =
-                                                  isOther
-                                                      ? (other?.links ?? [])
-                                                      : (me?.links ?? []);
-                                              final linkTitles =
-                                                  isOther
-                                                      ? (other?.linkTitles)
-                                                      : (me?.linkTitles);
-                                              final linkThumbnails =
-                                                  isOther
-                                                      ? (other?.linkThumbnails)
-                                                      : (me?.linkThumbnails);
-                                              if (links.isNotEmpty) {
-                                                LinkBottomSheet.show(
-                                                  context,
-                                                  links: links,
-                                                  linkTitles: linkTitles,
-                                                  linkThumbnails:
-                                                      linkThumbnails,
-                                                  otherUser: widget.otherUser,
-                                                );
-                                              }
-                                            },
-                                            child: Container(
-                                              width: 40,
-                                              height: 40,
-                                              decoration: BoxDecoration(
-                                                color:
-                                                    Theme.of(
-                                                      context,
-                                                    ).colorScheme.onSurface,
-                                                shape: BoxShape.circle,
-                                              ),
-                                              padding: const EdgeInsets.all(8),
-                                              child: SvgPicture.asset(
-                                                'assets/icons/link.svg',
-                                                width: 24,
-                                                height: 24,
-                                                colorFilter: ColorFilter.mode(
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.surface,
-                                                  BlendMode.srcIn,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
+
+                                      // 🎯 부대 마크, 하트(여친), 또는 링크 아이콘 (프로필 원형의 우측 하단에 배치)
                                     ],
                                   );
                                 },
@@ -819,18 +723,20 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                               GestureDetector(
                                 onTap: () {
                                   if (me != null) {
-                                    showProfileInfoEditBottomSheet(me);
+                                    _openMilitaryInfoSetting(me);
                                   }
                                 },
-                                child: Column(
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
                                       // ✅ username은 절대 노출하지 않음
                                       // 내 프로필: alias가 있으면 alias, 없으면 username
                                       // 타인 프로필: alias가 있으면 alias, 없으면 빈 문자열
                                       _isOwnProfile
-                                          ? (_displayAlias ?? _displayUsername)
-                                          : (_displayAlias ?? ''),
+                                          ? (displayAlias ?? displayUsername)
+                                          : (displayAlias ?? ''),
                                       style: TextStyle(
                                         color:
                                             Theme.of(
@@ -840,6 +746,40 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                         fontWeight: FontWeight.bold,
                                         height: 1.1,
                                       ),
+                                    ),
+                                    // 🎯 여친일 경우 하트 아이콘을 닉네임 오른쪽 위에 표시
+                                    Builder(
+                                      builder: (context) {
+                                        final displayUser =
+                                            isOther
+                                                ? (viewedUser ?? other)
+                                                : me;
+                                        final isGirlfriend =
+                                            displayUser
+                                                ?.militaryInfo
+                                                ?.userType ==
+                                            UserType.girlfriend;
+
+                                        if (isGirlfriend) {
+                                          return Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 2,
+                                              top: 2,
+                                            ),
+                                            child: Icon(
+                                              Icons.favorite,
+                                              size: 12,
+                                              color: const Color.fromARGB(
+                                                255,
+                                                255,
+                                                104,
+                                                93,
+                                              ),
+                                            ),
+                                          );
+                                        }
+                                        return const SizedBox.shrink();
+                                      },
                                     ),
                                   ],
                                 ),
@@ -851,12 +791,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             ],
                           ),
                         ),
-                        // Feed 모드 전환 스위처 (카드뷰 / 이미지 전용)
                         _buildFeedModeSwitcher(),
-                        // Feed 내부에 이미 Consumer가 있으므로 중복 제거
-                        _feed.buildFeedContent(
-                          scrollController: _scrollController,
-                        ),
+                        _buildProfileFeedContentSliver(),
                       ],
                     ),
                   ),
@@ -877,6 +813,262 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         ),
       ),
     );
+  }
+
+  /// 현재 선택된 탭에 따라 sliver 컨텐츠를 렌더링
+  Widget _buildProfileFeedContentSliver() {
+    return ValueListenableBuilder<FeedDisplayMode>(
+      valueListenable: FeedDisplayModeManager(),
+      builder: (context, displayMode, _) {
+        // 전체(sections) 탭
+        if (_selectedSectionPhaseKey == null &&
+            _selectedAccessLevelKey == null) {
+          return Consumer<ProfileFeedSectionsProvider>(
+            builder: (context, provider, _) {
+              if (provider.isLoading) {
+                // ✅ 로딩/새로고침 시 쉬머 표시
+                return const FeedLoadingShimmerSliver();
+              }
+
+              // 에러 상태는 기존 Feed의 에러 UI와 일관되게 처리하기 위해 간단히 빈 상태로 둠
+              if (provider.networkError != null && provider.sections.isEmpty) {
+                return const SliverToBoxAdapter(child: SizedBox(height: 20));
+              }
+
+              // ✅ GridCategorySection / VerticalCategorySection 내부에서
+              // context.read<BaseFeedProvider>()를 호출하므로, 여기서 "BaseFeedProvider 타입"으로 브릿지 제공한다.
+              return ChangeNotifierProvider<BaseFeedProvider>.value(
+                value: _feedProvider,
+                child: ProfileFeedSectionsView(
+                  sections: provider.sections,
+                  displayMode: displayMode,
+                  isOwnProfile: _isOwnProfile,
+                  flattenSections:
+                      (() {
+                        try {
+                          // ✅ 1) 서버가 통짜 섹션(phase=all)로 내려주는 경우를 최우선으로 처리
+                          if (provider.sections.length == 1) {
+                            final phase =
+                                (provider.sections.first['phase'] ?? '')
+                                    .toString();
+                            if (phase == 'all') return true;
+                          }
+
+                          // ✅ 2) userInfo에서 role 기반 판별 (userInfo에 militaryInfo가 없을 수 있음)
+                          final info = provider.userInfo;
+                          final role = info?['role']?.toString().toLowerCase();
+                          if (role == 'girlfriend') return true;
+
+                          // ✅ 3) militaryInfo.userType 기반 판별
+                          if (info == null) return false;
+                          final owner = User.fromJson(info);
+                          return owner.militaryInfo?.userType ==
+                              UserType.girlfriend;
+                        } catch (_) {
+                          return false;
+                        }
+                      })(),
+                  mainScrollController: _scrollController,
+                  onTapMore: (phaseKey) => _selectProfileFeedTab(phaseKey),
+                  selectedBase: BaseFilter.all, // ✅ sections 탭은 공개범위 탭과 별개
+                  systemCategoryMappings: provider.systemCategoryMappings,
+                ),
+              );
+            },
+          );
+        }
+
+        // 전용(phase/accessLevel) 탭: 서버 필터 + 페이지네이션
+        return _feed.buildFeedContent(scrollController: _scrollController);
+      },
+    );
+  }
+
+  Future<void> _selectProfileFeedTab(String? phaseKey) async {
+    if (!mounted) return;
+    if (_selectedSectionPhaseKey == phaseKey) return;
+
+    setState(() {
+      _selectedSectionPhaseKey = phaseKey;
+      _selectedAccessLevelKey = null; // ✅ phase 탭 선택 시 accessLevel 탭 해제
+    });
+
+    final isOther = !_isOwnProfile;
+    final targetUsername =
+        isOther
+            ? widget.otherUser?.username
+            : context.read<UserProvider>().currentUser?.username;
+    if (targetUsername == null || targetUsername.isEmpty) return;
+
+    // 전체(sections)
+    if (phaseKey == null) {
+      _feedProvider.configureServerFilter(
+        phase: null,
+        lifePhase: null,
+        accessLevel: null,
+      );
+      await _sectionsProvider.loadSections(
+        username: targetUsername,
+        force: true,
+      );
+      return;
+    }
+
+    // 전용(phase/lifePhase)
+    final query = _queryForPhaseKey(phaseKey);
+    _feedProvider.configureServerFilter(
+      phase: query.$1,
+      lifePhase: query.$2,
+      accessLevel: null,
+    );
+
+    await _feedProvider.loadInitial(
+      username: isOther ? targetUsername : null,
+      // ✅ 필터가 변경되었으므로 서버에서 다시 가져오기
+      force: true,
+    );
+  }
+
+  Future<void> _selectProfileFeedAccessLevelTab(String? accessLevelKey) async {
+    debugPrint(
+      '[UserProfileScreen] _selectProfileFeedAccessLevelTab 호출: '
+      'accessLevelKey=$accessLevelKey',
+    );
+    if (!mounted) return;
+    if (_selectedAccessLevelKey == accessLevelKey &&
+        _selectedSectionPhaseKey == null) {
+      return;
+    }
+
+    setState(() {
+      _selectedSectionPhaseKey = null; // ✅ accessLevel 탭 선택 시 phase 탭 해제
+      _selectedAccessLevelKey = accessLevelKey;
+    });
+
+    final isOther = !_isOwnProfile;
+    final targetUsername =
+        isOther
+            ? widget.otherUser?.username
+            : context.read<UserProvider>().currentUser?.username;
+    if (targetUsername == null || targetUsername.isEmpty) return;
+
+    // accessLevelKey == null → sections 탭으로 복귀
+    if (accessLevelKey == null) {
+      _feedProvider.configureServerFilter(
+        phase: null,
+        lifePhase: null,
+        accessLevel: null,
+      );
+      await _sectionsProvider.loadSections(
+        username: targetUsername,
+        force: true,
+      );
+      return;
+    }
+
+    // 전용(accessLevel) 탭
+    _feedProvider.configureServerFilter(
+      phase: null,
+      lifePhase: null,
+      accessLevel: accessLevelKey,
+    );
+
+    await _feedProvider.loadInitial(
+      username: isOther ? targetUsername : null,
+      // ✅ 필터가 변경되었으므로 서버에서 다시 가져오기
+      force: true,
+    );
+  }
+
+  /// ✅ 필터 조합 적용 (phase + accessLevel 동시 설정)
+  Future<void> _applyFilterCombination(
+    String? phaseKey,
+    String? accessLevelKey,
+  ) async {
+    if (!mounted) return;
+
+    setState(() {
+      _selectedSectionPhaseKey = phaseKey;
+      _selectedAccessLevelKey = accessLevelKey;
+    });
+
+    final isOther = !_isOwnProfile;
+    final targetUsername =
+        isOther
+            ? widget.otherUser?.username
+            : context.read<UserProvider>().currentUser?.username;
+    if (targetUsername == null || targetUsername.isEmpty) return;
+
+    // 둘 다 null이면 sections 탭으로 복귀
+    if (phaseKey == null && accessLevelKey == null) {
+      _feedProvider.configureServerFilter(
+        phase: null,
+        lifePhase: null,
+        accessLevel: null,
+      );
+      await _sectionsProvider.loadSections(
+        username: targetUsername,
+        force: true,
+      );
+      return;
+    }
+
+    // phase와 accessLevel을 동시에 설정
+    String? phase;
+    String? lifePhase;
+    if (phaseKey != null) {
+      final query = _queryForPhaseKey(phaseKey);
+      phase = query.$1;
+      lifePhase = query.$2;
+    }
+
+    // ✅ API 명세: 서버에서 phase와 accessLevel 모두 필터링
+    _feedProvider.configureServerFilter(
+      phase: phase,
+      lifePhase: lifePhase,
+      accessLevel: accessLevelKey, // ✅ API 명세에 따라 서버에 전달
+    );
+
+    // ✅ 필터가 변경되었으므로 서버에서 다시 가져오기 (force: true)
+    await _feedProvider.loadInitial(
+      username: isOther ? targetUsername : null,
+      force: true, // 필터 변경 시 서버에서 다시 가져오기
+    );
+  }
+
+  /// returns (phase, lifePhase)
+  (String?, String?) _queryForPhaseKey(String phaseKey) {
+    // pseudo-phase: leave / preEnlistmentMemory
+    if (phaseKey == 'leave') {
+      return (null, 'LEAVE_OR_PRE_ENLISTMENT');
+    }
+    if (phaseKey == 'preEnlistmentMemory') {
+      return ('preEnlistment', 'LEAVE_OR_PRE_ENLISTMENT');
+    }
+    return (phaseKey, null);
+  }
+
+  String _sectionTitleFromPhase(String phaseKey) {
+    switch (phaseKey) {
+      case 'preEnlistment':
+        return '입대전';
+      case 'training':
+        return '훈련소';
+      case 'private':
+        return '이병';
+      case 'privateFirstClass':
+        return '일병';
+      case 'corporal':
+        return '상병';
+      case 'sergeant':
+        return '병장';
+      case 'leave':
+        return '휴가모듬';
+      case 'preEnlistmentMemory':
+        return '입대전 추억';
+      default:
+        return phaseKey;
+    }
   }
 
   SliverToBoxAdapter _buildFeedModeSwitcher() {
@@ -920,10 +1112,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   Widget _buildCategoryButton(IconData icon) {
     return GestureDetector(
       onTap: () {
+        final mappings =
+            _selectedSectionPhaseKey == null
+                ? context
+                    .read<ProfileFeedSectionsProvider>()
+                    .systemCategoryMappings
+                : _feedProvider.systemCategoryMappings;
+
+        final sectionsProvider = context.read<ProfileFeedSectionsProvider>();
         _categoryDropDown.showCategoryDropdown(
           context,
           _categoryButtonKey,
           _feedProvider,
+          onPhaseSelected: (phaseKey) => _selectProfileFeedTab(phaseKey),
+          currentPhaseKey: _selectedSectionPhaseKey,
+          systemCategoryMappings: mappings,
+          currentAccessLevelKey: _selectedAccessLevelKey,
+          onAccessLevelSelected: (k) => _selectProfileFeedAccessLevelTab(k),
+          sections: sectionsProvider.sections,
+          onFilterApplied:
+              (phaseKey, accessLevelKey) =>
+                  _applyFilterCombination(phaseKey, accessLevelKey),
         );
       },
       child: Container(
@@ -941,33 +1150,46 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 SizedBox(width: 8),
-                _isOwnProfile
-                    ? Consumer<MyProfileFeedProvider>(
-                      builder:
-                          (context, provider, _) => Text(
-                            context.tr(provider.selectedLabel),
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(1),
-                            ),
-                          ),
-                    )
-                    : Consumer<OtherProfileFeedProvider>(
-                      builder:
-                          (context, provider, _) => Text(
-                            context.tr(provider.selectedLabel),
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withOpacity(1),
-                            ),
-                          ),
-                    ),
+                Builder(
+                  builder: (context) {
+                    // Phase 필터 표시
+                    final phaseLabel =
+                        _selectedSectionPhaseKey == null
+                            ? '전체'
+                            : _sectionTitleFromPhase(_selectedSectionPhaseKey!);
+
+                    // 공개 범위 필터 표시 (sections 응답의 systemCategoryMappings 기반)
+                    // ✅ ProfileAccessLevel.toDisplayLabel 사용
+                    final accessLabel =
+                        (_selectedAccessLevelKey == null)
+                            ? context.tr('all')
+                            : ProfileAccessLevel.toDisplayLabel(
+                              _selectedAccessLevelKey!,
+                            );
+
+                    // sections 탭: "전체"
+                    // 전용 phase 탭: phase
+                    // 전용 accessLevel 탭: accessLabel
+                    final displayText =
+                        _selectedSectionPhaseKey == null &&
+                                _selectedAccessLevelKey == null
+                            ? '전체'
+                            : _selectedSectionPhaseKey != null
+                            ? phaseLabel
+                            : accessLabel;
+
+                    return Text(
+                      displayText,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(1),
+                      ),
+                    );
+                  },
+                ),
                 SizedBox(width: 4),
                 Icon(
                   Icons.keyboard_arrow_down,
@@ -1558,6 +1780,109 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     );
   }
 
+  /// 군 정보 설정 화면 열기 (별명 포함)
+  void _openMilitaryInfoSetting(User me) {
+    final userProvider = context.read<UserProvider>();
+    final militaryInfo = me.militaryInfo;
+    final alias = me.alias ?? '';
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (context) => MilitaryInfoSettingScreen(
+              initialInfo: militaryInfo,
+              initialAlias: alias,
+              onSave: (String alias, MilitaryInfo militaryInfo) async {
+                try {
+                  // ✅ PUT vs PATCH 판단
+                  // - 군인(military) + 입대 후(afterEnlistment)이고 입대일/진급일/계급만 변경된 경우: PATCH
+                  // - 그 외: PUT
+                  final isMilitaryAfterEnlistment =
+                      militaryInfo.userType == UserType.military &&
+                      militaryInfo.status == MilitaryStatus.afterEnlistment;
+
+                  final initialInfo = militaryInfo;
+                  final hasOnlyStateChanges =
+                      initialInfo.enlistmentDate != null &&
+                      (militaryInfo.enlistmentDate !=
+                              initialInfo.enlistmentDate ||
+                          militaryInfo.currentRank != initialInfo.currentRank ||
+                          _hasPromotionDatesChanged(
+                            militaryInfo.manualPromotionDates,
+                            initialInfo.manualPromotionDates,
+                          ));
+
+                  bool success = false;
+
+                  if (isMilitaryAfterEnlistment && hasOnlyStateChanges) {
+                    // ✅ PATCH /api/military/state-adjustment 사용
+                    // currentRank는 수정 불가 (서버가 자동 계산) - 요청에 포함하지 않음
+                    final manualPromotionDatesMap = militaryInfo
+                        .manualPromotionDates
+                        ?.map(
+                          (key, value) =>
+                              MapEntry(key, value.toIso8601String()),
+                        );
+
+                    success = await userProvider.adjustMilitaryState(
+                      enlistmentDate: militaryInfo.enlistmentDate,
+                      manualPromotionDates: manualPromotionDatesMap,
+                    );
+
+                    // ✅ PATCH 성공 시 별명도 업데이트 (별도 호출)
+                    if (success && alias != (me.alias ?? '')) {
+                      await userProvider.updateProfileInfo(
+                        alias: alias,
+                        militaryInfo: null, // militaryInfo는 이미 PATCH로 업데이트됨
+                      );
+                    }
+                  } else {
+                    // ✅ PUT /api/profile/info 사용
+                    success = await userProvider.updateProfileInfo(
+                      alias: alias,
+                      militaryInfo: militaryInfo,
+                    );
+                  }
+
+                  // ✅ 일반 저장 UX를 위해 번들 재조회 (입대일/진급일 변경은 SettingScreen에서 Splash로 리로드)
+                  if (success) {
+                    await userProvider.fetchUserBundle();
+                  }
+
+                  return success;
+                } catch (e) {
+                  debugPrint('[UserProfileScreen] 군 정보 저장 실패: $e');
+                  return false;
+                }
+              },
+            ),
+      ),
+    );
+  }
+
+  /// 진급일 변경 여부 확인 (user_profile_screen.dart용)
+  bool _hasPromotionDatesChanged(
+    Map<String, DateTime>? current,
+    Map<String, DateTime>? initial,
+  ) {
+    if (current == null && initial == null) {
+      return false;
+    }
+    if (current == null || initial == null) {
+      return true;
+    }
+    if (current.length != initial.length) {
+      return true;
+    }
+    for (final entry in current.entries) {
+      final initialDate = initial[entry.key];
+      if (initialDate == null || initialDate != entry.value) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void showProfileInfoEditBottomSheet(User me) {
     // 컨트롤러에 현재 값 설정
     _nameController.text = me.alias ?? '';
@@ -1605,6 +1930,22 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         );
       },
     );
+  }
+
+  /// 🎯 군종에 맞는 부대 마크 이미지 경로 반환
+  String _getBranchImagePath(MilitaryBranch branch) {
+    switch (branch) {
+      case MilitaryBranch.army:
+        return 'assets/images/army_nobg.png';
+      case MilitaryBranch.navy:
+        return 'assets/images/navy_nobg.png';
+      case MilitaryBranch.airForce:
+        return 'assets/images/airforce_nobg.png';
+      case MilitaryBranch.marines:
+        return 'assets/images/marin_nobg.png';
+      default:
+        return 'assets/images/army_nobg.png';
+    }
   }
 
   /// 프로필 사진 제거 (기본 이미지로 변경)

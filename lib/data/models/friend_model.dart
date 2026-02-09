@@ -24,6 +24,7 @@ class Friend {
   final FriendStatus status;
   final DateTime createdAt;
   final bool isRequester; // 내가 보낸 요청인지 여부
+  final String? role; // 🎯 사용자 역할 (girlfriend, military 등)
 
   Friend({
     required this.id,
@@ -33,6 +34,7 @@ class Friend {
     required this.status,
     required this.createdAt,
     required this.isRequester,
+    this.role,
   });
 
   factory Friend.fromJson(Map<String, dynamic> json) {
@@ -51,6 +53,14 @@ class Friend {
         parsedStatus = FriendStatus.UNKNOWN;
     }
 
+    final roleValue = json['role'];
+    final roleString = roleValue?.toString();
+
+    // ✅ 디버그: role 필드 파싱 로그
+    debugPrint(
+      '[Friend.fromJson] username=${json['username']}, role=$roleValue, roleString=$roleString, roleType=${roleValue?.runtimeType}',
+    );
+
     return Friend(
       id: (json['id'] as num?)?.toInt() ?? 0,
       username: (json['username'] ?? '').toString(),
@@ -64,6 +74,7 @@ class Friend {
               ? _parseUtcDateTime(json['createdAt'] as String)
               : DateTime.fromMillisecondsSinceEpoch(0).toUtc(),
       isRequester: (json['requester'] as bool?) ?? false,
+      role: roleString, // 🎯 역할 정보 파싱
     );
   }
 }

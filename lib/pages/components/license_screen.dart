@@ -48,7 +48,7 @@ class LicenseScreen extends StatelessWidget {
                   width: 80,
                   height: 80,
                   decoration: BoxDecoration(
-                    color: AppColors.primary,
+                    color: Theme.of(context).colorScheme.primary,
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Center(

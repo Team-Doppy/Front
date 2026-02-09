@@ -1,3 +1,4 @@
+import 'package:doppy/data/models/access_level.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:doppy/data/services/search_service.dart';

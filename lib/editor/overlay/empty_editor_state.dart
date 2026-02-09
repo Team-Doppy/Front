@@ -66,7 +66,7 @@ class EmptyEditorState extends StatelessWidget {
                   ),
               const SizedBox(height: 16),
               Text(
-                context.tr('tap_to_start_writing'),
+                customMessage ?? context.tr('tap_to_start_writing'),
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,

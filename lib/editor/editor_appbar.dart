@@ -16,7 +16,6 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'dart:convert';
 import 'package:super_editor/super_editor.dart';
 import 'package:doppy/editor/postwrite_screen.dart' show PostWriteMode;
-import 'package:doppy/theme/app_colors.dart';
 
 class EditModeAppBar extends StatefulWidget {
   final EditorService editorService;
@@ -251,9 +250,13 @@ class EditorAppBar extends StatelessWidget {
   onExportMetadataChanged; // ✅ 다음(썸네일 편집)에서 편집한 메타데이터 전달
   final String? initialTitleForExport; // ✅ 다음(썸네일 편집) 프리필용
   final String? initialThumbnailUrlForExport; // ✅ 다음(썸네일 편집) 프리필용
-  final PostWriteMode? mode; // ✅ 온보딩 모드 여부
+  final PostWriteMode? mode; // ✅ 글쓰기 모드
   final int? initialYear; // 초기 연도
   final int? initialYearOfWeek; // 초기 주차 (1-53)
+  final List<String>?
+  initialRecipientUsernames; // ✅ letter 모드: 선택한 친구 목록 (하위 호환성)
+  final List<Map<String, dynamic>>?
+  initialRecipients; // ✅ letter 모드: 선택한 친구 전체 정보
 
   const EditorAppBar({
     super.key,
@@ -269,6 +272,8 @@ class EditorAppBar extends StatelessWidget {
     this.mode,
     this.initialYear,
     this.initialYearOfWeek,
+    this.initialRecipientUsernames, // ✅ letter 모드: 선택한 친구 목록 (하위 호환성)
+    this.initialRecipients, // ✅ letter 모드: 선택한 친구 전체 정보
   });
 
   Future<void> _onNextButtonTapped(BuildContext context) async {
@@ -353,6 +358,15 @@ class EditorAppBar extends StatelessWidget {
       if (t.isNotEmpty) map['title'] = t;
       // 🎯 summary 필드 제거됨
       if (th.isNotEmpty) map['thumbnailImageUrl'] = th;
+      // ✅ letter 모드: 선택한 친구 목록 추가 (전체 정보 포함)
+      if (mode == PostWriteMode.letter) {
+        if (initialRecipients != null) {
+          map['letterRecipients'] = initialRecipients;
+        } else if (initialRecipientUsernames != null) {
+          // 하위 호환성: username만 있는 경우
+          map['letterRecipients'] = initialRecipientUsernames;
+        }
+      }
       json = jsonEncode(map);
     } catch (_) {
       // 실패해도 다음 화면 진입은 허용
@@ -368,8 +382,8 @@ class EditorAppBar extends StatelessWidget {
               sessionKey: sessionKey, // draft ID를 sessionKey로 사용
               initialYear: initialYear,
               initialYearOfWeek: initialYearOfWeek,
-              isOnboardingMode:
-                  mode == PostWriteMode.onboarding, // 🎯 온보딩 모드 전달
+              isOnboardingMode: false, // ✅ 온보딩 모드 제거됨
+              writeMode: mode, // ✅ 글쓰기 모드 전달
             ),
       ),
     );

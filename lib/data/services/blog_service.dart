@@ -43,21 +43,54 @@ class BlogService {
   Future<Map<String, dynamic>> getProfileFeed(
     String username, {
     int page = 0,
-    int size = 200,
+    int size = 20,
+    String? phase,
+    String? lifePhase,
+    String? accessLevel,
+    bool preview = false,
   }) async {
     try {
+      final queryParameters = <String, dynamic>{'page': page, 'size': size};
+      if (phase != null && phase.isNotEmpty) queryParameters['phase'] = phase;
+      if (lifePhase != null && lifePhase.isNotEmpty) {
+        queryParameters['lifePhase'] = lifePhase;
+      }
+      if (accessLevel != null && accessLevel.isNotEmpty) {
+        queryParameters['accessLevel'] = accessLevel;
+      }
+      if (preview) queryParameters['preview'] = true;
+
+      debugPrint(
+        '[BlogService] getProfileFeed 요청: username=$username, '
+        'queryParameters=$queryParameters',
+      );
+
       final response = await _dio.get(
         '/api/profile/feed/$username',
-        queryParameters: {'page': page, 'size': size},
+        queryParameters: queryParameters,
       );
 
       final responseData = response.data as Map<String, dynamic>;
       // { success, data, message } 형태에서 data 추출
+      Map<String, dynamic> result;
       if (responseData.containsKey('data')) {
-        return responseData['data'] as Map<String, dynamic>;
+        result = responseData['data'] as Map<String, dynamic>;
+      } else {
+        // data 필드가 없으면 전체 응답 반환 (하위 호환성)
+        result = responseData;
       }
-      // data 필드가 없으면 전체 응답 반환 (하위 호환성)
-      return responseData;
+
+      // ✅ 디버그 로그: 서버 응답 확인
+      final postsData = result['posts'] as Map<String, dynamic>?;
+      final postsList = postsData?['posts'] as List?;
+      debugPrint(
+        '[BlogService] getProfileFeed 응답: '
+        'totalElements=${postsData?['totalElements']}, '
+        'posts.length=${postsList?.length ?? 0}, '
+        'hasNext=${postsData?['hasNext']}',
+      );
+
+      return result;
     } catch (e) {
       debugPrint('[BlogService] 프로필 피드 로드 실패: $e');
 
@@ -78,6 +111,59 @@ class BlogService {
           rethrow; // 기타 네트워크 에러도 그대로 전달
         }
       }
+      rethrow;
+    }
+  }
+
+  /// 프로필 피드 섹션 조회 (전체 탭: phase별 6개 + 더보기)
+  /// 응답: { success, data: ProfileFeedSectionsResponse, message }
+  ///
+  /// - endpoint: GET /api/profile/feed/{username}/sections
+  Future<Map<String, dynamic>> getProfileFeedSections(String username) async {
+    try {
+      final response = await _dio.get('/api/profile/feed/$username/sections');
+
+      final responseData = response.data as Map<String, dynamic>;
+      // { success, data, message } 형태에서 data 추출
+      if (responseData.containsKey('data')) {
+        return responseData['data'] as Map<String, dynamic>;
+      }
+      // data 필드가 없으면 전체 응답 반환 (하위 호환성)
+      return responseData;
+    } catch (e) {
+      debugPrint('[BlogService] 프로필 피드 섹션 로드 실패: $e');
+
+      if (e is DioException) {
+        // 네트워크 연결 오류는 DioException을 그대로 전달
+        if (e.type == DioExceptionType.connectionError ||
+            e.type == DioExceptionType.connectionTimeout ||
+            e.type == DioExceptionType.sendTimeout ||
+            e.type == DioExceptionType.receiveTimeout) {
+          rethrow; // DioException 그대로 전달
+        }
+        // HTTP 상태 코드가 있는 경우에만 Exception 변환
+        if (e.response?.statusCode == 404) {
+          throw Exception('사용자를 찾을 수 없습니다.');
+        } else if (e.response?.statusCode == 401) {
+          throw Exception('인증이 필요합니다.');
+        } else {
+          rethrow; // 기타 네트워크 에러도 그대로 전달
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// 섹션(phase) 표시 순서 저장 (본인만)
+  /// PUT /api/profile/feed/section-order
+  Future<void> saveProfileFeedSectionOrder(List<String> phaseOrder) async {
+    try {
+      await _dio.put(
+        '/api/profile/feed/section-order',
+        data: <String, dynamic>{'phaseOrder': phaseOrder},
+      );
+    } catch (e) {
+      debugPrint('[BlogService] 섹션 순서 저장 실패: $e');
       rethrow;
     }
   }
@@ -482,10 +568,36 @@ class BlogService {
           (postData['mentionedUsernames'] is List)
               ? List<String>.from(postData['mentionedUsernames'] as List)
               : <String>[],
-      // 🎯 연도와 주차 정보 (새 포스트 발행 시 포함)
+
+      // 🎯 그리드 셀 지정 (우선순위: phase+slotIndex > year+weekOfYear > postedAt > 생략)
+      // 1. phase + slotIndex (최우선)
+      if (postData['phase'] != null) 'phase': postData['phase'] as String,
+      if (postData['slotIndex'] != null)
+        'slotIndex': postData['slotIndex'] as int,
+      // 2. year + weekOfYear
       if (postData['year'] != null) 'year': postData['year'] as int,
       if (postData['weekOfYear'] != null)
         'weekOfYear': postData['weekOfYear'] as int,
+      // 3. postedAt
+      if (postData['postedAt'] != null)
+        'postedAt': postData['postedAt'] as String,
+
+      // 🎯 작성 모드 (lifePhase)
+      if (postData['lifePhase'] != null)
+        'lifePhase': postData['lifePhase'] as String,
+
+      // ✅ API 명세: 편지 모드 - recipientUserId
+      if (postData['recipientUserId'] != null)
+        'recipientUserId': postData['recipientUserId'] as int,
+
+      // ✅ 편지 모드 - recipientUsername (클라에서 username을 그대로 보내기)
+      if (postData['recipientUsername'] != null)
+        'recipientUsername': postData['recipientUsername'] as String,
+
+      // ✅ API 명세: 글 타입 (writingType)
+      if (postData['writingType'] != null)
+        'writingType': postData['writingType'] as String,
+
       // 그룹 기능 제거로 인해 GROUPS 처리 제거
     };
 
@@ -842,78 +954,25 @@ class BlogService {
     }
   }
 
-  /// 홈용 추천 카드 조회 (GET /api/recommendation-cache/for-home)
-  /// 응답: List<RecCardForHomeResponse>
-  Future<List<Map<String, dynamic>>> getHomeRecommendations() async {
-    try {
-      debugPrint('[BlogService] 홈용 추천 카드 조회 시작');
-
-      final response = await _dio.get(
-        '/api/recommendation-cache/for-home',
-        options: Options(receiveTimeout: const Duration(seconds: 10)),
-      );
-
-      if (response.statusCode == 200) {
-        final data = response.data;
-        final recommendations = List<Map<String, dynamic>>.from(
-          data is List ? data : (data['data'] as List? ?? []),
-        );
-
-        debugPrint('[BlogService] 홈용 추천 카드 조회 성공: ${recommendations.length}개');
-        return recommendations;
-      }
-
-      throw Exception('홈용 추천 카드 조회 실패: ${response.statusCode}');
-    } catch (e) {
-      debugPrint('[BlogService] 홈용 추천 카드 조회 실패: $e');
-      if (e is DioException) {
-        final statusCode = e.response?.statusCode;
-        final responseData = e.response?.data;
-        
-        // 🎯 500 에러 상세 로깅
-        if (statusCode == 500) {
-          debugPrint('[BlogService] ⚠️ 서버 500 에러 상세:');
-          debugPrint('[BlogService]   - statusCode: $statusCode');
-          debugPrint('[BlogService]   - responseData: $responseData');
-          debugPrint('[BlogService]   - errorType: ${e.type}');
-          debugPrint('[BlogService]   - errorMessage: ${e.message}');
-        }
-        
-        final errorMessage = (responseData is Map<String, dynamic>)
-            ? (responseData['message'] ?? '홈용 추천 카드 조회 실패')
-            : '홈용 추천 카드 조회 실패';
-
-        if (statusCode == 401) {
-          throw Exception('인증이 필요합니다.');
-        } else {
-          throw Exception('$errorMessage (상태 코드: $statusCode)');
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// 주차 셀 포스트 목록 조회 (GET /api/weeks/postlist)
-  /// 응답: WeekPostListResponse { posts: BlogResponse[] }
-  Future<List<Map<String, dynamic>>> getWeekPostList({
-    required int year,
-    required int week,
-    List<int>? postIds,
+  /// 군인 그리드 셀 포스트 목록 조회 (GET /api/military/postlist)
+  /// 요청: phase, slotIndex 필수
+  /// 응답: { data: { posts: BlogResponse[], phase: string, slotIndex: int } }
+  Future<List<Map<String, dynamic>>> getMilitaryPostList({
+    required String phase,
+    required int slotIndex,
   }) async {
     try {
       debugPrint(
-        '[BlogService] 주차 포스트 목록 조회: $year년 $week주차, postIds: ${postIds?.length ?? 0}개',
+        '[BlogService] 군인 그리드 포스트 목록 조회: phase=$phase, slotIndex=$slotIndex',
       );
 
-      final queryParams = <String, dynamic>{'year': year, 'week': week};
-
-      // postIds가 있으면 쉼표 구분 문자열로 추가
-      if (postIds != null && postIds.isNotEmpty) {
-        queryParams['postIds'] = postIds.join(',');
-      }
+      final queryParams = <String, dynamic>{
+        'phase': phase,
+        'slotIndex': slotIndex,
+      };
 
       final response = await _dio.get(
-        '/api/weeks/postlist',
+        '/api/military/postlist',
         queryParameters: queryParams,
       );
 
@@ -931,13 +990,13 @@ class BlogService {
         final postsList =
             posts.map((post) => post as Map<String, dynamic>).toList();
 
-        debugPrint('[BlogService] 주차 포스트 목록 조회 성공: ${postsList.length}개');
+        debugPrint('[BlogService] 군인 그리드 포스트 목록 조회 성공: ${postsList.length}개');
         return postsList;
       }
 
-      throw Exception('주차 포스트 목록 조회 실패: ${response.statusCode}');
+      throw Exception('군인 그리드 포스트 목록 조회 실패: ${response.statusCode}');
     } catch (e) {
-      debugPrint('[BlogService] 주차 포스트 목록 조회 실패: $e');
+      debugPrint('[BlogService] 군인 그리드 포스트 목록 조회 실패: $e');
 
       if (e is DioException) {
         final statusCode = e.response?.statusCode;

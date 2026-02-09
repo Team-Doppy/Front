@@ -15,7 +15,7 @@ class AppTheme {
 
       // ===== Color Scheme =====
       colorScheme: ColorScheme.light(
-        primary: AppColors.primary,
+        primary: AppColors.primaryLight, // Light theme: 어두운 청록색
         primaryContainer: AppColors.primaryLight,
         secondary: AppColors.accent,
         surface: AppColors.lightSurface,
@@ -86,7 +86,7 @@ class AppTheme {
         foregroundColor: AppColors.lightTextPrimary,
         elevation: 0,
         scrolledUnderElevation: 1,
-        surfaceTintColor: AppColors.primary,
+        surfaceTintColor: AppColors.primaryLight,
         titleTextStyle: AppTextStyles.withThemeColor(
           AppTextStyles.headlineMedium,
           false,
@@ -96,8 +96,8 @@ class AppTheme {
 
       // ===== Text Selection Theme =====
       textSelectionTheme: TextSelectionThemeData(
-        cursorColor: AppColors.primary,
-        selectionHandleColor: AppColors.primary,
+        cursorColor: AppColors.primaryLight,
+        selectionHandleColor: AppColors.primaryLight,
       ),
 
       // ===== PopupMenu Theme =====
@@ -119,7 +119,7 @@ class AppTheme {
 
       // ===== Color Scheme =====
       colorScheme: ColorScheme.dark(
-        primary: AppColors.primary,
+        primary: AppColors.primaryDark, // Dark theme: 밝은 청록색
         primaryContainer: AppColors.primaryDark,
         secondary: AppColors.accentDark,
         surface: AppColors.darkSurface,
@@ -190,7 +190,7 @@ class AppTheme {
         foregroundColor: AppColors.darkTextPrimary,
         elevation: 0,
         scrolledUnderElevation: 1,
-        surfaceTintColor: AppColors.primary,
+        surfaceTintColor: AppColors.primaryDark,
         titleTextStyle: AppTextStyles.withThemeColor(
           AppTextStyles.headlineMedium,
           true,
@@ -200,8 +200,8 @@ class AppTheme {
 
       // ===== Text Selection Theme =====
       textSelectionTheme: TextSelectionThemeData(
-        cursorColor: AppColors.primary,
-        selectionHandleColor: AppColors.primary,
+        cursorColor: AppColors.primaryDark,
+        selectionHandleColor: AppColors.primaryDark,
       ),
 
       // ===== PopupMenu Theme =====

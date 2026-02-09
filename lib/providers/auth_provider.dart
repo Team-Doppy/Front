@@ -6,7 +6,7 @@ import '../../data/services/blog_service.dart';
 import 'package:doppy/image/utils/read_image_cache_manager.dart';
 import 'user_provider.dart';
 import 'friend_provider.dart';
-import 'weekly_contribution_provider.dart';
+import 'military_grid_provider.dart';
 import 'package:doppy/data/models/user_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -40,7 +40,7 @@ class AuthProvider extends ChangeNotifier {
     FriendProvider().logout();
     OtherProfileFeedProvider().logout();
     MyProfileFeedProvider().logout();
-    WeeklyContributionProvider().logout(); // ✅ 주간 기여도 캐시 초기화
+    MilitaryGridProvider().logout();
 
     // 4. 모든 서비스 캐시 초기화
     BlogService.clearAllCache();
@@ -168,8 +168,8 @@ class AuthProvider extends ChangeNotifier {
     if (prev != null && prev.isNotEmpty && prev != username) {
       // sync 메서드이므로 best-effort로 비동기 실행
       Future.microtask(() => ReadImageCacheManager.purge());
-      // ✅ 계정 변경 시 주간 기여도 캐시도 초기화
-      WeeklyContributionProvider().logout();
+      // ✅ 계정 변경 시 Military Grid 캐시도 초기화
+      MilitaryGridProvider().logout();
     }
 
     _isLoggedIn = isLoggedIn;

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:doppy/pages/components/doppy_loading_logo.dart';
 import 'package:doppy/pages/screens/favorites_screen.dart';
 import 'package:doppy/pages/screens/blocked_users_screen.dart';
-import 'package:doppy/pages/screens/test_mode_screen.dart';
 import 'package:doppy/pages/components/license_screen.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -325,7 +324,7 @@ class _SettingScreenState extends State<SettingScreen>
                           effectiveEnabled ? 'ON' : 'OFF',
                           style: TextStyle(
                             fontSize: 15,
-                            color: AppColors.primary,
+                            color: Theme.of(context).colorScheme.primary,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -385,7 +384,7 @@ class _SettingScreenState extends State<SettingScreen>
                       : context.tr('light'),
                   style: TextStyle(
                     fontSize: 15,
-                    color: AppColors.primary,
+                    color: Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -429,20 +428,6 @@ class _SettingScreenState extends State<SettingScreen>
             title: context.tr('others'),
             surfaceColor: surfaceColor,
             children: [
-              // ✅ 통합 테스트 모드 (개발용)
-              if (kDebugMode)
-                _SettingTile(
-                  icon: Icons.bug_report_outlined,
-                  label: '통합 테스트 모드',
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const TestModeScreen(),
-                      ),
-                    );
-                  },
-                ),
               _SettingTile(
                 icon: Icons.article_outlined,
                 label: context.tr('license'),

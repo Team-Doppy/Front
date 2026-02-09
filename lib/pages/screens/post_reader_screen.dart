@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 import 'dart:async';
+import 'package:doppy/data/models/access_level.dart';
 import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/auth_service.dart';
 import 'package:doppy/editor/component/app_image_node.dart';

@@ -4,13 +4,12 @@ import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/friend_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
-import 'package:doppy/providers/weekly_contribution_provider.dart';
-import 'package:doppy/providers/home_recommendation_provider.dart';
+import 'package:doppy/providers/military_grid_provider.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/data/services/auth_service.dart';
+import 'package:doppy/data/services/user_service.dart';
 import 'package:doppy/utils/deep_link_store.dart';
 import 'package:doppy/utils/deep_link_handler.dart';
-import 'package:doppy/utils/week_utils.dart';
 import 'package:doppy/pages/screens/join_screen.dart';
 import 'package:doppy/pages/onbording/onbording_flow.dart';
 import 'package:doppy/providers/publish_provider.dart';
@@ -177,6 +176,16 @@ class _SplashScreenState extends State<SplashScreen>
       try {
         await _loadUserBundle();
       } catch (e) {
+        // ✅ militaryInfo가 null인 경우는 온보딩 플로우로 이동 (에러가 아님)
+        final errorStr = e.toString();
+        if (errorStr.contains('militaryInfo is null')) {
+          debugPrint('[SplashScreen] ✅ 온보딩 플로우로 이동 필요 감지 - 온보딩 플로우로 이동 예정');
+          // _shouldForceOnboardingFlow는 이미 _loadUserBundle()에서 설정됨
+          // _BootstrapResult.loggedIn()을 반환하여 _transitionAfterReady()에서 체크하도록 함
+          // 이후 로직은 실행하지 않고 바로 반환
+          return _BootstrapResult.loggedIn();
+        }
+
         // ✅ 유저 번들 로드 실패 시 (401, 502 등) 로그인 화면으로 리다이렉트
         // UserService가 DioException을 Exception으로 변환하므로 에러 메시지도 체크
         if (e is DioException) {
@@ -188,7 +197,6 @@ class _SplashScreenState extends State<SplashScreen>
         }
 
         // ✅ Exception 메시지에 상태 코드가 포함된 경우도 체크
-        final errorStr = e.toString();
         if (errorStr.contains('401') || errorStr.contains('502')) {
           debugPrint(
             '[SplashScreen] ⚠️ 유저 번들 로드 실패 (에러 메시지: $errorStr) - 로그인 화면으로 리다이렉트',
@@ -201,22 +209,27 @@ class _SplashScreenState extends State<SplashScreen>
       }
 
       // 나머지 API는 병렬로 로드 (실패해도 앱 시작은 가능)
-      await Future.wait([
-        _loadFriendsBundle(),
-        _loadMyProfileFeed(),
-        _loadHomeRecommendations(), // ✅ 홈용 추천 카드 로드
-      ]);
+      await Future.wait([_loadFriendsBundle(), _loadMyProfileFeed()]);
 
       // MyProfileFeed 로드 완료 후 WeeklyContributions 로드 (totalPosts 사용을 위해)
       await _loadWeeklyContributions();
 
-      // 5. 검색 기록 및 추천 포스트 (비동기)
-      _loadSearchHistory();
-      _loadSearchScreenData();
+      // 5. 검색 기록 및 추천 포스트 (동기 처리 - 중복 로드 방지)
+      await Future.wait([_loadSearchHistory(), _loadSearchScreenData()]);
 
       return _BootstrapResult.loggedIn();
     } catch (e) {
       debugPrint('[SplashScreen] 부트스트랩 오류: $e');
+
+      // ✅ 온보딩 플로우로 이동해야 하는 경우 (에러가 아님)
+      final errorStr = e.toString();
+      if (errorStr.contains('militaryInfo is null')) {
+        debugPrint(
+          '[SplashScreen] ✅ 온보딩 플로우로 이동 필요 감지 (최상위 catch) - 온보딩 플로우로 이동 예정',
+        );
+        // _shouldForceOnboardingFlow는 이미 _loadUserBundle()에서 설정됨
+        return _BootstrapResult.loggedIn();
+      }
 
       // ✅ 부트스트랩에서 DioException 발생 시 상태 코드 확인
       if (e is DioException) {
@@ -232,13 +245,13 @@ class _SplashScreenState extends State<SplashScreen>
 
       // ✅ Exception 메시지에 "401", "502" 또는 "인증이 필요"가 포함된 경우도 체크
       // (UserService가 DioException을 Exception으로 변환하므로)
-      final errorStr = e.toString().toLowerCase();
-      if (errorStr.contains('401') ||
-          errorStr.contains('502') ||
-          errorStr.contains('unauthorized') ||
-          errorStr.contains('인증이 필요') ||
-          errorStr.contains('유저 번들 조회 실패: 401') ||
-          errorStr.contains('유저 번들 조회 실패: 502')) {
+      final errorStrLower = errorStr.toLowerCase();
+      if (errorStrLower.contains('401') ||
+          errorStrLower.contains('502') ||
+          errorStrLower.contains('unauthorized') ||
+          errorStrLower.contains('인증이 필요') ||
+          errorStrLower.contains('유저 번들 조회 실패: 401') ||
+          errorStrLower.contains('유저 번들 조회 실패: 502')) {
         debugPrint('[SplashScreen] ⚠️ 부트스트랩 중 인증/서버 에러 발생 - 로그인 화면으로 리다이렉트');
         return _BootstrapResult.notLoggedIn();
       }
@@ -342,10 +355,38 @@ class _SplashScreenState extends State<SplashScreen>
       // ✅ 부트스트랩에서는 401/403 같은 인증 실패를 반드시 throw해서 로그인으로 보낸다.
       await userProvider.fetchUserBundle(throwOnAuthError: true);
 
+      // 🎯 군인 정보 확인 (항상 필수)
+      final militaryInfo = userProvider.currentUser?.militaryInfo;
+
       // 🎯 서버에서 온보딩 완료 여부 확인
       // ✅ null이면 서버에서 값이 오지 않았음을 의미하므로 온보딩 플로우로 가지 않음
       final completed = _isOnboardingCompleted();
-      if (completed == false) {
+
+      // ✅ militaryInfo가 null이면 무조건 온보딩 플로우로 이동
+      if (militaryInfo == null) {
+        debugPrint('[SplashScreen] ⚠️ militaryInfo가 null - 온보딩 플로우로 강제 이동');
+
+        // onboardingCompleted가 true로 되어 있으면 false로 수정
+        if (completed == true) {
+          try {
+            await UserService().updateOnboardingCompleted(
+              onboardingCompleted: false,
+            );
+            debugPrint('[SplashScreen] ✅ onboardingCompleted를 false로 수정 완료');
+          } catch (e) {
+            debugPrint('[SplashScreen] ⚠️ onboardingCompleted 수정 실패: $e');
+          }
+        }
+
+        // ✅ 군인 정보가 없으면 무조건 온보딩 플로우로 이동
+        // setState는 비동기이므로 즉시 반영되지 않을 수 있으므로,
+        // _shouldForceOnboardingFlow를 직접 true로 설정하고 예외를 던져서
+        // _bootstrap()에서 처리하도록 함
+        _shouldForceOnboardingFlow = true;
+        debugPrint('[SplashScreen] 군인 정보 없음 - 온보딩 플로우로 강제 이동');
+        // ✅ 예외를 던져서 _bootstrap()에서 처리하도록 함
+        throw Exception('militaryInfo is null - force onboarding flow');
+      } else if (completed == false) {
         // ✅ 명시적으로 false인 경우에만 온보딩 플로우로 이동
         if (mounted) {
           setState(() {
@@ -357,11 +398,33 @@ class _SplashScreenState extends State<SplashScreen>
         debugPrint('[SplashScreen] 온보딩 완료 여부 값이 서버에서 오지 않음 - 온보딩 플로우로 이동하지 않음');
       }
     } catch (e) {
-      // ✅ 401, 502 등 모든 에러는 다시 throw하여 부트스트랩에서 처리
-      // (유저 번들은 필수이므로 실패 시 로그인 화면으로 리다이렉트)
+      // ✅ 네트워크 오류(502 등) 시 로컬 SharedPreferences 확인
       if (e is DioException) {
         final statusCode = e.response?.statusCode;
         debugPrint('[SplashScreen] 유저 번들 로드 중 에러 발생 (status: $statusCode)');
+
+        // ✅ 502 등 네트워크 오류 시 로컬 SharedPreferences 확인
+        if (statusCode != null && statusCode >= 500) {
+          debugPrint('[SplashScreen] 네트워크 오류 감지 - 로컬 SharedPreferences 확인');
+          final localCompleted =
+              await UserService.getOnboardingCompletedFromLocal();
+
+          if (localCompleted == true) {
+            // ✅ 로컬에 온보딩 완료로 저장되어 있으면 홈으로 이동 (네트워크 오류 상태로)
+            debugPrint('[SplashScreen] 로컬에 온보딩 완료 저장됨 - 홈으로 이동 (네트워크 오류 상태)');
+            // 예외를 던지지 않고 그냥 진행 (홈으로 이동)
+            return;
+          } else {
+            // ✅ 로컬에 온보딩 완료가 없거나 false면 온보딩으로 이동
+            debugPrint('[SplashScreen] 로컬에 온보딩 완료 없음 - 온보딩 플로우로 이동');
+            _shouldForceOnboardingFlow = true;
+            throw Exception(
+              'militaryInfo is null - force onboarding flow (network error)',
+            );
+          }
+        }
+
+        // ✅ 401 등 인증 오류는 그대로 throw
         rethrow;
       }
       debugPrint('[SplashScreen] 유저 번들 로드 실패: $e');
@@ -386,43 +449,24 @@ class _SplashScreenState extends State<SplashScreen>
     }
   }
 
-  /// 주차 기여도 로드 (프로바이더에 저장)
+  /// Military Grid 로드 (프로바이더에 저장)
+  /// ✅ 스플래시에서 동기적으로 처리 - 완료될 때까지 기다림
   Future<void> _loadWeeklyContributions() async {
     try {
-      final provider = context.read<WeeklyContributionProvider>();
-      final currentYear = WeekUtils.getCurrentYear();
+      final provider = context.read<MilitaryGridProvider>();
 
-      // 현재 연도의 기여도 데이터 로드
-      await provider.loadContributions(currentYear);
-
-      // 총 포스트 개수 설정 (MyProfileFeedProvider에서)
-      // MyProfileFeed가 먼저 로드되어야 하므로 이미 완료된 상태
-      final feedProvider = context.read<MyProfileFeedProvider>();
-      final userInfo = feedProvider.userInfo;
-
-      int? totalPosts;
-
-      if (userInfo != null && userInfo.containsKey('totalPosts')) {
-        totalPosts = userInfo['totalPosts'] as int?;
-        if (totalPosts != null) {
-          provider.setTotalPostCount(totalPosts);
-        }
-      }
-
-      // 서버에서 totalPosts를 받지 못한 경우, BaseFeedProvider의 totalPostCount 사용
-      if (totalPosts == null || totalPosts == 0) {
-        final totalPostCount = feedProvider.totalPostCount;
-        if (totalPostCount > 0) {
-          provider.setTotalPostCount(totalPostCount);
-        }
-      }
+      // Military Grid 데이터 로드 (에러 발생해도 계속 진행)
+      await provider.loadGrid();
+      debugPrint('[SplashScreen] ✅ Military Grid 로드 완료');
     } catch (e) {
       // ✅ 401 에러는 다시 throw하여 부트스트랩에서 처리
       if (e is DioException && e.response?.statusCode == 401) {
-        debugPrint('[SplashScreen] 주차 기여도 로드 중 401 에러 발생');
+        debugPrint('[SplashScreen] Military Grid 로드 중 401 에러 발생');
         rethrow;
       }
-      debugPrint('[SplashScreen] 주차 기여도 로드 실패 (무시): $e');
+      // ✅ 파싱 에러 등은 무시하고 계속 진행 (홈에서 쉬머 표시)
+      debugPrint('[SplashScreen] ⚠️ Military Grid 로드 실패 (홈에서 쉬머 표시): $e');
+      // 에러가 발생해도 provider에 null 상태를 유지하여 홈에서 쉬머를 표시할 수 있도록 함
     }
   }
 
@@ -447,29 +491,14 @@ class _SplashScreenState extends State<SplashScreen>
   /// 🎯 검색 화면용 데이터 미리 로드 (추천 포스트만)
   Future<void> _loadSearchScreenData() async {
     try {
-      final searchService = SearchService();
+      // ✅ Provider로 주입된 SearchService 인스턴스에 미리 로드해야
+      // SearchScreen에서 "비어있어서 다시 로드"가 발생하지 않음.
+      final searchService = context.read<SearchService>();
       // 추천 포스트 20개만 로드 (5개는 Hero, 나머지는 그리드용)
       await searchService.fetchRecommendedPosts(page: 0, size: 20);
     } catch (e) {
       // 데이터 로드 실패는 앱 시작을 막지 않음
       debugPrint('[SplashScreen] 검색 화면 데이터 로드 실패: $e');
-    }
-  }
-
-  /// 홈용 추천 카드 로드
-  Future<void> _loadHomeRecommendations() async {
-    try {
-      final provider = context.read<HomeRecommendationProvider>();
-      await provider.loadHomeRecommendations();
-      debugPrint('[SplashScreen] 홈용 추천 카드 로드 완료');
-    } catch (e) {
-      // ✅ 401 에러는 다시 throw하여 부트스트랩에서 처리
-      if (e is DioException && e.response?.statusCode == 401) {
-        debugPrint('[SplashScreen] 홈용 추천 카드 로드 중 401 에러 발생');
-        rethrow;
-      }
-      // 데이터 로드 실패는 앱 시작을 막지 않음 (401 제외)
-      debugPrint('[SplashScreen] 홈용 추천 카드 로드 실패 (무시): $e');
     }
   }
 
@@ -794,23 +823,11 @@ class _SplashScreenState extends State<SplashScreen>
       // ✅ 홈 화면에서 바로 최신 상태가 보이도록 필수 데이터만 재로드
       // - WeeklyContribution은 loadContributions가 캐시가 있으면 스킵되므로,
       //   "발행 직후"에는 refreshAfterPostPublished(optimistic)로 즉시 보라색/카운트 반영 + 백그라운드 동기화
-      await Future.wait([_loadMyProfileFeed(), _loadHomeRecommendations()]);
+      await _loadMyProfileFeed();
 
-      final request = publishProvider.lastRequest;
-      final year = request?.year ?? WeekUtils.getCurrentYear();
-      final weekNumber =
-          request?.nthWeek ?? WeekUtils.getWeekNumber(DateTime.now());
-
-      final weekly = context.read<WeeklyContributionProvider>();
-      // ✅ 온보딩 직후 첫 홈 진입에서는 "백그라운드 리로드"로 UI가 흔들리면 안 된다.
-      // - optimisticUpdate=true는 500ms 후 reloadContributions가 한 번 더 돌면서
-      //   그리드(보라색 셀) + 그리팅 메시지가 실시간으로 바뀌는 현상을 만든다.
-      // - 따라서 여기서는 서버 기반으로 1회 동기화(=optimisticUpdate:false)만 수행한다.
-      await weekly.refreshAfterPostPublished(
-        year,
-        weekNumber: weekNumber,
-        optimisticUpdate: false,
-      );
+      final gridProvider = context.read<MilitaryGridProvider>();
+      // ✅ 온보딩 직후 첫 홈 진입에서는 서버에서 최신 그리드 데이터를 다시 로드
+      await gridProvider.reloadGrid();
     } catch (e) {
       debugPrint('[SplashScreen] 온보딩 게시 후 데이터 재로드 실패(무시): $e');
     }

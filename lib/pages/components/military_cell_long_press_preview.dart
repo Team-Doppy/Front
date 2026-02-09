@@ -1,67 +1,51 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:doppy/pages/components/shimmer_box.dart';
-import 'package:doppy/providers/weekly_contribution_provider.dart';
+import 'package:doppy/data/models/military_grid_model.dart';
 import 'package:doppy/utils/text_bold_utils.dart';
-import 'package:flutter/foundation.dart';
+import 'package:doppy/l10n/military_grid_messages.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
-/// 롱프레스 프리뷰 전용 위젯 (이미지 + 제목)
-class WeekLongPressPreview extends StatefulWidget {
-  final int weekNumber;
-  final int year;
+/// Military Grid 셀 롱프레스 프리뷰 전용 위젯 (이미지 + 제목)
+/// 기존 WeekLongPressPreview를 Phase/Cell 기반으로 변경
+class MilitaryCellLongPressPreview extends StatefulWidget {
+  final Phase phase;
+  final Cell cell;
 
-  const WeekLongPressPreview({
+  const MilitaryCellLongPressPreview({
     super.key,
-    required this.weekNumber,
-    required this.year,
+    required this.phase,
+    required this.cell,
   });
 
   @override
-  State<WeekLongPressPreview> createState() => _WeekLongPressPreviewState();
+  State<MilitaryCellLongPressPreview> createState() =>
+      _MilitaryCellLongPressPreviewState();
 }
 
-class _WeekLongPressPreviewState extends State<WeekLongPressPreview>
-    with SingleTickerProviderStateMixin {
-  Map<String, String?>? _cachedPreview; // 🎯 데이터를 한 번만 읽어서 캐싱
-  bool _isImageLoaded = false; // 🎯 이미지 로드 완료 여부
-
-  String? _lastLoadedKey; // 🎯 마지막으로 로드된 weekNumber/year 조합
+class _MilitaryCellLongPressPreviewState
+    extends State<MilitaryCellLongPressPreview> {
+  bool _isImageLoaded = false;
+  String? _lastLoadedKey;
 
   @override
   void initState() {
     super.initState();
-    // 초기 데이터 로드 (한 번만)
-    _loadPreview();
-    _lastLoadedKey = '${widget.year}-${widget.weekNumber}';
+    _lastLoadedKey = _getCellKey();
   }
 
   @override
-  void dispose() {
-    super.dispose();
-  }
-
-  @override
-  void didUpdateWidget(WeekLongPressPreview oldWidget) {
+  void didUpdateWidget(MilitaryCellLongPressPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // year나 weekNumber가 변경된 경우에만 다시 로드
-    if (oldWidget.year != widget.year ||
-        oldWidget.weekNumber != widget.weekNumber) {
-      // 🎯 새로운 주차로 변경 시 이미지 로드 상태 리셋
+    if (oldWidget.phase.phase != widget.phase.phase ||
+        oldWidget.cell.slotIndex != widget.cell.slotIndex) {
       setState(() {
         _isImageLoaded = false;
         _lastLoadedKey = null;
       });
-      _loadPreview();
     }
   }
 
-  void _loadPreview() {
-    final weeklyProvider = context.read<WeeklyContributionProvider>();
-    _cachedPreview = weeklyProvider.getWeekPostPreview(
-      widget.year,
-      widget.weekNumber,
-    );
+  String _getCellKey() {
+    return '${widget.phase.phase}-${widget.cell.slotIndex}';
   }
 
   @override
@@ -69,18 +53,20 @@ class _WeekLongPressPreviewState extends State<WeekLongPressPreview>
     final onSurface = Theme.of(context).colorScheme.onSurface;
     final surfaceVariant = Theme.of(context).colorScheme.surfaceVariant;
 
-    // ✅ 캐시된 데이터 사용 (리빌드 시에도 재조회 없음)
-    // preview가 null이면 다시 로드 시도
-    var preview = _cachedPreview;
-    if (preview == null) {
-      _loadPreview();
-      preview = _cachedPreview;
+    // 휴가 포스트 우선, 없으면 첫 번째 포스트
+    PostMeta? previewPost;
+    try {
+      previewPost = widget.cell.myPosts.firstWhere(
+        (p) => p.isLeaveOrPreEnlistment,
+      );
+    } catch (_) {
+      previewPost =
+          widget.cell.myPosts.isNotEmpty ? widget.cell.myPosts.first : null;
     }
 
-    final title = preview?['title'] ?? '';
-    final thumbnailUrl = preview?['thumbnailUrl'] ?? '';
+    final thumbnailUrl = previewPost?.thumbnailUrl ?? '';
 
-    // ✅ 이미지 URL이 있으면 바로 이미지 위젯 표시 (ShimmerBox 스킵)
+    // 이미지 URL이 있으면 이미지 위젯 표시
     if (thumbnailUrl.isNotEmpty) {
       return RepaintBoundary(
         child: Material(
@@ -97,20 +83,18 @@ class _WeekLongPressPreviewState extends State<WeekLongPressPreview>
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // ✅ 이미지가 있으면 바로 이미지 위젯 표시
                   RepaintBoundary(
                     child: CachedNetworkImage(
                       imageUrl: thumbnailUrl,
                       fit: BoxFit.cover,
-                      fadeInDuration: Duration(milliseconds: 200),
-                      fadeOutDuration: Duration(milliseconds: 200),
+                      fadeInDuration: const Duration(milliseconds: 200),
+                      fadeOutDuration: const Duration(milliseconds: 200),
                       memCacheWidth: 200,
                       placeholder: (context, url) {
-                        return SizedBox(width: 250, height: 200);
+                        return const SizedBox(width: 250, height: 200);
                       },
                       imageBuilder: (context, imageProvider) {
-                        final currentKey =
-                            '${widget.year}-${widget.weekNumber}';
+                        final currentKey = _getCellKey();
                         if (!_isImageLoaded) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {
                             if (mounted &&
@@ -126,8 +110,7 @@ class _WeekLongPressPreviewState extends State<WeekLongPressPreview>
                         return Image(image: imageProvider, fit: BoxFit.cover);
                       },
                       errorWidget: (context, url, error) {
-                        final currentKey =
-                            '${widget.year}-${widget.weekNumber}';
+                        final currentKey = _getCellKey();
                         if (!_isImageLoaded) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {
                             if (mounted &&
@@ -158,7 +141,22 @@ class _WeekLongPressPreviewState extends State<WeekLongPressPreview>
       );
     }
 
-    // 데이터 없음 (이미지 URL이 없고 title도 없음)
+    // 데이터 없음
+    // ✅ Phase 라벨 가져오기
+    final phaseLabel =
+        MilitaryGridMessages.getPhaseLabel(widget.phase.labelKey) ??
+        widget.phase.phase;
+
+    // ✅ 프리뷰 텍스트 생성
+    String previewText;
+    if (widget.phase.phase == 'preEnlistment') {
+      // 입대전: "입대 n주전" 형식
+      previewText = '입대 ${widget.cell.slotIndex}주전';
+    } else {
+      // 일반 phase: "상병 n주차" 형식
+      previewText = '$phaseLabel ${widget.cell.slotIndex}주차';
+    }
+
     return Material(
       color: Colors.transparent,
       child: Container(
@@ -177,7 +175,7 @@ class _WeekLongPressPreviewState extends State<WeekLongPressPreview>
         ),
         child: Center(
           child: Text(
-            '${widget.weekNumber}주차',
+            previewText,
             style: LocaleTypography.style(
               context: context,
               fontSize: 20,

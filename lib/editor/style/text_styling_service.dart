@@ -1,4 +1,5 @@
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/component/template_component.dart';
 import 'package:doppy/editor/service/editor_service.dart';
 import 'package:doppy/editor/style/font_catalog.dart';
 import 'package:doppy/editor/style/text_attributions.dart';
@@ -612,6 +613,18 @@ class TextStylingService extends ChangeNotifier {
               id: node.id,
               text: node.text,
               metadata: updatedMetadata,
+            ),
+          ),
+        );
+      } else if (node is TemplateNode) {
+        // ✅ 템플릿 노드도 정렬 업데이트
+        requests.add(
+          ReplaceNodeRequest(
+            existingNodeId: node.id,
+            newNode: TemplateNode(
+              id: node.id,
+              templateText: node.templateText,
+              textAlign: alignment,
             ),
           ),
         );

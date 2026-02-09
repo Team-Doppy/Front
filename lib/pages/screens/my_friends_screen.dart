@@ -2,6 +2,8 @@ import 'dart:ui';
 
 import 'package:doppy/data/models/friend_model.dart';
 import 'package:doppy/data/models/user_model.dart';
+import 'package:doppy/data/models/military_info_model.dart';
+import 'package:doppy/data/models/girlfriend_request_model.dart';
 import 'package:doppy/data/services/search_service.dart';
 import 'package:doppy/l10n/app_localizations.dart';
 import 'package:doppy/pages/components/common_profile_avatar.dart';
@@ -12,6 +14,7 @@ import 'package:doppy/pages/components/shimmer_box.dart';
 import 'package:doppy/pages/screens/profile_image_view_screen.dart';
 import 'package:doppy/pages/screens/user_profile_screen.dart';
 import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/utils/error_handler.dart';
 import 'package:doppy/utils/text_bold_utils.dart';
 import 'package:flutter/material.dart';
@@ -82,64 +85,261 @@ class _MyFriendsScreenState extends State<MyFriendsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showUserSearchBottomSheet(context),
-        backgroundColor: Theme.of(context).colorScheme.onSurface,
-        foregroundColor: Theme.of(context).colorScheme.surface,
-        shape: const CircleBorder(),
-        child: const Icon(Icons.add),
-      ),
       body: SafeArea(
-        child: Consumer<FriendProvider>(
-          builder: (context, friendProvider, _) {
-            // 로딩 중이면 투명도 0, 아니면 스크롤에 따른 투명도
-            final opacity = friendProvider.isLoading ? 0.0 : _appBarOpacity;
+        child: Stack(
+          children: [
+            // 메인 콘텐츠
+            Consumer2<FriendProvider, UserProvider>(
+              builder: (context, friendProvider, userProvider, _) {
+                // 로딩 중이면 투명도 0, 아니면 스크롤에 따른 투명도
+                final opacity = friendProvider.isLoading ? 0.0 : _appBarOpacity;
+                final currentUser = userProvider.currentUser;
 
-            return CustomRefreshIndicator(
-              onRefresh: _handleRefresh,
-              child: RawScrollbar(
-                controller: _scrollController,
-                thumbColor: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withOpacity(0.15),
-                radius: const Radius.circular(8),
-                thickness: 4,
-                thumbVisibility: true,
-                child: CustomScrollView(
-                  controller: _scrollController,
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  slivers: [
-                    // SliverAppBar
-                    SliverAppBar(
-                      scrolledUnderElevation: 0,
-                      backgroundColor: Colors.transparent,
-                      elevation: 0,
-                      pinned: false, // 상단에 고정하지 않음
-                      floating: true, // 위로 스크롤하면 숨겨지고, 아래로 내리면 나타남
-                      snap: false, // 스냅 효과 없음 (부드러운 전환)
-                      toolbarHeight:
-                          kToolbarHeight + 8, // 🎯 빨간 닷이 잘리지 않도록 높이 추가
-                      leading: Opacity(
-                        opacity: opacity,
-                        child: IconButton(
-                          icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                          onPressed: () => Navigator.pop(context),
+                // ✅ 커플 연결 상태 확인
+                final isGirlfriend =
+                    currentUser?.militaryInfo?.userType == UserType.girlfriend;
+                final connectedMilitaryUser =
+                    currentUser?.connectedMilitaryUser; // 곰신일 때
+                final connectedGirlfriend =
+                    currentUser?.connectedToMeByUser; // 군인/입대예정일 때
+                final hasCouple =
+                    (isGirlfriend && connectedMilitaryUser != null) ||
+                    (!isGirlfriend && connectedGirlfriend != null);
+
+                return CustomRefreshIndicator(
+                  onRefresh: _handleRefresh,
+                  child: RawScrollbar(
+                    controller: _scrollController,
+                    thumbColor: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.15),
+                    radius: const Radius.circular(8),
+                    thickness: 4,
+                    thumbVisibility: true,
+                    child: CustomScrollView(
+                      controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      slivers: [
+                        // SliverAppBar
+                        SliverAppBar(
+                          scrolledUnderElevation: 0,
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                          pinned: false, // 상단에 고정하지 않음
+                          floating: true, // 위로 스크롤하면 숨겨지고, 아래로 내리면 나타남
+                          snap: false, // 스냅 효과 없음 (부드러운 전환)
+                          toolbarHeight:
+                              kToolbarHeight + 8, // 🎯 빨간 닷이 잘리지 않도록 높이 추가
+                          leading: Opacity(
+                            opacity: opacity,
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.arrow_back_ios_new_rounded,
+                              ),
+                              onPressed: () => Navigator.pop(context),
+                            ),
+                          ),
                         ),
-                      ),
+                        // ✅ 짝궁 섹션 (커플이 연결되어 있을 때만 표시)
+                        if (hasCouple)
+                          _buildCoupleSection(
+                            context,
+                            isGirlfriend,
+                            connectedMilitaryUser,
+                            connectedGirlfriend,
+                            currentUser,
+                          ),
+                        // 받은 요청 섹션 (가로 스크롤)
+                        _buildReceivedRequestsSection(
+                          context,
+                          friendProvider,
+                          connectedGirlfriend?.username,
+                        ),
+                        // 보낸 요청 섹션 (가로 스크롤)
+                        _buildSentRequestsSection(context, friendProvider),
+                        // 수락된 친구 그리드
+                        _buildAcceptedFriendsSliver(context, friendProvider),
+                      ],
                     ),
-                    // 받은 요청 섹션 (가로 스크롤)
-                    _buildReceivedRequestsSection(context, friendProvider),
-                    // 보낸 요청 섹션 (가로 스크롤)
-                    _buildSentRequestsSection(context, friendProvider),
-                    // 수락된 친구 그리드
-                    _buildAcceptedFriendsSliver(context, friendProvider),
-                  ],
-                ),
+                  ),
+                );
+              },
+            ),
+            // ✅ FloatingActionButton (Stack으로 직접 배치)
+            Positioned(
+              right: 16,
+              bottom: 16,
+              child: FloatingActionButton(
+                onPressed: () => _showUserSearchBottomSheet(context),
+                backgroundColor: Theme.of(context).colorScheme.onSurface,
+                foregroundColor: Theme.of(context).colorScheme.surface,
+                shape: const CircleBorder(),
+                child: const Icon(Icons.add),
               ),
-            );
-          },
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  // ✅ 짝궁 섹션 (커플 연결 표시)
+  Widget _buildCoupleSection(
+    BuildContext context,
+    bool isGirlfriend,
+    User? connectedMilitaryUser,
+    User? connectedGirlfriend,
+    User? currentUser,
+  ) {
+    // 연결된 상대방 정보
+    final partner = isGirlfriend ? connectedMilitaryUser : connectedGirlfriend;
+    if (partner == null) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+
+    return SliverToBoxAdapter(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 16, 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // ✅ 짝궁 타이틀 + pairAlias 표시
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        // ✅ pairAlias가 있으면 애칭으로 표시, 없으면 "짝궁"
+                        (partner.pairAlias != null &&
+                                partner.pairAlias!.isNotEmpty)
+                            ? partner.pairAlias!
+                            : '짝궁',
+                        style: LocaleTypography.setStyle(
+                          context: context,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.more_horiz),
+                  onPressed:
+                      () => _showCoupleSettingsBottomSheet(
+                        context,
+                        isGirlfriend,
+                        partner,
+                        currentUser,
+                      ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                // 현재 사용자 프로필
+                Expanded(
+                  child: _buildCoupleProfileTile(
+                    context,
+                    currentUser?.profileImageUrl,
+                    currentUser?.alias ?? currentUser?.username ?? '',
+                    currentUser?.username ?? '',
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // 상대방 프로필
+                Expanded(
+                  child: _buildCoupleProfileTile(
+                    context,
+                    partner.profileImageUrl,
+                    partner.alias ?? partner.username,
+                    partner.username,
+                  ),
+                ),
+                Spacer(),
+              ],
+            ),
+          ),
+          // ✅ 다른 섹션들과 동일한 간격 (받은 요청, 보낸 요청과 동일)
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
+  // ✅ 커플 프로필 타일
+  Widget _buildCoupleProfileTile(
+    BuildContext context,
+    String? profileImageUrl,
+    String alias,
+    String username,
+  ) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder:
+                (_) => UserProfileScreen(otherUser: User(username: username)),
+          ),
+        );
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CommonProfileAvatar(
+            imageUrl: profileImageUrl,
+            username: username,
+            size: 110.0,
+            backgroundColor: Theme.of(context).colorScheme.background,
+            borderColor: Theme.of(
+              context,
+            ).colorScheme.onSurface.withOpacity(0.1),
+            borderWidth: 2,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            alias,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: LocaleTypography.setStyle(
+              context: context,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.9),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ✅ 커플 설정 바텀시트 표시
+  void _showCoupleSettingsBottomSheet(
+    BuildContext context,
+    bool isGirlfriend,
+    User partner,
+    User? currentUser,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder:
+          (context) => CoupleSettingsBottomSheet(
+            isGirlfriend: isGirlfriend,
+            partner: partner,
+            currentUser: currentUser,
+          ),
     );
   }
 
@@ -147,8 +347,18 @@ class _MyFriendsScreenState extends State<MyFriendsScreen> {
   Widget _buildReceivedRequestsSection(
     BuildContext context,
     FriendProvider friendProvider,
+    String? connectedGirlfriendUsername, // 🎯 이미 짝궁인 사용자 username
   ) {
-    final received = friendProvider.receivedRequests;
+    // 🎯 받은 요청에서 이미 짝궁인 사용자 제외 (곰신 요청 수락 완료)
+    final received =
+        friendProvider.receivedRequests.where((request) {
+          // 곰신 요청이고 이미 짝궁인 경우 제외
+          if (connectedGirlfriendUsername != null &&
+              request.username == connectedGirlfriendUsername) {
+            return false;
+          }
+          return true;
+        }).toList();
 
     if (received.isEmpty) {
       return const SliverToBoxAdapter(child: SizedBox.shrink());
@@ -180,6 +390,31 @@ class _MyFriendsScreenState extends State<MyFriendsScreen> {
                 itemCount: received.length,
                 itemBuilder: (context, index) {
                   final friend = received[index];
+                  // 🎯 곰신 요청인지 확인
+                  // 방법 1: role 필드 확인 (서버에서 제공하는 경우)
+                  bool isCoupleRequest = false;
+                  if (friend.role != null) {
+                    final userType = UserTypeExtension.fromServerRole(
+                      friend.role,
+                    );
+                    if (userType == UserType.girlfriend) {
+                      isCoupleRequest = true;
+                    }
+                  }
+
+                  // 방법 2: girlfriendRequest 필드 확인 (서버에서 role이 없을 때 대체)
+                  final userProvider = context.watch<UserProvider>();
+                  final currentUser = userProvider.currentUser;
+                  final girlfriendRequest = currentUser?.girlfriendRequest;
+                  if (!isCoupleRequest && girlfriendRequest != null) {
+                    if (girlfriendRequest.requester.username ==
+                            friend.username &&
+                        girlfriendRequest.status ==
+                            GirlfriendRequestStatus.pending) {
+                      isCoupleRequest = true;
+                    }
+                  }
+
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: FriendTile(
@@ -188,6 +423,7 @@ class _MyFriendsScreenState extends State<MyFriendsScreen> {
                         url: friend.profileImageUrl,
                         alias: friend.alias,
                         state: FriendState.requestReceived,
+                        isCoupleRequest: isCoupleRequest, // ✅ 곰신 요청 여부 전달
                       ),
                       isSelected: false,
                       onToggle: () {},
@@ -592,18 +828,13 @@ class UserSearchBottomSheetState extends State<UserSearchBottomSheet> {
 
       if (!mounted) return;
       if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context
-                  .tr('request_cancelled_for_user')
-                  .replaceAll('{username}', username)
-                  .replaceAll('{count}', '1')
-                  .replaceAll('개의 팔로우 요청을', '$username 요청을'),
-            ),
-            duration: const Duration(seconds: 2),
-            backgroundColor: Theme.of(context).colorScheme.onSurface,
-          ),
+        ErrorHandler.showInfo(
+          context,
+          context
+              .tr('request_cancelled_for_user')
+              .replaceAll('{username}', username)
+              .replaceAll('{count}', '1')
+              .replaceAll('개의 팔로우 요청을', '$username 요청을'),
         );
       } else {
         ErrorHandler.showError(context, context.tr('cancel_request_failed'));
@@ -1009,11 +1240,13 @@ class FriendTileData {
   final String? url;
   final String? alias;
   final FriendState state;
+  final bool isCoupleRequest; // ✅ 곰신 요청 여부
   FriendTileData({
     required this.username,
     required this.url,
     this.alias,
     required this.state,
+    this.isCoupleRequest = false, // 기본값 false
   });
 }
 
@@ -1036,10 +1269,31 @@ class FriendTile extends StatelessWidget {
   ) {
     // 받은 요청에서 해당 사용자의 프로필 이미지 URL 찾기
     final friendProvider = context.read<FriendProvider>();
+    final userProvider = context.read<UserProvider>();
     final receivedRequest =
         friendProvider.receivedRequests
             .where((friend) => friend.username == username)
             .firstOrNull;
+
+    // 🎯 곰신 요청인지 확인
+    // 방법 1: role 필드 확인 (서버에서 제공하는 경우)
+    bool isCoupleRequest = false;
+    if (receivedRequest?.role != null) {
+      final userType = UserTypeExtension.fromServerRole(receivedRequest!.role);
+      if (userType == UserType.girlfriend) {
+        isCoupleRequest = true;
+      }
+    }
+
+    // 방법 2: girlfriendRequest 필드 확인 (서버에서 role이 없을 때 대체)
+    final currentUser = userProvider.currentUser;
+    final girlfriendRequest = currentUser?.girlfriendRequest;
+    if (!isCoupleRequest && girlfriendRequest != null) {
+      if (girlfriendRequest.requester.username == username &&
+          girlfriendRequest.status == GirlfriendRequestStatus.pending) {
+        isCoupleRequest = true;
+      }
+    }
 
     showModalBottomSheet(
       context: context,
@@ -1053,6 +1307,7 @@ class FriendTile extends StatelessWidget {
               child: FriendRequestBottomSheet(
                 username: username,
                 profileImageUrl: receivedRequest?.profileImageUrl,
+                isCoupleRequest: isCoupleRequest, // ✅ 곰신 요청 여부 전달
               ),
             ),
           ),
@@ -1175,6 +1430,24 @@ class FriendTile extends StatelessWidget {
               ),
             ),
           ),
+          // ✅ 곰신 요청일 때 하트 아이콘 표시 (가운데)
+          if (data.isCoupleRequest && data.state == FriendState.requestReceived)
+            Positioned.fill(
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.favorite,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1226,6 +1499,285 @@ class FriendTile extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// ✅ 커플 설정 바텀시트
+class CoupleSettingsBottomSheet extends StatefulWidget {
+  final bool isGirlfriend;
+  final User partner;
+  final User? currentUser;
+
+  const CoupleSettingsBottomSheet({
+    super.key,
+    required this.isGirlfriend,
+    required this.partner,
+    this.currentUser,
+  });
+
+  @override
+  State<CoupleSettingsBottomSheet> createState() =>
+      _CoupleSettingsBottomSheetState();
+}
+
+class _CoupleSettingsBottomSheetState extends State<CoupleSettingsBottomSheet> {
+  final TextEditingController _nicknameController = TextEditingController();
+  bool _isDisconnecting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // ✅ 서버에서 받은 pairAlias를 TextField에 설정
+    final pairAlias = widget.partner.pairAlias;
+    if (pairAlias != null && pairAlias.isNotEmpty) {
+      _nicknameController.text = pairAlias;
+    }
+  }
+
+  @override
+  void dispose() {
+    _nicknameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleDisconnect() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('헤어지기'),
+            content: const Text('정말 헤어지시겠어요? 연결이 해제되면 다시 연결할 수 없습니다.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('취소'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                ),
+                child: const Text('헤어지기'),
+              ),
+            ],
+          ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _isDisconnecting = true;
+    });
+
+    try {
+      final userProvider = context.read<UserProvider>();
+      await userProvider.disconnectMilitaryConnection();
+      if (mounted) {
+        Navigator.of(context).pop(); // 바텀시트 닫기
+        final myAlias =
+            widget.currentUser?.alias ?? widget.currentUser?.username ?? '';
+        ErrorHandler.showInfo(context, '힘내요, $myAlias');
+      }
+    } catch (e) {
+      if (mounted) {
+        ErrorHandler.handleError(context, e, customMessage: '헤어짐 실패');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDisconnecting = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleSaveNickname() async {
+    final nickname = _nicknameController.text.trim();
+
+    // ✅ 빈 문자열이면 삭제 (null로 전송)
+    final pairAliasToSave = nickname.isEmpty ? null : nickname;
+
+    try {
+      final userProvider = context.read<UserProvider>();
+      await userProvider.updatePairAlias(pairAliasToSave);
+
+      if (mounted) {
+        Navigator.of(context).pop(); // 바텀시트 닫기
+        ErrorHandler.showInfo(context, '애칭이 저장되었어요');
+      }
+    } catch (e) {
+      if (mounted) {
+        ErrorHandler.handleError(context, e, customMessage: '애칭 저장에 실패했어요');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.5,
+      minChildSize: 0.3,
+      maxChildSize: 0.9,
+      builder: (context, scrollController) {
+        return Material(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              // 드래그 핸들
+              Padding(
+                padding: const EdgeInsets.only(top: 10, bottom: 6),
+                child: Center(
+                  child: Container(
+                    width: 44,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.onSurface.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+              ),
+              // 제목
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '짝궁 설정',
+                      style: LocaleTypography.setStyle(
+                        context: context,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(context).pop(),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+              // 스크롤 가능한 내용
+              Expanded(
+                child: ListView(
+                  controller: scrollController,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  children: [
+                    // 현재 곰신일 수 있음 표시
+                    if (widget.isGirlfriend)
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.surfaceVariant.withOpacity(
+                            0.5,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              size: 20,
+                              color: theme.colorScheme.primary,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                '현재 곰신일 수 있습니다',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: theme.colorScheme.onSurface,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (widget.isGirlfriend) const SizedBox(height: 20),
+
+                    // 커플 애칭 설정
+                    Text(
+                      '짝궁 애칭',
+                      style: LocaleTypography.setStyle(
+                        context: context,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _nicknameController,
+                      decoration: InputDecoration(
+                        hintText: '예: 내 짝궁, 우리 커플 등',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: theme.colorScheme.surfaceVariant.withOpacity(
+                          0.5,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _handleSaveNickname,
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text('저장'),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // 헤어짐 버튼
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: _isDisconnecting ? null : _handleDisconnect,
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          side: BorderSide(
+                            color: theme.colorScheme.error.withOpacity(0.5),
+                          ),
+                          foregroundColor: theme.colorScheme.error,
+                        ),
+                        child:
+                            _isDisconnecting
+                                ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Text('헤어지기'),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

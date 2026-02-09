@@ -7,6 +7,7 @@ import 'package:doppy/editor/component/row_image_component.dart';
 import 'package:doppy/editor/component/pageview_image_component.dart';
 import 'package:doppy/editor/component/clip_component.dart';
 import 'package:doppy/editor/component/divider_component.dart';
+import 'package:doppy/editor/component/template_component.dart';
 import 'package:doppy/editor/nodes/mention_node.dart';
 import 'package:doppy/editor/service/drag_service.dart';
 import 'package:doppy/editor/service/sticker_service.dart';
@@ -2959,6 +2960,8 @@ class EditorService extends ChangeNotifier {
     for (int i = 0; i < document.length; i++) {
       final node = document.getNodeAt(i);
       if (node == null) continue;
+      // ✅ 템플릿 노드는 빈 문서로 취급 (제외)
+      if (node is TemplateNode) continue;
       if (node is ParagraphNode) {
         if (node.text.text.trim().isNotEmpty) return true;
       } else if (_isSpecialNode(node)) {
@@ -3070,6 +3073,10 @@ class EditorService extends ChangeNotifier {
     for (int i = 0; i < document.length; i++) {
       final node = document.getNodeAt(i);
       if (node == null) continue;
+      // ✅ 템플릿 노드는 fingerprint에서 제외
+      if (node is TemplateNode) {
+        continue;
+      }
       if (node is ParagraphNode) {
         nodes.add({
           't': 'p',

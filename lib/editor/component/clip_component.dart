@@ -774,7 +774,9 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                             Positioned.fill(
                               child: IgnorePointer(
                                 child: Container(
-                                  color: AppColors.primary.withOpacity(0.4),
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withOpacity(0.4),
                                 ),
                               ),
                             ),
@@ -786,7 +788,10 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                                   child: Container(
                                     decoration: BoxDecoration(
                                       border: Border.all(
-                                        color: AppColors.primary,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
                                         width: 4,
                                       ),
                                     ),
@@ -817,7 +822,10 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                                     child: AnimatedDropLine(
                                       child: Container(
                                         height: 5,
-                                        color: AppColors.primary,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
                                       ),
                                     ),
                                   ),
@@ -832,22 +840,10 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                                     child: AnimatedDropLine(
                                       child: Container(
                                         width: 5,
-                                        color: AppColors.primary,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              if (_shouldShowRightVerticalLine())
-                                Positioned(
-                                  top: marginTop,
-                                  bottom: marginBottom,
-                                  right: 0,
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(left: 2),
-                                    child: AnimatedDropLine(
-                                      child: Container(
-                                        width: 5,
-                                        color: AppColors.primary,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
                                       ),
                                     ),
                                   ),
@@ -862,7 +858,10 @@ class _ClipComponentState extends State<_ClipComponent> with DocumentComponent {
                                     child: AnimatedDropLine(
                                       child: Container(
                                         height: 5,
-                                        color: AppColors.primary,
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
                                       ),
                                     ),
                                   ),

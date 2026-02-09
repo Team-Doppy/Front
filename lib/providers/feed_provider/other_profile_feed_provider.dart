@@ -17,7 +17,20 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
   bool _loadingMore = false;
   bool _hasMore = true;
   int _currentPage = 0;
-  int _totalPages = 0;
+
+  // 다른 사람 피드 캐시 (필터별, 5분)
+  final Map<String, _OtherFeedCacheEntry> _cacheByFilterKey = {};
+  static const Duration _cacheValidDuration = Duration(minutes: 5);
+  String _activeFilterKey = '';
+
+  String _makeFilterKey(String username) =>
+      '$username|${serverPhase ?? ''}|${serverLifePhase ?? ''}|${serverAccessLevel ?? ''}|$pageSize';
+
+  bool _isCacheValid(String filterKey) {
+    final entry = _cacheByFilterKey[filterKey];
+    if (entry == null) return false;
+    return DateTime.now().difference(entry.cachedAt) < _cacheValidDuration;
+  }
 
   // Getters 구현
   @override
@@ -42,6 +55,31 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
 
     final String? previous = _username;
     _username = username;
+    final filterKey = _makeFilterKey(username);
+    _activeFilterKey = filterKey;
+
+    if (!force && _isCacheValid(filterKey)) {
+      final cached = _cacheByFilterKey[filterKey];
+      if (cached != null) {
+        userInfoInternal =
+            cached.userInfo != null
+                ? Map<String, dynamic>.from(cached.userInfo!)
+                : null;
+        postsInternal
+          ..clear()
+          ..addAll(cached.posts.map((e) => Map<String, dynamic>.from(e)));
+        systemCategoryMappingsInternal = cached.systemCategoryMappings?.map(
+          (key, value) => MapEntry(
+            key,
+            value.map((e) => Map<String, dynamic>.from(e)).toList(),
+          ),
+        );
+        _currentPage = cached.currentPage;
+        _hasMore = cached.hasMore;
+        notifyListeners();
+        return;
+      }
+    }
 
     // 사용자 전환 시, 기존 UI 데이터 즉시 클리어
     if (previous != null && previous != _username) {
@@ -55,11 +93,15 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
 
     try {
       // 통합 API 호출: 스키마 + 포스트
+      // ✅ API 명세: 서버에서 phase와 accessLevel 모두 필터링
       // getProfileFeed는 이미 { success, data, message }에서 data만 추출해서 반환
       final feedData = await blogService.getProfileFeed(
         _username!,
         page: 0,
         size: pageSize,
+        phase: serverPhase,
+        lifePhase: serverLifePhase,
+        accessLevel: serverAccessLevel, // ✅ API 명세에 따라 서버에 accessLevel 전달
       );
 
       // feedData는 이미 data 필드의 내용 (ProfileFeedSchemaAndPostsResponse)
@@ -73,8 +115,24 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
       // 페이지네이션 처리
       final postsData = feedData['posts'] as Map<String, dynamic>?;
       _currentPage = 0;
-      _totalPages = postsData?['totalPages'] ?? 0;
       _hasMore = postsData?['hasNext'] ?? false;
+
+      _cacheByFilterKey[filterKey] = _OtherFeedCacheEntry(
+        cachedAt: DateTime.now(),
+        userInfo:
+            userInfoInternal != null
+                ? Map<String, dynamic>.from(userInfoInternal!)
+                : null,
+        posts: postsInternal.map((e) => Map<String, dynamic>.from(e)).toList(),
+        systemCategoryMappings: systemCategoryMappingsInternal?.map(
+          (key, value) => MapEntry(
+            key,
+            value.map((e) => Map<String, dynamic>.from(e)).toList(),
+          ),
+        ),
+        currentPage: _currentPage,
+        hasMore: _hasMore,
+      );
 
       debugPrint('[OtherProfileFeedProvider] 서버 로드 완료: $_username');
     } catch (e) {
@@ -105,12 +163,14 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
         _username!,
         page: _currentPage + 1,
         size: pageSize,
+        phase: serverPhase,
+        lifePhase: serverLifePhase,
+        accessLevel: serverAccessLevel,
       );
 
       // feedData는 이미 data 필드의 내용 (ProfileFeedSchemaAndPostsResponse)
       final postsData = feedData['posts'] as Map<String, dynamic>?;
       final List<dynamic> newPosts = postsData?['posts'] ?? [];
-      final totalPages = postsData?['totalPages'] ?? 0;
       final hasNext = postsData?['hasNext'] ?? false;
 
       if (newPosts.isEmpty) {
@@ -124,8 +184,17 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
         }
 
         _currentPage++;
-        _totalPages = totalPages;
         _hasMore = hasNext;
+      }
+
+      final active = _cacheByFilterKey[_activeFilterKey];
+      if (active != null) {
+        active.posts
+          ..clear()
+          ..addAll(postsInternal.map((e) => Map<String, dynamic>.from(e)));
+        active.currentPage = _currentPage;
+        active.hasMore = _hasMore;
+        active.cachedAt = DateTime.now();
       }
     } catch (e) {
       debugPrint('[OtherProfileFeedProvider] loadMore 실패: $e');
@@ -151,7 +220,6 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
     _hasMore = true;
     _username = null;
     _currentPage = 0;
-    _totalPages = 0;
     // 선택 상태도 초기화
     selectBase(BaseFilter.all);
     notifyListeners();
@@ -177,4 +245,22 @@ class OtherProfileFeedProvider extends BaseFeedProvider {
       'OtherProfileFeedProvider does not support post reordering.',
     );
   }
+}
+
+class _OtherFeedCacheEntry {
+  _OtherFeedCacheEntry({
+    required this.cachedAt,
+    required this.userInfo,
+    required this.posts,
+    required this.systemCategoryMappings,
+    required this.currentPage,
+    required this.hasMore,
+  });
+
+  DateTime cachedAt;
+  Map<String, dynamic>? userInfo;
+  List<Map<String, dynamic>> posts;
+  Map<String, List<Map<String, dynamic>>>? systemCategoryMappings;
+  int currentPage;
+  bool hasMore;
 }

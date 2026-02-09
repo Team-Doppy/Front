@@ -8,24 +8,22 @@ import 'package:doppy/utils/text_bold_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-/// 주차별 포스트 리스트 페이지 (블러/오버레이 없이 단독 페이지로 표시)
-class WeekPostListScreen extends StatefulWidget {
-  final int year;
-  final int weekNumber;
-  final List<int>? postIds; // ✅ 선택적: 그리드 셀에서 이미 알고 있는 포스트 ID들
+/// 군인 그리드 셀 포스트 리스트 페이지 (phase + slotIndex 기반)
+class MilitaryPostListScreen extends StatefulWidget {
+  final String phase; // 복무 단계 코드 (preEnlistment, training, private, etc.)
+  final int slotIndex; // 단계 내 N주차 (1-based)
 
-  const WeekPostListScreen({
+  const MilitaryPostListScreen({
     super.key,
-    required this.year,
-    required this.weekNumber,
-    this.postIds, // ✅ 선택적 파라미터로 변경
+    required this.phase,
+    required this.slotIndex,
   });
 
   @override
-  State<WeekPostListScreen> createState() => _WeekPostListScreenState();
+  State<MilitaryPostListScreen> createState() => _MilitaryPostListScreenState();
 }
 
-class _WeekPostListScreenState extends State<WeekPostListScreen>
+class _MilitaryPostListScreenState extends State<MilitaryPostListScreen>
     with TickerProviderStateMixin {
   bool _isLoading = true;
   bool _hasError = false;
@@ -44,11 +42,11 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
     )..repeat();
 
     // ✅ 실제 API 호출
-    _loadWeekPosts();
+    _loadMilitaryPosts();
   }
 
-  /// 주차 포스트 목록 로드
-  Future<void> _loadWeekPosts() async {
+  /// 군인 그리드 셀 포스트 목록 로드
+  Future<void> _loadMilitaryPosts() async {
     try {
       setState(() {
         _isLoading = true;
@@ -57,10 +55,9 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
       });
 
       final blogService = BlogService();
-      final postsData = await blogService.getWeekPostList(
-        year: widget.year,
-        week: widget.weekNumber,
-        postIds: widget.postIds,
+      final postsData = await blogService.getMilitaryPostList(
+        phase: widget.phase,
+        slotIndex: widget.slotIndex,
       );
 
       // PostData로 변환
@@ -78,7 +75,7 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
         });
       }
     } catch (e) {
-      debugPrint('[WeekPostListScreen] 포스트 목록 로드 실패: $e');
+      debugPrint('[MilitaryPostListScreen] 포스트 목록 로드 실패: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -117,16 +114,18 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
               decodeWidth: decodeWidth,
             );
             await precacheImage(imageProvider, context);
-            debugPrint('[WeekPostListScreen] ✅ 썸네일 프리로드 완료: ${post.id}');
+            debugPrint('[MilitaryPostListScreen] ✅ 썸네일 프리로드 완료: ${post.id}');
           } catch (e) {
-            debugPrint('[WeekPostListScreen] ⚠️ 썸네일 프리로드 실패: ${post.id} - $e');
+            debugPrint(
+              '[MilitaryPostListScreen] ⚠️ 썸네일 프리로드 실패: ${post.id} - $e',
+            );
             // 프리로드 실패해도 계속 진행
           }
         }),
         eagerError: false, // 하나 실패해도 나머지 계속 진행
       );
     } catch (e) {
-      debugPrint('[WeekPostListScreen] 이미지 프리로드 오류: $e');
+      debugPrint('[MilitaryPostListScreen] 이미지 프리로드 오류: $e');
     }
 
     // ✅ 나머지는 백그라운드에서 로드 (화면 진입을 막지 않음)
@@ -217,10 +216,7 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
                       key: const ValueKey('text'),
                       children: [
                         Text(
-                          context
-                              .tr('loading_week_posts_title')
-                              .replaceAll('{year}', '${widget.year}')
-                              .replaceAll('{week}', '${widget.weekNumber}'),
+                          '${widget.phase} ${widget.slotIndex}주차',
                           style: LocaleTypography.setStyle(
                             context: context,
                             fontSize: 28,
@@ -295,14 +291,29 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
   }
 
   Widget _buildErrorScreen(BuildContext context, ColorScheme colorScheme) {
+    debugPrint('[MilitaryPostListScreen] 에러 메시지: $_errorMessage');
     return Container(
       key: const ValueKey('error'),
       width: double.infinity,
       height: double.infinity,
       color: colorScheme.background,
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.start,
         children: [
+          // ✅ 상단 뒤로가기 아이콘
+          Row(
+            children: [
+              SizedBox(width: 4),
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  color: colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+          Spacer(),
           Text(
             context.tr('failed_to_load_posts'),
             style: TextStyle(
@@ -316,7 +327,7 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Text(
-                _errorMessage!,
+                "글이 삭제되었거나 네트워크 문제가 발생했어요",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
@@ -325,6 +336,7 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
               ),
             ),
           ],
+          Spacer(),
         ],
       ),
     );
@@ -415,10 +427,7 @@ class _WeekPostListScreenState extends State<WeekPostListScreen>
       child: SafeArea(
         top: false,
         child: Text(
-          context
-              .tr('week_format')
-              .replaceAll('{year}', '${widget.year}')
-              .replaceAll('{week}', '${widget.weekNumber}'),
+          '${widget.phase} ${widget.slotIndex}주차',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w400,

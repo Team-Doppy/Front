@@ -174,8 +174,10 @@ class FriendService {
       final response = await _dio.get('/api/friends/search?username=$query');
       if (response.statusCode == 200) {
         final List<dynamic> data = response.data;
-        // API 응답이 {"username": "..."} 이므로 User 모델로 변환
-        return data.map((item) => User(username: item['username'])).toList();
+        // API 응답이 UserSearchDto 형태: username, alias, profileImageUrl, role 포함
+        return data
+            .map((item) => User.fromJson(item as Map<String, dynamic>))
+            .toList();
       }
       throw Exception('사용자 검색 실패');
     } catch (e) {

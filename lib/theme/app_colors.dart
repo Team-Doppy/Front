@@ -4,15 +4,11 @@ import 'package:flutter/material.dart';
 class AppColors {
   AppColors._(); // private constructor
 
-  // ===== Primary Colors (연한 푸른색) =====
-  static const Color primary = Color.fromARGB(
-    255,
-    120,
-    140,
-    255,
-  ); // 연한 푸른색 (밝게)
-  static const Color primaryDark = Color(0xFF46529D); // 진한 푸른색
-  static const Color primaryLight = Color(0xFF7F8DE9); // 더 연한 푸른색
+  // ===== Primary Colors =====
+  // Light theme용 primary (어두운 청록색)
+  static const Color primaryLight = Color.fromARGB(255, 130, 183, 166);
+  // Dark theme용 primary (밝은 청록색 - 다크 배경에서 잘 보이도록)
+  static const Color primaryDark = Color.fromARGB(255, 91, 195, 164);
 
   // ===== Accent Colors =====
   static const Color accent = Color(0xFFE0E0E0); // 중성 회색

@@ -23,11 +23,9 @@ class MyProfileFeedProvider extends BaseFeedProvider {
   bool get hasUserReordered => _hasUserReordered;
 
   // 내 피드 캐시
-  Map<String, dynamic>? _cachedUserInfo;
-  List<Map<String, dynamic>>? _cachedPosts;
-  Map<String, List<Map<String, dynamic>>>? _cachedSystemCategoryMappings;
-  DateTime? _lastCacheTime;
+  final Map<String, _FeedCacheEntry> _cacheByFilterKey = {};
   static const Duration _cacheValidDuration = Duration(minutes: 5); // 5분 캐시
+  String _activeFilterKey = '';
 
   // Getters 구현
   @override
@@ -39,9 +37,10 @@ class MyProfileFeedProvider extends BaseFeedProvider {
   @override
   bool get hasMore => _hasMore;
 
-  bool get _isCacheValid {
-    if (_lastCacheTime == null) return false;
-    return DateTime.now().difference(_lastCacheTime!) < _cacheValidDuration;
+  bool _isCacheValid(String filterKey) {
+    final entry = _cacheByFilterKey[filterKey];
+    if (entry == null) return false;
+    return DateTime.now().difference(entry.cachedAt) < _cacheValidDuration;
   }
 
   @override
@@ -54,10 +53,14 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
     _username = myUsername;
 
-    // 캐시 확인 (force가 아닌 경우)
-    if (!force && _isCacheValid && _cachedUserInfo != null) {
+    final filterKey =
+        '${serverPhase ?? ''}|${serverLifePhase ?? ''}|${serverAccessLevel ?? ''}|$pageSize';
+    _activeFilterKey = filterKey;
+
+    // 캐시 확인 (force가 아닌 경우) + 동일 필터일 때만
+    if (!force && _isCacheValid(filterKey)) {
       debugPrint('[MyProfileFeedProvider] 캐시에서 로드');
-      _loadFromCache();
+      _loadFromCache(filterKey);
       notifyListeners();
       return;
     }
@@ -70,11 +73,20 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
     try {
       // 통합 API 호출: 스키마 + 포스트
+      // ✅ API 명세: 서버에서 phase와 accessLevel 모두 필터링
       // getProfileFeed는 이미 { success, data, message }에서 data만 추출해서 반환
+      debugPrint(
+        '[MyProfileFeedProvider] 서버 요청: username=$_username, '
+        'phase=$serverPhase, lifePhase=$serverLifePhase, '
+        'accessLevel=$serverAccessLevel, pageSize=$pageSize',
+      );
       final feedData = await blogService.getProfileFeed(
         _username!,
         page: 0,
         size: pageSize,
+        phase: serverPhase,
+        lifePhase: serverLifePhase,
+        accessLevel: serverAccessLevel, // ✅ API 명세에 따라 서버에 accessLevel 전달
       );
 
       // feedData는 이미 data 필드의 내용 (ProfileFeedSchemaAndPostsResponse)
@@ -87,11 +99,19 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
       // 페이지네이션 처리
       final postsData = feedData['posts'] as Map<String, dynamic>?;
+      final postsList = postsData?['posts'] as List?;
       _currentPage = 0;
       _hasMore = postsData?['hasNext'] ?? false;
 
+      debugPrint(
+        '[MyProfileFeedProvider] 서버 응답 처리 완료: '
+        'totalElements=${postsData?['totalElements']}, '
+        'posts.length=${postsList?.length ?? 0}, '
+        'hasNext=$_hasMore',
+      );
+
       // 캐시에 저장
-      _saveToCache();
+      _saveToCache(filterKey);
 
       debugPrint('[MyProfileFeedProvider] 서버 로드 완료');
     } catch (e) {
@@ -116,52 +136,56 @@ class MyProfileFeedProvider extends BaseFeedProvider {
   }
 
   /// 캐시에서 데이터 로드
-  void _loadFromCache() {
-    if (_cachedUserInfo != null)
-      userInfoInternal = Map<String, dynamic>.from(_cachedUserInfo!);
+  void _loadFromCache(String filterKey) {
+    final entry = _cacheByFilterKey[filterKey];
+    if (entry == null) return;
 
-    if (_cachedPosts != null) {
-      postsInternal.clear();
-      postsInternal.addAll(
-        _cachedPosts!.map((e) => Map<String, dynamic>.from(e)),
-      );
-    }
-
-    if (_cachedSystemCategoryMappings != null) {
-      systemCategoryMappingsInternal = _cachedSystemCategoryMappings!.map(
-        (key, value) => MapEntry(
-          key,
-          value.map((e) => Map<String, dynamic>.from(e)).toList(),
-        ),
-      );
-    }
-  }
-
-  /// 캐시에 데이터 저장
-  void _saveToCache() {
-    _cachedUserInfo =
-        userInfoInternal != null
-            ? Map<String, dynamic>.from(userInfoInternal!)
+    userInfoInternal =
+        entry.userInfo != null
+            ? Map<String, dynamic>.from(entry.userInfo!)
             : null;
-    _cachedPosts =
-        postsInternal.map((e) => Map<String, dynamic>.from(e)).toList();
-    _cachedSystemCategoryMappings = systemCategoryMappingsInternal?.map(
+
+    postsInternal
+      ..clear()
+      ..addAll(entry.posts.map((e) => Map<String, dynamic>.from(e)));
+
+    systemCategoryMappingsInternal = entry.systemCategoryMappings?.map(
       (key, value) => MapEntry(
         key,
         value.map((e) => Map<String, dynamic>.from(e)).toList(),
       ),
     );
-    _lastCacheTime = DateTime.now();
 
-    debugPrint('[MyProfileFeedProvider] 캐시 저장 완료');
+    _currentPage = entry.currentPage;
+    _hasMore = entry.hasMore;
+  }
+
+  /// 캐시에 데이터 저장
+  void _saveToCache(String filterKey) {
+    _cacheByFilterKey[filterKey] = _FeedCacheEntry(
+      cachedAt: DateTime.now(),
+      userInfo:
+          userInfoInternal != null
+              ? Map<String, dynamic>.from(userInfoInternal!)
+              : null,
+      posts: postsInternal.map((e) => Map<String, dynamic>.from(e)).toList(),
+      systemCategoryMappings: systemCategoryMappingsInternal?.map(
+        (key, value) => MapEntry(
+          key,
+          value.map((e) => Map<String, dynamic>.from(e)).toList(),
+        ),
+      ),
+      currentPage: _currentPage,
+      hasMore: _hasMore,
+    );
+
+    debugPrint('[MyProfileFeedProvider] 캐시 저장 완료: filterKey=$filterKey');
   }
 
   /// 캐시 무효화
   void invalidateCache() {
-    _cachedUserInfo = null;
-    _cachedPosts = null;
-    _cachedSystemCategoryMappings = null;
-    _lastCacheTime = null;
+    _cacheByFilterKey.clear();
+    _activeFilterKey = '';
     debugPrint('[MyProfileFeedProvider] 캐시 무효화');
   }
 
@@ -177,8 +201,10 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       if (userInfoInternal != null) {
         userInfoInternal!['profileImageUrl'] = imageUrl;
       }
-      if (_cachedUserInfo != null) {
-        _cachedUserInfo!['profileImageUrl'] = imageUrl;
+      for (final entry in _cacheByFilterKey.values) {
+        if (entry.userInfo != null) {
+          entry.userInfo!['profileImageUrl'] = imageUrl;
+        }
       }
 
       notifyListeners();
@@ -202,8 +228,10 @@ class MyProfileFeedProvider extends BaseFeedProvider {
         if (userInfoInternal != null) {
           userInfoInternal!['profileImageUrl'] = '';
         }
-        if (_cachedUserInfo != null) {
-          _cachedUserInfo!['profileImageUrl'] = '';
+        for (final entry in _cacheByFilterKey.values) {
+          if (entry.userInfo != null) {
+            entry.userInfo!['profileImageUrl'] = '';
+          }
         }
 
         notifyListeners();
@@ -234,20 +262,21 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       postsInternal.insert(0, updatedPost);
     }
 
-    // 캐시 데이터도 업데이트
-    if (_cachedPosts != null) {
-      final cachedIdx = _cachedPosts!.indexWhere(
+    // 캐시 데이터도 업데이트 (현재 탭/필터 기준)
+    final activeCache = _cacheByFilterKey[_activeFilterKey];
+    if (activeCache != null) {
+      final cachedIdx = activeCache.posts.indexWhere(
         (p) => p['id']?.toString() == postId,
       );
       if (cachedIdx != -1) {
-        final existingCachedPost = _cachedPosts![cachedIdx];
-        _cachedPosts![cachedIdx] = Map<String, dynamic>.from({
+        final existingCachedPost = activeCache.posts[cachedIdx];
+        activeCache.posts[cachedIdx] = Map<String, dynamic>.from({
           ...existingCachedPost,
           ...updatedPost,
         });
       } else {
         // 캐시에도 없으면 추가
-        _cachedPosts!.insert(0, Map<String, dynamic>.from(updatedPost));
+        activeCache.posts.insert(0, Map<String, dynamic>.from(updatedPost));
       }
     }
 
@@ -261,9 +290,8 @@ class MyProfileFeedProvider extends BaseFeedProvider {
     postsInternal.removeWhere((p) => p['id']?.toString() == postId);
 
     // 캐시 데이터에서도 제거
-    if (_cachedPosts != null) {
-      _cachedPosts!.removeWhere((p) => p['id']?.toString() == postId);
-    }
+    final activeCache = _cacheByFilterKey[_activeFilterKey];
+    activeCache?.posts.removeWhere((p) => p['id']?.toString() == postId);
 
     notifyListeners();
   }
@@ -311,17 +339,18 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       }
 
       // 캐시도 업데이트
-      if (_cachedPosts != null) {
-        final cachedIdx = _cachedPosts!.indexWhere(
+      final activeCache = _cacheByFilterKey[_activeFilterKey];
+      if (activeCache != null) {
+        final cachedIdx = activeCache.posts.indexWhere(
           (p) => (p['id'] as int?) == postIdInt,
         );
         if (cachedIdx != -1) {
-          final cachedPost = _cachedPosts![cachedIdx];
-          _cachedPosts!.removeAt(cachedIdx);
-          _cachedPosts!.insert(0, cachedPost);
+          final cachedPost = activeCache.posts[cachedIdx];
+          activeCache.posts.removeAt(cachedIdx);
+          activeCache.posts.insert(0, cachedPost);
           // 캐시의 globalIndex도 업데이트
-          for (int i = 0; i < _cachedPosts!.length; i++) {
-            _cachedPosts![i]['globalIndex'] = i;
+          for (int i = 0; i < activeCache.posts.length; i++) {
+            activeCache.posts[i]['globalIndex'] = i;
           }
         }
       }
@@ -360,10 +389,14 @@ class MyProfileFeedProvider extends BaseFeedProvider {
 
     try {
       // getProfileFeed는 이미 { success, data, message }에서 data만 추출해서 반환
+      // 전용 탭에서는 phase/lifePhase 필터를 유지해야 함
       final feedData = await blogService.getProfileFeed(
         _username!,
         page: _currentPage + 1,
         size: pageSize,
+        phase: serverPhase,
+        lifePhase: serverLifePhase,
+        accessLevel: serverAccessLevel,
       );
 
       // feedData는 이미 data 필드의 내용 (ProfileFeedSchemaAndPostsResponse)
@@ -385,7 +418,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
         _hasMore = hasNext;
 
         // 캐시 업데이트
-        _saveToCache();
+        _saveToCache(_activeFilterKey);
       }
     } catch (e) {
       debugPrint('[MyProfileFeedProvider] loadMore 실패: $e');
@@ -452,7 +485,7 @@ class MyProfileFeedProvider extends BaseFeedProvider {
         debugPrint('[MyProfileFeedProvider] 포스트 순서 서버 저장 성공');
 
         // 캐시 업데이트
-        _saveToCache();
+        _saveToCache(_activeFilterKey);
       } catch (e) {
         debugPrint('⚠️ [MyProfileFeedProvider] 서버 포스트 순서 변경 실패, 롤백: $e');
 
@@ -467,4 +500,22 @@ class MyProfileFeedProvider extends BaseFeedProvider {
       rethrow;
     }
   }
+}
+
+class _FeedCacheEntry {
+  _FeedCacheEntry({
+    required this.cachedAt,
+    required this.userInfo,
+    required this.posts,
+    required this.systemCategoryMappings,
+    required this.currentPage,
+    required this.hasMore,
+  });
+
+  final DateTime cachedAt;
+  final Map<String, dynamic>? userInfo;
+  final List<Map<String, dynamic>> posts;
+  final Map<String, List<Map<String, dynamic>>>? systemCategoryMappings;
+  final int currentPage;
+  final bool hasMore;
 }

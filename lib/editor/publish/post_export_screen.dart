@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:doppy/data/services/upload_service.dart';
 import 'package:doppy/editor/service/node_component_service.dart';
 import 'package:doppy/editor/service/content_change_detector.dart';
@@ -25,6 +26,13 @@ import 'package:doppy/main.dart' show navigatorKey;
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
 import 'dart:io';
 import 'package:video_player/video_player.dart';
+import 'package:doppy/data/models/user_model.dart';
+import 'package:doppy/data/models/military_info_model.dart';
+import 'package:doppy/providers/user_provider.dart';
+import 'package:doppy/providers/friend_provider.dart';
+import 'package:doppy/editor/postwrite_screen.dart';
+import 'package:doppy/editor/overlay/letter_recipient_selection_overlay.dart';
+import 'package:doppy/pages/components/common_profile_avatar.dart';
 
 void printLarge(String text, {int chunkSize = 800}) {
   final int len = text.length;
@@ -32,6 +40,25 @@ void printLarge(String text, {int chunkSize = 800}) {
     final int end = (i + chunkSize < len) ? i + chunkSize : len;
     debugPrint(text.substring(i, end));
   }
+}
+
+/// 하트 파티클 데이터 클래스
+class _HeartParticle {
+  final String id;
+  final Offset startPosition;
+  final double startSize;
+  final double rotation;
+  final double horizontalOffset;
+  final AnimationController controller;
+
+  _HeartParticle({
+    required this.id,
+    required this.startPosition,
+    required this.startSize,
+    required this.rotation,
+    required this.horizontalOffset,
+    required this.controller,
+  });
 }
 
 class PostExportScreen extends StatefulWidget {
@@ -46,6 +73,7 @@ class PostExportScreen extends StatefulWidget {
     this.initialYear,
     this.initialYearOfWeek,
     this.isOnboardingMode = false, // 🎯 온보딩 모드 여부
+    this.writeMode, // ✅ 글쓰기 모드
   });
   final String exported;
   final String? sessionKey; // 블로그/드래프트별 네임스페이스 키
@@ -56,6 +84,7 @@ class PostExportScreen extends StatefulWidget {
   final int? initialYear; // 초기 연도
   final int? initialYearOfWeek; // 초기 주차 (1-53)
   final bool isOnboardingMode; // 🎯 온보딩 모드 여부
+  final PostWriteMode? writeMode; // ✅ 글쓰기 모드
 
   @override
   State<PostExportScreen> createState() => _PostExportScreenState();
@@ -80,8 +109,15 @@ class _PostExportScreenState extends State<PostExportScreen>
 
   bool _editMode = false;
 
-  // 공개 범위 선택 (기본값: 전체공개)
-  String _currentAccessLevel = SystemCategoryKeys.public;
+  // 공개 범위 선택 (기본값: 글 타입에 따라 결정)
+  late String _currentAccessLevel;
+
+  // ✅ letter 모드: 선택한 친구 목록 (exported에서 추출)
+  List<String> _letterRecipients = [];
+
+  // ✅ 친구공개(친구지정): 선택한 친구 목록
+  List<Map<String, dynamic>> _selectedFriends =
+      []; // {username, alias, imageUrl}
 
   // ✅ 수정 모드: 원본 exported(변경 감지용)
   Map<String, dynamic>? _initialExportedForComparisonMap;
@@ -106,9 +142,20 @@ class _PostExportScreenState extends State<PostExportScreen>
   // 🎯 dispose()에서 안전하게 사용하기 위해 UploadService 참조 저장
   UploadService? _uploadService;
 
+  // ✅ 하트 파티클 관리 (letter 모드에서 여친만 선택되었을 때)
+  final List<_HeartParticle> _heartParticles = [];
+  late AnimationController _heartSpawnController;
+  final math.Random _random = math.Random();
+  bool _shouldShowHearts = false;
+
   @override
   void initState() {
     super.initState();
+    // ✅ 수정 모드일 때는 initialAccessLevel 우선 사용, 없으면 글 타입에 따른 기본값
+    _currentAccessLevel =
+        widget.initialAccessLevel ??
+        _getDefaultAccessLevelForWriteMode(widget.writeMode);
+
     // 🎯 수정 진입 시 원본 payload 파싱 (있으면)
     if (widget.initialExportedForComparison != null &&
         widget.initialExportedForComparison!.trim().isNotEmpty) {
@@ -137,6 +184,12 @@ class _PostExportScreenState extends State<PostExportScreen>
       });
     });
 
+    // ✅ 하트 파티클 생성 타이머 (약하게: 800ms마다)
+    _heartSpawnController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800), // ✅ 약하게: 800ms마다
+    );
+
     // 카테고리는 Step3 컴포넌트에서 로드함
   }
 
@@ -144,6 +197,68 @@ class _PostExportScreenState extends State<PostExportScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _uploadService = context.read<UploadService>();
+
+    // ✅ letter 모드: String 형태의 letterRecipients를 Map 형태로 변환
+    if (widget.writeMode == PostWriteMode.letter &&
+        _letterRecipients.isNotEmpty &&
+        (_exportedBase['letterRecipients'] as List?)?.isNotEmpty == true &&
+        (_exportedBase['letterRecipients'] as List).first is! Map) {
+      try {
+        final friendProvider = context.read<FriendProvider>();
+        final friends = friendProvider.acceptedFriends;
+        final userProvider = context.read<UserProvider>();
+        final currentUser = userProvider.currentUser;
+
+        // 연결된 짝궁도 확인
+        User? partner;
+        if (currentUser != null) {
+          final userType = currentUser.militaryInfo?.userType;
+          if (userType == UserType.girlfriend) {
+            partner = currentUser.connectedMilitaryUser;
+          } else if (userType == UserType.military ||
+              userType == UserType.plannedEnlistment) {
+            partner = currentUser.connectedToMeByUser;
+          }
+        }
+
+        final letterRecipientsAsMaps = <Map<String, dynamic>>[];
+        for (final username in _letterRecipients) {
+          if (username == 'all_friends') continue;
+
+          // 연결된 짝궁인지 확인
+          if (partner != null && partner.username == username) {
+            letterRecipientsAsMaps.add({
+              'username': partner.username,
+              'alias': partner.alias ?? partner.username,
+              'imageUrl': partner.profileImageUrl,
+            });
+          } else {
+            // 친구 목록에서 찾기
+            try {
+              final friend = friends.firstWhere((f) => f.username == username);
+              letterRecipientsAsMaps.add({
+                'username': friend.username,
+                'alias': friend.alias,
+                'imageUrl': friend.profileImageUrl,
+              });
+            } catch (_) {
+              // 친구를 찾을 수 없으면 username만으로 추가
+              letterRecipientsAsMaps.add({
+                'username': username,
+                'alias': username,
+                'imageUrl': null,
+              });
+            }
+          }
+        }
+        _exportedBase['letterRecipients'] = letterRecipientsAsMaps;
+      } catch (_) {
+        // 변환 실패 시 그대로 유지
+      }
+    }
+
+    // ✅ letter 모드에서 여친만 선택되었는지 확인하고 하트 파티클 시작/중지
+    _updateHeartParticles();
   }
 
   @override
@@ -151,6 +266,15 @@ class _PostExportScreenState extends State<PostExportScreen>
     try {
       _titleController.dispose();
       _titleFocusNode.dispose();
+
+      // ✅ 하트 파티클 정리
+      _heartSpawnController.removeListener(_spawnHeart);
+      _heartSpawnController.stop();
+      _heartSpawnController.dispose();
+      for (final particle in _heartParticles) {
+        particle.controller.dispose();
+      }
+      _heartParticles.clear();
 
       // 🎯 비디오 컨트롤러 정리 (로컬/서버 구분하여 처리)
       // _disposeVideoController 내부에서 _cachedVideoUrl 여부에 따라 처리
@@ -182,6 +306,78 @@ class _PostExportScreenState extends State<PostExportScreen>
     if (exportedTitle != null && exportedTitle.trim().isNotEmpty) {
       _title = exportedTitle.trim();
       _titleController.text = _title;
+    }
+
+    // ✅ letter 모드: 선택한 친구 목록 추출
+    if (widget.writeMode == PostWriteMode.letter) {
+      try {
+        final recipients = exported['letterRecipients'] as List?;
+        if (recipients != null) {
+          // Map 형태인 경우 (전체 정보) - 수정 모드에서 전체 정보 유지
+          if (recipients.isNotEmpty && recipients.first is Map) {
+            // ✅ exportedBase에 Map 형태로 유지 (수정 모드에서 전체 정보 필요)
+            _exportedBase['letterRecipients'] = recipients;
+            _letterRecipients =
+                recipients
+                    .map(
+                      (r) =>
+                          (r as Map<String, dynamic>)['username']?.toString() ??
+                          '',
+                    )
+                    .where((r) => r.isNotEmpty)
+                    .toList();
+          } else {
+            // String 형태인 경우 (하위 호환성)
+            _letterRecipients =
+                recipients
+                    .map((r) => r.toString())
+                    .where((r) => r.isNotEmpty)
+                    .toList();
+            // ✅ String 형태를 Map 형태로 변환하는 것은 didChangeDependencies에서 처리
+            // (initState에서는 context.read 사용 불가)
+          }
+        }
+      } catch (_) {
+        _letterRecipients = [];
+      }
+    }
+
+    // ✅ letter 모드: 하트 파티클 업데이트 (초기 로드 후)
+    if (widget.writeMode == PostWriteMode.letter) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _updateHeartParticles();
+        }
+      });
+    }
+
+    // ✅ 친구공개(친구지정): 선택한 친구 목록 추출
+    try {
+      final selectedFriends = exported['selectedFriends'] as List?;
+      if (selectedFriends != null) {
+        _selectedFriends =
+            selectedFriends
+                .map((f) => f is Map<String, dynamic> ? f : <String, dynamic>{})
+                .where((f) => f['username'] != null)
+                .toList();
+      }
+    } catch (_) {
+      _selectedFriends = [];
+    }
+
+    // ✅ 수정 모드: exported에서 accessLevel 추출 (실제 보낸 타겟 정보 반영)
+    if (widget.isEditMode) {
+      try {
+        final exportedAccessLevel = exported['accessLevel']?.toString();
+        if (exportedAccessLevel != null && exportedAccessLevel.isNotEmpty) {
+          _currentAccessLevel = exportedAccessLevel.toUpperCase();
+          debugPrint(
+            '[PostExportScreen] 수정 모드: accessLevel=$_currentAccessLevel 로드',
+          );
+        }
+      } catch (e) {
+        debugPrint('[PostExportScreen] accessLevel 추출 실패: $e');
+      }
     }
 
     // 🎯 썸네일: exported에서 가져오기 (임시저장 사용 안 함)
@@ -418,7 +614,7 @@ class _PostExportScreenState extends State<PostExportScreen>
             AccessLevelParser.parseAccessLevelString(exported['accessLevel']) ??
             '';
 
-        // 공개범위 초기화
+        // 공개범위 초기화 (exported에 값이 있으면 우선 사용)
         if (level == SystemCategoryKeys.private) {
           _currentAccessLevel = SystemCategoryKeys.private;
         } else if (level == SystemCategoryKeys.public) {
@@ -426,11 +622,38 @@ class _PostExportScreenState extends State<PostExportScreen>
         } else if (level == SystemCategoryKeys.friends) {
           _currentAccessLevel = SystemCategoryKeys.friends;
         } else {
-          _currentAccessLevel = SystemCategoryKeys.public; // 기본값
+          // exported에 값이 없으면 글 타입에 따른 기본값 사용
+          _currentAccessLevel = _getDefaultAccessLevelForWriteMode(
+            widget.writeMode,
+          );
         }
       } catch (_) {}
     }
     setState(() {});
+  }
+
+  /// ✅ 글 타입에 따른 기본 공개범위 반환
+  String _getDefaultAccessLevelForWriteMode(PostWriteMode? writeMode) {
+    switch (writeMode) {
+      case PostWriteMode.militaryLife:
+        // 부대 기록: 개인적인 내용이므로 비공개
+        return SystemCategoryKeys.private;
+      case PostWriteMode.leaveOrPreEnlistment:
+        // 휴가 모드: 기본값 전체공개
+        return SystemCategoryKeys.public;
+      case PostWriteMode.public:
+        // 공개 글: 전체공개
+        return SystemCategoryKeys.public;
+      case PostWriteMode.letter:
+        // 편지: 특정 수신인에게 보내는 것이므로 비공개
+        return SystemCategoryKeys.private;
+      case PostWriteMode.promise:
+        // 약속: 친구들과 공유하는 것이 적절
+        return SystemCategoryKeys.friends;
+      case null:
+        // 글 타입이 없으면 기본값 전체공개
+        return SystemCategoryKeys.public;
+    }
   }
 
   // 🎯 비디오 컨트롤러 안전하게 dispose하는 헬퍼 메서드
@@ -826,9 +1049,107 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
   }
 
+  /// ✅ militaryInfo 기반으로 현재 phase 계산
+  String? _calculatePhaseFromMilitaryInfo() {
+    final userProvider = context.read<UserProvider>();
+    final currentUser = userProvider.currentUser;
+    if (currentUser == null) return null;
+
+    // ✅ 곰신의 경우 연결된 남친의 militaryInfo 사용
+    final militaryInfo =
+        currentUser.connectedMilitaryUser?.militaryInfo ??
+        currentUser.militaryInfo;
+    if (militaryInfo == null) return null;
+
+    final userStatus = militaryInfo.status;
+    final currentRank = militaryInfo.currentRank;
+
+    if (userStatus == MilitaryStatus.beforeEnlistment) {
+      return 'preEnlistment';
+    } else if (userStatus == MilitaryStatus.afterEnlistment &&
+        currentRank != null) {
+      switch (currentRank) {
+        case MilitaryRank.trainee:
+          return 'training';
+        case MilitaryRank.private:
+          return 'private';
+        case MilitaryRank.privateFirstClass:
+          return 'privateFirstClass';
+        case MilitaryRank.corporal:
+          return 'corporal';
+        case MilitaryRank.sergeant:
+          return 'sergeant';
+      }
+    }
+
+    return null;
+  }
+
   /// 🎯 발행 모드: 새 포스트 발행
   Future<void> _publish() async {
     try {
+      String? recipientUsername;
+      String? writingType;
+      String? phase;
+
+      // ✅ letter 모드일 때 발송 대상 선택
+      if (widget.writeMode == PostWriteMode.letter) {
+        final recipient = await _showLetterRecipientSelection();
+        if (recipient == null) {
+          // 사용자가 취소한 경우
+          return;
+        }
+        // ✅ username을 직접 사용 (서버에서 username으로 조회)
+        recipientUsername = recipient.username;
+
+        // ✅ 편지 모드: writingType은 서버가 자동으로 LETTER로 설정하지만, 명시적으로도 설정 가능
+        writingType = 'LETTER';
+      } else if (widget.writeMode == PostWriteMode.promise) {
+        // ✅ API 명세: Promise 모드 - writingType=PROMISE, accessLevel=PRIVATE
+        writingType = 'PROMISE';
+        // Promise는 반드시 PRIVATE이어야 함
+        if (_currentAccessLevel.toUpperCase() !=
+            SystemCategoryKeys.private.toUpperCase()) {
+          await DialogUtils.showInfoDialog(
+            context,
+            title: context.tr('error'),
+            message: '목표(Promise) 글은 공개범위가 나만보기(PRIVATE)이어야 합니다.',
+          );
+          return;
+        }
+        debugPrint('[PostExportScreen] Promise 모드: writingType=PROMISE');
+      } else if (widget.writeMode == PostWriteMode.militaryLife) {
+        // ✅ MILITARY_LIFE 모드: writingType 설정
+        writingType = 'MILITARY_LIFE';
+      }
+
+      // ✅ 여친이 쓴 글이 아닐 때 항상 phase 보내기
+      final userProvider = context.read<UserProvider>();
+      final currentUser = userProvider.currentUser;
+      final isGirlfriend =
+          currentUser?.militaryInfo?.userType == UserType.girlfriend;
+      final requiresPhase = !isGirlfriend; // ✅ 여친이 아닐 때 항상 phase 필요
+
+      if (requiresPhase) {
+        // ✅ militaryInfo 기반으로 현재 phase 계산
+        phase = _calculatePhaseFromMilitaryInfo();
+        if (phase == null) {
+          await DialogUtils.showInfoDialog(
+            context,
+            title: context.tr('error'),
+            message: '군 정보를 확인할 수 없어 글을 발행할 수 없습니다.',
+          );
+          return;
+        }
+        debugPrint(
+          '[PostExportScreen] phase 계산 완료: $phase (writingType=$writingType, isGirlfriend=$isGirlfriend)',
+        );
+      } else {
+        debugPrint(
+          '[PostExportScreen] phase 생략 (여친이 쓴 글: isGirlfriend=$isGirlfriend)',
+        );
+      }
+
       // 검증
       final validationError = _validateInputs();
       if (validationError != null) {
@@ -856,6 +1177,12 @@ class _PostExportScreenState extends State<PostExportScreen>
         );
       }
 
+      // ✅ 친구공개(친구지정)일 때 선택한 친구 목록을 exportedBase에 포함
+      if (_currentAccessLevel.toUpperCase() ==
+          SystemCategoryKeys.friends.toUpperCase()) {
+        _exportedBase['selectedFriends'] = _selectedFriends;
+      }
+
       // 🎯 아래 모든 로직은 Provider(백그라운드)의 몫
       // - payload 생성/업로드/피드갱신/실패 다이얼로그/완료 ShareOverlay 표시
       context.read<PublishProvider>().startPublish(
@@ -868,6 +1195,10 @@ class _PostExportScreenState extends State<PostExportScreen>
           nthWeek: nthWeek,
           sessionKey: widget.sessionKey,
           isOnboardingMode: widget.isOnboardingMode, // 🎯 온보딩 모드 전달
+          lifePhase: widget.writeMode?.toLifePhase(), // 🎯 작성 모드 전달
+          recipientUsername: recipientUsername, // ✅ 편지 모드: 수신인 username (필수)
+          writingType: writingType, // ✅ 글 타입 (LETTER, PROMISE 등)
+          phase: phase, // ✅ 복무 단계 코드 (MILITARY_LIFE일 때 필수)
         ),
       );
 
@@ -963,6 +1294,54 @@ class _PostExportScreenState extends State<PostExportScreen>
         child: Stack(
           children: [
             _buildDynamicBackground(),
+            // ✅ 하트 파티클 오버레이 (letter 모드에서 여친만 선택되었을 때)
+            ..._heartParticles.map((particle) {
+              return AnimatedBuilder(
+                animation: particle.controller,
+                builder: (context, child) {
+                  final progress = particle.controller.value;
+                  final curve = Curves.easeOut.transform(progress);
+
+                  // 위로 이동 (페이드아웃) - 약하게
+                  final offsetY = -curve * 180; // 최대 180px 위로 (약하게)
+                  final offsetX =
+                      math.sin(progress * math.pi * 2) *
+                      particle.horizontalOffset *
+                      curve; // 좌우 흔들림
+
+                  // 페이드아웃
+                  final opacity =
+                      (1.0 - progress).clamp(0.0, 1.0) * 0.6; // ✅ 약하게: 최대 0.6
+
+                  // 스케일 (작아지면서 사라짐)
+                  final scale = 1.0 - progress * 0.3;
+
+                  // 회전
+                  final rotation =
+                      particle.rotation +
+                      progress * math.pi * 0.5; // ✅ 약하게: 회전 속도 감소
+
+                  return Positioned(
+                    left: particle.startPosition.dx + offsetX,
+                    top: particle.startPosition.dy + offsetY,
+                    child: Opacity(
+                      opacity: opacity,
+                      child: Transform.scale(
+                        scale: scale,
+                        child: Transform.rotate(
+                          angle: rotation,
+                          child: Icon(
+                            Icons.favorite,
+                            color: const Color.fromARGB(255, 255, 103, 92),
+                            size: particle.startSize,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+            }).toList(),
             Scaffold(
               backgroundColor: Colors.transparent,
               extendBodyBehindAppBar: true,
@@ -1259,8 +1638,49 @@ class _PostExportScreenState extends State<PostExportScreen>
     }
   }
 
-  // 🎯 하단 네비게이션 바 (공개범위 선택)
+  // 🎯 하단 네비게이션 바 (공개범위 선택 또는 letter 모드 친구 목록)
   Widget _buildBottomNavigationBar() {
+    // ✅ letter 모드일 때는 선택한 친구 목록 표시
+    if (widget.writeMode == PostWriteMode.letter) {
+      return SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            vertical: 12,
+          ), // ✅ horizontal 패딩 제거
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+          ),
+          child: _buildLetterRecipientsDisplay(),
+        ),
+      );
+    }
+
+    // ✅ 친구공개(친구지정)일 때는 친구 선택 UI 표시
+    final isFriendsAccess =
+        _currentAccessLevel.toUpperCase() ==
+        SystemCategoryKeys.friends.toUpperCase();
+
+    debugPrint(
+      '[PostExportScreen] _buildBottomNavigationBar: _currentAccessLevel=$_currentAccessLevel, isFriendsAccess=$isFriendsAccess, _selectedFriends.length=${_selectedFriends.length}',
+    );
+
+    if (isFriendsAccess) {
+      return SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            vertical: 12,
+          ), // ✅ horizontal 패딩 제거
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+          ),
+          child: _buildFriendsSelectionDisplay(),
+        ),
+      );
+    }
+
+    // 일반 모드: 공개범위 선택 버튼
     return SafeArea(
       top: false,
       child: Container(
@@ -1283,6 +1703,11 @@ class _PostExportScreenState extends State<PostExportScreen>
                     onChanged: (accessLevel) {
                       setState(() {
                         _currentAccessLevel = accessLevel;
+                        // 친구공개가 아닌 경우 선택한 친구 목록 초기화
+                        if (accessLevel.toUpperCase() !=
+                            SystemCategoryKeys.friends.toUpperCase()) {
+                          _selectedFriends = [];
+                        }
                       });
                     },
                   );
@@ -1291,6 +1716,645 @@ class _PostExportScreenState extends State<PostExportScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// ✅ 여친만 선택되었는지 확인 (친구공개 모드용)
+  bool _isOnlyPartnerSelectedForFriends(List<Map<String, dynamic>> friends) {
+    if (friends.length != 1) return false;
+
+    final userProvider = context.read<UserProvider>();
+    final currentUser = userProvider.currentUser;
+    User? partner;
+    if (currentUser != null) {
+      final userType = currentUser.militaryInfo?.userType;
+      if (userType == UserType.girlfriend) {
+        partner = currentUser.connectedMilitaryUser;
+      } else if (userType == UserType.military ||
+          userType == UserType.plannedEnlistment) {
+        partner = currentUser.connectedToMeByUser;
+      }
+    }
+
+    if (partner == null) return false;
+
+    final selectedFriend = friends.first;
+    return selectedFriend['username'] == partner.username;
+  }
+
+  // ✅ 친구공개(친구지정): 선택한 친구 목록 표시
+  Widget _buildFriendsSelectionDisplay() {
+    debugPrint(
+      '[PostExportScreen] _buildFriendsSelectionDisplay: _selectedFriends.length=${_selectedFriends.length}',
+    );
+
+    if (_selectedFriends.isEmpty) {
+      return GestureDetector(
+        onTap: () => _openFriendSelection(),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.person_add_outlined,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '친구 선택',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.5),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ✅ 여친만 선택되었는지 확인
+    final isOnlyPartner = _isOnlyPartnerSelectedForFriends(_selectedFriends);
+    final showAddButton = !isOnlyPartner; // ✅ 여친만 있으면 + 버튼 숨김
+
+    // ✅ 여친(짝궁) 1명만 선택된 경우: 리스트 UI는 숨기고 높이만 유지
+    // - UX: 하트 파티클(다른 오버레이)만으로 충분
+    if (isOnlyPartner) {
+      return const SizedBox(width: double.infinity, height: 100);
+    }
+
+    // ✅ 1명일 때도 리스트 UI로 통일 (가운데 정렬)
+    return SizedBox(
+      width: double.infinity, // ✅ 화면 전체 너비
+      height: 100, // 프로필 + 이름을 위한 높이
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        shrinkWrap: true,
+        physics: const ClampingScrollPhysics(), // ✅ alwaysScroll 적용
+        itemCount:
+            _selectedFriends.length +
+            (showAddButton ? 1 : 0) +
+            2, // ✅ + 버튼 조건부 포함 + 양쪽 SizedBox
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          // ✅ 맨 왼쪽에 SizedBox 추가 (첫 번째 아이템)
+          if (index == 0) {
+            return const SizedBox(width: 24); // ✅ 왼쪽 여백
+          }
+
+          // ✅ 맨 오른쪽에 SizedBox 추가 (마지막 아이템)
+          final totalItems = _selectedFriends.length + (showAddButton ? 1 : 0);
+          if (index == totalItems + 1) {
+            return const SizedBox(width: 24); // ✅ 오른쪽 여백
+          }
+
+          // ✅ 인덱스 조정 (왼쪽 SizedBox 제외)
+          final adjustedIndex = index - 1;
+
+          // ✅ 마지막 item은 + 버튼 (showAddButton이 true일 때만)
+          if (showAddButton && adjustedIndex == _selectedFriends.length) {
+            return GestureDetector(
+              onTap: () => _openFriendSelection(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 64, // ✅ 프로필 크기에 맞춰 조정
+                    height: 64,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.3),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.add,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.7),
+                      size: 28, // ✅ 약간 크게: 24 -> 28
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  // + 버튼 아래 공간 (이름이 없어도 레이아웃 맞추기)
+                  const SizedBox(height: 20),
+                ],
+              ),
+            );
+          }
+
+          // ✅ 일반 친구 프로필
+          final friend = _selectedFriends[adjustedIndex];
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CommonProfileAvatar(
+                imageUrl:
+                    (friend['profileImageUrl'] ?? friend['imageUrl'])
+                        as String?,
+                username: friend['username'] as String? ?? '',
+                size: 64.0, // ✅ 더 크게: 48 -> 64
+                borderColor: Colors.transparent,
+                borderWidth: 0,
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: 64, // ✅ 프로필 크기에 맞춰 너비 조정
+                child: Text(
+                  friend['alias'] as String? ??
+                      friend['username'] as String? ??
+                      '',
+                  style: TextStyle(
+                    fontSize: 13, // ✅ 약간 크게: 12 -> 13
+                    fontWeight: FontWeight.w500,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ✅ letter 모드: 수신인 선택 화면 열기
+  Future<void> _openLetterRecipientSelection() async {
+    // 기존 선택한 수신인들의 정보
+    final letterRecipientsAsFriends = <Map<String, dynamic>>[];
+
+    try {
+      final recipients = _exportedBase['letterRecipients'] as List?;
+      if (recipients != null && recipients.isNotEmpty) {
+        if (recipients.first is Map) {
+          letterRecipientsAsFriends.addAll(
+            recipients
+                .map((r) => r as Map<String, dynamic>)
+                .where(
+                  (r) =>
+                      r['username'] != null && r['username'] != 'all_friends',
+                )
+                .toList(),
+          );
+        }
+      }
+    } catch (_) {
+      // 에러 발생 시 빈 리스트
+    }
+
+    final initialUsernames =
+        letterRecipientsAsFriends
+            .map((f) => f['username'] as String?)
+            .where((u) => u != null && u.isNotEmpty)
+            .toList()
+            .cast<String>();
+
+    // LetterRecipientSelectionScreen 재활용 (returnResult: true로 결과 반환)
+    final selectedRecipients = await Navigator.of(
+      context,
+    ).push<List<Map<String, dynamic>>>(
+      MaterialPageRoute(
+        builder:
+            (_) => LetterRecipientSelectionScreen(
+              initialRecipientUsernames:
+                  initialUsernames.isNotEmpty ? initialUsernames : null,
+              returnResult: true, // ✅ 결과 반환 모드
+            ),
+      ),
+    );
+
+    if (selectedRecipients != null && selectedRecipients.isNotEmpty) {
+      // ✅ exportedBase에 업데이트
+      setState(() {
+        _exportedBase['letterRecipients'] = selectedRecipients;
+        // _letterRecipients도 업데이트
+        _letterRecipients =
+            selectedRecipients
+                .map((r) => r['username']?.toString() ?? '')
+                .where((r) => r.isNotEmpty)
+                .toList();
+      });
+    }
+  }
+
+  // ✅ 친구 선택 화면 열기
+  Future<void> _openFriendSelection() async {
+    // 기존 선택한 친구들의 username 리스트
+    final initialUsernames =
+        _selectedFriends
+            .map((f) => f['username'] as String?)
+            .where((u) => u != null && u.isNotEmpty)
+            .toList()
+            .cast<String>();
+
+    // LetterRecipientSelectionScreen 재활용 (returnResult: true로 결과 반환)
+    final selectedRecipients = await Navigator.of(
+      context,
+    ).push<List<Map<String, dynamic>>>(
+      MaterialPageRoute(
+        builder:
+            (_) => LetterRecipientSelectionScreen(
+              initialRecipientUsernames:
+                  initialUsernames.isNotEmpty ? initialUsernames : null,
+              returnResult: true, // ✅ 결과 반환 모드
+            ),
+      ),
+    );
+
+    if (selectedRecipients != null && selectedRecipients.isNotEmpty) {
+      // ✅ 이미 전체 정보가 포함되어 있으므로 그대로 사용
+      final selectedFriendsList = <Map<String, dynamic>>[];
+      for (final recipient in selectedRecipients) {
+        if (recipient['username'] == 'all_friends') continue; // "모든 친구" 제외
+
+        selectedFriendsList.add({
+          'username': recipient['username'] as String? ?? '',
+          'alias':
+              recipient['alias'] as String? ??
+              recipient['username'] as String? ??
+              '',
+          'imageUrl': recipient['imageUrl'] as String?,
+        });
+      }
+
+      setState(() {
+        _selectedFriends = selectedFriendsList;
+      });
+      // ✅ 하트 파티클 업데이트
+      _updateHeartParticles();
+    }
+  }
+
+  /// ✅ letter 모드에서 여친만 선택되었는지 확인하고 하트 파티클 관리
+  void _updateHeartParticles() {
+    if (widget.writeMode != PostWriteMode.letter) {
+      // letter 모드가 아니면 하트 파티클 중지
+      if (_shouldShowHearts) {
+        _shouldShowHearts = false;
+        _heartSpawnController.removeListener(_spawnHeart);
+        _heartSpawnController.stop();
+        for (final particle in _heartParticles) {
+          particle.controller.dispose();
+        }
+        _heartParticles.clear();
+        if (mounted) setState(() {});
+      }
+      return;
+    }
+
+    // letter 모드일 때: 여친만 선택되었는지 확인
+    final userProvider = context.read<UserProvider>();
+    final currentUser = userProvider.currentUser;
+    User? partner;
+    if (currentUser != null) {
+      final userType = currentUser.militaryInfo?.userType;
+      if (userType == UserType.girlfriend) {
+        partner = currentUser.connectedMilitaryUser;
+      } else if (userType == UserType.military ||
+          userType == UserType.plannedEnlistment) {
+        partner = currentUser.connectedToMeByUser;
+      }
+    }
+
+    // letterRecipients가 1명이고, 그게 연결된 짝궁(여친)인지 확인
+    final isOnlyPartnerSelected =
+        partner != null &&
+        _letterRecipients.length == 1 &&
+        _letterRecipients.first == partner.username &&
+        !_letterRecipients.contains('all_friends');
+
+    if (isOnlyPartnerSelected && !_shouldShowHearts) {
+      // 하트 파티클 시작
+      _shouldShowHearts = true;
+      _heartSpawnController.repeat();
+      _heartSpawnController.addListener(_spawnHeart);
+      if (mounted) setState(() {});
+    } else if (!isOnlyPartnerSelected && _shouldShowHearts) {
+      // 하트 파티클 중지
+      _shouldShowHearts = false;
+      _heartSpawnController.removeListener(_spawnHeart);
+      _heartSpawnController.stop();
+      for (final particle in _heartParticles) {
+        particle.controller.dispose();
+      }
+      _heartParticles.clear();
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// ✅ 새로운 하트 파티클 생성 (약하게)
+  void _spawnHeart() {
+    if (!mounted || !_shouldShowHearts) return;
+
+    // 최대 파티클 개수 제한 (약하게: 8개)
+    if (_heartParticles.length >= 8) return;
+
+    // 선택된 친구 목록 영역 중앙 기준
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+
+    // 하단 네비게이션 바 영역 중앙 기준
+    final centerX = screenWidth / 2;
+    final centerY = screenHeight * 0.9; // 하단 90% 지점
+
+    // 랜덤 시작 위치 (약하게: 범위 축소)
+    final startX = centerX + (_random.nextDouble() - 0.5) * 120; // -60 ~ +60 범위
+    final startY = centerY - 20 - _random.nextDouble() * 20;
+
+    // 랜덤 속성 (약하게: 크기와 범위 축소)
+    final size = 12.0 + _random.nextDouble() * 8.0; // 12~20px (약하게)
+    final rotation = _random.nextDouble() * 2 * math.pi;
+    final horizontalOffset = (_random.nextDouble() - 0.5) * 80; // 좌우 흔들림 범위 축소
+
+    final controller = AnimationController(
+      vsync: this,
+      duration: Duration(
+        milliseconds: 2500 + _random.nextInt(1000), // 2.5~3.5초 (약하게)
+      ),
+    );
+
+    final particle = _HeartParticle(
+      id:
+          DateTime.now().millisecondsSinceEpoch.toString() +
+          _random.nextInt(1000).toString(),
+      startPosition: Offset(startX, startY),
+      startSize: size,
+      rotation: rotation,
+      horizontalOffset: horizontalOffset,
+      controller: controller,
+    );
+
+    setState(() {
+      _heartParticles.add(particle);
+    });
+
+    // 애니메이션 완료 시 파티클 제거
+    controller.forward().then((_) {
+      if (mounted) {
+        setState(() {
+          _heartParticles.remove(particle);
+        });
+        controller.dispose();
+      }
+    });
+  }
+
+  // ✅ letter 모드: 선택한 친구 목록 표시 (친구공개와 동일한 형식)
+  Widget _buildLetterRecipientsDisplay() {
+    // ✅ 여친(짝궁) 1명만 선택된 경우: 리스트 UI 제거 + 높이 유지
+    // - 하트 파티클은 이미 화면 오버레이로 표시됨
+    if (_shouldShowHearts) {
+      return const SizedBox(width: double.infinity, height: 100);
+    }
+
+    // ✅ letterRecipients를 selectedFriends 형식으로 변환
+    final letterRecipientsAsFriends = <Map<String, dynamic>>[];
+
+    // exported에서 letterRecipients 전체 정보 가져오기
+    try {
+      final recipients = _exportedBase['letterRecipients'] as List?;
+      if (recipients != null && recipients.isNotEmpty) {
+        if (recipients.first is Map) {
+          // Map 형태인 경우 (전체 정보)
+          letterRecipientsAsFriends.addAll(
+            recipients
+                .map((r) => r as Map<String, dynamic>)
+                .where(
+                  (r) =>
+                      r['username'] != null && r['username'] != 'all_friends',
+                )
+                .toList(),
+          );
+        } else {
+          // String 형태인 경우 (하위 호환성) - FriendProvider에서 조회 필요
+          final friendProvider = context.read<FriendProvider>();
+          final friends = friendProvider.acceptedFriends;
+          final userProvider = context.read<UserProvider>();
+          final currentUser = userProvider.currentUser;
+
+          // 연결된 짝궁도 확인
+          User? partner;
+          if (currentUser != null) {
+            final userType = currentUser.militaryInfo?.userType;
+            if (userType == UserType.girlfriend) {
+              partner = currentUser.connectedMilitaryUser;
+            } else if (userType == UserType.military ||
+                userType == UserType.plannedEnlistment) {
+              partner = currentUser.connectedToMeByUser;
+            }
+          }
+
+          for (final username in _letterRecipients) {
+            if (username == 'all_friends') continue;
+
+            // 연결된 짝궁인지 확인
+            if (partner != null && partner.username == username) {
+              letterRecipientsAsFriends.add({
+                'username': partner.username,
+                'alias': partner.alias ?? partner.username,
+                'imageUrl': partner.profileImageUrl,
+              });
+            } else {
+              // 친구 목록에서 찾기
+              try {
+                final friend = friends.firstWhere(
+                  (f) => f.username == username,
+                );
+                letterRecipientsAsFriends.add({
+                  'username': friend.username,
+                  'alias': friend.alias,
+                  'imageUrl': friend.profileImageUrl,
+                });
+              } catch (_) {
+                // 친구를 찾을 수 없으면 username만으로 추가
+                letterRecipientsAsFriends.add({
+                  'username': username,
+                  'alias': username,
+                  'imageUrl': null,
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // 에러 발생 시 빈 리스트
+    }
+
+    // ✅ 친구공개와 동일한 형식으로 표시
+    if (letterRecipientsAsFriends.isEmpty) {
+      return GestureDetector(
+        onTap: () {
+          // letter 모드에서는 수신인 재선택 불가 (에디터로 돌아가야 함)
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.2),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.person_outline,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '수신인 선택',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.5),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ✅ 여친만 선택되었는지 확인
+    final userProvider = context.read<UserProvider>();
+    final currentUser = userProvider.currentUser;
+    User? partner;
+    if (currentUser != null) {
+      final userType = currentUser.militaryInfo?.userType;
+      if (userType == UserType.girlfriend) {
+        partner = currentUser.connectedMilitaryUser;
+      } else if (userType == UserType.military ||
+          userType == UserType.plannedEnlistment) {
+        partner = currentUser.connectedToMeByUser;
+      }
+    }
+
+    final isOnlyPartner =
+        partner != null &&
+        letterRecipientsAsFriends.length == 1 &&
+        letterRecipientsAsFriends.first['username'] == partner.username;
+    final showAddButton = !isOnlyPartner; // ✅ 여친만 있으면 + 버튼 숨김
+
+    // ✅ 1명일 때도 리스트 UI로 통일 (가운데 정렬)
+    return SizedBox(
+      width: double.infinity, // ✅ 화면 전체 너비
+      height: 100, // 프로필 + 이름을 위한 높이
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        shrinkWrap: true,
+        physics: const AlwaysScrollableScrollPhysics(), // ✅ alwaysScroll 적용
+        itemCount:
+            letterRecipientsAsFriends.length +
+            (showAddButton ? 1 : 0) +
+            2, // ✅ + 버튼 조건부 포함 + 양쪽 SizedBox
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          // ✅ 맨 왼쪽에 SizedBox 추가 (첫 번째 아이템)
+          if (index == 0) {
+            return const SizedBox(width: 24); // ✅ 왼쪽 여백
+          }
+
+          // ✅ 맨 오른쪽에 SizedBox 추가 (마지막 아이템)
+          final totalItems =
+              letterRecipientsAsFriends.length + (showAddButton ? 1 : 0);
+          if (index == totalItems + 1) {
+            return const SizedBox(width: 24); // ✅ 오른쪽 여백
+          }
+
+          // ✅ 인덱스 조정 (왼쪽 SizedBox 제외)
+          final adjustedIndex = index - 1;
+
+          // ✅ 마지막 item은 + 버튼 (showAddButton이 true일 때만)
+          if (showAddButton &&
+              adjustedIndex == letterRecipientsAsFriends.length) {
+            return GestureDetector(
+              onTap: () => _openLetterRecipientSelection(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 64, // ✅ 프로필 크기에 맞춰 조정
+                    height: 64,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.3),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.add,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.7),
+                      size: 28, // ✅ 약간 크게: 24 -> 28
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  // + 버튼 아래 공간 (이름이 없어도 레이아웃 맞추기)
+                  const SizedBox(height: 20),
+                ],
+              ),
+            );
+          }
+
+          // ✅ 일반 친구 프로필
+          final friend = letterRecipientsAsFriends[adjustedIndex];
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CommonProfileAvatar(
+                imageUrl: friend['imageUrl'] as String?,
+                username: friend['username'] as String? ?? '',
+                size: 64.0, // ✅ 더 크게: 48 -> 64
+                borderColor: Colors.transparent,
+                borderWidth: 0,
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: 64, // ✅ 프로필 크기에 맞춰 너비 조정
+                child: Text(
+                  friend['alias'] as String? ??
+                      friend['username'] as String? ??
+                      '',
+                  style: TextStyle(
+                    fontSize: 13, // ✅ 약간 크게: 12 -> 13
+                    fontWeight: FontWeight.w500,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1338,5 +2402,45 @@ class _PostExportScreenState extends State<PostExportScreen>
         ),
       ),
     );
+  }
+
+  /// ✅ letter 모드: 발송 대상 선택 화면 표시
+  Future<User?> _showLetterRecipientSelection() async {
+    final userProvider = context.read<UserProvider>();
+    final currentUser = userProvider.currentUser;
+
+    // 발송 대상 후보 목록
+    User? recipient;
+
+    if (currentUser?.militaryInfo?.userType == UserType.girlfriend) {
+      // 곰신: connectedMilitaryUser (남친)
+      recipient = currentUser?.connectedMilitaryUser;
+    } else {
+      // 군인/입대 예정자: connectedToMeByUser (곰신)
+      recipient = currentUser?.connectedToMeByUser;
+    }
+
+    // 발송 대상이 없으면 에러 표시
+    if (recipient == null) {
+      await DialogUtils.showInfoDialog(
+        context,
+        title: '대상이 없어요',
+        message: '연결된 짝궁이 없습니다.',
+      );
+      return null;
+    }
+
+    // ✅ DialogUtils를 사용한 발송 대상 확인 다이얼로그
+    final recipientName = recipient.alias ?? recipient.username;
+    final confirmed = await DialogUtils.showConfirmDialog(
+      context,
+      title: '포스트 보내기',
+      message: '$recipientName에게 보내시겠습니까?',
+      confirmText: '확인',
+      cancelText: '취소',
+      isDestructive: false,
+    );
+
+    return confirmed == true ? recipient : null;
   }
 }

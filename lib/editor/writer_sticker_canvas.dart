@@ -417,7 +417,10 @@ class _StickerViewState extends State<_StickerView>
     if (isDragging) {
       return Container(
         decoration: BoxDecoration(
-          border: Border.all(color: AppColors.primary, width: 2),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.primary,
+            width: 2,
+          ),
           borderRadius: BorderRadius.circular(4),
         ),
         child: body,

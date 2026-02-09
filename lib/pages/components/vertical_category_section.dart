@@ -7,12 +7,15 @@ import 'package:doppy/data/models/post_data.dart';
 import 'package:doppy/data/services/blog_service.dart';
 import 'package:doppy/providers/feed_provider/base_feed_provider.dart';
 import 'package:doppy/providers/feed_provider/my_profile_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/other_profile_feed_provider.dart';
+import 'package:doppy/providers/feed_provider/profile_feed_sections_provider.dart';
+import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/providers/feed_provider/feed_ui_service.dart';
 import 'package:doppy/pages/components/image_view.dart';
 import 'package:doppy/pages/screens/post_reader_screen.dart';
 import 'package:doppy/utils/dialog_utils.dart';
 import 'package:doppy/utils/error_handler.dart';
-import 'package:doppy/data/models/system_category_keys.dart';
+import 'package:doppy/data/models/access_level.dart';
 import 'package:doppy/pages/components/access_level_sheet.dart'
     show AccessLevelSheet, AccessLevelSelectMode;
 
@@ -42,11 +45,25 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
   int? _postDropTargetIndex;
   int? _draggingPostIndex;
 
+  BaseFeedProvider? _readFeedProvider(BuildContext context) {
+    // ✅ 어떤 트리에서도 크래시 없이 동작하도록 폴백 제공
+    try {
+      return context.read<BaseFeedProvider>();
+    } catch (_) {}
+    try {
+      return context.read<MyProfileFeedProvider>();
+    } catch (_) {}
+    try {
+      return context.read<OtherProfileFeedProvider>();
+    } catch (_) {}
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final feedProvider = context.read<BaseFeedProvider>();
-    final isReadOnly = feedProvider.isReadOnly;
+    final feedProvider = _readFeedProvider(context);
+    final isReadOnly = feedProvider?.isReadOnly ?? true;
     final isImageOnly = widget.displayMode == FeedDisplayMode.imageOnly;
 
     if (widget.posts.isEmpty) {
@@ -248,7 +265,8 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     bool isFirstPost,
     bool isLastPost,
   ) {
-    final feedProvider = context.read<BaseFeedProvider>();
+    final feedProvider = _readFeedProvider(context);
+    if (feedProvider == null) return const SizedBox.shrink();
     final isReadOnly = feedProvider.isReadOnly;
 
     return Column(
@@ -307,36 +325,73 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
 
     if (result != null) {
       if (result['deleted'] == true) {
-        final provider = context.read<BaseFeedProvider>();
-        provider.clearInMemory();
-        provider.setNetworkError(null);
-        await provider.loadInitial(force: true);
-        // 🎯 포스트 삭제 시 홈 화면 동기화 제거 (등록 시에만 provider 호출)
+        // ✅ 포스트 삭제 시 "전체 & 모든 포스트 모드"로 재로드
+        try {
+          final sectionsProvider = context.read<ProfileFeedSectionsProvider>();
+          final userProvider = context.read<UserProvider>();
+          final currentUser = userProvider.currentUser;
+          final username = currentUser?.username;
+
+          if (username != null && username.isNotEmpty) {
+            await sectionsProvider.loadSections(
+              username: username,
+              force: true,
+            );
+            debugPrint(
+              '[VerticalCategorySection] ✅ 포스트 삭제 후 sections 재로드 완료 (전체 모드)',
+            );
+          }
+        } catch (e) {
+          debugPrint('[VerticalCategorySection] ⚠️ sections 재로드 실패: $e');
+          // 폴백: 기존 방식으로 피드만 새로고침
+          final provider = _readFeedProvider(context);
+          if (provider != null) {
+            provider.clearInMemory();
+            provider.setNetworkError(null);
+            await provider.loadInitial(force: true);
+          }
+        }
       } else if (result['accessLevelChanged'] == true) {
         final postId = result['postId']?.toString();
         final accessLevel = result['accessLevel']?.toString();
 
         if (postId != null && accessLevel != null) {
-          final provider = context.read<BaseFeedProvider>();
+          final provider = _readFeedProvider(context);
+          if (provider == null) return;
           provider.updatePostMetadata(postId, accessLevel: accessLevel);
         } else {
-          final provider = context.read<BaseFeedProvider>();
+          final provider = _readFeedProvider(context);
+          if (provider == null) return;
           provider.clearInMemory();
           provider.setNetworkError(null);
           await provider.loadInitial(force: true);
         }
       } else if (result['didEdit'] == true) {
-        // ✅ 포스트 수정 완료 시 피드 업데이트
-        final provider = context.read<BaseFeedProvider>();
-        final exported = result['exported'] as Map<String, dynamic>?;
-        if (exported != null && provider is MyProfileFeedProvider) {
-          provider.updatePostInCache(exported);
-          debugPrint('[VerticalCategorySection] ✅ 포스트 수정 후 피드 업데이트 완료');
-        } else {
-          // exported가 없거나 다른 provider인 경우 전체 새로고침
-          provider.clearInMemory();
-          provider.setNetworkError(null);
-          await provider.loadInitial(force: true);
+        // ✅ 포스트 수정 시 "전체 & 모든 포스트 모드"로 재로드
+        try {
+          final sectionsProvider = context.read<ProfileFeedSectionsProvider>();
+          final userProvider = context.read<UserProvider>();
+          final currentUser = userProvider.currentUser;
+          final username = currentUser?.username;
+
+          if (username != null && username.isNotEmpty) {
+            await sectionsProvider.loadSections(
+              username: username,
+              force: true,
+            );
+            debugPrint(
+              '[VerticalCategorySection] ✅ 포스트 수정 후 sections 재로드 완료 (전체 모드)',
+            );
+          }
+        } catch (e) {
+          debugPrint('[VerticalCategorySection] ⚠️ sections 재로드 실패: $e');
+          // 폴백: 기존 방식으로 피드만 새로고침
+          final provider = _readFeedProvider(context);
+          if (provider != null) {
+            provider.clearInMemory();
+            provider.setNetworkError(null);
+            await provider.loadInitial(force: true);
+          }
         }
       }
     }
@@ -350,7 +405,8 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     int targetIndex,
   ) async {
     try {
-      final provider = context.read<BaseFeedProvider>();
+      final provider = _readFeedProvider(context);
+      if (provider == null) return;
 
       if (provider is MyProfileFeedProvider) {
         // 로컬에서 먼저 순서 변경 (스왑)
@@ -416,13 +472,31 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
 
     try {
       final blogService = BlogService();
-      final provider = context.read<BaseFeedProvider>();
+      final provider = _readFeedProvider(context);
+      if (provider == null) return;
 
       await blogService.deletePost(post.id);
 
-      provider.clearInMemory();
-      provider.setNetworkError(null);
-      await provider.loadInitial(force: true);
+      // ✅ 포스트 삭제 시 "전체 & 모든 포스트 모드"로 재로드
+      try {
+        final sectionsProvider = context.read<ProfileFeedSectionsProvider>();
+        final userProvider = context.read<UserProvider>();
+        final currentUser = userProvider.currentUser;
+        final username = currentUser?.username;
+
+        if (username != null && username.isNotEmpty) {
+          await sectionsProvider.loadSections(username: username, force: true);
+          debugPrint(
+            '[VerticalCategorySection] ✅ 포스트 삭제 후 sections 재로드 완료 (전체 모드)',
+          );
+        }
+      } catch (e) {
+        debugPrint('[VerticalCategorySection] ⚠️ sections 재로드 실패: $e');
+        // 폴백: 기존 방식으로 피드만 새로고침
+        provider.clearInMemory();
+        provider.setNetworkError(null);
+        await provider.loadInitial(force: true);
+      }
 
       if (context.mounted) {
         ErrorHandler.showInfo(context, l10n.translate('post_deleted'));
@@ -438,14 +512,11 @@ class _VerticalCategorySectionState extends State<VerticalCategorySection> {
     BuildContext context,
     PostData post,
   ) async {
-    final provider = context.read<BaseFeedProvider>();
+    final provider = _readFeedProvider(context);
+    if (provider == null) return;
 
-    String currentAccessLevel = SystemCategoryKeys.public;
-    if (post.accessLevel == AccessLevel.private) {
-      currentAccessLevel = SystemCategoryKeys.private;
-    } else if (post.accessLevel == AccessLevel.friends) {
-      currentAccessLevel = SystemCategoryKeys.friends;
-    }
+    // 🎯 새로운 AccessLevel enum의 serverValue 사용
+    final currentAccessLevel = post.accessLevel.serverValue;
 
     AccessLevelSheet.show(
       context,

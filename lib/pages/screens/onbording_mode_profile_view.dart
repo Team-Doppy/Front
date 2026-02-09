@@ -135,7 +135,7 @@ class _OnbordingModeProfileImageViewScreenState
       });
     }
 
-    // ✅ 온보딩 모드: 이미지 피커는 index2_bg.dart에서 먼저 띄우고, 선택한 이미지와 함께 진입
+    // ✅ 온보딩 모드: 이미지 피커는 profile_setting_step.dart에서 먼저 띄우고, 선택한 이미지와 함께 진입
     // 따라서 여기서는 자동으로 피커를 띄우지 않음
     // ✅ 처음에는 0으로 시작 (이미지 로드 후에만 forward)
     // _imageEditorFadeController.forward(); // 제거: 처음 로드 시 흔들림 방지

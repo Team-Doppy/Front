@@ -1,17 +1,24 @@
-import '../data/models/system_category_keys.dart';
+import '../data/models/access_level.dart';
 
 /// 공개범위 관련 파싱 유틸리티
 class AccessLevelParser {
-  /// accessLevel 문자열을 enum으로 변환
+  /// accessLevel 문자열을 enum으로 변환 (하위 호환성 유지)
+  /// @deprecated 새로운 코드에서는 AccessLevelExtension.fromServerValue를 직접 사용하세요.
   static String? parseAccessLevelString(dynamic data) {
     final levelStr = data?.toString().toUpperCase();
-    if (levelStr == SystemCategoryKeys.private ||
-        levelStr == SystemCategoryKeys.public ||
-        levelStr == SystemCategoryKeys.friends) {
+    // 새로운 AccessLevel enum의 모든 값 지원
+    try {
+      AccessLevelExtension.fromServerValue(levelStr ?? 'PUBLIC');
       return levelStr;
+    } catch (_) {
+      return null;
     }
-    // 그룹 기능 제거로 인해 'GROUPS' 제거
-    return null;
+  }
+
+  /// accessLevel 문자열을 AccessLevel enum으로 변환
+  static AccessLevel parseAccessLevel(dynamic data) {
+    final levelStr = data?.toString() ?? 'PUBLIC';
+    return AccessLevelExtension.fromServerValue(levelStr);
   }
 
   // 그룹 기능 제거로 인해 parseSharedGroupIds, parseSharedGroupNames 메서드 제거

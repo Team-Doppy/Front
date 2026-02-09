@@ -1,15 +1,17 @@
-import 'package:doppy/theme/app_colors.dart';
+import 'package:dio/dio.dart';
 import 'package:doppy/utils/error_handler.dart';
-import 'package:doppy/l10n/app_localizations.dart';
+import 'package:doppy/data/models/military_info_model.dart';
+import 'package:doppy/data/services/user_service.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
-import 'package:doppy/pages/onbording/steps/index0_step.dart';
-import 'package:doppy/pages/onbording/steps/index1_bg.dart';
-import 'package:doppy/pages/onbording/steps/index2_bg.dart';
-import 'package:doppy/pages/onbording/steps/index3_step.dart';
-import 'package:doppy/pages/onbording/steps/index4_bg.dart';
+import 'package:doppy/pages/onbording/steps/military_user_type_selection_step.dart';
+import 'package:doppy/pages/onbording/steps/military_branch_step.dart';
+import 'package:doppy/pages/onbording/steps/military_date_step.dart';
+// import 'package:doppy/utils/military_time_utils.dart'; // 서버 중심 구조로 변경 - 계산 로직 제거
+import 'package:doppy/pages/onbording/steps/military_user_search_step.dart';
+import 'package:doppy/pages/onbording/steps/nickname_setting_step.dart';
+import 'package:doppy/pages/onbording/steps/profile_setting_step.dart';
+import 'package:doppy/pages/onbording/steps/military_welcome_step.dart';
 import 'package:doppy/providers/user_provider.dart';
-import 'package:doppy/editor/postwrite_screen.dart';
 import 'package:provider/provider.dart';
 
 class OnboardingFlow extends StatefulWidget {
@@ -19,1211 +21,706 @@ class OnboardingFlow extends StatefulWidget {
   State<OnboardingFlow> createState() => _OnboardingFlowState();
 }
 
-class _OnboardingFlowState extends State<OnboardingFlow>
-    with TickerProviderStateMixin {
-  late AnimationController _snapController;
-  late AnimationController _indicatorPulseController; // ✅ 인디케이터 깜빡임 애니메이션
-  late Animation<double> _indicatorPulseAnimation;
-  late AnimationController _index0HintController; // ✅ index0 카드 미세 스와이프 힌트
-  late AnimationController _index3HintController; // ✅ index3 카드 미세 스와이프 힌트
-  int _currentIndex = 0; // 현재 인덱스 (0~4) - 사이드이펙트(키보드) 용
-  bool _isDragging = false; // ✅ 전환(드래그) 중 Index2 애니메이션 pause 제어용
-  static const double _stackAlignY = 0.15; // ✅ 카드를 위로 올리기 위해 값 감소
-  static const int _totalSteps = 5; // 0,1,2,3,4 (5단계)
-  static const double _bgFadeOutEnd = 0.25; // ✅ 나갈 때: 초반에 빠르게 페이드아웃(0~0.25)
-  // ✅ 페이드인: 300ms 동안 진행 (전체 480ms 기준)
-  static const double _bgFadeInStart = 1.0 - (300.0 / 480.0); // ≈ 0.375
+class _OnboardingFlowState extends State<OnboardingFlow> {
+  late PageController _pageController;
+  int _currentPage = 0;
 
-  // ✅ Index1 입력 관련
-  late final TextEditingController _index1NicknameController;
-  bool _nicknameSubmitted = false; // ✅ 별명 제출 완료 여부
-  String _submittedNickname = ''; // ✅ 제출된 별명 저장 (변화 감지용)
-  bool _hasNavigatedToPostWrite = false; // ✅ PostWriteScreen으로 전환 여부
-  bool _isProfileImageUploaded = false; // ✅ 프로필 사진 업로드 완료 여부
-  bool _shouldHideIndicatorInIndex1 =
-      false; // ✅ index1에서 인디케이터 숨김 여부 (키보드/완료 버튼)
-  bool _rebuildScheduled = false;
-  int _autoAdvanceNonce = 0; // ✅ index2 업로드 완료 후 자동 이동 예약 취소/무효화용
-  bool _autoAdvanceInterrupted = false; // ✅ 사용자 인터럽션(탭/스와이프) 여부
+  // 🎯 온보딩 데이터
+  UserType? _userType;
+  MilitaryBranch? _branch = MilitaryBranch.army; // ✅ 기본값: 육군
+  DateTime? _enlistmentDate;
+  DateTime? _plannedEnlistmentDate;
+  MilitaryRank? _currentRank;
+  // ✅ 곰신 모드 로딩 상태 관리
+  final ValueNotifier<bool> _girlfriendLoadingNotifier = ValueNotifier<bool>(
+    false,
+  );
+  List<String> _connectedMilitaryUserIds = [];
+  bool _userSearchCompleted = false;
+  bool _nicknameCompleted = false;
+
+  // 별명 입력 관련
+  late final TextEditingController _nicknameController;
+  String _submittedNickname = '';
+
+  // 🎯 동적 단계 수 계산
+  int get _totalSteps {
+    if (_userType == null) return 1; // 역할 선택만
+
+    if (_userType == UserType.girlfriend) {
+      // 곰신: 역할(0) → 별명(1) → 프로필(2) → 군인 검색(3)
+      return 4;
+    } else if (_userType == UserType.military ||
+        _userType == UserType.plannedEnlistment) {
+      // 군인/입대 예정: 역할(0) → 군종(1) → 입대일(2) → 별명(3) → 프로필(4) → 환영(5)
+      return 6;
+    }
+    return 1;
+  }
 
   @override
   void initState() {
     super.initState();
-    _index1NicknameController = TextEditingController();
-    _snapController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 480), // 프레지 느낌: 여유롭고 쾌감 있는 전환
-      lowerBound: 0.0,
-      upperBound: (_totalSteps - 1).toDouble(), // 4.0
-    )..addListener(() {
-      // ✅ 최적화: 프레임마다 setState 금지 (build는 AnimatedBuilder가 처리)
-      _updateCurrentIndex();
-    });
+    _nicknameController = TextEditingController();
+    _pageController = PageController();
 
-    // ✅ 인디케이터 깜빡임 애니메이션
-    _indicatorPulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    );
-    _indicatorPulseAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _indicatorPulseController,
-        curve: Curves.easeInOut,
-      ),
-    );
-
-    // ✅ index0 카드 "살짝 스와이프" 힌트 애니메이션 (아주 미세하게 반복)
-    _index0HintController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000), // ✅ 1초로 변경
-    );
-
-    // ✅ index3 카드 "살짝 스와이프" 힌트 애니메이션 (아주 미세하게 반복)
-    _index3HintController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000), // ✅ 1초로 변경
-    );
-
-    // ✅ 초기 진입 시 0번 인덱스이면 0.5초 지연 후 애니메이션 시작
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _currentIndex == 0) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted && _currentIndex == 0) {
-            _indicatorPulseController.repeat(reverse: true);
-            _index0HintController.repeat(reverse: true);
-          }
-        });
-      }
-    });
+    // ✅ 역할 선택 Step이 기본으로 선택하는 값(현재: index=1 '입대 예정이에요')을
+    // OnboardingFlow도 동일하게 초기화해, 첫 프레임 직후 _totalSteps 변경으로 PageView가
+    // 재생성되며 "첫 진입 타이틀 애니메이션이 안 보이는" 문제를 방지한다.
+    _userType ??= UserType.plannedEnlistment;
   }
 
   @override
   void dispose() {
-    _snapController.dispose();
-    _indicatorPulseController.dispose();
-    _index0HintController.dispose();
-    _index3HintController.dispose();
-    _index1NicknameController.dispose();
+    _pageController.dispose();
+    _nicknameController.dispose();
     super.dispose();
   }
 
-  void _safeSetState(VoidCallback fn) {
+  bool _canProceedToNext() {
+    switch (_currentPage) {
+      case 0: // 역할 선택
+        return _userType != null;
+      case 1: // 조건부 단계
+        if (_userType == UserType.girlfriend) {
+          // 곰신: 별명 입력
+          return _nicknameCompleted;
+        } else if (_userType == UserType.military ||
+            _userType == UserType.plannedEnlistment) {
+          // 군인/입대 예정: 군종 선택 (기본값이 있으므로 항상 true)
+          return true;
+        }
+        return false;
+      case 2: // 조건부 단계 2
+        if (_userType == UserType.girlfriend) {
+          // 곰신: 프로필 업로드 (선택사항)
+          return true; // 프로필은 필수 항목이 아님
+        } else if (_userType == UserType.military) {
+          // 이미 입대한 군인: 입대일 선택 (기본값이 있으므로 항상 true)
+          return true;
+        } else if (_userType == UserType.plannedEnlistment) {
+          // 입대 예정자: 입대일 선택 (기본값이 있으므로 항상 true)
+          return true;
+        }
+        return false;
+      case 3: // 조건부 단계 3
+        if (_userType == UserType.girlfriend) {
+          // 곰신: 군인 검색 (반드시 선택 필요)
+          return _userSearchCompleted && _connectedMilitaryUserIds.isNotEmpty;
+        } else if (_userType == UserType.military ||
+            _userType == UserType.plannedEnlistment) {
+          // 군인/입대 예정: 별명 입력 (기본값이 있으므로 항상 true)
+          return true;
+        }
+        return false;
+      case 4: // 조건부 단계 4
+        if (_userType == UserType.military ||
+            _userType == UserType.plannedEnlistment) {
+          // 군인/입대 예정: 프로필 업로드 (선택사항)
+          return true; // 프로필은 필수 항목이 아님
+        }
+        return false;
+      case 5: // 조건부 단계 5
+        if (_userType == UserType.military ||
+            _userType == UserType.plannedEnlistment) {
+          // 군인/입대 예정: 환영 화면 (항상 진행 가능)
+          return true;
+        }
+        return false;
+      default:
+        return false;
+    }
+  }
+
+  void _nextPage() {
     if (!mounted) return;
-    // build 중/프레임 중 들어오는 콜백(setState) 충돌 방지: 다음 프레임으로 미룸
-    final phase = SchedulerBinding.instance.schedulerPhase;
-    final shouldDefer =
-        phase != SchedulerPhase.idle &&
-        phase != SchedulerPhase.postFrameCallbacks;
-    if (!shouldDefer) {
-      setState(fn);
+    if (!_canProceedToNext()) {
+      ErrorHandler.showError(context, '필수 항목을 선택해주세요.');
       return;
     }
-    if (_rebuildScheduled) return;
-    _rebuildScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _rebuildScheduled = false;
-      if (!mounted) return;
-      setState(fn);
-    });
-  }
-
-  void _interruptIndex2AutoAdvance() {
-    // ✅ 사용자 인터럽션이 들어오면, 예약된 자동 이동 취소
-    _autoAdvanceInterrupted = true;
-    _autoAdvanceNonce++;
-  }
-
-  void _scheduleIndex2AutoAdvanceIfNeeded() {
-    // ✅ index2에서 업로드 완료(멋진데요?)가 뜬 후,
-    // 사용자의 인터럽션이 없으면 잠깐 지연 후 다음으로 자동 이동
-    if (_currentIndex != 2) return;
-    if (!_isProfileImageUploaded) return;
-
-    final nonce = ++_autoAdvanceNonce;
-    _autoAdvanceInterrupted = false;
-
-    Future.delayed(const Duration(milliseconds: 2000), () {
-      if (!mounted) return;
-      if (_autoAdvanceNonce != nonce) return;
-      if (_autoAdvanceInterrupted) return;
-      if (_currentIndex != 2) return;
-      if (!_isProfileImageUploaded) return;
-      if (_isDragging || _snapController.isAnimating) return;
-
-      _snapController.animateTo(
-        3.0,
+    if (_currentPage < _totalSteps - 1 && _pageController.hasClients) {
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 400),
         curve: Curves.easeOutCubic,
-        duration: const Duration(milliseconds: 480),
       );
-    });
+    }
   }
 
-  void _updateCurrentIndex() {
-    // ✅ 로직 안정성: 항상 controller.value 기반
-    final newIndex = (_snapController.value + 0.5).floor().clamp(
-      0,
-      _totalSteps - 1,
-    );
-    if (_currentIndex != newIndex) {
-      final oldIndex = _currentIndex;
-      _currentIndex = newIndex;
-      // ✅ 인덱스 1에서 벗어날 때 키보드 즉시 내리기
-      if (oldIndex == 1 && newIndex != 1) {
-        FocusScope.of(context).unfocus();
-        // ✅ index1에서 임시로 바꾼 텍스트는 유지하지 않고, 마지막으로 "제출된 별명"으로 복원
-        if (_nicknameSubmitted) {
-          final text = _submittedNickname;
-          _index1NicknameController.value = TextEditingValue(
-            text: text,
-            selection: TextSelection.collapsed(offset: text.length),
-          );
+  void _previousPage() {
+    if (!mounted) return;
+    if (_currentPage > 0 && _pageController.hasClients) {
+      _pageController.previousPage(
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  Widget _buildPage(int index) {
+    // Index 0: 역할 선택 (항상)
+    if (index == 0) {
+      return MilitaryUserTypeSelectionStep(
+        key: const ValueKey('military_user_type_selection'), // 위젯 인스턴스 유지
+        initialUserType: _userType,
+        initialIsPlanned: _userType == UserType.plannedEnlistment,
+        onUserTypeSelected: (type, isPlanned) {
+          // build 중에 setState를 호출하지 않도록 addPostFrameCallback 사용
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _userType = type;
+              if (type == UserType.military ||
+                  type == UserType.plannedEnlistment) {
+                _connectedMilitaryUserIds = [];
+              }
+            });
+          });
+        },
+        onConfirm: _nextPage,
+      );
+    }
+
+    // _userType이 아직 설정되지 않았으면 빈 화면
+    if (_userType == null) {
+      return const SizedBox.shrink();
+    }
+
+    // 곰신 모드: 역할(0) → 별명(1) → 프로필(2) → 군인 검색(3)
+    if (_userType == UserType.girlfriend) {
+      return switch (index) {
+        1 => NicknameSettingStep(
+          nicknameController: _nicknameController,
+          userType: _userType,
+          onNicknameSubmitted: () {
+            // 로컬 상태만 업데이트 (API 호출 없음)
+            setState(() {
+              _submittedNickname = _nicknameController.text.trim();
+              _nicknameCompleted = _submittedNickname.isNotEmpty;
+            });
+          },
+          onConfirm: _nextPage,
+          onBack: _previousPage,
+        ),
+        2 => ProfileSettingStep(
+          pauseAnimation: false,
+          onProfileImageUploaded: (isUploaded) {
+            // 프로필 업로드는 선택 사항(진행 가능 여부에 영향 없음)
+          },
+          onConfirm: _nextPage, // 다음 버튼 클릭 시 검색 단계로
+          onBack: _previousPage,
+        ),
+        3 => MilitaryUserSearchStep(
+          userType: _userType!,
+          initialUserIds: _connectedMilitaryUserIds,
+          isLoadingNotifier: _girlfriendLoadingNotifier,
+          onUserIdsSelected: (userIds) {
+            if (mounted) {
+              setState(() {
+                _connectedMilitaryUserIds = userIds;
+                // 선택 상태만 업데이트 (자동 완료는 하지 않음)
+                _userSearchCompleted = userIds.isNotEmpty;
+              });
+              // 곰신 모드가 아닌 경우 자동 완료하지 않음 (확인 버튼 필요)
+            }
+          },
+          onConfirm:
+              _userType == UserType.girlfriend
+                  ? () {
+                    // 곰신 모드: 요청 보내기 버튼 클릭 시 온보딩 완료 후 스플래시로 이동
+                    if (mounted) {
+                      _girlfriendLoadingNotifier.value = true; // ✅ 로딩 시작
+                      Future.delayed(const Duration(milliseconds: 300), () {
+                        if (mounted) _completeOnboardingForGirlfriend();
+                      });
+                    }
+                  }
+                  : () {
+                    // 가족/친구 모드: 확인 버튼 클릭 시 온보딩 완료
+                    if (mounted) {
+                      Future.delayed(const Duration(milliseconds: 300), () {
+                        if (mounted) _completeOnboarding();
+                      });
+                    }
+                  },
+          onBack: _previousPage,
+        ),
+        _ => const SizedBox.shrink(),
+      };
+    }
+
+    // 군인/입대 예정 모드
+    if (_userType == UserType.military ||
+        _userType == UserType.plannedEnlistment) {
+      if (_userType == UserType.plannedEnlistment) {
+        // 입대 예정: 역할(0) → 군종(1) → 입대일(2) → 별명(3) → 프로필(4)
+        return switch (index) {
+          1 => MilitaryBranchStep(
+            initialBranch: _branch,
+            onBranchSelected: (branch) {
+              if (mounted) {
+                setState(() {
+                  _branch = branch;
+                });
+              }
+            },
+            onConfirm: _nextPage,
+            onBack: _previousPage,
+          ),
+          2 => MilitaryDateStep(
+            status: MilitaryStatus.beforeEnlistment,
+            initialDate: _plannedEnlistmentDate,
+            onDateSelected: (date) {
+              if (mounted) {
+                setState(() {
+                  _plannedEnlistmentDate = date;
+                });
+              }
+            },
+            onConfirm: _nextPage,
+            onBack: _previousPage,
+          ),
+          3 => NicknameSettingStep(
+            nicknameController: _nicknameController,
+            userType: _userType,
+            onNicknameSubmitted: () {
+              // 로컬 상태만 업데이트 (API 호출 없음)
+              if (mounted) {
+                setState(() {
+                  _submittedNickname = _nicknameController.text.trim();
+                  _nicknameCompleted = _submittedNickname.isNotEmpty;
+                });
+              }
+            },
+            onConfirm: _nextPage,
+            onBack: _previousPage,
+          ),
+          4 => ProfileSettingStep(
+            pauseAnimation: false,
+            onProfileImageUploaded: (isUploaded) {
+              // 프로필은 선택사항이므로 자동으로 온보딩 완료하지 않음
+            },
+            onConfirm: _nextPage, // 다음 버튼 클릭 시 환영 화면으로
+            onBack: _previousPage,
+          ),
+          5 => MilitaryWelcomeStep(
+            branch: _branch, // ✅ 선택한 군종 전달
+            onConfirm: () async {
+              // 시작하기 버튼 클릭 시 온보딩 완료
+              await _completeOnboarding();
+            },
+            onBack: _previousPage,
+          ),
+          _ => const SizedBox.shrink(),
+        };
+      } else {
+        // 군인: 역할(0) → 군종(1) → 입대일(2) → 별명(3) → 프로필(4)
+        return switch (index) {
+          1 => MilitaryBranchStep(
+            initialBranch: _branch,
+            onBranchSelected: (branch) {
+              if (mounted) {
+                setState(() {
+                  _branch = branch;
+                });
+              }
+            },
+            onConfirm: _nextPage,
+            onBack: _previousPage,
+          ),
+          2 => MilitaryDateStep(
+            status: MilitaryStatus.afterEnlistment,
+            initialDate: _enlistmentDate,
+            onDateSelected: (date) {
+              if (mounted) {
+                setState(() {
+                  _enlistmentDate = date;
+                  // 서버에서 계급을 관리하므로 클라이언트에서 계산하지 않음
+                  // _currentRank는 사용자가 직접 선택하거나 서버에서 받은 값을 사용
+                });
+              }
+            },
+            onConfirm: _nextPage,
+            onBack: _previousPage,
+          ),
+          3 => NicknameSettingStep(
+            nicknameController: _nicknameController,
+            userType: _userType,
+            onNicknameSubmitted: () {
+              // 로컬 상태만 업데이트 (API 호출 없음)
+              if (mounted) {
+                setState(() {
+                  _submittedNickname = _nicknameController.text.trim();
+                  _nicknameCompleted = _submittedNickname.isNotEmpty;
+                });
+              }
+            },
+            onConfirm: _nextPage,
+            onBack: _previousPage,
+          ),
+          4 => ProfileSettingStep(
+            pauseAnimation: false,
+            onProfileImageUploaded: (isUploaded) {
+              // 프로필은 선택사항이므로 자동으로 온보딩 완료하지 않음
+            },
+            onConfirm: _nextPage, // 다음 버튼 클릭 시 환영 화면으로
+            onBack: _previousPage,
+          ),
+          5 => MilitaryWelcomeStep(
+            branch: _branch, // ✅ 선택한 군종 전달
+            onConfirm: () async {
+              // 시작하기 버튼 클릭 시 온보딩 완료
+              await _completeOnboarding();
+            },
+            onBack: _previousPage,
+          ),
+          _ => const SizedBox.shrink(),
+        };
+      }
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  /// 서버 에러 메시지 파싱
+  String _parseServerErrorMessage(dynamic error) {
+    String errorMessage = '정보 저장 중 오류가 발생했습니다.';
+
+    if (error is DioException) {
+      // 서버에서 반환한 에러 메시지 추출
+      final responseData = error.response?.data;
+      if (responseData != null) {
+        if (responseData is String) {
+          errorMessage = responseData;
+        } else if (responseData is Map<String, dynamic>) {
+          errorMessage =
+              responseData['message']?.toString() ??
+              responseData['error']?.toString() ??
+              errorMessage;
         }
       }
-
-      // ✅ 다시 index1로 돌아올 때도 항상 "제출된 별명"으로 시작
-      if (newIndex == 1 && _nicknameSubmitted) {
-        final text = _submittedNickname;
-        _index1NicknameController.value = TextEditingValue(
-          text: text,
-          selection: TextSelection.collapsed(offset: text.length),
-        );
-      }
-
-      // ✅ 업로드가 완료된 상태로 index2에 들어오면 자동 이동 예약
-      if (newIndex == 2 && _isProfileImageUploaded) {
-        _scheduleIndex2AutoAdvanceIfNeeded();
-      }
-
-      // ✅ 인디케이터 깜빡임 애니메이션 제어
-      if (newIndex == 0) {
-        // 0번 인덱스 진입: 0.5초 지연 후 애니메이션 시작
-        Future.delayed(const Duration(milliseconds: 300), () {
-          if (mounted && _currentIndex == 0) {
-            _indicatorPulseController.repeat(reverse: true);
-            if (!_isDragging && !_snapController.isAnimating) {
-              _index0HintController.repeat(reverse: true);
-            }
-          }
-        });
-      } else if (newIndex == 3) {
-        // 3번 인덱스 진입: 0.5초 지연 후 애니메이션 시작
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted && _currentIndex == 3) {
-            if (!_isDragging) {
-              // ✅ 애니메이션 완료 후 시작하도록 약간 추가 지연
-              Future.delayed(const Duration(milliseconds: 100), () {
-                if (mounted && _currentIndex == 3 && !_isDragging) {
-                  _index3HintController.repeat(reverse: true);
-                }
-              });
-            }
-          }
-        });
-      } else {
-        // 다른 인덱스로 이동: 애니메이션 중지
-        _indicatorPulseController.stop();
-        _indicatorPulseController.reset();
-        _index0HintController.stop();
-        _index0HintController.reset();
-        _index3HintController.stop();
-        _index3HintController.reset();
-      }
-
-      // ✅ index 4로 전환 시 PostWriteScreen으로 push
-      if (newIndex == 4 && !_hasNavigatedToPostWrite) {
-        _hasNavigatedToPostWrite = true;
-        // 전환 애니메이션이 완료된 후 push
-        Future.delayed(const Duration(milliseconds: 100), () {
-          if (mounted) {
-            Navigator.of(context)
-                .push(
-                  PageRouteBuilder(
-                    pageBuilder:
-                        (context, animation, secondaryAnimation) =>
-                            PostwriteScreen(
-                              mode: PostWriteMode.onboarding,
-                              disableAutoFocus:
-                                  true, // 🎯 온보딩에서는 키보드 자동 포커스 비활성화
-                              emptyStateMessage: context.tr(
-                                'onboarding_empty_state_message',
-                              ), // 🎯 온보딩용 빈 상태 메시지
-                            ),
-                    transitionDuration: const Duration(milliseconds: 300),
-                    reverseTransitionDuration: const Duration(
-                      milliseconds: 250,
-                    ),
-                    transitionsBuilder: (
-                      context,
-                      animation,
-                      secondaryAnimation,
-                      child,
-                    ) {
-                      return FadeTransition(opacity: animation, child: child);
-                    },
-                  ),
-                )
-                .then((result) {
-                  // ✅ pop 시 index 3으로 돌아가기
-                  if (mounted && result == 'back') {
-                    _hasNavigatedToPostWrite = false; // 다시 전환 가능하도록
-                    _snapController.animateTo(
-                      3.0,
-                      curve: Curves.easeOutCubic,
-                      duration: const Duration(milliseconds: 480),
-                    );
-                  }
-                });
-          }
-        });
-      }
-      // ✅ AnimatedBuilder가 프레임마다 build하므로 여기서 setState로 강제 리빌드는 하지 않음
+    } else if (error.toString().contains('입대 후인 경우 현재 계급이 필요합니다')) {
+      errorMessage = '입대 후인 경우 현재 계급이 필요합니다.';
     }
+
+    return errorMessage;
   }
 
-  void _onPanStart(DragStartDetails d) {
-    if (!_isDragging) {
-      setState(() => _isDragging = true);
-    }
-    // ✅ index2에서 스와이프 시작은 자동 이동 인터럽트로 간주
-    if (_currentIndex == 2) {
-      _interruptIndex2AutoAdvance();
-    }
-    // ✅ 사용자가 직접 밀기 시작하면 힌트 애니메이션은 즉시 중지
-    if (_currentIndex == 0) {
-      _index0HintController.stop();
-      _index0HintController.reset();
-    } else if (_currentIndex == 3) {
-      _index3HintController.stop();
-      _index3HintController.reset();
-    }
-    _snapController.stop();
-  }
+  Future<void> _completeOnboarding() async {
+    // 🎯 서버에서 계급을 관리하므로 클라이언트에서 계산하지 않음
+    // 사용자가 선택한 계급을 그대로 사용하거나, 서버에서 계산된 값을 받아서 사용
 
-  void _onPanUpdate(DragUpdateDetails d) {
-    final width = MediaQuery.of(context).size.width;
-
-    // 양방향 스와이프 지원: 왼쪽(음수)은 forward, 오른쪽(양수)은 reverse
-    // startX 기반 delta는 누적 적용 시 튀기 쉬워서, 프레임 delta 기반으로 누적
-    // ✅ 스와이프 감도 약간 둔감하게: 0.92 배율 적용
-    const double swipeSensitivity = 0.92;
-    final p = (-d.delta.dx / width) * swipeSensitivity;
-
-    // ✅ 별명 입력(index 1)에서는 다음(왼쪽 스와이프)만 막기, 이전(오른쪽 스와이프)은 허용
-    if (_currentIndex == 1 && !_nicknameSubmitted) {
-      // 왼쪽 스와이프(다음, p > 0)는 완전히 막기
-      if (p > 0) {
-        return;
-      }
-      // 오른쪽 스와이프(이전, p < 0)는 허용하되, 1.0 이하로만 제한
-      final next = (_snapController.value + p).clamp(
-        0.0,
-        1.0, // index 1까지만 허용
-      );
-      _snapController.value = next;
+    // ✅ 필수값 검증 (assert로 앱이 죽지 않도록, 여기서 UX로 처리)
+    if (_userType == null) {
+      if (mounted) ErrorHandler.showError(context, '유저 타입을 선택해주세요.');
       return;
     }
 
-    final next = (_snapController.value + p).clamp(
-      0.0,
-      (_totalSteps - 1).toDouble(),
-    );
-    // controller.value 업데이트 -> listener가 setState 처리
-    _snapController.value = next;
-  }
+    // 군인: 입대일만 필수 (계급은 서버에서 입대일로 자동 계산)
+    if (_userType == UserType.military) {
+      if (_enlistmentDate == null) {
+        if (mounted) {
+          ErrorHandler.showError(context, '입대일을 입력해주세요.');
+        }
+        return;
+      }
+    }
 
-  Widget _buildBg(BuildContext context, int idx) {
-    // ✅ 전환 중(Index2 BG의 반복 애니메이션/이미지 디코딩 등) 부하 완화
-    final pauseIndex2Animation = _isDragging || _snapController.isAnimating;
-    final username = context.read<UserProvider>().currentUser?.username ?? '';
-    return switch (idx) {
-      0 => Index0Background(name: username),
-      1 => Index1Background(
-        nicknameController: _index1NicknameController,
-        onNicknameSubmitted: () => _handleNicknameSubmit(),
-        submittedNickname: _submittedNickname, // ✅ 제출된 별명 전달
-        onShouldHideIndicator: (shouldHide) {
-          if (_shouldHideIndicatorInIndex1 == shouldHide) return;
-          _safeSetState(() {
-            _shouldHideIndicatorInIndex1 = shouldHide;
-          });
-        },
-      ),
-      2 => Index2Background(
-        pauseAnimation: pauseIndex2Animation,
-        onProfileImageUploaded: (isUploaded) {
-          if (_isProfileImageUploaded == isUploaded) return;
-          _safeSetState(() {
-            _isProfileImageUploaded = isUploaded;
-          });
-          // ✅ 업로드 완료 콜백을 index2에서 받으면 자동 이동 예약
-          if (isUploaded) {
-            _scheduleIndex2AutoAdvanceIfNeeded();
-          }
-        },
-      ),
-      3 => const Index3Background(),
-      4 => const Index4Background(),
-      _ => const SizedBox.shrink(),
-    };
-  }
+    // 입대예정: 예정 입대일 필수
+    if (_userType == UserType.plannedEnlistment) {
+      if (_plannedEnlistmentDate == null) {
+        if (mounted) {
+          ErrorHandler.showError(context, '예정 입대일을 입력해주세요.');
+        }
+        return;
+      }
+    }
 
-  double _bgOutOpacity(double t) {
-    // t: 0..1 (bgFrom 기준 이동량)
-    // ✅ “좀 일찍” 나가도록 초반에 빠르게 0으로
-    final x = (t / _bgFadeOutEnd).clamp(0.0, 1.0);
-    return (1.0 - Curves.easeOutCubic.transform(x)).clamp(0.0, 1.0);
-  }
+    // 곰신: 연결된 군인 1명 필수
+    if (_userType == UserType.girlfriend) {
+      if (_connectedMilitaryUserIds.length != 1) {
+        if (mounted) {
+          ErrorHandler.showError(context, '연결할 군인 1명을 선택해주세요.');
+        }
+        return;
+      }
+    }
 
-  double _bgInOpacity(double t) {
-    // ✅ “거의 다 전환된 후” 마지막 200ms 정도로 페이드인
-    // 480ms 기준: (1 - 0.60) = 0.40 구간 ≈ 192ms (요청 200ms 근사)
-    final x = ((t - _bgFadeInStart) / (1.0 - _bgFadeInStart)).clamp(0.0, 1.0);
-    return Curves.easeInOut.transform(x).clamp(0.0, 1.0);
-  }
-
-  /// ✅ 별명 제출 처리 (API 호출 및 상태 업데이트)
-  Future<void> _handleNicknameSubmit() async {
-    final nickname = _index1NicknameController.text.trim();
-    if (nickname.isEmpty) return;
+    // 🎯 MilitaryInfo 생성
+    late final MilitaryInfo militaryInfo;
+    try {
+      militaryInfo = MilitaryInfo(
+        userType: _userType!,
+        branch: _branch ?? MilitaryBranch.army,
+        status:
+            _userType == UserType.plannedEnlistment
+                ? MilitaryStatus.beforeEnlistment
+                : (_userType == UserType.military
+                    ? MilitaryStatus.afterEnlistment
+                    : MilitaryStatus.afterEnlistment), // 곰신은 입대 후
+        enlistmentDate: _enlistmentDate,
+        currentRank: _currentRank, // 서버에서 계산하거나 사용자가 입력한 값 사용
+        plannedEnlistmentDate: _plannedEnlistmentDate,
+        connectedMilitaryUserIds:
+            _connectedMilitaryUserIds.isNotEmpty
+                ? _connectedMilitaryUserIds
+                : null,
+      );
+    } catch (e, stackTrace) {
+      debugPrint('❌ [OnboardingFlow] MilitaryInfo 생성 실패: $e');
+      debugPrint('❌ [OnboardingFlow] Stack trace: $stackTrace');
+      if (mounted) {
+        ErrorHandler.showError(context, '군인 정보가 올바르지 않습니다. 입력값을 확인해주세요.');
+      }
+      return;
+    }
 
     try {
-      // API 호출
       final userProvider = context.read<UserProvider>();
-      // 현재 자기소개 가져오기 (없으면 빈 문자열)
 
-      final success = await userProvider.updateProfileInfo(alias: nickname);
+      // 🎯 프로필 업데이트 (militaryInfo 포함) - 먼저 저장
+      // rethrow=true로 설정하여 exception을 받아서 에러 메시지 파싱
+      try {
+        final success = await userProvider.updateProfileInfo(
+          alias: _submittedNickname.isNotEmpty ? _submittedNickname : '',
+          militaryInfo: militaryInfo,
+          shouldRethrow: true, // exception을 다시 던져서 에러 메시지 파싱
+        );
 
-      if (success && mounted) {
-        setState(() {
-          _nicknameSubmitted = true;
-          _submittedNickname = nickname; // ✅ 제출된 별명 저장
-        });
-
-        // 키보드 내리기
-        FocusScope.of(context).unfocus();
-
-        // 다음 페이지로 이동
-        Future.delayed(const Duration(milliseconds: 300), () {
+        if (!success) {
           if (mounted) {
-            _snapController.animateTo(
-              2.0,
-              curve: Curves.easeOutCubic,
-              duration: const Duration(milliseconds: 480),
-            );
+            ErrorHandler.showError(context, '정보 저장에 실패했습니다. 다시 시도해주세요.');
           }
-        });
-      } else if (mounted) {
-        // 실패 메시지 표시
-        ErrorHandler.showError(context, context.tr('nickname_save_failed'));
+          return;
+        }
+      } catch (e) {
+        // 서버 에러 메시지 파싱
+        final errorMessage = _parseServerErrorMessage(e);
+        if (mounted) {
+          ErrorHandler.showError(context, errorMessage);
+        }
+        return;
+      }
+
+      // 🎯 militaryInfo가 실제로 저장되었는지 확인
+      // 서버에서 최신 정보를 다시 가져와서 확인
+      await userProvider.fetchUserBundle();
+      final savedUser = userProvider.currentUser;
+      final savedMilitaryInfo = savedUser?.militaryInfo;
+
+      if (savedMilitaryInfo == null) {
+        debugPrint(
+          '[OnboardingFlow] ⚠️ militaryInfo 저장 실패 - onboardingCompleted를 false로 설정하고 온보딩 플로우 유지',
+        );
+
+        // 🎯 militaryInfo 저장 실패 시 onboardingCompleted를 false로 설정
+        try {
+          await UserService().updateOnboardingCompleted(
+            onboardingCompleted: false,
+          );
+          debugPrint('[OnboardingFlow] ✅ onboardingCompleted를 false로 설정 완료');
+        } catch (e) {
+          debugPrint('[OnboardingFlow] ⚠️ onboardingCompleted 수정 실패: $e');
+        }
+
+        if (mounted) {
+          ErrorHandler.showError(context, '군인 정보 저장에 실패했습니다. 다시 시도해주세요.');
+          // 🎯 온보딩 플로우에 머물러서 사용자가 다시 시도할 수 있도록 함
+          // (현재 화면에 머물러 있으므로 자동으로 온보딩 플로우 유지)
+        }
+        return;
+      }
+
+      debugPrint(
+        '[OnboardingFlow] ✅ militaryInfo 저장 확인: userType=${savedMilitaryInfo.userType}',
+      );
+
+      // 🎯 militaryInfo가 저장되었을 때만 온보딩 완료 플래그 설정
+      if (mounted) {
+        await UserService().updateOnboardingCompleted(
+          onboardingCompleted: true,
+        );
+
+        // 🎯 홈 화면으로 이동
+        if (mounted) {
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+        }
       }
     } catch (e) {
-      debugPrint('[OnboardingFlow] 별명 저장 실패: $e');
+      debugPrint('[OnboardingFlow] 완료 실패: $e');
       if (mounted) {
-        // ✅ 서버 에러 메시지가 있으면 표시, 없으면 기본 메시지
-        final errorMessage =
-            e.toString().contains('400')
-                ? '별명 저장에 실패했습니다. 별명 형식을 확인해주세요.'
-                : context.tr('nickname_save_failed');
+        // 서버 에러 메시지 파싱
+        String errorMessage = _parseServerErrorMessage(e);
         ErrorHandler.showError(context, errorMessage);
       }
     }
   }
 
-  void _onPanEnd(DragEndDetails d) {
-    if (_isDragging) {
-      setState(() => _isDragging = false);
-    }
-    final velocity = d.velocity.pixelsPerSecond.dx;
-    // 속도 기반 임계값: 빠른 스와이프는 방향 우선
-    const fastSwipeThreshold = 900.0;
-    final progress = _snapController.value; // ✅ 롤백 버그 방지: 항상 현재 controller 값 사용
+  /// 곰신 모드 전용 온보딩 완료 (스플래시를 거쳐 홈으로 이동)
+  Future<void> _completeOnboardingForGirlfriend() async {
+    try {
+      // 🎯 MilitaryInfo 생성 (곰신 모드: branch와 status는 기본값 사용)
+      final militaryInfo = MilitaryInfo(
+        userType: _userType!,
+        branch: MilitaryBranch.army, // ✅ 곰신은 기본값 사용
+        status: MilitaryStatus.afterEnlistment, // ✅ 곰신은 기본값 사용
+        enlistmentDate: null,
+        currentRank: null,
+        plannedEnlistmentDate: null,
+        connectedMilitaryUserIds:
+            _connectedMilitaryUserIds.isNotEmpty
+                ? _connectedMilitaryUserIds
+                : null,
+      );
 
-    int targetIndex;
-    if (velocity < -fastSwipeThreshold) {
-      // 왼쪽 스와이프: 다음 단계로
-      targetIndex = progress.ceil().clamp(0, _totalSteps - 1);
-    } else if (velocity > fastSwipeThreshold) {
-      // 오른쪽 스와이프: 이전 단계로
-      targetIndex = progress.floor().clamp(0, _totalSteps - 1);
-    } else {
-      // 느린 경우: 가장 가까운 단계로
-      targetIndex = progress.round().clamp(0, _totalSteps - 1);
-    }
+      final userProvider = context.read<UserProvider>();
 
-    // ✅ 별명 입력 검증: index 1에서 다음(index 2)으로 넘어갈 때 별명이 제출되지 않았으면 완전히 막기
-    if (_currentIndex == 1 && !_nicknameSubmitted) {
-      // 별명이 제출되지 않았으면 다음으로 가는 것을 완전히 막기
-      if (targetIndex > 1) {
-        targetIndex = 1;
-      }
-      // 이전으로 가는 것은 허용 (targetIndex < 1은 이미 처리됨)
-      // progress 값도 1.0 이하로 제한
-      if (progress > 1.0) {
-        _snapController.value = 1.0;
+      // 🎯 프로필 업데이트 (militaryInfo 포함) - 먼저 저장
+      // shouldRethrow=true로 설정하여 exception을 받아서 에러 메시지 파싱
+      try {
+        final success = await userProvider.updateProfileInfo(
+          alias: _submittedNickname.isNotEmpty ? _submittedNickname : '',
+          militaryInfo: militaryInfo,
+          shouldRethrow: true, // exception을 다시 던져서 에러 메시지 파싱
+        );
+
+        if (!success) {
+          debugPrint(
+            '[OnboardingFlow] ⚠️ updateProfileInfo 실패 (곰신) - onboardingCompleted를 false로 설정하고 온보딩 플로우 유지',
+          );
+
+          // 🎯 프로필 업데이트 실패 시 onboardingCompleted를 false로 설정
+          try {
+            await UserService().updateOnboardingCompleted(
+              onboardingCompleted: false,
+            );
+            debugPrint(
+              '[OnboardingFlow] ✅ onboardingCompleted를 false로 설정 완료 (곰신)',
+            );
+          } catch (e) {
+            debugPrint(
+              '[OnboardingFlow] ⚠️ onboardingCompleted 수정 실패 (곰신): $e',
+            );
+          }
+
+          if (mounted) {
+            _girlfriendLoadingNotifier.value = false; // ✅ 실패 시 로딩 해제
+            ErrorHandler.showError(context, '정보 저장에 실패했습니다. 다시 시도해주세요.');
+            // 🎯 온보딩 플로우에 머물러서 사용자가 다시 시도할 수 있도록 함
+          }
+          return;
+        }
+      } catch (e) {
+        // 서버 에러 메시지 파싱
+        final errorMessage = _parseServerErrorMessage(e);
+        if (mounted) {
+          _girlfriendLoadingNotifier.value = false; // ✅ 실패 시 로딩 해제
+          ErrorHandler.showError(context, errorMessage);
+        }
         return;
       }
-    }
 
-    // ✅ 1에서 벗어나는 전환이면 즉시 키보드 내리기
-    if (_currentIndex == 1 && targetIndex != 1) {
-      FocusScope.of(context).unfocus();
-    }
+      // 🎯 militaryInfo가 실제로 저장되었는지 확인
+      // 서버에서 최신 정보를 다시 가져와서 확인
+      await userProvider.fetchUserBundle();
+      final savedUser = userProvider.currentUser;
+      final savedMilitaryInfo = savedUser?.militaryInfo;
 
-    final targetValue = targetIndex.toDouble();
-    if ((_snapController.value - targetValue).abs() < 0.001) {
-      _snapController.value = targetValue;
-      return;
-    }
+      if (savedMilitaryInfo == null) {
+        debugPrint(
+          '[OnboardingFlow] ⚠️ militaryInfo 저장 실패 (곰신) - onboardingCompleted를 false로 설정하고 온보딩 플로우 유지',
+        );
 
-    _snapController
-        .animateTo(
-          targetValue,
-          curve: Curves.easeOutCubic, // 빠르게 시작해서 느리게 끝나는 easing
-          duration: const Duration(milliseconds: 480), // 프레지 느낌: 여유롭고 쾌감 있는 전환
-        )
-        .whenComplete(() {
-          if (!mounted) return;
-          // ✅ index0로 다시 정착했으면 힌트 애니메이션 재개
-          if ((_snapController.value - 0.0).abs() < 0.001 &&
-              _currentIndex == 0 &&
-              !_isDragging) {
-            _index0HintController.repeat(reverse: true);
-          }
-          // ✅ index3로 다시 정착했으면 힌트 애니메이션 재개
-          if ((_snapController.value - 3.0).abs() < 0.001 &&
-              _currentIndex == 3 &&
-              !_isDragging) {
-            Future.delayed(const Duration(milliseconds: 100), () {
-              if (mounted && _currentIndex == 3 && !_isDragging) {
-                _index3HintController.repeat(reverse: true);
-              }
-            });
-          }
-        });
+        // 🎯 militaryInfo 저장 실패 시 onboardingCompleted를 false로 설정
+        try {
+          await UserService().updateOnboardingCompleted(
+            onboardingCompleted: false,
+          );
+          debugPrint(
+            '[OnboardingFlow] ✅ onboardingCompleted를 false로 설정 완료 (곰신)',
+          );
+        } catch (e) {
+          debugPrint('[OnboardingFlow] ⚠️ onboardingCompleted 수정 실패 (곰신): $e');
+        }
+
+        if (mounted) {
+          _girlfriendLoadingNotifier.value = false; // ✅ 실패 시 로딩 해제
+          ErrorHandler.showError(context, '군인 정보 저장에 실패했습니다. 다시 시도해주세요.');
+          // 🎯 온보딩 플로우에 머물러서 사용자가 다시 시도할 수 있도록 함
+          // (현재 화면에 머물러 있으므로 자동으로 온보딩 플로우 유지)
+        }
+        return;
+      }
+
+      debugPrint(
+        '[OnboardingFlow] ✅ militaryInfo 저장 확인 (곰신): userType=${savedMilitaryInfo.userType}',
+      );
+
+      // 🎯 곰신 요청 보내기 (연결된 군인에게)
+      if (_connectedMilitaryUserIds.isNotEmpty) {
+        final targetUsername = _connectedMilitaryUserIds.first;
+        try {
+          await userProvider.sendGirlfriendRequest(targetUsername);
+          debugPrint(
+            '[OnboardingFlow] ✅ 곰신 요청 보내기 완료: targetUsername=$targetUsername',
+          );
+        } catch (e) {
+          debugPrint('[OnboardingFlow] ⚠️ 곰신 요청 보내기 실패: $e (온보딩은 계속 진행)');
+          // 곰신 요청 보내기 실패해도 온보딩은 완료 처리 (나중에 다시 시도 가능)
+        }
+      }
+
+      // 🎯 militaryInfo가 저장되었을 때만 온보딩 완료 플래그 설정
+      if (mounted) {
+        await UserService().updateOnboardingCompleted(
+          onboardingCompleted: true,
+        );
+
+        // 🎯 스플래시 화면으로 이동 (스플래시가 홈으로 자동 이동)
+        // 로딩 상태는 스플래시로 이동할 때까지 유지
+        if (mounted) {
+          Navigator.of(
+            context,
+          ).pushNamedAndRemoveUntil('/splash', (route) => false);
+          // ✅ 스플래시로 이동 후 로딩 해제 (스플래시가 홈으로 이동할 때까지 유지)
+          Future.delayed(const Duration(milliseconds: 500), () {
+            _girlfriendLoadingNotifier.value = false;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('[OnboardingFlow] 곰신 모드 완료 실패: $e');
+      if (mounted) {
+        _girlfriendLoadingNotifier.value = false; // ✅ 에러 시 로딩 해제
+        // 서버 에러 메시지 파싱
+        final errorMessage = _parseServerErrorMessage(e);
+        ErrorHandler.showError(context, errorMessage);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: GestureDetector(
-        onPanStart: _onPanStart,
-        onPanUpdate: _onPanUpdate,
-        onPanEnd: _onPanEnd,
-        onTapDown: (_) {
-          // ✅ index2에서 탭도 인터럽트로 간주(자동 이동 취소)
-          if (_currentIndex == 2) {
-            _interruptIndex2AutoAdvance();
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      body: PageView.builder(
+        // key 제거: itemCount 변경 시에도 위젯이 재생성되지 않도록
+        controller: _pageController,
+        physics: const NeverScrollableScrollPhysics(), // 스와이프 비활성화
+        itemCount: _totalSteps,
+        onPageChanged: (index) {
+          if (mounted) {
+            setState(() {
+              _currentPage = index;
+            });
           }
         },
-        child: Stack(
-          children: [
-            // ===== Cards: snap + hint 로만 갱신 =====
-            AnimatedBuilder(
-              animation: _snapController,
-              builder: (context, _) {
-                final progress = _snapController.value;
-
-                final baseT01 = progress.clamp(0.0, 1.0);
-                final t01 = baseT01.clamp(0.0, 1.0);
-                final t12 = (progress - 1.0).clamp(0.0, 1.0);
-                final t23 = (progress - 2.0).clamp(0.0, 1.0);
-                final t34 = (progress - 3.0).clamp(0.0, 1.0);
-
-                final inDeck01 = progress < 1.0;
-                final inHorizontalSlide12 = progress >= 1.0 && progress < 2.0;
-                final inDeckStyle23 = progress >= 2.0 && progress < 3.0;
-                final inDeck34 = progress >= 3.0;
-
-                final showBackOnTop = t01 > 0.55;
-                final showBackOnTop34 = t34 > 0.55;
-                final atIndex3 = (progress - 3.0).abs() < 0.01;
-
-                return Container(
-                  color: Colors.transparent,
-                  child: Stack(
-                    children: [
-                      if (inDeck01) ...[
-                        Align(
-                          alignment: const Alignment(0, _stackAlignY),
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              if (!showBackOnTop)
-                                RepaintBoundary(
-                                  child: BackCard(
-                                    progress: t01,
-                                    color:
-                                        AppColors
-                                            .darkSurface, // 🎯 index 0: 검(surface)
-                                    stackAlignY: _stackAlignY,
-                                  ),
-                                ),
-                              IgnorePointer(
-                                ignoring: t01 > 0.995,
-                                // ✅ index0에서만: 파란 카드 위젯 자체를 Transform으로 살짝 이동(눈속임)
-                                // progress(t01)는 건드리지 않아서 BG 전환/스냅 로직 영향 없음
-                                child: AnimatedBuilder(
-                                  animation: _index0HintController,
-                                  builder: (context, _) {
-                                    final shouldWiggle =
-                                        _currentIndex == 0 &&
-                                        !_isDragging &&
-                                        !_snapController.isAnimating &&
-                                        progress < 0.02;
-                                    final t =
-                                        shouldWiggle
-                                            ? Curves.easeInOutCubic.transform(
-                                              _index0HintController.value,
-                                            )
-                                            : 0.0;
-                                    // ✅ 더 넓은 운동 범위로 왼쪽으로 살짝 움직였다가 복귀
-                                    final dx = -15.0 * t;
-                                    return Transform.translate(
-                                      offset: Offset(dx, 0),
-                                      child: RepaintBoundary(
-                                        child: FrontCard(
-                                          progress: t01,
-                                          color: const Color.fromARGB(
-                                            255,
-                                            108,
-                                            140,
-                                            255,
-                                          ),
-                                          child: Opacity(
-                                            opacity: ((t01 - 0.5).abs() * 2)
-                                                .clamp(0.0, 1.0),
-                                            child: const Index0CardContent(),
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                              if (showBackOnTop)
-                                RepaintBoundary(
-                                  child: BackCard(
-                                    progress: t01,
-                                    color:
-                                        AppColors
-                                            .darkSurface, // 🎯 index 0: 검(surface)
-                                    stackAlignY: _stackAlignY,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-
-                      if (inHorizontalSlide12) ...[
-                        Positioned.fill(
-                          child: RepaintBoundary(
-                            child: _HorizontalSlideMode(t: t12),
-                          ),
-                        ),
-                      ],
-
-                      if (inDeckStyle23) ...[
-                        Align(
-                          alignment: const Alignment(0, _stackAlignY),
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              const RepaintBoundary(
-                                child: _StaticDeckCard(
-                                  color:
-                                      AppColors.darkBackground, // 🎯 index 2:
-                                  rotate: 0.10,
-                                  translate: Offset(50, 14),
-                                  scale: 0.90,
-                                ),
-                              ),
-                              RepaintBoundary(
-                                child: BackCard(
-                                  progress: (1.0 - t23).clamp(0.0, 1.0),
-                                  stackAlignY: _stackAlignY,
-                                  color:
-                                      AppColors
-                                          .darkBackground, // 🎯 index 2: 검(background)
-                                  restTranslateX: -40,
-                                  restTranslateY: 14,
-                                  restRotate: -0.15,
-                                ),
-                              ),
-                              IgnorePointer(
-                                child: RepaintBoundary(
-                                  child: FrontCard(
-                                    progress: (1.0 - t23).clamp(0.0, 1.0),
-                                    color: const Color(0xFF5B7FFF),
-                                    slideSign: 1.0,
-                                    rotateSign: 1.0,
-                                    child: Opacity(
-                                      opacity: ((t23 - 0.5).abs() * 2).clamp(
-                                        0.0,
-                                        1.0,
-                                      ),
-                                      child: const Index3CardContent(),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-
-                      if (inDeck34) ...[
-                        Align(
-                          alignment: const Alignment(0, _stackAlignY),
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              if (atIndex3) ...[
-                                const RepaintBoundary(
-                                  child: _StaticDeckCard(
-                                    color:
-                                        AppColors
-                                            .darkSurface, // 🎯 index 3: 검(surface)
-                                    rotate: 0.10,
-                                    translate: Offset(50, 14),
-                                    scale: 0.90,
-                                  ),
-                                ),
-                                const RepaintBoundary(
-                                  child: _StaticDeckCard(
-                                    color: AppColors.darkBackground,
-                                    rotate: -0.15,
-                                    translate: Offset(-40, 14),
-                                    scale: 0.88,
-                                  ),
-                                ),
-                                IgnorePointer(
-                                  // ✅ index3에서도: 파란 카드 위젯 자체를 Transform으로 살짝 이동(눈속임)
-                                  child: AnimatedBuilder(
-                                    animation: _index3HintController,
-                                    builder: (context, _) {
-                                      final shouldWiggle =
-                                          _currentIndex == 3 &&
-                                          !_isDragging &&
-                                          !_snapController.isAnimating &&
-                                          (progress - 3.0).abs() < 0.01;
-                                      final t =
-                                          shouldWiggle
-                                              ? Curves.easeInOutCubic.transform(
-                                                _index3HintController.value,
-                                              )
-                                              : 0.0;
-                                      // ✅ 더 넓은 운동 범위로 왼쪽으로 살짝 움직였다가 복귀
-                                      final dx = -15.0 * t;
-                                      return Transform.translate(
-                                        offset: Offset(dx, 0),
-                                        child: RepaintBoundary(
-                                          child: FrontCard(
-                                            progress: 0.0,
-                                            color: const Color(0xFF5B7FFF),
-                                            child: Opacity(
-                                              opacity: 1.0,
-                                              child: const Index3CardContent(),
-                                            ),
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ] else ...[
-                                if (!showBackOnTop34)
-                                  RepaintBoundary(
-                                    child: BackCard(
-                                      progress: t34,
-                                      stackAlignY: _stackAlignY,
-                                      color:
-                                          AppColors
-                                              .darkSurface, // 🎯 index 3/4: 검(background)
-                                    ),
-                                  ),
-                                IgnorePointer(
-                                  child: RepaintBoundary(
-                                    child: _MovingDeckCard(
-                                      progress: t34,
-                                      color: AppColors.darkSurface,
-                                      baseTranslate: const Offset(-40, 14),
-                                      baseRotate: -0.15,
-                                      baseScale: 0.88,
-                                    ),
-                                  ),
-                                ),
-                                IgnorePointer(
-                                  ignoring: t34 > 0.995,
-                                  child: RepaintBoundary(
-                                    child: FrontCard(
-                                      progress: t34,
-                                      color: const Color(0xFF5B7FFF),
-                                      child: Opacity(
-                                        opacity: ((t34 - 0.5).abs() * 2).clamp(
-                                          0.0,
-                                          1.0,
-                                        ),
-                                        child: const Index3CardContent(),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (showBackOnTop34)
-                                  RepaintBoundary(
-                                    child: BackCard(
-                                      progress: t34,
-                                      stackAlignY: _stackAlignY,
-                                      color:
-                                          AppColors
-                                              .darkSurface, // 🎯 index 3 -> 4: push 직전까지 surface 유지
-                                    ),
-                                  ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                );
-              },
-            ),
-
-            // ===== Background: snapController로만 갱신 (힌트 애니메이션으로 BG/텍스트필드 리빌드 방지) =====
-            // ✅ BG는 카드 위에 있어야 실제 입력 UI(index1 등)가 가려지지 않음
-            Positioned.fill(
-              child: AnimatedBuilder(
-                animation: _snapController,
-                builder: (context, _) {
-                  final progress = _snapController.value;
-                  final from = progress.floor().clamp(0, _totalSteps - 1);
-                  final delta = progress - from.toDouble();
-                  final t = delta.abs().clamp(0.0, 1.0);
-
-                  if (t < 0.001) {
-                    return RepaintBoundary(
-                      child: KeyedSubtree(
-                        key: ValueKey('bg-$from'),
-                        child: _buildBg(context, from),
-                      ),
-                    );
-                  }
-
-                  final to = (from + (delta >= 0 ? 1 : -1)).clamp(
-                    0,
-                    _totalSteps - 1,
-                  );
-
-                  final outOpacity = _bgOutOpacity(t);
-                  final inOpacity = _bgInOpacity(t);
-
-                  return Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      RepaintBoundary(
-                        child: Opacity(
-                          opacity: outOpacity,
-                          child: KeyedSubtree(
-                            key: ValueKey('bg-$from'),
-                            child: _buildBg(context, from),
-                          ),
-                        ),
-                      ),
-                      if (inOpacity > 0.0)
-                        RepaintBoundary(
-                          child: Opacity(
-                            opacity: inOpacity,
-                            child: KeyedSubtree(
-                              key: ValueKey('bg-$to'),
-                              child: _buildBg(context, to),
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-            ),
-
-            // ===== Indicator: snapController로만 갱신 =====
-            AnimatedBuilder(
-              animation: _snapController,
-              builder: (context, _) {
-                // ✅ index2는 기본적으로 숨김이지만, 프로필 업로드가 완료되면 표시
-                if (_currentIndex == 2 && !_isProfileImageUploaded) {
-                  return const SizedBox.shrink();
-                }
-                if (_currentIndex == 1 &&
-                    (!_nicknameSubmitted || _shouldHideIndicatorInIndex1)) {
-                  return const SizedBox.shrink();
-                }
-                return Positioned(
-                  bottom: 40,
-                  left: 0,
-                  right: 0,
-                  child: SafeArea(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(_totalSteps, (index) {
-                        // ✅ 현재 인덱스에 해당하는 닷만 활성화
-                        final isActive = _currentIndex == index;
-                        final shouldPulse = _currentIndex == 0 && index == 1;
-                        return AnimatedBuilder(
-                          animation: _indicatorPulseAnimation,
-                          builder: (context, child) {
-                            if (shouldPulse) {
-                              final t = _indicatorPulseAnimation.value;
-                              final grayColor = const Color.fromARGB(
-                                255,
-                                70,
-                                70,
-                                70,
-                              );
-                              final blueColor = const Color(0xFF5B7FFF);
-                              final r =
-                                  (grayColor.red +
-                                          (blueColor.red - grayColor.red) * t)
-                                      .round();
-                              final g =
-                                  (grayColor.green +
-                                          (blueColor.green - grayColor.green) *
-                                              t)
-                                      .round();
-                              final b =
-                                  (grayColor.blue +
-                                          (blueColor.blue - grayColor.blue) * t)
-                                      .round();
-                              final opacity = 0.4 + (0.7 - 0.4) * t;
-                              return Container(
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 3,
-                                ),
-                                width: 10,
-                                height: 10,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Color.fromRGBO(r, g, b, opacity),
-                                ),
-                              );
-                            }
-                            return Container(
-                              margin: const EdgeInsets.symmetric(horizontal: 3),
-                              width: 10,
-                              height: 10,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color:
-                                    isActive
-                                        ? const Color(0xFF5B7FFF)
-                                        : const Color.fromARGB(
-                                          255,
-                                          70,
-                                          70,
-                                          70,
-                                        ).withOpacity(0.4),
-                              ),
-                            );
-                          },
-                        );
-                      }),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ===== 1<->2 가로 슬라이드 모드 =====
-class _HorizontalSlideMode extends StatelessWidget {
-  final double t; // 0..1
-  const _HorizontalSlideMode({required this.t});
-
-  @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: ColoredBox(
-            color: AppColors.darkSurface,
-          ), // 🎯 index 1: 검(background)
-        ),
-        Positioned.fill(
-          child: Transform.translate(
-            offset: Offset(width * (1.0 - t), 0),
-            child: const ColoredBox(
-              color: AppColors.darkBackground, // 🎯 index 2:
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class FrontCard extends StatelessWidget {
-  final double progress;
-  final Color color;
-  final double slideSign; // -1: 기존(왼쪽으로), +1: 반전(오른쪽으로)
-  final double rotateSign; // -1: 기존, +1: 반전
-  final Widget? child;
-  const FrontCard({
-    required this.progress,
-    this.color = const Color(0xFF5B7FFF), // 기본값: 파란색
-    this.slideSign = -1.0,
-    this.rotateSign = -1.0,
-    this.child,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // ✅ 최적화: MediaQuery 값 캐싱
-    final width = MediaQuery.of(context).size.width;
-
-    // 빠르게 시작해서 느리게 끝나는 easing
-    // progress가 거의 끝까지 가도 카드가 화면에 일부라도 보이도록 제한
-    final clampedProgress = progress.clamp(0.0, 1.0); // 95%까지만 이동
-    final eased = Curves.easeOut.transform(clampedProgress);
-
-    // 카드 크기 (4:5 비율) - 더 크게 조정
-    final cardWidth = width * 0.85; // ✅ 0.78 -> 0.85로 증가
-    final cardHeight = cardWidth * 1.25; // 4:5 비율
-
-    return Transform.translate(
-      offset: Offset(slideSign * width * 1.1 * eased, 0),
-      child: Transform.rotate(
-        angle: rotateSign * 0.28 * eased,
-        alignment: Alignment.bottomCenter,
-        child: Container(
-          width: cardWidth,
-          height: cardHeight,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(32),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.20),
-                blurRadius: 30,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child:
-              child == null
-                  ? null
-                  : ClipRRect(
-                    borderRadius: BorderRadius.circular(32),
-                    child: child!,
-                  ),
-        ),
-      ),
-    );
-  }
-}
-
-class BackCard extends StatelessWidget {
-  final double progress;
-  final double stackAlignY;
-  final Color color;
-  final double restTranslateX;
-  final double restTranslateY;
-  final double restRotate;
-  const BackCard({
-    required this.progress,
-    required this.stackAlignY,
-    this.color = AppColors.darkSurface, // AppColors.darkSurface
-    this.restTranslateX = 50,
-    this.restTranslateY = 0,
-    this.restRotate = 0.15,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // ✅ 최적화: MediaQuery 값 캐싱
-    final mediaQuery = MediaQuery.of(context);
-    final size = mediaQuery.size;
-    final width = size.width;
-    final height = size.height;
-    final bottomInset = mediaQuery.padding.bottom;
-
-    // 처음엔 뒤에, 나중엔 앞에 - 빠르게 시작해서 느리게 끝나는 easing
-    final eased = Curves.easeOutCubic.transform(progress.clamp(0.0, 1.0));
-    // 확대/축소는 더 완만하게 느리게 진행 (더 부드러운 확대를 위해 느린 curve 사용)
-    final clampedProgress = progress.clamp(0.0, 1.0);
-    // Curves.decelerate는 더 부드럽고 느리게 확대됨
-    final scaleEased = Curves.decelerate.transform(clampedProgress);
-
-    // 카드 기본 크기 (4:5 비율) - 더 크게 조정
-    final cardWidth = width * 0.85; // ✅ 0.78 -> 0.85로 증가
-    final cardHeight = cardWidth * 1.25; // 4:5 비율
-
-    // 스케일: 0.88 → 화면을 덮을 만큼 확대 (더 느린 easing 적용)
-    final baseScale = 0.88 + 0.12 * scaleEased; // 0.88 → 1.0
-    // 화면을 덮도록 확장 (가로/세로 중 더 큰 비율로)
-    // 약간의 오버슈트를 줘서 상단이 미세하게 남는 케이스를 방지
-    final expandScale = ([
-              height / cardHeight,
-              width / cardWidth,
-            ].reduce((a, b) => a > b ? a : b) *
-            1.08)
-        .clamp(1.0, 6.0);
-    final finalScale = baseScale + (scaleEased * (expandScale - baseScale));
-
-    // X 이동: restTranslateX → 0 (뒤에서 앞으로)
-    final translateX = restTranslateX * (1 - eased);
-
-    // 카드 스택이 화면 중앙보다 아래에 있어서, 확대 시 "바닥이 고정"되며 아래 여백이 남음
-    // -> 확대될수록 아래로 내려서 화면 하단까지 덮도록 보정
-    final stackCenterY = (height * 0.5) + (height * 0.5 * stackAlignY);
-    final cardBottomAtRest = stackCenterY + (cardHeight * 0.5);
-    final bottomGap = (height - cardBottomAtRest).clamp(0.0, height);
-    // 하단 홈 인디케이터/인셋까지 확실히 덮기 위한 오버슈트
-    final translateY =
-        (bottomGap + bottomInset + 24.0) * eased + restTranslateY * (1 - eased);
-
-    // 회전: restRotate → 정면
-    final rotate = restRotate * (1 - eased);
-
-    // 닉네임 UI는 거의 끝까지 숨기고, 마지막에만 나타나게 (카드가 거의 끝까지 유지되도록)
-    final contentOpacity = ((eased - 0.75) / 0.25).clamp(0.0, 1.0);
-    final radius = 32.0 * (1.0 - eased); // 확대될수록 모서리 0에 수렴
-
-    return Transform.translate(
-      offset: Offset(translateX, translateY),
-      child: Transform.scale(
-        scale: finalScale,
-        alignment: Alignment.bottomCenter,
-        child: Transform.rotate(
-          angle: rotate,
-          alignment: Alignment.bottomCenter,
-          child: Container(
-            width: cardWidth,
-            height: cardHeight,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(radius),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(radius),
-              child: IgnorePointer(
-                ignoring: contentOpacity < 0.98,
-                child: Opacity(opacity: contentOpacity, child: Container()),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// (이전 실험용 전환 위젯들은 더 이상 사용하지 않아서 제거됨)
-
-/// 인덱스 2 "정지 상태"에서만 쓰는 고정 포즈 카드(뒤 카드 2장)
-class _StaticDeckCard extends StatelessWidget {
-  final Color color;
-  final double rotate;
-  final Offset translate;
-  final double scale;
-
-  const _StaticDeckCard({
-    required this.color,
-    required this.rotate,
-    required this.translate,
-    required this.scale,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final cardWidth = width * 0.85; // ✅ 0.78 -> 0.85로 증가
-    final cardHeight = cardWidth * 1.25;
-
-    return Transform.translate(
-      offset: translate,
-      child: Transform.scale(
-        scale: scale,
-        alignment: Alignment.bottomCenter,
-        child: Transform.rotate(
-          angle: rotate,
-          alignment: Alignment.bottomCenter,
-          child: Container(
-            width: cardWidth,
-            height: cardHeight,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(32),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 2->3 드래그 중, 검정 카드도 파란 카드와 같은 방향으로 같이 빠지도록 하는 "이동 카드"
-class _MovingDeckCard extends StatelessWidget {
-  final double progress; // 0..1
-  final Color color;
-  final Offset baseTranslate;
-  final double baseRotate;
-  final double baseScale;
-
-  const _MovingDeckCard({
-    required this.progress,
-    required this.color,
-    required this.baseTranslate,
-    required this.baseRotate,
-    required this.baseScale,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    // FrontCard와 동일한 easing으로 속도 맞춤
-    // progress가 거의 끝까지 가도 카드가 화면에 일부라도 보이도록 제한
-    final clampedProgress = progress.clamp(0.0, 1.0); // 95%까지만 이동
-    final eased = Curves.easeOut.transform(clampedProgress);
-
-    final cardWidth = width * 0.85; // ✅ 0.78 -> 0.85로 증가
-    final cardHeight = cardWidth * 1.25;
-
-    // FrontCard와 같은 곡선으로 좌측으로 빠짐(-) + 회전(-)
-    final dx = baseTranslate.dx + (-width * 1.1 * eased);
-    final dy = baseTranslate.dy;
-    final rotate = baseRotate + (-0.28 * eased);
-    final scale = baseScale;
-
-    return Transform.translate(
-      offset: Offset(dx, dy),
-      child: Transform.scale(
-        scale: scale,
-        alignment: Alignment.bottomCenter,
-        child: Transform.rotate(
-          angle: rotate,
-          alignment: Alignment.bottomCenter,
-          child: Container(
-            width: cardWidth,
-            height: cardHeight,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(32),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.20),
-                  blurRadius: 30,
-                  offset: const Offset(0, 10),
-                ),
-              ],
-            ),
-          ),
-        ),
+        itemBuilder: (context, index) {
+          // 인덱스 범위 체크
+          if (index >= _totalSteps) {
+            return const SizedBox.shrink();
+          }
+          return _buildPage(index);
+        },
       ),
     );
   }
