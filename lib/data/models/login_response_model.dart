@@ -7,16 +7,18 @@ class LoginResponse {
   LoginResponse({
     required this.token,
     required this.refreshToken,
-    required this.type,
+    this.type = 'Bearer',
     required this.username,
   });
 
   factory LoginResponse.fromJson(Map<String, dynamic> json) {
+    final data = json['data'] ?? json;
+    final token = (data['token'] ?? data['accessToken'] ?? data['access_token'] ?? '').toString();
     return LoginResponse(
-      token: json['token'],
-      refreshToken: json['refreshToken'],
-      type: json['type'],
-      username: json['username'],
+      token: token,
+      refreshToken: (data['refreshToken'] ?? data['refresh_token'] ?? '').toString(),
+      type: (data['type'] ?? 'Bearer').toString(),
+      username: (data['username'] ?? '').toString(),
     );
   }
 }
