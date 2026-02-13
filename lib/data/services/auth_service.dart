@@ -436,6 +436,9 @@ class AuthService {
     }
   }
 
+  /// 401 시 Dio 등에서 호출. 리프레시 성공 여부 반환.
+  Future<bool> tryRefreshToken() async => _refreshToken();
+
   Future<bool> _refreshToken() async {
     final refresh = await getRefreshToken();
     if (refresh == null || refresh.isEmpty) return false;

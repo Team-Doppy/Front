@@ -49,7 +49,7 @@ class _SplashScreenState extends State<SplashScreen> {
       await userProvider.fetchUserBundle();
 
       // 3. 그래프 로드 (GET /api/graph?mode=real) – 실패해도 메인 진입, 타임아웃이면 온보딩
-      await graphProvider.loadGraph(mode: 'mock', count: 80);
+      await graphProvider.loadGraph(mode: 'mock', count: 13);
       if (!mounted) return;
 
       if (_isTimeoutErrorString(graphProvider.error)) {

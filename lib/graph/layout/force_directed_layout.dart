@@ -273,15 +273,18 @@ class ForceDirectedLayout {
       _keepInWorld(node, worldSize, nodeCount);
     }
 
-    // 독립 노드: 연결 영역 바깥 링이지만 너무 멀리 않게 (구분 느낌만)
-    final outerRadius = math.min(halfW, halfH) * 0.76;
+    // 독립 노드: 원/밴드 없이 화면 전역에 불규칙 분포 (규칙적 링 완전 제거)
+    final spreadW = worldSize.width * 0.88;
+    final spreadH = worldSize.height * 0.88;
     for (var i = 0; i < independent.length; i++) {
-      final angle =
-          2 * math.pi * i / math.max(1, independent.length) +
-          random.nextDouble() * 0.2;
+      // 노드마다 완전히 다른 위치: id로 시드한 의사난수 + 랜덤으로 전역 분산
+      final sx =
+          ((independent[i].id * 0.317) % 1.0) + random.nextDouble() * 0.4;
+      final sy =
+          ((independent[i].id * 0.619) % 1.0) + random.nextDouble() * 0.4;
       independent[i].position = Offset(
-        centerX + outerRadius * math.cos(angle),
-        centerY + outerRadius * math.sin(angle),
+        centerX + (sx - 0.5) * spreadW,
+        centerY + (sy - 0.5) * spreadH,
       );
       _keepInWorld(independent[i], worldSize, nodeCount);
     }
@@ -528,11 +531,29 @@ class ForceDirectedLayout {
           final toCenter = center - nodes[i].position;
           forces[i] = forces[i] + toCenter * 0.013;
         } else {
-          // 독립 노드: 연결 영역 바깥으로 살짝만 (완전 분리보다는 구분 느낌)
+          // 독립 노드: 연결 영역에서 밀어내되, 노드마다 “밀리는 방향”을 다르게 해서 규칙적 링 방지
           final fromCentroid = nodes[i].position - connectedCentroid;
           final dist = fromCentroid.distance;
           if (dist > 1.0) {
-            forces[i] = forces[i] + fromCentroid * (0.02 / dist);
+            final radialDir = fromCentroid / dist;
+            final tangent = Offset(-radialDir.dy, radialDir.dx);
+            // 노드별 고유 각도(라디안) → 방사+접선을 섞어 “나가는 방향”을 제각각으로
+            final nodeAngle = (nodes[i].id * 2.1) % (2 * math.pi);
+            final mixRadial = math.cos(nodeAngle).clamp(0.2, 1.0);
+            final mixTangent = math.sin(nodeAngle) * 0.7;
+            final pushDir = (radialDir * mixRadial + tangent * mixTangent);
+            final pushLen = pushDir.dx * pushDir.dx + pushDir.dy * pushDir.dy;
+            if (pushLen > 0.01) {
+              final norm = pushDir / math.sqrt(pushLen);
+              final strength =
+                  (0.008 + 0.022 * ((nodes[i].id * 0.382) % 1.0)) / dist;
+              forces[i] = forces[i] + norm * strength;
+            }
+            // 추가: 노드별 고정 “드리프트” 방향 → 한쪽으로만 몰리지 않게
+            final driftAngle = (nodes[i].id * 1.7 + 1.3) % (2 * math.pi);
+            forces[i] =
+                forces[i] +
+                Offset(math.cos(driftAngle), math.sin(driftAngle)) * 0.006;
           }
         }
       }

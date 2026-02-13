@@ -1,0 +1,1356 @@
+import 'dart:typed_data';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:provider/provider.dart';
+import '../../editor/config/drop_line_config.dart';
+import '../../editor/service/editor_service.dart';
+import '../../editor/service/node_component_service.dart';
+import '../../editor/utils/animated_drop_line.dart';
+import '../config/editor_config.dart' as NodeTypeChecker;
+import '../config/editor_config.dart';
+import '../../media/utils/image_error_placeholder.dart';
+import '../../media/utils/image_size_util.dart';
+import '../../media/utils/shimmer_box.dart';
+import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
+import '../utils/edit_image_cache_manager.dart';
+import '../postreader/image_detail_screen.dart';
+import '../../upload/service/upload_service.dart';
+import 'dart:ui' as ui;
+import 'dart:math' as math;
+import 'package:super_editor/super_editor.dart';
+
+class SingleImageComponentBuilder implements ComponentBuilder {
+  const SingleImageComponentBuilder({
+    required this.screenWidth, // 🎯 외부에서 전달받음
+    this.dragService,
+    this.isEditing = true,
+    this.isDarkMode = false,
+  });
+
+  final double screenWidth; // 🚀 한 번만 계산된 화면 너비
+  final dynamic dragService; // DragService 타입을 나중에 import해서 수정
+  final bool isEditing;
+  final bool isDarkMode;
+
+  @override
+  Widget? createComponent(
+    SingleColumnDocumentComponentContext componentContext,
+    SingleColumnLayoutComponentViewModel componentViewModel,
+  ) {
+    if (componentViewModel is ImageComponentViewModel) {
+      // ✅ 중요: SuperEditor의 DocumentLayout/히트테스트/드래그&드롭은
+      // componentContext.componentKey로 컴포넌트를 추적한다.
+      // 이 키를 외부에서 고정 키로 바꾸면 분리/병합/삽입이 깨질 수 있으므로 그대로 전달한다.
+      return SingleImageComponent(
+        nodeId: componentViewModel.nodeId,
+        imageUrl: componentViewModel.imageUrl,
+        componentKey: componentContext.componentKey,
+        screenWidth: screenWidth, // 🚀 전달
+        dragService: dragService,
+        isEditing: isEditing,
+        isDarkMode: isDarkMode,
+      );
+    }
+    return null;
+  }
+
+  @override
+  SingleColumnLayoutComponentViewModel? createViewModel(
+    Document document,
+    DocumentNode node,
+  ) {
+    if (node is ImageNode) {
+      return ImageComponentViewModel(nodeId: node.id, imageUrl: node.imageUrl);
+    }
+    return null;
+  }
+}
+
+class SingleImageComponent extends StatefulWidget {
+  const SingleImageComponent({
+    required this.nodeId,
+    required this.imageUrl,
+    required this.screenWidth,
+    required GlobalKey componentKey,
+    this.dragService,
+    this.isEditing = true,
+    this.isDarkMode = false,
+    Key? key,
+  }) : _componentKey = componentKey,
+       super(key: componentKey);
+
+  final String nodeId;
+  final String imageUrl;
+  final double screenWidth; // 🚀 최고 효율: 외부에서 한 번만 계산된 값
+  final GlobalKey _componentKey;
+  final dynamic dragService; // DragService 타입을 나중에 import해서 수정
+  final bool isEditing;
+  final bool isDarkMode;
+
+  @override
+  State<SingleImageComponent> createState() => _SingleImageComponentState();
+}
+
+class _SingleImageComponentState extends State<SingleImageComponent>
+    with DocumentComponent, TickerProviderStateMixin {
+  // 새 프레임이 준비되기 전까지 마지막으로 성공적으로 렌더한 child를 보존해 깜빡임을 줄인다.
+  Widget? _lastRenderedChild;
+  GlobalKey get componentKey => widget._componentKey;
+
+  // 🎯 특수 노드 사이 클릭 감지 플래그
+  bool _isSpecialNodeGapTap = false;
+
+  static const double marginTop = 2.5;
+  static const double marginBottom = 2.5;
+
+  // 🎯 성능 최적화: 캐싱된 메타데이터 크기
+  Size? _cachedImageSize;
+  bool _isMeasuring = false; // 🎯 중복 측정 방지 플래그
+  bool _sizeInitialized = false;
+
+  // 🎯 특수 노드 사이 클릭 감지 (true: 특수 노드 사이 클릭, false: 일반 클릭)
+  bool _handleSpecialNodeTap(Offset globalPosition) {
+    if (widget.dragService == null) return false;
+    final editorService = widget.dragService!.editorService;
+    final doc = editorService.document;
+    final dragService = widget.dragService!;
+
+    // 자신의 인덱스와 Rect 확인
+    final currentNodeIndex = doc.getNodeIndexById(widget.nodeId);
+    if (currentNodeIndex == -1) return false;
+
+    final nodeRect = dragService.getNodeGlobalRect(widget.nodeId);
+    if (nodeRect == null) return false;
+
+    // 🎯 위쪽 이웃 노드 확인
+    if (currentNodeIndex > 0) {
+      final prevNode = doc.getNodeAt(currentNodeIndex - 1);
+      if (prevNode != null) {
+        if (NodeTypeChecker.isSpecialNode(prevNode)) {
+          final prevRect = dragService.getNodeGlobalRect(prevNode.id);
+          if (prevRect != null) {
+            // 위쪽 노드와 자신 사이의 간격 확인 (위쪽 노드 아래 20px ~ 자신 위쪽 20px)
+            final gapTop = prevRect.bottom - 20;
+            final gapBottom = nodeRect.top + 20;
+            if (globalPosition.dy >= gapTop && globalPosition.dy <= gapBottom) {
+              // 특수 노드 사이 빈 문단 추가
+              editorService.insertEmptyParagraphAtIndex(currentNodeIndex);
+              dragService.invalidateNodeRectCache();
+              context.read<NodeComponentService>().selectNode(null);
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    // 🎯 아래쪽 이웃 노드 확인
+    if (currentNodeIndex < doc.nodeCount - 1) {
+      final nextNode = doc.getNodeAt(currentNodeIndex + 1);
+      if (nextNode != null) {
+        if (NodeTypeChecker.isSpecialNode(nextNode)) {
+          final nextRect = dragService.getNodeGlobalRect(nextNode.id);
+          if (nextRect != null) {
+            // 자신과 아래쪽 노드 사이의 간격 확인 (자신 아래 20px ~ 아래쪽 노드 위쪽 20px)
+            final gapTop = nodeRect.bottom - 20;
+            final gapBottom = nextRect.top + 20;
+            if (globalPosition.dy >= gapTop && globalPosition.dy <= gapBottom) {
+              // 특수 노드 사이 빈 문단 추가
+              editorService.insertEmptyParagraphAtIndex(currentNodeIndex + 1);
+              dragService.invalidateNodeRectCache();
+              context.read<NodeComponentService>().selectNode(null);
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  late final AnimationController _controller;
+  // 스포일러 해제 스캐터 이펙트
+  late final AnimationController _scatterCtrl;
+  bool _scatterActive = false;
+  bool _wasSpoilerVisible = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // 🎯 메타데이터에서 이미지 크기 미리 로드 (shimmer 최적화)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _getImageSizeFromMetadata(); // 캐싱됨
+    });
+
+    _controller = AnimationController.unbounded(vsync: this)
+      ..repeat(min: 0, max: 1, period: const Duration(milliseconds: 1300));
+    _scatterCtrl =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 520),
+        )..addStatusListener((status) {
+          if (status == AnimationStatus.completed ||
+              status == AnimationStatus.dismissed) {
+            if (mounted) setState(() => _scatterActive = false);
+          }
+        });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scatterCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Document? doc;
+    DocumentSelection? composerSelection;
+
+    final theme = Theme.of(context).colorScheme;
+
+    if (widget.isEditing) {
+      final editorService = _getEditorService();
+      doc = editorService?.document;
+      composerSelection =
+          editorService?.editor.composer.selectionNotifier.value;
+    } else {
+      // 읽기 모드: SuperEditorState를 통해 document 가져오기 (PageViewImageComponent와 동일)
+      // ignore: invalid_use_of_visible_for_testing_member
+      final seState = context.findAncestorStateOfType<SuperEditorState>();
+      // ignore: invalid_use_of_visible_for_testing_member
+      doc = seState?.editContext.editor.document;
+    }
+
+    final bool hasImageAbove = doc == null
+        ? false
+        : _hasNeighborImage(doc, widget.nodeId, -1);
+    final bool hasImageBelow = doc == null
+        ? false
+        : _hasNeighborImage(doc, widget.nodeId, 1);
+
+    // 🎯 RepaintBoundary로 감싸서 키보드 애니메이션 시 불필요한 repaint 방지
+    return RepaintBoundary(
+      child: Column(
+        children: [
+          if (!hasImageAbove)
+            SizedBox(
+              height: NodeTypeChecker.EditorConfig.specialNodePaddingWithText,
+            ),
+          // 실제 이미지 내용 + 좌/우 세로 라인 (머지 모드에서)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final editedBytes = context
+                  .select<NodeComponentService, Uint8List?>(
+                    (service) => service.getEditedBytes(widget.nodeId),
+                  );
+              // 패딩(center/full) 토글 시 너비 변화 → AspectRatio 기반 높이 변화가 발생한다.
+              final image = AnimatedSize(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: RepaintBoundary(
+                  child: Padding(
+                    padding: EdgeInsets.zero,
+                    child: _buildImage(editedBytes),
+                  ),
+                ),
+              );
+
+              // 🎯 업로드 중 상태 판정 (메타데이터 + 실제 업로드 태스크 존재 여부)
+              // 🎯 업로드 중 상태 확인 (편집 모드에서만, 읽기 전용 모드에서는 항상 false)
+              bool isUploading = false;
+              if (widget.isEditing) {
+                try {
+                  isUploading = context.select<UploadService, bool>(
+                    (service) => service.hasActiveUploadForRef(widget.nodeId),
+                  );
+                } catch (e) {
+                  debugPrint('[SingleImage] UploadService 확인 실패: $e');
+                }
+              }
+
+              final isSelected = context.select<NodeComponentService, bool>(
+                (service) => service.selectedImageId == widget.nodeId,
+              );
+
+              // 🎯 downstream 위치에 커서가 있을 때도 selection 효과 표시
+              bool isDownstreamSelected = false;
+              if (composerSelection != null &&
+                  composerSelection.isCollapsed &&
+                  composerSelection.extent.nodeId == widget.nodeId) {
+                final position = composerSelection.extent.nodePosition;
+                if (position is UpstreamDownstreamNodePosition &&
+                    position ==
+                        const UpstreamDownstreamNodePosition.downstream()) {
+                  isDownstreamSelected = true;
+                }
+              }
+              // selection 핸들이 이미지 노드를 포함할 때만, 그리고 경계가 이미지인 경우 Downstream일 때만 하이라이트
+
+              bool isSelectionHighlighted = false;
+              if (composerSelection != null &&
+                  !composerSelection.isCollapsed &&
+                  doc != null) {
+                isSelectionHighlighted = _isNodeCoveredBySelection(
+                  doc,
+                  composerSelection,
+                  widget.nodeId,
+                );
+              }
+
+              // 스포일러 상태 (헬퍼 사용)
+              bool isSpoilerFlag = false;
+              try {
+                final node = doc?.getNodeById(widget.nodeId);
+                Map<String, dynamic>? meta;
+                if (node is ImageNode) {
+                  meta = (node as dynamic).metadata as Map<String, dynamic>?;
+                }
+                // 🎯 context.select로 변경하여 스포일러 변경사항 감지
+                isSpoilerFlag = context.select<NodeComponentService, bool>(
+                  (service) =>
+                      service.shouldShowImageSpoiler(widget.nodeId, meta),
+                );
+              } catch (_) {}
+
+              // 해제 직전 → 직후 전환 감지하여 스캐터 실행
+              final wasSpoilerBefore = _wasSpoilerVisible;
+              // 🎯 초기 렌더링 감지: _wasSpoilerVisible이 false이고 isSpoilerFlag가 true면 초기 상태
+              final isInitialSpoilerRender =
+                  !_wasSpoilerVisible && isSpoilerFlag;
+              if (_wasSpoilerVisible &&
+                  !isSpoilerFlag &&
+                  _scatterCtrl.status != AnimationStatus.forward) {
+                _wasSpoilerVisible = isSpoilerFlag;
+                // 🎯 build 중 reset()/forward() 호출 시 status listener가 setState를 트리거하여
+                // "setState called during build" 발생 → PostFrameCallback으로 지연
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  setState(() {
+                    _scatterActive = true;
+                  });
+                  _scatterCtrl
+                    ..reset()
+                    ..forward();
+                });
+              } else {
+                _wasSpoilerVisible = isSpoilerFlag;
+              }
+
+              return Stack(
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: widget.isEditing && widget.dragService != null
+                        ? (details) {
+                            final isGapTap = _handleSpecialNodeTap(
+                              details.globalPosition,
+                            );
+                            setState(() {
+                              _isSpecialNodeGapTap = isGapTap;
+                            });
+                          }
+                        : null,
+                    onTap: widget.isEditing && widget.dragService != null
+                        ? () {
+                            // 🎯 특수 노드 사이 클릭이면 셀렉 보류
+                            if (_isSpecialNodeGapTap) {
+                              setState(() {
+                                _isSpecialNodeGapTap = false;
+                              });
+                              return;
+                            }
+
+                            debugPrint(
+                              '[SingleImageComponent] onTap 호출됨: nodeId=${widget.nodeId}',
+                            );
+                            // 노드 선택/해제
+                            final imageService = context
+                                .read<NodeComponentService>();
+                            final currentSelected =
+                                imageService.selectedImageId;
+                            if (currentSelected == widget.nodeId) {
+                              // 같은 노드 재탭: 선택 해제
+                              debugPrint('[SingleImageComponent] 선택 해제');
+                              imageService.selectNode(null);
+                              widget.dragService?.invalidateNodeRectCache();
+                            } else {
+                              // 다른 노드 선택
+                              debugPrint(
+                                '[SingleImageComponent] 노드 선택: nodeId=${widget.nodeId}',
+                              );
+                              imageService.selectNode(widget.nodeId);
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  widget.dragService?.invalidateNodeRectCache();
+                                }
+                              });
+                            }
+                          }
+                        : (!widget.isEditing
+                            ? () {
+                                // 🎯 보기 모드: 스포일러가 있으면 해제, 없으면 자세히 보기
+                                if (isSpoilerFlag) {
+                                  context
+                                      .read<NodeComponentService>()
+                                      .setSpoiler(widget.nodeId, false);
+                                } else {
+                                  ImageDetailScreen.push(
+                                    context,
+                                    imageUrls: [widget.imageUrl],
+                                    initialIndex: 0,
+                                  );
+                                }
+                              }
+                            : null),
+                    onLongPressStart:
+                        widget.isEditing &&
+                            widget.dragService != null &&
+                            !isUploading
+                        ? (details) {
+                            FocusManager.instance.primaryFocus?.unfocus();
+                            FocusScope.of(context).unfocus();
+                            widget.dragService?.startDrag(
+                              widget.nodeId,
+                              context,
+                              details.globalPosition,
+                            );
+                          }
+                        : null,
+                    onLongPressMoveUpdate:
+                        widget.isEditing &&
+                            widget.dragService != null &&
+                            !isUploading
+                        ? (details) {
+                            widget.dragService?.updateDrag(
+                              details.globalPosition,
+                              context,
+                            );
+                          }
+                        : null,
+                    onLongPressEnd:
+                        widget.isEditing &&
+                            widget.dragService != null &&
+                            !isUploading
+                        ? (_) {
+                            widget.dragService?.endDrag();
+                          }
+                        : null,
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        top: marginTop,
+                        bottom: marginBottom,
+                      ),
+                      child: Stack(
+                        children: [
+                          image,
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: TweenAnimationBuilder<double>(
+                                tween: Tween<double>(
+                                  begin: wasSpoilerBefore ? 1.0 : 0.0,
+                                  end: isSpoilerFlag ? 1.0 : 0.0,
+                                ),
+                                duration:
+                                    isInitialSpoilerRender ||
+                                        wasSpoilerBefore == isSpoilerFlag
+                                    ? Duration.zero
+                                    : const Duration(milliseconds: 180),
+                                curve: Curves.easeOutCubic,
+                                builder: (context, t, _) {
+                                  if (t <= 0.001) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  final brightness = Theme.of(
+                                    context,
+                                  ).brightness;
+                                  final isLightTheme =
+                                      brightness == Brightness.light;
+
+                                  final sigma = 20.0 * t;
+                                  return Opacity(
+                                    opacity: t,
+                                    child: Stack(
+                                      children: [
+                                        // ✅ 블러 레이어 (서서히 적용)
+                                        Positioned.fill(
+                                          child: ClipRect(
+                                            child: BackdropFilter(
+                                              filter: ui.ImageFilter.blur(
+                                                sigmaX: sigma,
+                                                sigmaY: sigma,
+                                              ),
+                                              child: Container(
+                                                color: Colors.black.withOpacity(
+                                                  0.10 * t,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+
+                                        Positioned.fill(
+                                          child: AnimatedBuilder(
+                                            animation: _controller,
+                                            builder: (context, _) {
+                                              return Opacity(
+                                                opacity: t,
+                                                child: CustomPaint(
+                                                  painter: _ImageSpoilerPainter(
+                                                    phase: _controller.value,
+                                                    isEditing: widget.isEditing,
+                                                    backgroundColor:
+                                                        Colors.transparent,
+                                                    dotColor: Colors.white,
+                                                    isLightTheme: isLightTheme,
+                                                  ),
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                          if (_scatterActive)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                ignoring: true,
+                                child: Builder(
+                                  builder: (context) {
+                                    final brightness = Theme.of(
+                                      context,
+                                    ).brightness;
+                                    final isLightTheme =
+                                        brightness == Brightness.light;
+                                    return AnimatedBuilder(
+                                      animation: _scatterCtrl,
+                                      builder: (context, _) {
+                                        return CustomPaint(
+                                          painter: _ImageSpoilerScatterPainter(
+                                            t: _scatterCtrl.value,
+                                            // 점은 항상 흰색
+                                            dotColor: Colors.white,
+                                            isLightTheme: isLightTheme,
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          if (isUploading)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                ignoring: false,
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 4,
+                                      color: Colors.white.withOpacity(1),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (isSelectionHighlighted)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: Container(
+                                  color: theme.primary.withOpacity(0.4),
+                                ),
+                              ),
+                            ),
+                          if (isSelected || isDownstreamSelected)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: AnimatedSelectionBorder(
+                                  isVisible: true,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: theme.primary,
+                                        width: 4,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // ✅ 드롭라인: dragService 변경 시 자동 rebuild (로우 이미지와 동일한 방식)
+                  if (widget.dragService != null && !isUploading)
+                    Positioned.fill(
+                      child: ListenableBuilder(
+                        listenable: widget.dragService!,
+                        builder: (context, _) {
+                          return Stack(
+                            children: [
+                              if (_shouldShowTopDropLine())
+                                Positioned(
+                                  top: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        height: 5,
+                                        color: theme.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_shouldShowLeftVerticalLine())
+                                Positioned(
+                                  top: marginTop,
+                                  bottom: marginBottom,
+                                  left: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(right: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        width: 5,
+                                        color: theme.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_shouldShowRightVerticalLine())
+                                Positioned(
+                                  top: marginTop,
+                                  bottom: marginBottom,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(left: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        width: 5,
+                                        color: theme.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_shouldShowBottomDropLine())
+                                Positioned(
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: AnimatedDropLine(
+                                      child: Container(
+                                        height: 5,
+                                        color: theme.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+          if (!hasImageBelow)
+            SizedBox(height: EditorConfig.specialNodePaddingWithText),
+        ],
+      ),
+    );
+  }
+
+  // DocumentComponent 필수 메서드들
+  @override
+  NodePosition getBeginningPosition() =>
+      UpstreamDownstreamNodePosition.upstream();
+
+  @override
+  NodePosition getEndPosition() => UpstreamDownstreamNodePosition.downstream();
+
+  @override
+  NodePosition? getPositionAtOffset(Offset localOffset) =>
+      UpstreamDownstreamNodePosition.upstream();
+
+  @override
+  Offset getOffsetForPosition(NodePosition nodePosition) => Offset.zero;
+
+  @override
+  Rect getRectForPosition(NodePosition nodePosition) {
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) {
+      return Rect.zero;
+    }
+    return Offset.zero & renderBox.size;
+  }
+
+  @override
+  Rect getRectForSelection(
+    NodePosition baseNodePosition,
+    NodePosition extentNodePosition,
+  ) {
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) {
+      return Rect.zero;
+    }
+    return Offset.zero & renderBox.size;
+  }
+
+  @override
+  NodeSelection getCollapsedSelectionAt(NodePosition nodePosition) =>
+      UpstreamDownstreamNodeSelection(
+        base: UpstreamDownstreamNodePosition.upstream(),
+        extent: UpstreamDownstreamNodePosition.upstream(),
+      );
+
+  @override
+  NodeSelection getSelectionBetween({
+    required NodePosition basePosition,
+    required NodePosition extentPosition,
+  }) => UpstreamDownstreamNodeSelection(
+    base: UpstreamDownstreamNodePosition.upstream(),
+    extent: UpstreamDownstreamNodePosition.downstream(),
+  );
+
+  @override
+  NodeSelection? getSelectionInRange(
+    Offset localBaseOffset,
+    Offset localExtentOffset,
+  ) => null;
+
+  @override
+  NodeSelection getSelectionOfEverything() => UpstreamDownstreamNodeSelection(
+    base: UpstreamDownstreamNodePosition.upstream(),
+    extent: UpstreamDownstreamNodePosition.downstream(),
+  );
+
+  @override
+  Rect getEdgeForPosition(NodePosition nodePosition) {
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) {
+      return Rect.zero;
+    }
+
+    // upstream/downstream 위치일 때는 커서를 표시하지 않음 (사용자 요청)
+    // selection 효과만 표시
+    if (nodePosition is UpstreamDownstreamNodePosition) {
+      return Offset.zero & renderBox.size;
+    }
+
+    return Offset.zero & renderBox.size;
+  }
+
+  @override
+  bool isVisualSelectionSupported() => false;
+
+  @override
+  NodePosition? movePositionLeft(
+    NodePosition currentPosition, [
+    MovementModifier? movementModifier,
+  ]) => null;
+
+  @override
+  NodePosition? movePositionRight(
+    NodePosition currentPosition, [
+    MovementModifier? movementModifier,
+  ]) => null;
+
+  @override
+  NodePosition? movePositionUp(NodePosition currentPosition) => null;
+
+  @override
+  NodePosition? movePositionDown(NodePosition currentPosition) => null;
+
+  @override
+  NodePosition getBeginningPositionNearX(double x) =>
+      // 🎯 upstream 위치로 커서가 가지 못하도록 항상 downstream 반환
+      const UpstreamDownstreamNodePosition.downstream();
+
+  @override
+  NodePosition getEndPositionNearX(double x) =>
+      UpstreamDownstreamNodePosition.downstream();
+
+  @override
+  MouseCursor? getDesiredCursorAtOffset(Offset localOffset) => null;
+
+  bool _shouldShowTopDropLine() {
+    return DropLineConfig.shouldShowTopDropLine(
+      nodeId: widget.nodeId,
+      dragService: widget.dragService,
+    );
+  }
+
+  bool _shouldShowBottomDropLine() {
+    return DropLineConfig.shouldShowBottomDropLine(
+      nodeId: widget.nodeId,
+      dragService: widget.dragService,
+    );
+  }
+
+  bool _shouldShowLeftVerticalLine() {
+    return DropLineConfig.shouldShowLeftVerticalLine(
+      nodeId: widget.nodeId,
+      dragService: widget.dragService,
+    );
+  }
+
+  bool _shouldShowRightVerticalLine() {
+    return DropLineConfig.shouldShowRightVerticalLine(
+      nodeId: widget.nodeId,
+      dragService: widget.dragService,
+    );
+  }
+
+  // selection이 이 이미지 노드를 포함하는지 계산. 경계가 이미지인 경우 Downstream일 때만 포함
+  bool _isNodeCoveredBySelection(
+    Document doc,
+    DocumentSelection selection,
+    String nodeId,
+  ) {
+    final baseIndex = doc.getNodeIndexById(selection.base.nodeId);
+    final extentIndex = doc.getNodeIndexById(selection.extent.nodeId);
+    final myIndex = doc.getNodeIndexById(nodeId);
+    if (baseIndex == -1 || extentIndex == -1 || myIndex == -1) return false;
+
+    final start = math.min(baseIndex, extentIndex);
+    final end = math.max(baseIndex, extentIndex);
+    if (myIndex < start || myIndex > end) return false;
+
+    // 시작 경계가 이 노드인 경우: base/extent 중 누가 start인지에 따라 affinity 체크
+    if (myIndex == start) {
+      final boundary = baseIndex == start ? selection.base : selection.extent;
+      final pos = boundary.nodePosition;
+      if (pos is UpstreamDownstreamNodePosition) {
+        // ✅ start 경계는 upstream일 때 포함 (아래→위 드래그 대칭 보장)
+        return pos.affinity == TextAffinity.upstream;
+      }
+    }
+    // 끝 경계가 이 노드인 경우
+    if (myIndex == end) {
+      final boundary = extentIndex == end ? selection.extent : selection.base;
+      final pos = boundary.nodePosition;
+      if (pos is UpstreamDownstreamNodePosition) {
+        return pos.affinity == TextAffinity.downstream;
+      }
+    }
+    // 범위 내부에 완전히 포함
+    return true;
+  }
+
+  /// 🎯 메타데이터에서 이미지 크기 가져오기 (shimmer 크기 결정)
+  /// 최적화: 한 번만 조회하고 캐싱, 중복 로직 제거
+  Size? _getImageSizeFromMetadata() {
+    // 🚀 이미 조회했으면 캐시 반환
+    if (_sizeInitialized) return _cachedImageSize;
+
+    _sizeInitialized = true; // 실패해도 재시도 방지
+
+    try {
+      final editorService = _getEditorService();
+      final node = editorService?.document.getNodeById(widget.nodeId);
+
+      if (node is! ImageNode) return null;
+
+      final meta = (node as dynamic).metadata as Map<String, dynamic>?;
+      if (meta == null) return null;
+
+      final dimensions = meta['imageDimensions'] as Map<String, dynamic>?;
+      if (dimensions == null || dimensions.isEmpty) return null;
+
+      // URL 또는 로컬 경로로 크기 찾기 (우선순위: imageUrl > localPath)
+      final sizeData =
+          dimensions[widget.imageUrl] ??
+          (meta['localPath'] != null
+              ? dimensions[meta['localPath'].toString()]
+              : null);
+
+      if (sizeData is Map<String, dynamic> &&
+          sizeData['width'] != null &&
+          sizeData['height'] != null) {
+        _cachedImageSize = Size(
+          (sizeData['width'] as num).toDouble(),
+          (sizeData['height'] as num).toDouble(),
+        );
+      }
+    } catch (e) {
+      debugPrint('[SingleImage] 메타데이터 크기 조회 실패: $e');
+    }
+
+    return _cachedImageSize;
+  }
+
+  /// 🎯 이미지 크기 측정 및 저장 (편집 모드 전용)
+  /// 🎯 RowImage 스타일: 간결한 구현
+  void _measureAndSaveImageSize() async {
+    if (!widget.isEditing || !mounted) {
+      return;
+    }
+
+    // 🎯 중복 측정 방지: 이미 측정 중이거나 캐시가 있으면 스킵
+    if (_isMeasuring || _cachedImageSize != null) {
+      return;
+    }
+
+    // 🎯 메타데이터에서 크기를 먼저 확인 (임시저장 등에서 이미 저장된 경우 스킵)
+    final metaSize = _getImageSizeFromMetadata();
+    if (metaSize != null) {
+      // 메타데이터에 크기가 있으면 측정 불필요
+      _cachedImageSize = metaSize;
+      return;
+    }
+
+    // 🎯 측정 시작 플래그 설정
+    _isMeasuring = true;
+
+    try {
+      // 🎯 공통 유틸리티 사용: 전체 이미지 다운로드 후 크기 추출
+      final size = await ImageSizeUtils.measureImageSize(widget.imageUrl);
+
+      if (!mounted) return;
+
+      if (size != null) {
+        _cachedImageSize = size;
+        _saveImageSizeToMetadata(size);
+      } else {
+        // 🎯 HEIC 파일 등은 ImageProvider로 재시도
+        if (ImageSizeUtils.isHeicFile(widget.imageUrl)) {
+          final providerSize =
+              await ImageSizeUtils.extractSizeFromImageProvider(
+                widget.imageUrl,
+              );
+          if (providerSize != null && mounted) {
+            _cachedImageSize = providerSize;
+            _saveImageSizeToMetadata(providerSize);
+          }
+        }
+      }
+    } catch (e) {
+      // 🎯 크기 측정 실패는 조용히 처리 (이미지 표시에는 영향 없음)
+      debugPrint('[SingleImage] ⚠️ 크기 측정 실패: ${widget.imageUrl} - $e');
+    } finally {
+      // 🎯 측정 완료 플래그 해제
+      _isMeasuring = false;
+    }
+  }
+
+  /// 🎯 측정된 이미지 크기를 메타데이터에 저장 (편집 모드 전용)
+  /// 🎯 RowImage 스타일: 간결하고 최적화된 구현
+  void _saveImageSizeToMetadata(Size size) {
+    if (!widget.isEditing) return;
+
+    try {
+      final editorService = _getEditorService();
+      if (editorService == null) {
+        assert(() {
+          debugPrint('[SingleImage] ⚠️ EditorService를 찾을 수 없어서 저장 실패');
+          return true;
+        }());
+        return;
+      }
+
+      final doc = editorService.document;
+      final node = doc.getNodeById(widget.nodeId);
+
+      if (node is ImageNode) {
+        final meta = node.metadata;
+        final imageDimensions = Map<String, dynamic>.from(
+          (meta['imageDimensions'] as Map<String, dynamic>?) ?? {},
+        );
+
+        final sizeData = {
+          'width': size.width.toInt(),
+          'height': size.height.toInt(),
+        };
+
+        // 🎯 성능 최적화: 이미 같은 크기가 저장되어 있으면 스킵
+        final existingSize =
+            imageDimensions[widget.imageUrl] as Map<String, dynamic>?;
+        if (existingSize != null &&
+            existingSize['width'] == size.width.toInt() &&
+            existingSize['height'] == size.height.toInt()) {
+          return; // 동일한 크기는 재저장하지 않음
+        }
+
+        // 🎯 로컬 경로를 키로 저장
+        imageDimensions[widget.imageUrl] = sizeData;
+
+        // 🎯 성능 최적화: 업로드된 네트워크 URL도 키로 저장 (나중에 매칭 용이)
+        final uploadedUrls = meta['uploadedUrls'] as Map<String, dynamic>?;
+        if (uploadedUrls != null && uploadedUrls.containsKey(widget.imageUrl)) {
+          final networkUrl = uploadedUrls[widget.imageUrl].toString();
+          if (networkUrl.isNotEmpty) {
+            imageDimensions[networkUrl] = sizeData;
+          }
+        }
+
+        final updatedNode = ImageNode(
+          id: node.id,
+          imageUrl: node.imageUrl,
+          metadata: {...meta, 'imageDimensions': imageDimensions},
+        );
+
+        editorService.document.replaceNodeById(widget.nodeId, updatedNode);
+
+        assert(() {
+          assert(() {
+            debugPrint(
+              '[SingleImage] ✅ 이미지 크기 저장 완료: nodeId=${widget.nodeId}, url=${widget.imageUrl}, size=${size.width.toInt()}x${size.height.toInt()}',
+            );
+            return true;
+          }());
+          return true;
+        }());
+      } else {
+        assert(() {
+          debugPrint(
+            '[SingleImage] ⚠️ ImageNode를 찾을 수 없음: nodeId=${widget.nodeId}',
+          );
+          return true;
+        }());
+      }
+    } catch (e, stackTrace) {
+      assert(() {
+        debugPrint('[SingleImage] ❌ 메타데이터 저장 실패: $e');
+        debugPrint('[SingleImage] 스택: $stackTrace');
+        return true;
+      }());
+    }
+  }
+
+  EditorService? _getEditorService() {
+    return widget.dragService?.editorService ??
+        (() {
+          try {
+            return Provider.of<EditorService>(context, listen: false);
+          } catch (_) {
+            return null;
+          }
+        }());
+  }
+
+  // 이미지 위젯 생성: editedBytes > (업로드중: metadata.localPath) > 로컬 파일 경로 > 네트워크 URL 순서
+  Widget _buildImage(Uint8List? editedBytes) {
+    if (editedBytes != null) {
+      final double w = widget.screenWidth; // 🚀 최고 효율: prop 사용
+      return Image.memory(
+        editedBytes,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.low,
+        frameBuilder: (context, child, frame, wasSyncLoaded) {
+          if (wasSyncLoaded || frame != null) {
+            _lastRenderedChild = child;
+            // 🎯 편집 모드에서만 메타데이터 없을 때 크기 측정 (이미지 업로드 시)
+            // 보기 모드에서는 메타데이터 필수 (재계산 안 함)
+            if (widget.isEditing && _cachedImageSize == null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  _measureAndSaveImageSize();
+                }
+              });
+            }
+            return child;
+          }
+          // 🎯 메타데이터에서 실제 크기 가져오기
+          final metaSize = _getImageSizeFromMetadata();
+          final h = metaSize != null
+              ? (w * metaSize.height / metaSize.width) // 실제 비율
+              : w / (4 / 5); // 기본 비율
+          return _lastRenderedChild ??
+              ShimmerBox(width: w, height: h, isDarkMode: widget.isDarkMode);
+        },
+      );
+    }
+
+    // ✅ 업로드 중이면 metadata.localPath로 미리보기 (단, 위젯 타입은 항상 Image(ImageProvider)로 통일)
+    String displayUrl = widget.imageUrl;
+    if (widget.isEditing &&
+        (displayUrl.isEmpty || !_isNetworkUrl(displayUrl))) {
+      try {
+        final editorService = _getEditorService();
+        final node = editorService?.document.getNodeById(widget.nodeId);
+        if (node is ImageNode) {
+          final meta = (node as dynamic).metadata as Map<String, dynamic>?;
+          final localPath = meta?['localPath']?.toString();
+          if (localPath != null && localPath.isNotEmpty) {
+            displayUrl = localPath;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 동일한 ResizeImage(width) 캐시 키로 hit가 난다.
+    final decodeWidth = widget.isEditing
+        ? widget.screenWidth
+        : widget.screenWidth * 2.0;
+
+    final isLocal =
+        !displayUrl.startsWith('http://') && !displayUrl.startsWith('https://');
+    final ImageProvider baseProvider = isLocal
+        ? FileImage(File(displayUrl))
+        : CachedNetworkImageProvider(
+            displayUrl,
+            cacheKey: displayUrl,
+            cacheManager: EditImageCacheManager.instance,
+          );
+    final ImageProvider imageProvider = ResizeImage(
+      baseProvider,
+      width: decodeWidth.toInt(),
+    );
+
+    return Image(
+      key: ValueKey('single_${widget.nodeId}'),
+      image: imageProvider,
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.low,
+      gaplessPlayback: true,
+      frameBuilder: (context, child, frame, wasSyncLoaded) {
+        if (wasSyncLoaded || frame != null) {
+          _lastRenderedChild = child;
+          if (widget.isEditing && _cachedImageSize == null && !_isMeasuring) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _measureAndSaveImageSize();
+            });
+          }
+          return child;
+        }
+        final w = widget.screenWidth;
+        final metaSize = _getImageSizeFromMetadata();
+        final h = metaSize != null
+            ? (w * metaSize.height / metaSize.width)
+            : w / (4 / 5);
+        return _lastRenderedChild ??
+            ShimmerBox(width: w, height: h, isDarkMode: widget.isDarkMode);
+      },
+      errorBuilder: (context, error, stack) => ImageErrorPlaceholder(
+        width: widget.screenWidth,
+        height: widget.screenWidth / (4 / 5),
+      ),
+    );
+  }
+
+  bool _isNetworkUrl(String path) {
+    return path.startsWith('http://') || path.startsWith('https://');
+  }
+
+  bool _hasNeighborImage(Document doc, String nodeId, int direction) {
+    final myIndex = doc.getNodeIndexById(nodeId);
+    if (myIndex == -1) return false;
+
+    // 🎯 바로 인접한 노드 확인
+    final immediateIndex = myIndex + direction;
+    if (immediateIndex >= 0 && immediateIndex < doc.nodeCount) {
+      final immediateNeighbor = doc.getNodeAt(immediateIndex);
+      if (immediateNeighbor != null) {
+        // 바로 인접한 노드가 특수 노드인 경우 (정책은 NodeTypeChecker/config에서 단일 관리)
+        if (NodeTypeChecker.isSpecialNode(immediateNeighbor)) {
+          return true;
+        }
+
+        // 바로 인접한 노드가 빈 ParagraphNode인 경우
+        if (immediateNeighbor is ParagraphNode) {
+          // ignore: deprecated_member_use
+          final isEmpty = immediateNeighbor.text.text.trim().isEmpty;
+
+          // 빈 ParagraphNode면 그 다음 노드를 확인
+          if (isEmpty) {
+            // 빈 ParagraphNode 다음 노드 확인
+            final nextIndex = immediateIndex + direction;
+            if (nextIndex >= 0 && nextIndex < doc.nodeCount) {
+              final nextNeighbor = doc.getNodeAt(nextIndex);
+              if (NodeTypeChecker.isSpecialNode(nextNeighbor)) {
+                // 빈 ParagraphNode를 사이에 둔 특수 노드 → 패딩 필요 (false 반환)
+                return false;
+              }
+            }
+            // 빈 ParagraphNode 다음에 특수 노드가 없으면 계속 검색
+          } else if (!isEmpty) {
+            // 텍스트가 있는 ParagraphNode → 패딩 필요
+            return false;
+          }
+        } else {
+          // 다른 타입의 노드면 패딩 필요
+          return false;
+        }
+      }
+    }
+
+    // 🎯 빈 ParagraphNode를 건너뛰고 실제 특수 노드나 텍스트가 있는 노드를 찾음
+    int searchIndex = myIndex + direction;
+    while (searchIndex >= 0 && searchIndex < doc.nodeCount) {
+      final neighbor = doc.getNodeAt(searchIndex);
+      if (neighbor == null) break;
+
+      // 특수 노드인 경우
+      if (NodeTypeChecker.isSpecialNode(neighbor)) {
+        return true;
+      }
+
+      // 빈 ParagraphNode가 아니면 (텍스트가 있는 경우) 패딩 필요
+      if (neighbor is ParagraphNode) {
+        // ignore: deprecated_member_use
+        final isEmpty = neighbor.text.text.trim().isEmpty;
+        // 비어있지 않으면 텍스트 노드이므로 패딩 필요
+        if (!isEmpty) {
+          return false; // 텍스트 노드가 있으면 패딩 필요
+        }
+        // 빈 ParagraphNode면 계속 검색
+      } else {
+        // 다른 타입의 노드면 패딩 필요
+        return false;
+      }
+
+      searchIndex += direction;
+    }
+
+    return false;
+  }
+}
+
+class _ImageSpoilerPainter extends CustomPainter {
+  final double phase;
+  final bool isEditing;
+  final Color backgroundColor;
+  final Color dotColor;
+  final bool isLightTheme;
+  _ImageSpoilerPainter({
+    required this.phase,
+    required this.isEditing,
+    required this.backgroundColor,
+    required this.dotColor,
+    required this.isLightTheme,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // 초기 프레임 등에서 Size가 0인 경우 NaN이 발생하지 않도록 보호
+    if (size.width <= 0 || size.height <= 0) return;
+    final rect = Offset.zero & size;
+    final mask = Paint()..style = PaintingStyle.fill;
+    // 배경 칠하기는 명시적으로 투명색이 아닌 경우에만 수행
+    // (Colors.transparent.withOpacity(1.0) → 불투명한 검정 문제 방지)
+    if (backgroundColor.alpha != 0) {
+      final double alpha = isEditing ? 0.4 : 1.0;
+      if (alpha > 0) {
+        mask.color = backgroundColor.withOpacity(alpha);
+        canvas.drawRect(rect, mask);
+      }
+    }
+    // 점을 더 선명하게 보이도록 높은 불투명도
+    final dotOpacity = isLightTheme ? 0.9 : 0.95;
+    final dot = Paint()
+      ..style = PaintingStyle.fill
+      ..color = dotColor.withOpacity(dotOpacity);
+
+    final area = rect.width * rect.height;
+    // 밀도 상향: 큰 이미지에서도 충분한 알갱이 수 유지 (성능 고려)
+    final count = isEditing
+        ? math.max(300, (area / 1200).floor())
+        : math.max(400, (area / 900).floor());
+    // 속도 낮춤
+    final double t = phase * (2 * math.pi) * 1.6;
+
+    // 기본 점들 그리기 (크기 2.2, 움직임/깜빡임 강화)
+    for (int i = 0; i < count; i++) {
+      final seed = rect.hashCode ^ (i * 486187739);
+      final r = math.Random(seed);
+      final baseX = r.nextDouble() * rect.width;
+      final baseY = r.nextDouble() * rect.height;
+      // 진폭 낮춤 (움직임 강도 감소)
+      final amp = 1.0 + r.nextDouble() * 5.0; // 1~6px
+      final ox = math.sin(t + i * 0.21) * amp;
+      final oy = math.cos(t * 0.9 + i * 0.13) * amp;
+      double x = baseX + ox;
+      double y = baseY + oy;
+      // width/height가 0일 경우 나눗셈으로 NaN이 발생할 수 있으므로 방어
+      if (rect.width > 0)
+        x = x % rect.width;
+      else
+        x = 0;
+      if (rect.height > 0)
+        y = y % rect.height;
+      else
+        y = 0;
+      if (x < 0) x += rect.width;
+      if (y < 0) y += rect.height;
+      // 별 깜빡임 효과: 점마다 약간 다른 투명도 변조
+      final twinkle = 0.7 + 0.3 * math.sin(t * 1.3 + i * 0.5);
+      final p = dot..color = dot.color.withOpacity(dotOpacity * twinkle);
+      // 알갱이 크기 축소
+      final sizePx = 1.0 + r.nextDouble() * 1.4; // 1.0~2.4px 원형
+      canvas.drawCircle(Offset(x, y), sizePx / 2, p);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ImageSpoilerPainter oldDelegate) {
+    return oldDelegate.phase != phase || oldDelegate.isEditing != isEditing;
+  }
+}
+
+// 이미지 스포일러 해제 시 파티클 흩어짐 이펙트
+class _ImageSpoilerScatterPainter extends CustomPainter {
+  final double t; // 0..1 진행도
+  final Color dotColor;
+  final bool isLightTheme;
+  _ImageSpoilerScatterPainter({
+    required this.t,
+    required this.dotColor,
+    required this.isLightTheme,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final baseOpacity = isLightTheme ? 0.4 : 0.6;
+    final fade = (1.0 - Curves.easeOut.transform(t)).clamp(0.0, 1.0);
+    final paint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = dotColor.withOpacity(baseOpacity * fade);
+
+    final area = rect.width * rect.height;
+    final count = math.max(80, (area / 220).floor());
+    final cx = rect.center.dx;
+    final cy = rect.center.dy;
+    for (int i = 0; i < count; i++) {
+      final seed = rect.hashCode ^ (i * 1009);
+      final r = math.Random(seed);
+      final rx = r.nextDouble() * rect.width;
+      final ry = r.nextDouble() * rect.height;
+      final startX = rect.left + rx;
+      final startY = rect.top + ry;
+      // 중심에서 방사형 퍼짐
+      final dirX = (startX - cx);
+      final dirY = (startY - cy);
+      final dirLen = math.sqrt(dirX * dirX + dirY * dirY) + 0.001;
+      final nx = dirX / dirLen;
+      final ny = dirY / dirLen;
+      final speed = 30 + r.nextDouble() * 44; // px
+      final move = Curves.easeOutQuad.transform(t) * speed;
+      final x = startX + nx * move;
+      final y = startY + ny * move;
+      final sz = 1.2 + (1.8 * (1.0 - t));
+      canvas.drawRect(Rect.fromLTWH(x, y, sz, sz), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ImageSpoilerScatterPainter oldDelegate) {
+    return oldDelegate.t != t;
+  }
+}

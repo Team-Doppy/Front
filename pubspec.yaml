@@ -75,6 +75,9 @@ dependencies:
   overlay_support: ^2.1.0
   imgly_sdk: ^3.3.0
   audioplayers: ^6.5.1
+  intl: ^0.20.2
+  flutter_cache_manager: ^3.4.1
+  photo_view: ^0.15.0
 
 dependency_overrides:
   screenshot: ^3.0.0

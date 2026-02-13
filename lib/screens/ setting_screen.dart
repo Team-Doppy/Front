@@ -3,6 +3,8 @@ import 'package:doppy/provider/theme_provider.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/typograpy_util.dart';
+import 'package:doppy/editor/utils/dialog_util.dart';
+import 'package:doppy/widgets/accout_delete_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:provider/provider.dart';
@@ -332,31 +334,28 @@ class SettingScreen extends StatelessWidget {
                 ),
                 label: '계정 삭제',
                 onTap: () async {
-                  final confirmed = await showDialog<bool>(
+                  final result = await showModalBottomSheet<Map<String, dynamic>>(
                     context: context,
-                    builder:
-                        (ctx) => AlertDialog(
-                          title: const Text('계정 삭제'),
-                          content: const Text(
-                            '계정을 삭제하면 모든 데이터가 삭제됩니다. 삭제하시겠습니까?',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: const Text('취소'),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, true),
-                              style: TextButton.styleFrom(
-                                foregroundColor: Colors.red,
-                              ),
-                              child: const Text('삭제'),
-                            ),
-                          ],
-                        ),
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (ctx) => const AccountDeletionSheet(),
+                  );
+                  if (result == null || result['reason'] == null) return;
+                  final confirmed = await DialogUtils.showConfirmDialog(
+                    context,
+                    title: '회원 탈퇴',
+                    message:
+                        '한 번 탈퇴하면 복구할 수 없습니다. 그래도 탈퇴하시겠습니까?',
+                    confirmText: '탈퇴하기',
+                    cancelText: '취소',
+                    isDestructive: true,
                   );
                   if (confirmed == true) {
-                    // TODO: 계정 삭제 API 연동
+                    await AccountDeletionSheet.performDeletionAndNavigate(
+                      context,
+                      reasonKey: result['reason'] as String,
+                      detail: result['detail'] as String?,
+                    );
                   }
                 },
               ),

@@ -1,3 +1,9 @@
+import 'dart:convert';
+
+import 'package:doppy/data/services/base_api_service.dart';
+import 'package:doppy/editor/postwrite/postwrite_screen.dart';
+import 'package:doppy/editor/service/draft_service.dart';
+import 'package:doppy/editor/service/post_export_service.dart';
 import 'package:doppy/onbording/onbording_screen.dart';
 import 'package:doppy/provider/theme_provider.dart';
 import 'package:doppy/providers/auth_provider.dart';
@@ -5,13 +11,14 @@ import 'package:doppy/providers/graph_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
 import 'package:doppy/screens/home_screen.dart';
 import 'package:doppy/screens/splash_screen.dart';
-import 'package:doppy/screens/write_screen.dart';
 import 'package:doppy/theme/app_theme.dart';
+import 'package:doppy/upload/upload_init.dart';
+import 'package:doppy/upload/service/upload_service.dart';
 import 'package:doppy/utils/bottom_nav_bar.dart';
 import 'package:doppy/widgets/home_search_field.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 
 // 앱 버전 및 상수
@@ -35,6 +42,10 @@ Future<void> main() async {
     debugPrint('[Firebase] 초기화 실패: $e');
   }
 
+  final uploadService = await UploadInit.ensureInitialized(
+    apiBaseUrl: BaseApiService.baseUrl,
+  );
+
   runApp(
     MultiProvider(
       providers: [
@@ -42,6 +53,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => UserProvider()),
         ChangeNotifierProvider(create: (_) => GraphProvider()),
+        ChangeNotifierProvider<UploadService>.value(value: uploadService),
       ],
       child: const MyApp(),
     ),
@@ -127,8 +139,61 @@ class MainTabShell extends StatefulWidget {
 class _MainTabShellState extends State<MainTabShell> {
   int _index = 0;
 
+  Future<void> _onPublish(
+    BuildContext navContext, {
+    required String title,
+    required String? thumbnailImageUrl,
+    required String accessLevel,
+    required String exportedJson,
+    bool isEditMode = false,
+    String? existingPostId,
+  }) async {
+    final payload = PostExporter.buildPublishPayload(
+      title: title,
+      thumbnailImageUrl: thumbnailImageUrl,
+      accessLevel: accessLevel,
+      exportedJson: exportedJson,
+    );
+    debugPrint('페이로드: ${jsonEncode(payload)}');
+  }
+
+  Future<void> _pushPostwriteScreen() async {
+    final uploadService = context.read<UploadService>();
+    final draftService = DraftService();
+    final autoDraft = await draftService.getAutoDraft();
+    if (!mounted) return;
+
+    Navigator.of(context)
+        .push(
+          PageRouteBuilder(
+            pageBuilder:
+                (_, __, ___) => PostwriteScreen(
+                  uploadService: uploadService,
+                  networkMode: true,
+                  enableAutoSave: true,
+                  autoSaveInterval: const Duration(seconds: 20),
+                  autoShowKeyboardOnEntry: true,
+                  onPublish: _onPublish,
+                  isEditMode: false,
+                  draftData: autoDraft,
+                ),
+            transitionsBuilder: (_, animation, __, child) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            transitionDuration: const Duration(milliseconds: 200),
+          ),
+        )
+        .then((_) {
+          if (mounted) setState(() => _index = 0);
+        });
+  }
+
   void _onTabTap(int index) {
     final graphProv = context.read<GraphProvider>();
+    if (index == 2) {
+      _pushPostwriteScreen();
+      return;
+    }
     if (index == 1) {
       graphProv.enterSearchMode();
     } else if (_index == 1 && index != 1) {
@@ -139,19 +204,15 @@ class _MainTabShellState extends State<MainTabShell> {
 
   @override
   Widget build(BuildContext context) {
-    // 0=Home, 1=Search(홈 검색모드), 2=Write, 3=Profile
-    final pageIndex = _index <= 1 ? 0 : _index - 1;
-
     return Scaffold(
       body: IndexedStack(
-        index: pageIndex,
+        index: 0,
         children: [
           HomeScreen(
             viewMode: _index == 1 ? HomeViewMode.search : HomeViewMode.normal,
             onSearchClose: () => _onTabTap(0),
-            onNavigateToPost: (nodeId) => setState(() => _index = 2),
+            onNavigateToPost: (_) => _pushPostwriteScreen(),
           ),
-          const WriteScreen(),
         ],
       ),
       bottomNavigationBar: Consumer<UserProvider>(
