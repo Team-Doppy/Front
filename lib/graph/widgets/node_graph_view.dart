@@ -361,13 +361,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
   int _skipMinReturnUntilMs = 0; // 핀치 스냅 직후 onPointerUp "home 복귀" 충돌 방지
   double? _gestureStartZoom; // 핀치 방향 안정 판별용
   int? _gestureStartZoomLevelIdx; // 핀치 시작 시 “양자화 단계” (min/m1/m2)
-  Offset? _lastPinchFocalLocal; // 핀치 종료 시 스냅 기준점(로컬 좌표)
-  bool _preziDragConsumed = false; // 프레지에서 “드래그=한단계 축소” 1회만 발동
-  Matrix4? _preziReturnTransform; // 프레지(줌인) 진입 직전 카메라(복귀용)
-  bool _preziPinchExitActive = false; // 프레지 핀치아웃 제스처 진행 중(pan 드리프트 억제용)
-
-  /// 핀치(줌) 감지 역치: 낮을수록 민감. 값을 올려 “의도된 핀치”만 인정 → 2단계 한번에 넘어가는 현상 완화.
-  static const double _pinchDetectThreshold = 0.22;
 
   late final AnimationController _nodeReturnController;
   Animation<double>? _nodeReturnAnim;
@@ -399,8 +392,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
   Offset? _pinchFocalLocal;
   static const double _pinchTriggerRatioThreshold =
       0.06; // 거리 6% 변화부터 트리거 (너무 크면 작은 축소가 감지 안 됨)
-  /// Listener(onPointerUp)에서 이미 양자화 스냅을 실행했으면 onInteractionEnd에서 중복 스냅 방지
-  bool _pinchSnapHandledInPointerUp = false;
+
   bool _primaryMoved = false;
   static const double _dragSlop = 8.0;
   bool _selectionClearedByDrag = false;
@@ -867,9 +859,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
   }) {
     if (_camera.isAnimating) return;
     final minS = _minScale ?? 0.1;
-    final startZoom =
-        _gestureStartZoom ??
-        _camera.value.getMaxScaleOnAxis();
+    final startZoom = _gestureStartZoom ?? _camera.value.getMaxScaleOnAxis();
     final levels = _quantizedZoomLevels();
     final maxIdx = levels.isEmpty ? 0 : (levels.length - 1);
     final startIdx =
@@ -1223,9 +1213,10 @@ class _NodeGraphViewState extends State<NodeGraphView>
         );
 
         _camera.setTransform(
-            Matrix4.identity()
-              ..translate(clamped.dx, clamped.dy)
-              ..scale(zoom));
+          Matrix4.identity()
+            ..translate(clamped.dx, clamped.dy)
+            ..scale(zoom),
+        );
       }
     }
   }
@@ -1413,15 +1404,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
     return Matrix4.identity()
       ..translate(tx, ty)
       ..scale(minScale);
-  }
-
-  EdgeInsets _maxInsets(EdgeInsets a, EdgeInsets b) {
-    return EdgeInsets.fromLTRB(
-      math.max(a.left, b.left),
-      math.max(a.top, b.top),
-      math.max(a.right, b.right),
-      math.max(a.bottom, b.bottom),
-    );
   }
 
   Offset _softWallTranslation({
@@ -1625,15 +1607,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
     }
   }
 
-  /// 확대 1단계(middle1) 근처인지. 노드 수에 따른 배율 사용.
-  bool _isInFirstZoomStep() {
-    final z = _camera.value.getMaxScaleOnAxis();
-    final m = _minScale ?? 0.1;
-    final n = widget.graph.nodes.length;
-    final m1 = m * NodeCountUtils.zoom1Multiplier(n);
-    return z >= m1 * 0.9 && z <= m1 * 1.15;
-  }
-
   double _computeMaxPinchScale(int nodeCount) {
     final minS = _minScale ?? 0.1;
     return minS * NodeCountUtils.zoom2Multiplier(nodeCount);
@@ -1793,10 +1766,18 @@ class _NodeGraphViewState extends State<NodeGraphView>
     1.0,
   ); // 매우 부드러운 ease-out (빨려들어가는 느낌)
 
+  /// 0단계(최소 줌)에서도 노드 쪽 탭 인식이 되도록, 화면 픽셀 기준 최소 히트 반경 보장.
+  static const double _minTapRadiusPx = 28.0;
+
   GraphNode? _getNodeAtPosition(Offset position) {
     final nodeRadius = _getNodeRadius(
       NodeCountUtils.effectiveCountForRendering(widget.graph.nodes.length),
     );
+    final zoom = _camera.scale;
+    // 줌아웃일 때 scene 거리만 쓰면 화면상 히트 영역이 너무 작아짐 → 픽셀 기준 최소 반경 적용
+    final minRadiusScene = zoom > 0 ? _minTapRadiusPx / zoom : nodeRadius * 2;
+    final hitRadiusScene = math.max(nodeRadius * 2, minRadiusScene);
+
     final nodesToTest =
         (widget.mode == NodeGraphMode.searchResult &&
                 widget.resultNodeIds != null &&
@@ -1805,14 +1786,18 @@ class _NodeGraphViewState extends State<NodeGraphView>
                 .where((n) => widget.resultNodeIds!.contains(n.id))
                 .toList()
             : widget.graph.nodes;
+
+    GraphNode? closest;
+    double closestDist = hitRadiusScene + 1;
     for (final node in nodesToTest) {
       final p = _displayPos[node.id] ?? node.position;
       final distance = (position - p).distance;
-      if (distance <= nodeRadius * 2) {
-        return node;
+      if (distance <= hitRadiusScene && distance < closestDist) {
+        closestDist = distance;
+        closest = node;
       }
     }
-    return null;
+    return closest;
   }
 
   @override
@@ -1838,12 +1823,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
           //   “확대/축소 중 뷰가 튄다”가 발생할 수 있음.
           // - 따라서 boundaryMargin은 **줌과 무관하게** 고정하고,
           //   빈 공간 억제/가시성 보정은 스냅/릴리즈 시점에 별도 클램프로 처리한다.
-          final effectiveBoundaryMargin = _maxInsets(
-            widget.boundaryMargin,
-            // zoomSpacing(spread)로 노드가 시각적으로 더 퍼질 수 있으므로,
-            // 확대 상태에서도 끝까지 패닝 가능하도록 여유를 크게 잡는다. (줌 중 동적 변경 금지)
-            EdgeInsets.all(math.max(screenSize.width, screenSize.height) * 3.0),
-          );
 
           final baseWorldSize = ForceDirectedLayout.suggestWorldSize(
             screenSize: screenSize,
@@ -1920,7 +1899,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
 
               // 2손가락 핀치 시작: “트리거만” 감지 (실제 스케일링은 금지)
               if (_activePointers.length == 2) {
-                _pinchSnapHandledInPointerUp = false;
                 final ids = _activePointers.toList();
                 final p0 = _pointerLocalPos[ids[0]];
                 final p1 = _pointerLocalPos[ids[1]];
@@ -1931,8 +1909,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
                   _pinchDirection = 0;
                   _pinchFocalLocal = (p0 + p1) / 2;
                   _lastGestureWasPinch = true; // 다른 release 로직과 충돌 방지
-                  _gestureStartZoom =
-                      _camera.value.getMaxScaleOnAxis();
+                  _gestureStartZoom = _camera.value.getMaxScaleOnAxis();
                   _gestureStartZoomLevelIdx = _nearestQuantizedZoomLevelIndex(
                     _gestureStartZoom ?? (_minScale ?? 0.1),
                   );
@@ -1967,9 +1944,8 @@ class _NodeGraphViewState extends State<NodeGraphView>
               _cancelNodeReturnAndSnapToEnd();
               _selectionClearedByDrag = false;
               _lastGestureWasPinch = false;
-              _gestureStartZoom =
-                  _camera.value.getMaxScaleOnAxis();
-              _preziDragConsumed = false;
+              _gestureStartZoom = _camera.value.getMaxScaleOnAxis();
+
               if (!isOnboarding) {
                 _stopMinPanWarpReturn();
                 _lastPanLocal = e.localPosition;
@@ -2030,8 +2006,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
                 if (!isOnboarding && !_selectionClearedByDrag) {
                   // 프레지 영역에서는 selection을 지우면 panEnabled가 다시 켜져 화면이 움직일 수 있음.
                   // 프레지 드래그는 “축소만 하고 패닝 금지”가 목표라 여기서는 선택을 유지.
-                  final zoom =
-                      _camera.value.getMaxScaleOnAxis();
+                  final zoom = _camera.value.getMaxScaleOnAxis();
                   final minS = _minScale ?? 0.1;
                   final maxPinch =
                       _maxPinchScale ??
@@ -2058,8 +2033,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
               // - soft wall로 끝쪽에서 자연스러운 저항
               if (!isOnboarding && !_isNodeDragging) {
                 final minS = _minScale ?? 0.1;
-                final zoom =
-                    _camera.value.getMaxScaleOnAxis();
+                final zoom = _camera.value.getMaxScaleOnAxis();
                 final isNearMin = zoom <= minS * 1.15;
                 final middle1 =
                     minS *
@@ -2141,9 +2115,10 @@ class _NodeGraphViewState extends State<NodeGraphView>
                     _minPanTargetTranslation = limited;
 
                     _camera.setTransform(
-                        Matrix4.identity()
-                          ..translate(limited.dx, limited.dy)
-                          ..scale(zoom));
+                      Matrix4.identity()
+                        ..translate(limited.dx, limited.dy)
+                        ..scale(zoom),
+                    );
                   }
                   _lastPanLocal = e.localPosition;
                 } else if (isFirstZoomStep) {
@@ -2160,12 +2135,19 @@ class _NodeGraphViewState extends State<NodeGraphView>
                     final smoothed =
                         Offset.lerp(trans, target, 0.28.clamp(0.0, 1.0))!;
                     _camera.setTransform(
-                        Matrix4.identity()
-                          ..translate(smoothed.dx, smoothed.dy)
-                          ..scale(zoom));
+                      Matrix4.identity()
+                        ..translate(smoothed.dx, smoothed.dy)
+                        ..scale(zoom),
+                    );
                   }
                   _lastPanLocal = e.localPosition;
                 } else {
+                  // 2단계 줌 이상: 일반 pan (예전 InteractiveViewer가 하던 역할)
+                  final last = _lastPanLocal;
+                  if (last != null && _primaryMoved) {
+                    final delta = e.localPosition - last;
+                    _camera.pan(delta);
+                  }
                   _lastPanLocal = e.localPosition;
                   _minPanTargetTranslation = null;
                 }
@@ -2187,6 +2169,11 @@ class _NodeGraphViewState extends State<NodeGraphView>
               _activePointers.remove(e.pointer);
               _pointerLocalPos.remove(e.pointer);
 
+              // 모든 손가락이 떨어졌을 때만 “직전 제스처가 핀치” 플래그 해제 (다음 탭이 정상 인식되도록)
+              if (_activePointers.isEmpty) {
+                _lastGestureWasPinch = false;
+              }
+
               // pinch 종료: 트리거가 있었다면 여기서만 자동 줌 실행
               if (wasMulti &&
                   _pinchGestureActive &&
@@ -2199,14 +2186,13 @@ class _NodeGraphViewState extends State<NodeGraphView>
                     focalLocal: focal,
                     screenSize: screenSize,
                   );
-                  _pinchSnapHandledInPointerUp = true;
                 }
                 _pinchGestureActive = false;
                 _pinchStartDistance = null;
                 _pinchTriggered = false;
                 _pinchDirection = 0;
                 _pinchFocalLocal = null;
-                _lastGestureWasPinch = false;
+                // _lastGestureWasPinch는 모든 손가락이 떨어질 때만 clear (위에서 처리)
                 _gestureStartZoom = null;
                 _gestureStartZoomLevelIdx = null;
               }
@@ -2227,11 +2213,13 @@ class _NodeGraphViewState extends State<NodeGraphView>
                 });
               } else {
                 final down = _primaryDownLocal;
-                // 핀치(2손가락) 중이었으면 노드 클릭으로 처리하지 않음
+                // 핀치 중/직후에는 노드 클릭으로 처리하지 않음 (모드 명확히 분리)
+                final wasPinch = _pinchGestureActive || _lastGestureWasPinch;
                 if (!isOnboarding &&
                     down != null &&
                     !_primaryMoved &&
-                    !wasMulti) {
+                    !wasMulti &&
+                    !wasPinch) {
                   final scene = _toScene(down);
                   final tapped = _getNodeAtPosition(scene);
                   if (tapped != null) {
@@ -2288,7 +2276,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
               _lastPanLocal = null;
               _minPanTargetTranslation = null;
               _gestureStartZoom = null;
-              _preziDragConsumed = false;
             },
             onPointerCancel: (e) {
               final wasMulti = _activePointers.length >= 2;
@@ -2307,7 +2294,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
                     focalLocal: focal,
                     screenSize: screenSize,
                   );
-                  _pinchSnapHandledInPointerUp = true;
                 }
                 _pinchGestureActive = false;
                 _pinchStartDistance = null;
@@ -2344,249 +2330,235 @@ class _NodeGraphViewState extends State<NodeGraphView>
               _lastPanLocal = null;
               _minPanTargetTranslation = null;
               _gestureStartZoom = null;
-              _preziDragConsumed = false;
             },
             child: ListenableBuilder(
               listenable: _camera,
               builder: (context, _) {
                 final zoom = _camera.scale;
                 final matrix = _camera.value;
-                    // 라벨: 초기 레이아웃 완료 후 + 임계값 넘으면 "켜짐" 판단 → AnimatedOpacity로 고정 시간 내 페이드 인 (확대 속도 무관)
-                    // - labelZoomThreshold >= 1: minScale 대비 배율 (1.4 = 최소축소의 1.4배에서 라벨 표시)
-                    // - labelZoomThreshold < 1: 절대 zoom 값 (하위 호환)
-                    final minSForLabel = _minScale ?? 0.1;
-                    final labelThreshold =
-                        widget.labelZoomThreshold >= 1
-                            ? (minSForLabel * widget.labelZoomThreshold).clamp(
-                              0.12,
-                              0.95,
-                            )
-                            : widget.labelZoomThreshold;
-                    // 노드 1개일 때는 라벨 항상 표시
-                    final labelOn =
-                        _layoutInitialized &&
-                        widget.showLabels &&
-                        (widget.graph.nodes.length == 1 ||
-                            zoom > labelThreshold);
-
-                    // zoom에 따른 “풍선 팽창” 렌더링 좌표 계산 (레이아웃 자체는 변하지 않음)
-                    // spread는 항상 현재 zoom 기반. 고정 시 focal translation 보정과 이중 보정되어 튐 발생
-                    final spread = _spreadForZoom(zoom);
-                    final center =
-                        _structureCenter ?? _graphBoundsInScene().center;
-                    _displaySpread = spread;
-                    final minS = _minScale ?? 0.1;
-                    final isAtMinScale = zoom <= minS * 1.1;
-                    if (widget.onIsAtMinScale != null &&
-                        _lastReportedIsAtMinScale != isAtMinScale) {
-                      _lastReportedIsAtMinScale = isAtMinScale;
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        widget.onIsAtMinScale?.call(isAtMinScale);
-                      });
-                    }
-                    final isNearMin = zoom <= minS * 1.15;
-                    final warpActive =
-                        widget.enableMinScalePanWarp &&
-                        isNearMin &&
-                        (_minPanWarpOffsetScene.distanceSquared > 0.000001 ||
-                            _minPanWarpReturnController.isAnimating);
-                    // 드래그/팬 중 버벅임 줄이기: spread/revision이 변할 때만 재계산
-                    final layoutIntroActive =
-                        _layoutIntroController.value < 1.0;
-                    final shouldRecompute =
-                        _camera.isAnimating ||
-                        layoutIntroActive ||
-                        (spread - _lastDisplaySpread).abs() > 0.002 ||
-                        _lastDisplayRevision != _graphRevision ||
-                        warpActive ||
-                        (_lastZoom - zoom).abs() > 0.001;
-                    if (shouldRecompute) {
-                      _lastDisplaySpread = spread;
-                      _lastDisplayRevision = _graphRevision;
-                      _lastZoom = zoom;
-                      final introT = _layoutIntroController.value.clamp(
-                        0.0,
-                        1.0,
-                      );
-                      final nodes = widget.graph.nodes;
-                      // LOD: 노드 수 많을 때는 보이는 노드만 좌표 계산 (버벅임 방지)
-                      final allowedIds =
-                          nodes.length >= NodeCountUtils.lodThreshold
-                              ? _allowedNodeIdsForZoom(zoom)
-                              : null;
-                      final nodesToCompute =
-                          allowedIds != null
-                              ? nodes
-                                  .where((n) => allowedIds.contains(n.id))
-                                  .toList()
-                              : nodes;
-                      final maxDist =
-                          nodesToCompute.isEmpty
-                              ? 1.0
-                              : nodesToCompute
-                                  .map((n) => (n.position - center).distance)
-                                  .reduce(math.max);
-                      _displayPos
-                        ..clear()
-                        ..addEntries(
-                          nodesToCompute.map((n) {
-                            final toCenter = n.position - center;
-                            final distNorm =
-                                maxDist > 1e-6
-                                    ? toCenter.distance / maxDist
-                                    : 0.0;
-                            final waveDelay = 0.22 * distNorm;
-                            final phaseOffset =
-                                0.08 * (2 * ((n.id * 0.618033) % 1) - 1);
-                            final effectiveT = (introT -
-                                    waveDelay +
-                                    phaseOffset)
-                                .clamp(0.0, 1.0);
-                            var p =
-                                center +
-                                toCenter *
-                                    spread *
-                                    Curves.easeOutCubic.transform(effectiveT);
-                            if (warpActive) {
-                              p =
-                                  p +
-                                  _minPanWarpOffsetForScenePos(
-                                    scenePos: p,
-                                    zoom: zoom <= 0 ? 1.0 : zoom,
-                                  );
-                            }
-                            return MapEntry(n.id, p);
-                          }),
-                        );
-                    }
-
-                    // scene 좌표계에서 화면에 보이는 영역 (컬링용)
-                    final tx = matrix.storage[12];
-                    final ty = matrix.storage[13];
-                    final viewportRect = Rect.fromLTRB(
-                      -tx / zoom,
-                      -ty / zoom,
-                      (screenSize.width - tx) / zoom,
-                      (screenSize.height - ty) / zoom,
-                    );
-
-                    // 중앙 영역만 라벨을 보이게: viewport 기준으로 inner rect를 만들고,
-                    // inner 밖에서는 edge 쪽으로 갈수록 부드럽게 페이드 아웃.
-                    // 확대1(middle1)에서는 진짜 가운데 몇 개만 (0.38), 확대될수록 넓게 (0.35)
-                    final minSForCenter = _minScale ?? 0.1;
-                    final middle1 =
-                        minSForCenter *
-                        NodeCountUtils.zoom1Multiplier(
-                          widget.graph.nodes.length,
-                        );
-                    final centerInnerFrac =
-                        zoom < middle1 * 1.1
-                            ? 0.38
-                            : 0.35; // 확대1: 가운데만 타이트, 확대2+: 넓게
-                    final innerRect = Rect.fromLTRB(
-                      viewportRect.left + viewportRect.width * centerInnerFrac,
-                      viewportRect.top + viewportRect.height * centerInnerFrac,
-                      viewportRect.right - viewportRect.width * centerInnerFrac,
-                      viewportRect.bottom -
-                          viewportRect.height * centerInnerFrac,
-                    );
-                    final fadeBand = math
-                        .min(
-                          viewportRect.width * centerInnerFrac,
-                          viewportRect.height * centerInnerFrac,
+                // 라벨: 초기 레이아웃 완료 후 + 임계값 넘으면 "켜짐" 판단 → AnimatedOpacity로 고정 시간 내 페이드 인 (확대 속도 무관)
+                // - labelZoomThreshold >= 1: minScale 대비 배율 (1.4 = 최소축소의 1.4배에서 라벨 표시)
+                // - labelZoomThreshold < 1: 절대 zoom 값 (하위 호환)
+                final minSForLabel = _minScale ?? 0.1;
+                final labelThreshold =
+                    widget.labelZoomThreshold >= 1
+                        ? (minSForLabel * widget.labelZoomThreshold).clamp(
+                          0.12,
+                          0.95,
                         )
-                        .clamp(1.0, double.infinity);
-                    double centerAlpha(Offset p) {
-                      if (innerRect.contains(p)) return 1.0;
-                      if (!viewportRect.contains(p)) return 0.0;
-                      final dx =
-                          p.dx < innerRect.left
-                              ? innerRect.left - p.dx
-                              : (p.dx > innerRect.right
-                                  ? p.dx - innerRect.right
-                                  : 0.0);
-                      final dy =
-                          p.dy < innerRect.top
-                              ? innerRect.top - p.dy
-                              : (p.dy > innerRect.bottom
-                                  ? p.dy - innerRect.bottom
-                                  : 0.0);
-                      final d = math.max(dx, dy);
-                      return (1.0 - (d / fadeBand)).clamp(0.0, 1.0);
-                    }
+                        : widget.labelZoomThreshold;
+                // 노드 1개일 때는 라벨 항상 표시
+                final labelOn =
+                    _layoutInitialized &&
+                    widget.showLabels &&
+                    (widget.graph.nodes.length == 1 || zoom > labelThreshold);
 
-                    return Transform(
-                      transform: _camera.value,
-                      alignment: Alignment.topLeft,
-                      child: SizedBox(
-                        width: worldSize.width,
-                        height: worldSize.height,
-                        child: ColoredBox(
-                          color: Colors.transparent,
-                          child: Stack(
-                            clipBehavior: Clip.none,
-                            children: [
+                // zoom에 따른 “풍선 팽창” 렌더링 좌표 계산 (레이아웃 자체는 변하지 않음)
+                // spread는 항상 현재 zoom 기반. 고정 시 focal translation 보정과 이중 보정되어 튐 발생
+                final spread = _spreadForZoom(zoom);
+                final center = _structureCenter ?? _graphBoundsInScene().center;
+                _displaySpread = spread;
+                final minS = _minScale ?? 0.1;
+                final isAtMinScale = zoom <= minS * 1.1;
+                if (widget.onIsAtMinScale != null &&
+                    _lastReportedIsAtMinScale != isAtMinScale) {
+                  _lastReportedIsAtMinScale = isAtMinScale;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    widget.onIsAtMinScale?.call(isAtMinScale);
+                  });
+                }
+                final isNearMin = zoom <= minS * 1.15;
+                final warpActive =
+                    widget.enableMinScalePanWarp &&
+                    isNearMin &&
+                    (_minPanWarpOffsetScene.distanceSquared > 0.000001 ||
+                        _minPanWarpReturnController.isAnimating);
+                // 드래그/팬 중 버벅임 줄이기: spread/revision이 변할 때만 재계산
+                final layoutIntroActive = _layoutIntroController.value < 1.0;
+                final shouldRecompute =
+                    _camera.isAnimating ||
+                    layoutIntroActive ||
+                    (spread - _lastDisplaySpread).abs() > 0.002 ||
+                    _lastDisplayRevision != _graphRevision ||
+                    warpActive ||
+                    (_lastZoom - zoom).abs() > 0.001;
+                if (shouldRecompute) {
+                  _lastDisplaySpread = spread;
+                  _lastDisplayRevision = _graphRevision;
+                  _lastZoom = zoom;
+                  final introT = _layoutIntroController.value.clamp(0.0, 1.0);
+                  final nodes = widget.graph.nodes;
+                  // LOD: 노드 수 많을 때는 보이는 노드만 좌표 계산 (버벅임 방지)
+                  final allowedIds =
+                      nodes.length >= NodeCountUtils.lodThreshold
+                          ? _allowedNodeIdsForZoom(zoom)
+                          : null;
+                  final nodesToCompute =
+                      allowedIds != null
+                          ? nodes
+                              .where((n) => allowedIds.contains(n.id))
+                              .toList()
+                          : nodes;
+                  final maxDist =
+                      nodesToCompute.isEmpty
+                          ? 1.0
+                          : nodesToCompute
+                              .map((n) => (n.position - center).distance)
+                              .reduce(math.max);
+                  _displayPos
+                    ..clear()
+                    ..addEntries(
+                      nodesToCompute.map((n) {
+                        final toCenter = n.position - center;
+                        final distNorm =
+                            maxDist > 1e-6 ? toCenter.distance / maxDist : 0.0;
+                        final waveDelay = 0.22 * distNorm;
+                        final phaseOffset =
+                            0.08 * (2 * ((n.id * 0.618033) % 1) - 1);
+                        final effectiveT = (introT - waveDelay + phaseOffset)
+                            .clamp(0.0, 1.0);
+                        var p =
+                            center +
+                            toCenter *
+                                spread *
+                                Curves.easeOutCubic.transform(effectiveT);
+                        if (warpActive) {
+                          p =
+                              p +
+                              _minPanWarpOffsetForScenePos(
+                                scenePos: p,
+                                zoom: zoom <= 0 ? 1.0 : zoom,
+                              );
+                        }
+                        return MapEntry(n.id, p);
+                      }),
+                    );
+                }
+
+                // scene 좌표계에서 화면에 보이는 영역 (컬링용)
+                final tx = matrix.storage[12];
+                final ty = matrix.storage[13];
+                final viewportRect = Rect.fromLTRB(
+                  -tx / zoom,
+                  -ty / zoom,
+                  (screenSize.width - tx) / zoom,
+                  (screenSize.height - ty) / zoom,
+                );
+
+                // 중앙 영역만 라벨을 보이게: viewport 기준으로 inner rect를 만들고,
+                // inner 밖에서는 edge 쪽으로 갈수록 부드럽게 페이드 아웃.
+                // 확대1(middle1)에서는 진짜 가운데 몇 개만 (0.38), 확대될수록 넓게 (0.35)
+                final minSForCenter = _minScale ?? 0.1;
+                final middle1 =
+                    minSForCenter *
+                    NodeCountUtils.zoom1Multiplier(widget.graph.nodes.length);
+                final centerInnerFrac =
+                    zoom < middle1 * 1.1
+                        ? 0.38
+                        : 0.35; // 확대1: 가운데만 타이트, 확대2+: 넓게
+                final innerRect = Rect.fromLTRB(
+                  viewportRect.left + viewportRect.width * centerInnerFrac,
+                  viewportRect.top + viewportRect.height * centerInnerFrac,
+                  viewportRect.right - viewportRect.width * centerInnerFrac,
+                  viewportRect.bottom - viewportRect.height * centerInnerFrac,
+                );
+                final fadeBand = math
+                    .min(
+                      viewportRect.width * centerInnerFrac,
+                      viewportRect.height * centerInnerFrac,
+                    )
+                    .clamp(1.0, double.infinity);
+                double centerAlpha(Offset p) {
+                  if (innerRect.contains(p)) return 1.0;
+                  if (!viewportRect.contains(p)) return 0.0;
+                  final dx =
+                      p.dx < innerRect.left
+                          ? innerRect.left - p.dx
+                          : (p.dx > innerRect.right
+                              ? p.dx - innerRect.right
+                              : 0.0);
+                  final dy =
+                      p.dy < innerRect.top
+                          ? innerRect.top - p.dy
+                          : (p.dy > innerRect.bottom
+                              ? p.dy - innerRect.bottom
+                              : 0.0);
+                  final d = math.max(dx, dy);
+                  return (1.0 - (d / fadeBand)).clamp(0.0, 1.0);
+                }
+
+                return Transform(
+                  transform: _camera.value,
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: worldSize.width,
+                    height: worldSize.height,
+                    child: ColoredBox(
+                      color: Colors.transparent,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
                           RepaintBoundary(
                             child: CustomPaint(
                               painter: GraphPainter(
-                              graph: widget.graph,
-                              revision: _graphRevision,
-                              overridePositions: _displayPos,
-                              viewport: viewportRect,
-                              allowedNodeIds: _allowedNodeIdsForZoom(zoom),
-                              resultNodeIds:
-                                  widget.mode == NodeGraphMode.searchResult
-                                      ? widget.resultNodeIds
-                                      : null,
-                              onboardingSearchResult:
-                                  widget.onboardingSearchResult,
-                              searchResultExitT: widget.searchResultExitT,
-                              searchWaveAnimation:
-                                  (widget.mode == NodeGraphMode.searching ||
-                                          widget.mode ==
-                                              NodeGraphMode.publishing)
-                                      ? _searchWaveController
-                                      : null,
-                              searchResultIntroAnimation:
-                                  widget.mode == NodeGraphMode.searchResult &&
-                                          widget.resultNodeIds != null &&
-                                          widget.resultNodeIds!.isNotEmpty
-                                      ? _searchResultIntroController
-                                      : null,
-                              nodeRadius: _getNodeRadius(
-                                NodeCountUtils.effectiveCountForRendering(
-                                  widget.graph.nodes.length,
-                                ),
-                              ),
-                              minNodeRadiusPx:
-                                  widget.nodeRadius != null ? 8.0 : null,
-                              lineColor: lineColor,
-                              primaryColor: primaryColor,
-                              nodeColors: widget.nodeColorScheme,
-                              selectedNodeId: _effectiveSelectedNodeId,
-                              draggingNodeId:
-                                  _isNodeDragging ? _dragRootNodeId : null,
-                              dragGroupNodeIds:
-                                  _isNodeDragging
-                                      ? _dragStartPositions.keys.toSet()
-                                      : _lastDragGroupForFade,
-                              dragFadeAnimation: _dragFade,
-                              screenSize: screenSize,
-                              zoom: zoom,
-                              maxEdges: _edgeCapForZoom(
-                                zoom,
-                                widget.graph.edges.length,
-                              ),
-                              minEdgeSimilarity: _minSimilarityForZoom(zoom),
-                              nodeCount:
+                                graph: widget.graph,
+                                revision: _graphRevision,
+                                overridePositions: _displayPos,
+                                viewport: viewportRect,
+                                allowedNodeIds: _allowedNodeIdsForZoom(zoom),
+                                resultNodeIds:
+                                    widget.mode == NodeGraphMode.searchResult
+                                        ? widget.resultNodeIds
+                                        : null,
+                                onboardingSearchResult:
+                                    widget.onboardingSearchResult,
+                                searchResultExitT: widget.searchResultExitT,
+                                searchWaveAnimation:
+                                    (widget.mode == NodeGraphMode.searching ||
+                                            widget.mode ==
+                                                NodeGraphMode.publishing)
+                                        ? _searchWaveController
+                                        : null,
+                                searchResultIntroAnimation:
+                                    widget.mode == NodeGraphMode.searchResult &&
+                                            widget.resultNodeIds != null &&
+                                            widget.resultNodeIds!.isNotEmpty
+                                        ? _searchResultIntroController
+                                        : null,
+                                nodeRadius: _getNodeRadius(
                                   NodeCountUtils.effectiveCountForRendering(
                                     widget.graph.nodes.length,
                                   ),
-                              edgeRenderMode: widget.edgeRenderMode,
-                              representativeMaxEdgesPerCluster:
-                                  widget.representativeMaxEdgesPerCluster,
-                              keyboardCompressionFactor: keyboardCompression,
-                              cameraRepaint: _camera,
+                                ),
+                                minNodeRadiusPx:
+                                    widget.nodeRadius != null ? 8.0 : null,
+                                lineColor: lineColor,
+                                primaryColor: primaryColor,
+                                nodeColors: widget.nodeColorScheme,
+                                selectedNodeId: _effectiveSelectedNodeId,
+                                draggingNodeId:
+                                    _isNodeDragging ? _dragRootNodeId : null,
+                                dragGroupNodeIds:
+                                    _isNodeDragging
+                                        ? _dragStartPositions.keys.toSet()
+                                        : _lastDragGroupForFade,
+                                dragFadeAnimation: _dragFade,
+                                screenSize: screenSize,
+                                zoom: zoom,
+                                maxEdges: _edgeCapForZoom(
+                                  zoom,
+                                  widget.graph.edges.length,
+                                ),
+                                minEdgeSimilarity: _minSimilarityForZoom(zoom),
+                                nodeCount:
+                                    NodeCountUtils.effectiveCountForRendering(
+                                      widget.graph.nodes.length,
+                                    ),
+                                edgeRenderMode: widget.edgeRenderMode,
+                                representativeMaxEdgesPerCluster:
+                                    widget.representativeMaxEdgesPerCluster,
+                                keyboardCompressionFactor: keyboardCompression,
+                                cameraRepaint: _camera,
                               ),
                               size: worldSize,
                             ),
@@ -2682,16 +2654,16 @@ class _NodeGraphViewState extends State<NodeGraphView>
                                     ),
                                   );
                                 }).toList()),
-                            ],
-                          ),
-                        ),
+                        ],
                       ),
-                  );
-                },
-              ),
-        );
-      },
-    ),
-  );
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+        },
+      ),
+    );
   }
 }
