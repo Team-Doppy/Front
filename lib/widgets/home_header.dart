@@ -8,7 +8,7 @@ import 'package:provider/provider.dart';
 /// 홈 화면 헤더 (플래그 기반 표시/숨김 + opacity 애니메이션 + 탭 + 검색칩)
 class HomeHeader extends StatelessWidget {
   final bool visible;
-  final List<String> tabs;
+
   final int selectedIndex;
   final ValueChanged<int>? onTabChanged;
   final VoidCallback? onMenuTap;
@@ -18,16 +18,20 @@ class HomeHeader extends StatelessWidget {
   final VoidCallback? onChipTap;
   final VoidCallback? onChipClose;
 
+  /// 노드 드래그 시 등 서브타이틀 덮어쓰기 (null이면 기본 '기록하고 패턴 발견하기')
+  final String? subtitleOverride;
+
   const HomeHeader({
     super.key,
     required this.visible,
-    this.tabs = const ['전체', '인기', '최근', '카테고리', '내 고민'],
+
     this.selectedIndex = 0,
     this.onTabChanged,
     this.onMenuTap,
     this.searchChipQuery,
     this.onChipTap,
     this.onChipClose,
+    this.subtitleOverride,
   });
 
   @override
@@ -136,15 +140,19 @@ class HomeHeader extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '기록하고 패턴 발견하기',
+                          subtitleOverride?.isNotEmpty == true
+                              ? subtitleOverride!
+                              : '기록하고 패턴 발견하기',
                           style: TypographyUtil.style(
                             context: context,
-                            fontSize: 14,
+                            fontSize: 16,
                             color:
                                 isDark
                                     ? AppColors.darkTextSecondary
                                     : AppColors.lightTextSecondary,
                           ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ],
@@ -158,8 +166,8 @@ class HomeHeader extends StatelessWidget {
                     height: 24,
                     color:
                         isDark
-                            ? AppColors.darkTextPrimary
-                            : AppColors.lightTextPrimary,
+                            ? AppColors.darkTextSecondary
+                            : AppColors.lightTextSecondary,
                   ),
                 ),
                 const SizedBox(width: 16),

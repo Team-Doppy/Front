@@ -4,15 +4,13 @@ import 'package:flutter/material.dart';
 class AppColors {
   AppColors._(); // private constructor
 
-  // ===== Primary Colors (연한 푸른색) =====
-  static const Color primary = Color.fromARGB(
+  static const Color primaryDark = Color(0xFFFFFFFF); // 진한 푸른색
+  static const Color primaryLight = Color.fromARGB(
     255,
-    120,
-    140,
+    139,
+    170,
     255,
-  ); // 연한 푸른색 (밝게)
-  static const Color primaryDark = Color(0xFF46529D); // 진한 푸른색
-  static const Color primaryLight = Color(0xFF7F8DE9); // 더 연한 푸른색
+  ); // 더 연한 푸른색
 
   // ===== Accent Colors =====
   static const Color accent = Color(0xFFE0E0E0); // 중성 회색

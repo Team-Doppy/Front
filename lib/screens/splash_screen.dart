@@ -1,3 +1,4 @@
+import 'package:doppy/app_flags.dart';
 import 'package:dio/dio.dart';
 import 'package:doppy/main.dart' show MainTabShell;
 import 'package:doppy/onbording/onbording_screen.dart';
@@ -48,8 +49,12 @@ class _SplashScreenState extends State<SplashScreen> {
       // 2. 내 정보 로드 (GET /api/auth/me) – 401이면 catch로 가서 온보딩으로
       await userProvider.fetchUserBundle();
 
-      // 3. 그래프 로드 (GET /api/graph?mode=real) – 실패해도 메인 진입, 타임아웃이면 온보딩
-      await graphProvider.loadGraph(mode: 'mock', count: 13);
+      // 3. 그래프 로드. kGraphSearchMock이면 mock+count, 아니면 real
+      if (kGraphSearchMock) {
+        await graphProvider.loadGraph(mode: 'mock', count: kGraphMockNodeCount);
+      } else {
+        await graphProvider.loadGraph(mode: 'real');
+      }
       if (!mounted) return;
 
       if (_isTimeoutErrorString(graphProvider.error)) {

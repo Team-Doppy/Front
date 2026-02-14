@@ -1,21 +1,32 @@
 import 'package:doppy/graph/models/node.dart';
 
 /// 엣지 모델 (서버 스키마 준수)
+/// conceptKeywords: 개념(contextual) 엣지 시 "연결 이유" 표시용, 감정/임베딩 엣지는 []
 class GraphEdge {
   final int fromNodeId;
   final int toNodeId;
   final double similarity; // 0.0 ~ 1.0 (서버에서 계산)
   final EdgeType type;
+  /// 개념 엣지: [개념 라벨, 앵커 쪽 키워드…, 타겟 쪽 키워드…]. 감정/임베딩: []
+  final List<String> conceptKeywords;
 
   GraphEdge({
     required this.fromNodeId,
     required this.toNodeId,
     required this.similarity,
     this.type = EdgeType.semantic,
+    this.conceptKeywords = const [],
   });
 
   factory GraphEdge.fromJson(Map<String, dynamic> json) {
     final typeStr = json['type'] as String? ?? 'semantic';
+    final keywordsRaw = json['conceptKeywords'];
+    final List<String> conceptKeywords = keywordsRaw is List<dynamic>
+        ? keywordsRaw
+            .map((e) => e?.toString() ?? '')
+            .where((s) => s.isNotEmpty)
+            .toList()
+        : <String>[];
     return GraphEdge(
       fromNodeId: _parseId(json['fromNodeId']),
       toNodeId: _parseId(json['toNodeId']),
@@ -24,6 +35,7 @@ class GraphEdge {
         (e) => e.name == typeStr,
         orElse: () => EdgeType.semantic,
       ),
+      conceptKeywords: conceptKeywords,
     );
   }
 

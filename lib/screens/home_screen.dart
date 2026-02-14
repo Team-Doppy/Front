@@ -1,4 +1,5 @@
 import 'package:doppy/graph/models/edge.dart';
+import 'package:doppy/graph/rendering/canvas.dart';
 import 'package:doppy/graph/widgets/node_graph_view.dart';
 import 'package:doppy/providers/graph_provider.dart';
 import 'package:doppy/screens/%20setting_screen.dart';
@@ -27,6 +28,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int? _selectedNodeId;
+  int? _draggingNodeId;
   bool _isAtMinScale = false;
   int _headerTabIndex = 0;
   GraphProvider? _pendingChipCloseProvider;
@@ -91,6 +93,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   NodeGraphMode _graphModeFrom(GraphProvider gp) {
+    if (gp.isPublishingWaitingWs) return NodeGraphMode.publishing;
     switch (gp.searchPhase) {
       case SearchPhase.searching:
         return NodeGraphMode.searching;
@@ -101,6 +104,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
+  /// 드래그 중인 노드에 대해: 엣지 conceptKeywords를 합친 문자열, 없으면 노드 제목
+  String? _dragSubtitleFor(GraphData graph, int nodeId) {
+    final edges = graph.getEdgesForNode(nodeId);
+    final keywords = <String>{};
+    for (final e in edges) {
+      keywords.addAll(e.conceptKeywords.where((s) => s.isNotEmpty));
+    }
+    if (keywords.isNotEmpty) return keywords.join(' · ');
+    return graph.getNodeById(nodeId)?.label ?? '';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -108,7 +122,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       body: Consumer<GraphProvider>(
         builder: (context, graphProv, _) {
           final isSearchMode = widget.viewMode == HomeViewMode.search;
-          final graphData = graphProv.graph ?? GraphData(nodes: [], edges: []);
+          final graphData =
+              graphProv.graphForDisplay ?? GraphData(nodes: [], edges: []);
           final showSearchField = isSearchMode && graphProv.isSearchFieldOpen;
           final keyboardVisible =
               MediaQuery.of(context).viewInsets.bottom > 20 || showSearchField;
@@ -131,39 +146,72 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   children: [
                     const SizedBox(height: 30),
                     Expanded(
-                      child: NodeGraphView(
-                        graph: graphData,
-                        mode: _graphModeFrom(graphProv),
-                        minEdgeSimilarity: 0.0,
-                        maxEdges: 5000,
-                        resultNodeIds:
-                            graphProv.searchPhase == SearchPhase.searchResult
-                                ? graphProv.resultNodeIds
-                                : null,
-                        searchResultExitT:
-                            _searchResultExitController.value > 0
-                                ? _searchResultExitAnimation.value
-                                : null,
-                        showLabels:
-                            graphProv.searchPhase != SearchPhase.searching,
-                        enableNodeDrag:
-                            graphProv.searchPhase != SearchPhase.searching,
-                        selectedNodeId: _selectedNodeId,
-                        onNodeSelected: (nodeId) {
-                          setState(() {
-                            _selectedNodeId = nodeId;
-                          });
+                      child: Builder(
+                        builder: (context) {
+                          // 노드 색상: 여기서 직접 지정 (원하는 색으로 변경)
+                          final isDark =
+                              Theme.of(context).brightness == Brightness.dark;
+                          final primary = Theme.of(context).colorScheme.primary;
+                          final base =
+                              isDark
+                                  ? const Color.fromARGB(255, 82, 82, 82)
+                                  : Colors.grey.shade400;
+                          final muted =
+                              isDark
+                                  ? Colors.grey.shade600
+                                  : Colors.grey.shade300;
+                          final nodeColorScheme = GraphNodeColorScheme(
+                            baseColor: base,
+                            mutedColor: muted,
+                            intensity1: base,
+                            intensity2: Color.lerp(primary, base, 0.45)!,
+                            intensity3: primary,
+                            primary: primary,
+                          );
+                          return NodeGraphView(
+                            graph: graphData,
+                            mode: _graphModeFrom(graphProv),
+                            minEdgeSimilarity: 0.0,
+                            maxEdges: 5000,
+                            nodeColorScheme: nodeColorScheme,
+                            resultNodeIds:
+                                graphProv.searchPhase ==
+                                        SearchPhase.searchResult
+                                    ? graphProv.resultNodeIds
+                                    : null,
+                            searchResultExitT:
+                                _searchResultExitController.value > 0
+                                    ? _searchResultExitAnimation.value
+                                    : null,
+                            showLabels:
+                                graphProv.searchPhase != SearchPhase.searching,
+                            enableNodeDrag:
+                                graphProv.searchPhase != SearchPhase.searching,
+                            selectedNodeId: _selectedNodeId,
+                            onNodeSelected: (nodeId) {
+                              setState(() {
+                                _selectedNodeId = nodeId;
+                              });
+                            },
+                            onIsAtMinScale: (value) {
+                              if (mounted && _isAtMinScale != value) {
+                                setState(() => _isAtMinScale = value);
+                              }
+                            },
+                            onNodeDragChange: (nodeId) {
+                              if (mounted && _draggingNodeId != nodeId) {
+                                setState(() => _draggingNodeId = nodeId);
+                              }
+                            },
+                            onNodeTap: _onNodeTap,
+                            onNavigateToPost: widget.onNavigateToPost,
+                          );
                         },
-                        onIsAtMinScale: (value) {
-                          if (mounted && _isAtMinScale != value) {
-                            setState(() => _isAtMinScale = value);
-                          }
-                        },
-                        onNodeTap: _onNodeTap,
-                        onNavigateToPost: widget.onNavigateToPost,
                       ),
                     ),
-                    SizedBox(height: MediaQuery.of(context).viewInsets.bottom),
+                    SizedBox(
+                      height: MediaQuery.of(context).viewInsets.bottom + 50,
+                    ),
                   ],
                 ),
               ),
@@ -202,6 +250,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           onChipClose:
                               showHeaderWithChip
                                   ? () => _onChipClose(graphProv)
+                                  : null,
+                          subtitleOverride:
+                              _draggingNodeId != null &&
+                                      graphData.nodes.isNotEmpty
+                                  ? _dragSubtitleFor(
+                                    graphData,
+                                    _draggingNodeId!,
+                                  )
                                   : null,
                         ),
                       ),

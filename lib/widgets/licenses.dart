@@ -1,5 +1,4 @@
 import 'package:doppy/main.dart' show AppConstants;
-import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/widgets/doppy_loading_logo.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -47,7 +46,7 @@ class LicenseScreen extends StatelessWidget {
                   width: 80,
                   height: 80,
                   decoration: BoxDecoration(
-                    color: AppColors.primary,
+                    color: Theme.of(context).colorScheme.primary,
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Center(

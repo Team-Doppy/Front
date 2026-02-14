@@ -33,10 +33,18 @@ class AccountDeletionSheet extends StatefulWidget {
     required String reasonKey,
     String? detail,
   }) async {
+    SnackbarUtil.showLoading(context, '계정 삭제중');
     final success = await processDeletion(reasonKey: reasonKey, detail: detail);
     if (!context.mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    if (success) {
+      SnackbarUtil.showInfo(context, '계정이 삭제되었습니다.');
+      await Future.delayed(const Duration(milliseconds: 1000));
+      if (!context.mounted) return;
+    }
     Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => LoginScreen(deletionResult: success)),
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
       (route) => false,
     );
   }

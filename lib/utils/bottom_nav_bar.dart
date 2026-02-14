@@ -1,3 +1,4 @@
+import 'package:doppy/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -45,7 +46,12 @@ class BottomNavBar extends StatelessWidget {
         child: Row(
           children: List.generate(3, (index) {
             final isSelected = index == currentIndex;
-            final iconSize = index == 0 ? 25.0 : 28.0;
+            final iconSize =
+                index == 0
+                    ? 24.0
+                    : index == 1
+                    ? 26.0
+                    : 25.0;
 
             return Expanded(
               child: GestureDetector(
@@ -60,7 +66,7 @@ class BottomNavBar extends StatelessWidget {
                       height: iconSize,
                       colorFilter: ColorFilter.mode(
                         isSelected
-                            ? Theme.of(context).colorScheme.primary
+                            ? AppColors.primaryLight
                             : Theme.of(context).colorScheme.onSurface,
                         BlendMode.srcIn,
                       ),

@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:doppy/app_flags.dart';
 import 'package:doppy/data/models/graph_search_models.dart';
 import 'package:doppy/data/services/base_api_service.dart';
 import 'package:doppy/graph/models/node.dart';
@@ -10,11 +11,11 @@ import 'package:flutter/foundation.dart';
 class GraphService {
   final Dio _dio = BaseApiService().dio;
 
-  /// GET /api/graph?mode=mock|real&count=1~300(mock만)
+  /// GET /api/graph?mode=mock|real&count=0~300(mock만, 0=빈 그래프)
   Future<GraphData> getGraph({String mode = 'real', int? count}) async {
     final query = <String, String>{'mode': mode};
     if (mode == 'mock' && count != null) {
-      query['count'] = count.clamp(1, 300).toString();
+      query['count'] = count.clamp(0, 300).toString();
     }
     final q = query.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&');
     final res = await _dio.get<Map<String, dynamic>>('/api/graph?$q');
@@ -37,22 +38,24 @@ class GraphService {
   }
 
   /// GET /api/graph/search
-  /// mock=true: 서버 mock 데이터에서 랜덤 반환(테스트용). mock=false: q 필수, 실제 시맨틱 검색.
+  /// limit: null이면 [kGraphSearchResultLimit] 사용. mock: null이면 [kGraphSearchMock] 사용.
   Future<SearchResult> search(
     String query, {
-    int limit = 30,
+    int? limit,
     bool useEmbedding = true,
-    bool mock = true,
+    bool? mock,
   }) async {
+    final limitValue = limit ?? kGraphSearchResultLimit;
+    final useMock = mock ?? kGraphSearchMock;
     final trimmed = query.trim();
-    if (!mock && trimmed.isEmpty) {
+    if (!useMock && trimmed.isEmpty) {
       return SearchResult(nodeIds: {}, query: query);
     }
 
     final params = <String, dynamic>{
-      'limit': limit.clamp(1, 100),
+      'limit': limitValue.clamp(1, 100),
       'useEmbedding': useEmbedding,
-      'mock': mock,
+      'mock': useMock,
     };
     if (trimmed.isNotEmpty) params['q'] = trimmed;
 
@@ -89,7 +92,7 @@ class GraphService {
     }
 
     if (kDebugMode) {
-      debugPrint('[GraphService] 검색 완료: mock=$mock, q="$trimmed", hits=${hits.length}, nodeIds=$nodeIds');
+      debugPrint('[GraphService] 검색 완료: mock=$useMock, limit=$limitValue, q="$trimmed", hits=${hits.length}, nodeIds=$nodeIds');
     }
     return SearchResult(nodeIds: nodeIds, query: query, hits: hits);
   }

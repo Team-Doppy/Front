@@ -1,5 +1,5 @@
 import 'package:doppy/main.dart' show AppConstants;
-import 'package:doppy/provider/theme_provider.dart';
+import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/theme/app_colors.dart';
 import 'package:doppy/utils/typograpy_util.dart';
@@ -40,19 +40,6 @@ class SettingScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              '설정 및 지원',
-              style: TypographyUtil.style(
-                context: context,
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
           // 1. 사용자 정보
           _buildSection(
             context,
@@ -142,7 +129,10 @@ class SettingScreen extends StatelessWidget {
                   context.watch<ThemeProvider>().themeMode == ThemeMode.dark
                       ? '다크'
                       : '라이트',
-                  style: TextStyle(fontSize: 17, color: AppColors.primary),
+                  style: TextStyle(
+                    fontSize: 17,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
                 onTap: () {
                   context.read<ThemeProvider>().toggleTheme();
@@ -292,23 +282,12 @@ class SettingScreen extends StatelessWidget {
                 ),
                 label: '로그아웃',
                 onTap: () async {
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder:
-                        (ctx) => AlertDialog(
-                          title: const Text('로그아웃'),
-                          content: const Text('로그아웃 하시겠습니까?'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: const Text('취소'),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, true),
-                              child: const Text('로그아웃'),
-                            ),
-                          ],
-                        ),
+                  final confirmed = await DialogUtils.showConfirmDialog(
+                    context,
+                    title: '로그아웃',
+                    message: '로그아웃 하시겠습니까?',
+                    confirmText: '로그아웃',
+                    cancelText: '취소',
                   );
                   if (confirmed == true && context.mounted) {
                     await AuthProvider().logout();
@@ -334,18 +313,18 @@ class SettingScreen extends StatelessWidget {
                 ),
                 label: '계정 삭제',
                 onTap: () async {
-                  final result = await showModalBottomSheet<Map<String, dynamic>>(
-                    context: context,
-                    isScrollControlled: true,
-                    backgroundColor: Colors.transparent,
-                    builder: (ctx) => const AccountDeletionSheet(),
-                  );
+                  final result =
+                      await showModalBottomSheet<Map<String, dynamic>>(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        builder: (ctx) => const AccountDeletionSheet(),
+                      );
                   if (result == null || result['reason'] == null) return;
                   final confirmed = await DialogUtils.showConfirmDialog(
                     context,
                     title: '회원 탈퇴',
-                    message:
-                        '한 번 탈퇴하면 복구할 수 없습니다. 그래도 탈퇴하시겠습니까?',
+                    message: '한 번 탈퇴하면 복구할 수 없습니다. 그래도 탈퇴하시겠습니까?',
                     confirmText: '탈퇴하기',
                     cancelText: '취소',
                     isDestructive: true,
@@ -359,7 +338,7 @@ class SettingScreen extends StatelessWidget {
                   }
                 },
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 40),
             ],
           ),
         ],

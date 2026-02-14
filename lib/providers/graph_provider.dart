@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' show Offset;
 import 'package:flutter/foundation.dart';
 import 'package:doppy/data/services/graph_service.dart';
 import 'package:doppy/graph/models/edge.dart';
@@ -6,11 +7,7 @@ import 'package:doppy/graph/models/node.dart';
 import 'package:doppy/graph/utils/node_count_utils.dart';
 
 /// 검색 단계
-enum SearchPhase {
-  idle,
-  searching,
-  searchResult,
-}
+enum SearchPhase { idle, searching, searchResult }
 
 /// 그래프 + 검색 상태. 스플래시에서 그래프 로드, 홈에서 그래프·검색 UI 사용
 class GraphProvider extends ChangeNotifier {
@@ -29,6 +26,9 @@ class GraphProvider extends ChangeNotifier {
   String? get error => _error;
   bool get hasGraph => _graph != null && _graph!.nodes.isNotEmpty;
 
+  /// 화면에 넘길 그래프. (검색/발행 시 1~2개 노드가 파도 애니만 함, 별도 노드 추가 없음)
+  GraphData? get graphForDisplay => _graph;
+
   // 검색 상태 (기존 SearchProvider 통합)
   SearchPhase _searchPhase = SearchPhase.idle;
   String? _searchQuery;
@@ -40,6 +40,20 @@ class GraphProvider extends ChangeNotifier {
   Set<int> get resultNodeIds => _resultNodeIds;
   bool get isSearchFieldOpen => _isSearchFieldOpen;
 
+  /// 발행 후 웹소켓 응답 대기 중 (홈 그래프에 파도 효과 표시)
+  bool _publishingWaitingWs = false;
+  bool get isPublishingWaitingWs => _publishingWaitingWs;
+
+  void enterPublishingMode() {
+    _publishingWaitingWs = true;
+    notifyListeners();
+  }
+
+  void exitPublishingMode() {
+    _publishingWaitingWs = false;
+    notifyListeners();
+  }
+
   /// GET /api/graph 호출 후 그래프 저장. 실패 시 _graph는 null, _error 설정
   Future<void> loadGraph({String mode = 'real', int? count}) async {
     if (_loading) return;
@@ -48,6 +62,23 @@ class GraphProvider extends ChangeNotifier {
     notifyListeners();
     try {
       _graph = await _graphService.getGraph(mode: mode, count: count);
+      // 노드 0개면 기본 "기록하기" 노드 하나 추가
+      if (_graph != null && _graph!.nodes.isEmpty) {
+        _graph = GraphData(
+          nodes: [
+            GraphNode(
+              id: 0,
+              label: '기록하기',
+              position: Offset.zero,
+              isPublic: true,
+              isAnchor: true,
+            ),
+          ],
+          edges: [],
+        );
+        if (kDebugMode)
+          debugPrint('[GraphProvider] 빈 그래프 → 기본 "기록하기" 노드 1개 추가');
+      }
     } catch (e) {
       _graph = null;
       _error = e.toString();
@@ -65,6 +96,7 @@ class GraphProvider extends ChangeNotifier {
     _searchQuery = null;
     _resultNodeIds = {};
     _isSearchFieldOpen = false;
+    _publishingWaitingWs = false;
     notifyListeners();
   }
 
@@ -95,13 +127,26 @@ class GraphProvider extends ChangeNotifier {
     _resultNodeIds = {};
     notifyListeners();
 
+    final nodeCount = _graph?.nodes.length ?? 0;
+    if (nodeCount <= 1) {
+      // API 호출만 건너뛰고, 검색 중(파도)은 그대로 보여준 뒤 2초 후 빈 결과로 전환
+      await Future.delayed(const Duration(seconds: 2));
+      if (_searchPhase != SearchPhase.searching) return;
+      _searchPhase = SearchPhase.searchResult;
+      _resultNodeIds = {};
+      notifyListeners();
+      return;
+    }
+
     try {
-      final result = await _graphService.search(query);
+      final result = await _graphService.search(query, useEmbedding: true);
       if (_searchPhase != SearchPhase.searching) return;
       _searchPhase = SearchPhase.searchResult;
       _resultNodeIds = result.nodeIds;
       if (kDebugMode) {
-        debugPrint('[GraphProvider] submitSearch 완료: resultNodeIds=$_resultNodeIds (${_resultNodeIds.length}개)');
+        debugPrint(
+          '[GraphProvider] submitSearch 완료: resultNodeIds=$_resultNodeIds (${_resultNodeIds.length}개)',
+        );
       }
     } catch (e) {
       if (_searchPhase == SearchPhase.searching) {
@@ -136,14 +181,11 @@ class GraphProvider extends ChangeNotifier {
     if (n <= NodeCountUtils.lodThreshold) return null;
 
     final ratio = (zoom / (minScale <= 0 ? 1.0 : minScale)).clamp(0.1, 10.0);
+    final capAtMin = NodeCountUtils.maxLodNodesAtMinZoom(n);
     final maxNodes =
         ratio <= 1.15
-            ? NodeCountUtils.lodThreshold
-            : _clamp(
-              (NodeCountUtils.lodThreshold * math.pow(ratio, 1.8)).round(),
-              NodeCountUtils.lodThreshold,
-              n,
-            );
+            ? capAtMin
+            : _clamp((capAtMin * math.pow(ratio, 1.8)).round(), capAtMin, n);
 
     return _computeLodNodeSet(
       graph: graph,
@@ -204,14 +246,14 @@ class GraphProvider extends ChangeNotifier {
       if (out.length >= maxNodes) break;
       out.add(node.id);
     }
-    if (selectedNodeId != null && out.length < maxNodes) out.add(selectedNodeId);
+    if (selectedNodeId != null && out.length < maxNodes)
+      out.add(selectedNodeId);
 
-    final byNewest = [...graph.nodes]
-      ..sort((a, b) {
-        final at = a.createdAt ?? DateTime(0);
-        final bt = b.createdAt ?? DateTime(0);
-        return bt.compareTo(at);
-      });
+    final byNewest = [...graph.nodes]..sort((a, b) {
+      final at = a.createdAt ?? DateTime(0);
+      final bt = b.createdAt ?? DateTime(0);
+      return bt.compareTo(at);
+    });
     for (final node in byNewest) {
       if (out.length >= maxNodes) break;
       if (!out.contains(node.id)) out.add(node.id);

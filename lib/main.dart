@@ -1,11 +1,11 @@
-import 'dart:convert';
-
+import 'package:doppy/app_flags.dart';
 import 'package:doppy/data/services/base_api_service.dart';
+import 'package:doppy/data/services/publish_flow_service.dart';
 import 'package:doppy/editor/postwrite/postwrite_screen.dart';
 import 'package:doppy/editor/service/draft_service.dart';
 import 'package:doppy/editor/service/post_export_service.dart';
 import 'package:doppy/onbording/onbording_screen.dart';
-import 'package:doppy/provider/theme_provider.dart';
+import 'package:doppy/providers/theme_provider.dart';
 import 'package:doppy/providers/auth_provider.dart';
 import 'package:doppy/providers/graph_provider.dart';
 import 'package:doppy/providers/user_provider.dart';
@@ -139,6 +139,8 @@ class MainTabShell extends StatefulWidget {
 class _MainTabShellState extends State<MainTabShell> {
   int _index = 0;
 
+  final PublishFlowService _publishFlowService = PublishFlowService();
+
   Future<void> _onPublish(
     BuildContext navContext, {
     required String title,
@@ -147,6 +149,7 @@ class _MainTabShellState extends State<MainTabShell> {
     required String exportedJson,
     bool isEditMode = false,
     String? existingPostId,
+    String? currentDraftId,
   }) async {
     final payload = PostExporter.buildPublishPayload(
       title: title,
@@ -154,7 +157,22 @@ class _MainTabShellState extends State<MainTabShell> {
       accessLevel: accessLevel,
       exportedJson: exportedJson,
     );
-    debugPrint('페이로드: ${jsonEncode(payload)}');
+    final content = payload['content'] as Map<String, dynamic>? ?? {};
+    final usedImageUrls = PostExporter.collectUsedMediaUrls(payload);
+    final author =
+        context.read<UserProvider>().currentUser?.username ?? 'unknown';
+
+    await _publishFlowService.execute(
+      navContext: navContext,
+      hostContext: context,
+      title: title,
+      thumbnailImageUrl: thumbnailImageUrl,
+      accessLevel: accessLevel,
+      content: content,
+      usedImageUrls: usedImageUrls,
+      author: author,
+      currentDraftId: currentDraftId,
+    );
   }
 
   Future<void> _pushPostwriteScreen() async {

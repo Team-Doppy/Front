@@ -14,7 +14,7 @@ class AppTheme {
 
       // ===== Color Scheme =====
       colorScheme: ColorScheme.light(
-        primary: AppColors.primary,
+        primary: AppColors.primaryLight,
         primaryContainer: AppColors.primaryLight,
         secondary: AppColors.accent,
         surface: AppColors.lightSurface,
@@ -28,20 +28,10 @@ class AppTheme {
         surfaceVariant: AppColors.lightSurfaceVariant,
       ),
 
-      // ===== AppBar Theme =====
-      appBarTheme: AppBarTheme(
-        backgroundColor: AppColors.lightBackground,
-        foregroundColor: AppColors.lightTextPrimary,
-        elevation: 0,
-        scrolledUnderElevation: 1,
-        surfaceTintColor: AppColors.primary,
-        systemOverlayStyle: SystemUiOverlayStyle.dark,
-      ),
-
       // ===== Text Selection Theme =====
       textSelectionTheme: TextSelectionThemeData(
-        cursorColor: AppColors.primary,
-        selectionHandleColor: AppColors.primary,
+        cursorColor: AppColors.primaryLight,
+        selectionHandleColor: AppColors.primaryLight,
       ),
 
       // ===== Scaffold Background =====
@@ -57,7 +47,7 @@ class AppTheme {
 
       // ===== Color Scheme =====
       colorScheme: ColorScheme.dark(
-        primary: AppColors.primary,
+        primary: AppColors.primaryDark,
         primaryContainer: AppColors.primaryDark,
         secondary: AppColors.accentDark,
         surface: AppColors.darkSurface,
@@ -71,26 +61,10 @@ class AppTheme {
         surfaceVariant: AppColors.darkSurfaceVariant,
       ),
 
-      // ===== AppBar Theme =====
-      appBarTheme: AppBarTheme(
-        backgroundColor: AppColors.darkBackground,
-        foregroundColor: AppColors.darkTextPrimary,
-        elevation: 0,
-        scrolledUnderElevation: 1,
-        surfaceTintColor: AppColors.primary,
-        systemOverlayStyle: SystemUiOverlayStyle.light,
-      ),
-
       // ===== Text Selection Theme =====
       textSelectionTheme: TextSelectionThemeData(
-        cursorColor: AppColors.primary,
-        selectionHandleColor: AppColors.primary,
-      ),
-
-      // ===== PopupMenu Theme =====
-      popupMenuTheme: PopupMenuThemeData(
-        color: AppColors.darkBackground,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        cursorColor: AppColors.primaryDark,
+        selectionHandleColor: AppColors.primaryDark,
       ),
 
       // ===== Scaffold Background =====

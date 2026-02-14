@@ -23,6 +23,7 @@ class _K {
   static const idTooShort = 'ID는 4자 이상이어야 합니다.';
   static const idAlreadyUsed = '이미 사용 중인 ID입니다.';
   static const pwTitle = '비밀번호를 설정해주세요';
+  static const pwTitleReset = '새 비밀번호를 설정해주세요';
   static const pwSubtitle = '8자 이상, 영문과 숫자를 포함해주세요.';
   static const pwHint = '비밀번호';
   static const pwConfirmTitle = '비밀번호를 다시 입력해주세요';
@@ -32,7 +33,6 @@ class _K {
   static const pwLetter = '영문 포함';
   static const pwNumber = '숫자 포함';
   static const next = '다음';
-  static const prev = '이전';
   static const completeBtn = '가입 완료';
   static const sendCode = '인증 코드 발송';
   static const verify = '인증하기';
@@ -302,33 +302,24 @@ class _JoinFlowState extends State<JoinFlow> {
         leading:
             _isLoginMode
                 ? GestureDetector(
-                  onTap: () => Navigator.pop(context),
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 24, top: 22),
-                    child: Text(
-                      _K.prev,
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurface.withOpacity(0.8),
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                  onTap: () {
+                    FocusScope.of(context).unfocus();
+                    Navigator.pop(context);
+                  },
+                  child: Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    color: theme.colorScheme.onSurface.withOpacity(0.8),
+                    size: 24,
                   ),
                 )
                 : (_isComplete
                     ? null
                     : GestureDetector(
                       onTap: _prevStep,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 24, top: 22),
-                        child: Text(
-                          _K.prev,
-                          style: TextStyle(
-                            color: theme.colorScheme.onSurface.withOpacity(0.8),
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                      child: Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        color: theme.colorScheme.onSurface.withOpacity(0.8),
+                        size: 24,
                       ),
                     )),
         actions:
@@ -353,26 +344,6 @@ class _JoinFlowState extends State<JoinFlow> {
                   ),
                 ]
                 : null,
-        bottom:
-            _isLoginMode || _isComplete
-                ? null
-                : PreferredSize(
-                  preferredSize: const Size.fromHeight(12),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: LinearProgressIndicator(
-                        value: (_step + 1) / _steps.length,
-                        minHeight: 4,
-                        backgroundColor: theme.colorScheme.surfaceVariant,
-                        valueColor: AlwaysStoppedAnimation(
-                          theme.colorScheme.onSurface.withOpacity(0.9),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
       ),
       body:
           _isLoginMode && !widget.emailVerificationOnly
@@ -400,6 +371,7 @@ class _JoinFlowState extends State<JoinFlow> {
                     initialEmail: _verifiedEmail ?? _emailCtrl.text,
                     enabledEdit: true,
                     mode: widget.emailVerificationOnly ? 'UPDATE' : 'REGISTER',
+                    isActive: _step == 0,
                     inputDeco: _inputDeco,
                     inputStyle: _inputStyle,
                     primaryBtn: _primaryBtn,
@@ -432,6 +404,7 @@ class _JoinFlowState extends State<JoinFlow> {
                   if (!widget.emailVerificationOnly) ...[
                     _IdStep(
                       ctrl: _idCtrl,
+                      isActive: _step == 1,
                       idChecked: _idChecked,
                       idAvailable: _idAvailable,
                       idLenChecked: _idLenChecked,
@@ -459,6 +432,7 @@ class _JoinFlowState extends State<JoinFlow> {
                     JoinPasswordStep(
                       ctrl: _pwCtrl,
                       valid: _pwValid,
+                      isActive: _step == 2,
                       inputDeco: _inputDeco,
                       inputStyle: _inputStyle,
                       primaryBtn: _primaryBtn,
@@ -549,12 +523,13 @@ class _JoinFlowState extends State<JoinFlow> {
         region: 'KR',
       );
       if (!mounted) return;
-      setState(() => _loading = false);
       if (ok) {
-        await Future.delayed(const Duration(milliseconds: 200));
         if (mounted) _goToSplash();
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted) setState(() => _loading = false);
       } else {
         setState(() => _signupErr = _K.signupFailed);
+        setState(() => _loading = false);
       }
     } catch (e) {
       if (mounted) {
@@ -568,13 +543,14 @@ class _JoinFlowState extends State<JoinFlow> {
 }
 
 // ─── 이메일 인증 단계 (Join/Reset 공용) ─────────────────────────
-/// [mode] 'REGISTER' | 'UPDATE' | 'PASSWORD_RESET'
-/// PASSWORD_RESET 시 sendCode는 findUsername+sendPasswordResetCode, verify 시 onVerified(email, code:, username:) 호출
+/// [mode] 'REGISTER' | 'UPDATE' | 'FIND'
+/// FIND: send-code(mode=FIND) → verify-code(mode=FIND) → username/find → onVerified(email, code:, username:)
 class JoinEmailStep extends StatefulWidget {
   final String title, subtitle, codeSubtitle;
   final String? initialEmail;
   final bool enabledEdit;
   final String mode;
+  final bool isActive;
   final InputDecoration Function(BuildContext, {String? hint}) inputDeco;
   final TextStyle Function(BuildContext) inputStyle;
   final Widget Function(
@@ -595,6 +571,7 @@ class JoinEmailStep extends StatefulWidget {
     this.initialEmail,
     this.enabledEdit = true,
     this.mode = 'REGISTER',
+    this.isActive = true,
     required this.inputDeco,
     required this.inputStyle,
     required this.primaryBtn,
@@ -608,6 +585,7 @@ class JoinEmailStep extends StatefulWidget {
 class _JoinEmailStepState extends State<JoinEmailStep> {
   final _emailCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
+  final _emailFocusNode = FocusNode();
   final _auth = AuthService();
   bool _sending = false, _verifying = false;
   bool _codeSent = false;
@@ -617,17 +595,32 @@ class _JoinEmailStepState extends State<JoinEmailStep> {
   String? _emailErr, _pinErr;
   int _failedAttempts = 0;
   static const _maxAttempts = 5;
-  String? _foundUsername;
 
   @override
   void initState() {
     super.initState();
     _emailCtrl.text = widget.initialEmail ?? '';
+    if (widget.isActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.isActive) _emailFocusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(JoinEmailStep oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.isActive) _emailFocusNode.requestFocus();
+      });
+    }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _emailFocusNode.dispose();
     _emailCtrl.dispose();
     _codeCtrl.dispose();
     super.dispose();
@@ -666,70 +659,30 @@ class _JoinEmailStepState extends State<JoinEmailStep> {
     if (_remaining > Duration.zero) return;
     setState(() => _sending = true);
     try {
-      if (widget.mode == 'PASSWORD_RESET') {
-        final findRes = await _auth.findUsernameByEmail(email);
-        if (!mounted) return;
-        if (!findRes.success) {
-          setState(() {
-            _emailErr = findRes.message ?? '해당 이메일로 가입된 계정이 없습니다.';
-            _sending = false;
-          });
-          return;
-        }
-        _foundUsername = findRes.username;
-        final res = await _auth.sendPasswordResetCode(
-          email,
-          username: _foundUsername,
-        );
-        if (!mounted) return;
-        if (res.success) {
-          setState(() {
-            _codeSent = true;
-            _failedAttempts = 0;
-            _codeCtrl.clear();
-            _sending = false;
-          });
-          final dur =
-              res.expiresIn != null
-                  ? Duration(seconds: res.expiresIn!)
-                  : const Duration(minutes: 5);
-          _startCooldown(dur);
-        } else {
-          final raw = res.message ?? '발송 실패';
-          final msg =
-              raw.contains('이메일 인증') && raw.contains('완료')
-                  ? '이메일 인증을 마친 계정만 재설정할 수 있습니다.'
-                  : raw;
-          setState(() {
-            _emailErr = msg;
-            _sending = false;
-          });
-        }
+      // REGISTER | UPDATE | FIND 모두 send-code (mode 그대로)
+      final res = await _auth.sendEmailVerificationCode(
+        email: email,
+        region: 'KR',
+        mode: widget.mode,
+      );
+      if (!mounted) return;
+      if (res.success) {
+        setState(() {
+          _codeSent = true;
+          _failedAttempts = 0;
+          _codeCtrl.clear();
+          _sending = false;
+        });
+        final dur =
+            res.expiresIn != null
+                ? Duration(seconds: res.expiresIn!)
+                : const Duration(minutes: 5);
+        _startCooldown(dur);
       } else {
-        final res = await _auth.sendEmailVerificationCode(
-          email: email,
-          region: 'KR',
-          mode: widget.mode,
-        );
-        if (!mounted) return;
-        if (res.success) {
-          setState(() {
-            _codeSent = true;
-            _failedAttempts = 0;
-            _codeCtrl.clear();
-            _sending = false;
-          });
-          final dur =
-              res.expiresIn != null
-                  ? Duration(seconds: res.expiresIn!)
-                  : const Duration(minutes: 5);
-          _startCooldown(dur);
-        } else {
-          setState(() {
-            _emailErr = res.message ?? '발송 실패';
-            _sending = false;
-          });
-        }
+        setState(() {
+          _emailErr = res.message ?? '발송 실패';
+          _sending = false;
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -759,31 +712,41 @@ class _JoinEmailStepState extends State<JoinEmailStep> {
     }
     setState(() => _verifying = true);
     try {
-      if (widget.mode == 'PASSWORD_RESET') {
-        await widget.onVerified(email, code: code, username: _foundUsername);
-      } else {
-        final res = await _auth.verifyEmailCode(
-          email: email,
-          code: code,
-          mode: widget.mode,
-        );
-        if (!mounted) return;
-        if (res.success && (res.verified ?? true)) {
-          await widget.onVerified(email);
-        } else {
-          final errCode = res.error?.error ?? '';
-          if (errCode == 'INVALID_VERIFICATION_CODE') {
-            setState(() {
-              _failedAttempts++;
-              final r = (_maxAttempts - _failedAttempts).clamp(0, _maxAttempts);
-              _pinErr =
-                  r > 0
-                      ? _K.codeMismatch.replaceAll('{count}', '$r')
-                      : _K.tooManyAttempts;
-            });
+      final res = await _auth.verifyEmailCode(
+        email: email,
+        code: code,
+        mode: widget.mode,
+      );
+      if (!mounted) return;
+      if (res.success && (res.verified ?? true)) {
+        if (widget.mode == 'FIND') {
+          final findRes = await _auth.findUsernameByEmail(email);
+          if (!mounted) return;
+          if (findRes.success) {
+            await widget.onVerified(
+              email,
+              code: code,
+              username: findRes.username,
+            );
           } else {
-            setState(() => _pinErr = res.message ?? '인증 실패');
+            setState(() => _pinErr = findRes.message ?? '등록된 계정을 찾을 수 없습니다.');
           }
+        } else {
+          await widget.onVerified(email);
+        }
+      } else {
+        final errCode = res.error?.error ?? '';
+        if (errCode == 'INVALID_VERIFICATION_CODE') {
+          setState(() {
+            _failedAttempts++;
+            final r = (_maxAttempts - _failedAttempts).clamp(0, _maxAttempts);
+            _pinErr =
+                r > 0
+                    ? _K.codeMismatch.replaceAll('{count}', '$r')
+                    : _K.tooManyAttempts;
+          });
+        } else {
+          setState(() => _pinErr = res.message ?? '인증 실패');
         }
       }
     } catch (e) {
@@ -826,6 +789,7 @@ class _JoinEmailStepState extends State<JoinEmailStep> {
                 const SizedBox(height: 24),
                 TextField(
                   controller: _emailCtrl,
+                  focusNode: _emailFocusNode,
                   enabled: w.enabledEdit && !_sending && !_codeSent,
                   keyboardType: TextInputType.emailAddress,
                   cursorColor: theme.colorScheme.onSurface,
@@ -925,8 +889,9 @@ class _JoinEmailStepState extends State<JoinEmailStep> {
 }
 
 // ─── ID 단계 ─────────────────────────────────────────────────
-class _IdStep extends StatelessWidget {
+class _IdStep extends StatefulWidget {
   final TextEditingController ctrl;
+  final bool isActive;
   final bool idChecked, idAvailable, idLenChecked, loading;
   final String? idCheckErr;
   final InputDecoration Function(BuildContext, {String? hint}) inputDeco;
@@ -945,6 +910,7 @@ class _IdStep extends StatelessWidget {
 
   const _IdStep({
     required this.ctrl,
+    this.isActive = false,
     required this.idChecked,
     required this.idAvailable,
     required this.idLenChecked,
@@ -960,15 +926,49 @@ class _IdStep extends StatelessWidget {
   });
 
   @override
+  State<_IdStep> createState() => _IdStepState();
+}
+
+class _IdStepState extends State<_IdStep> {
+  final _focusNode = FocusNode();
+
+  @override
+  void didUpdateWidget(_IdStep oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.isActive) _focusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.isActive) _focusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final canNext = ctrl.text.length >= 4;
+    final w = widget;
+    final canNext = w.ctrl.text.length >= 4;
     String? err;
-    if (idCheckErr != null)
-      err = idCheckErr;
-    else if (idLenChecked && ctrl.text.length < 4)
+    if (w.idCheckErr != null)
+      err = w.idCheckErr;
+    else if (w.idLenChecked && w.ctrl.text.length < 4)
       err = _K.idTooShort;
-    else if (idChecked && !idAvailable)
+    else if (w.idChecked && !w.idAvailable)
       err = _K.idAlreadyUsed;
     return Column(
       children: [
@@ -994,59 +994,62 @@ class _IdStep extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               TextField(
-                controller: ctrl,
+                controller: w.ctrl,
+                focusNode: _focusNode,
                 cursorColor: theme.colorScheme.onSurface,
-                style: inputStyle(context),
-                decoration: inputDeco(context, hint: _K.idHint).copyWith(
-                  errorText: err,
-                  prefixIcon: const Icon(
-                    Icons.alternate_email_rounded,
-                    size: 18,
-                  ),
-                  suffixIcon:
-                      ctrl.text.isNotEmpty
-                          ? IconButton(
-                            icon: Icon(
-                              Icons.clear,
-                              size: 18,
-                              color: theme.colorScheme.onSurfaceVariant
-                                  .withOpacity(0.6),
-                            ),
-                            onPressed: onClear,
-                          )
-                          : null,
-                ),
-                onChanged: (_) => onIdChanged(),
+                style: w.inputStyle(context),
+                decoration: w
+                    .inputDeco(context, hint: _K.idHint)
+                    .copyWith(
+                      errorText: err,
+                      prefixIcon: const Icon(
+                        Icons.alternate_email_rounded,
+                        size: 18,
+                      ),
+                      suffixIcon:
+                          w.ctrl.text.isNotEmpty
+                              ? IconButton(
+                                icon: Icon(
+                                  Icons.clear,
+                                  size: 18,
+                                  color: theme.colorScheme.onSurfaceVariant
+                                      .withOpacity(0.6),
+                                ),
+                                onPressed: w.onClear,
+                              )
+                              : null,
+                    ),
+                onChanged: (_) => w.onIdChanged(),
                 onSubmitted: (_) {
                   if (canNext) {
-                    if (!idChecked)
-                      onCheck();
-                    else if (idAvailable)
-                      onNext();
+                    if (!w.idChecked)
+                      w.onCheck();
+                    else if (w.idAvailable)
+                      w.onNext();
                   }
                 },
               ),
             ],
           ),
         ),
-        if (canNext || loading)
+        if (canNext || w.loading)
           Container(
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
             child: SafeArea(
               top: false,
-              child: primaryBtn(
+              child: w.primaryBtn(
                 context,
                 label: _K.next,
                 onPressed:
-                    loading
+                    w.loading
                         ? null
                         : () {
-                          if (!idChecked)
-                            onCheck();
-                          else if (idAvailable)
-                            onNext();
+                          if (!w.idChecked)
+                            w.onCheck();
+                          else if (w.idAvailable)
+                            w.onNext();
                         },
-                loading: loading,
+                loading: w.loading,
               ),
             ),
           ),
@@ -1056,9 +1059,11 @@ class _IdStep extends StatelessWidget {
 }
 
 // ─── 비밀번호 단계 (Join/Reset 공용) ──────────────────────────
-class JoinPasswordStep extends StatelessWidget {
+class JoinPasswordStep extends StatefulWidget {
   final TextEditingController ctrl;
   final bool valid;
+  final bool isActive;
+  final bool isResetMode;
   final bool obscure;
   final VoidCallback onToggleObscure;
   final void Function(String) onValidate;
@@ -1076,6 +1081,8 @@ class JoinPasswordStep extends StatelessWidget {
   const JoinPasswordStep({
     required this.ctrl,
     required this.valid,
+    this.isActive = false,
+    this.isResetMode = false,
     required this.obscure,
     required this.onToggleObscure,
     required this.onValidate,
@@ -1086,8 +1093,42 @@ class JoinPasswordStep extends StatelessWidget {
   });
 
   @override
+  State<JoinPasswordStep> createState() => _JoinPasswordStepState();
+}
+
+class _JoinPasswordStepState extends State<JoinPasswordStep> {
+  final _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.isActive) _focusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(JoinPasswordStep oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.isActive) _focusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final w = widget;
     return Column(
       children: [
         Expanded(
@@ -1096,7 +1137,7 @@ class JoinPasswordStep extends StatelessWidget {
             children: [
               const SizedBox(height: 36),
               Text(
-                _K.pwTitle,
+                w.isResetMode ? _K.pwTitleReset : _K.pwTitle,
                 style: theme.textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   fontSize: 24,
@@ -1112,46 +1153,49 @@ class JoinPasswordStep extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               TextField(
-                controller: ctrl,
-                obscureText: obscure,
+                controller: w.ctrl,
+                focusNode: _focusNode,
+                obscureText: w.obscure,
                 cursorColor: theme.colorScheme.onSurface,
-                style: inputStyle(context),
-                decoration: inputDeco(context, hint: _K.pwHint).copyWith(
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      obscure ? Icons.visibility_off : Icons.visibility,
-                      color: theme.colorScheme.onSurface.withOpacity(0.6),
-                      size: 18,
+                style: w.inputStyle(context),
+                decoration: w
+                    .inputDeco(context, hint: _K.pwHint)
+                    .copyWith(
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          w.obscure ? Icons.visibility_off : Icons.visibility,
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                          size: 18,
+                        ),
+                        onPressed: w.onToggleObscure,
+                      ),
                     ),
-                    onPressed: onToggleObscure,
-                  ),
-                ),
-                onChanged: onValidate,
-                onSubmitted: (_) => valid ? onNext() : null,
+                onChanged: w.onValidate,
+                onSubmitted: (_) => w.valid ? w.onNext() : null,
               ),
-              if (ctrl.text.isNotEmpty) ...[
+              if (w.ctrl.text.isNotEmpty) ...[
                 const SizedBox(height: 16),
-                _reqRow(context, _K.pwMinLen, ctrl.text.length >= 8),
+                _reqRow(context, _K.pwMinLen, w.ctrl.text.length >= 8),
                 _reqRow(
                   context,
                   _K.pwLetter,
-                  RegExp(r'[a-zA-Z]').hasMatch(ctrl.text),
+                  RegExp(r'[a-zA-Z]').hasMatch(w.ctrl.text),
                 ),
                 _reqRow(
                   context,
                   _K.pwNumber,
-                  RegExp(r'[0-9]').hasMatch(ctrl.text),
+                  RegExp(r'[0-9]').hasMatch(w.ctrl.text),
                 ),
               ],
             ],
           ),
         ),
-        if (valid)
+        if (w.valid)
           Container(
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
             child: SafeArea(
               top: false,
-              child: primaryBtn(context, label: _K.next, onPressed: onNext),
+              child: w.primaryBtn(context, label: _K.next, onPressed: w.onNext),
             ),
           ),
       ],
@@ -1291,7 +1335,7 @@ class JoinConfirmPwStep extends StatelessWidget {
 }
 
 // ─── 로그인 단계 (기본 진입) ───────────────────────────────────
-class _LoginStep extends StatelessWidget {
+class _LoginStep extends StatefulWidget {
   final TextEditingController idCtrl;
   final TextEditingController pwCtrl;
   final bool loading;
@@ -1327,9 +1371,33 @@ class _LoginStep extends StatelessWidget {
   });
 
   @override
+  State<_LoginStep> createState() => _LoginStepState();
+}
+
+class _LoginStepState extends State<_LoginStep> {
+  final _idFocusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (mounted) _idFocusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _idFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final canLogin = idCtrl.text.trim().isNotEmpty && pwCtrl.text.isNotEmpty;
+    final w = widget;
+    final canLogin =
+        w.idCtrl.text.trim().isNotEmpty && w.pwCtrl.text.isNotEmpty;
 
     return Column(
       children: [
@@ -1367,51 +1435,57 @@ class _LoginStep extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               TextField(
-                controller: idCtrl,
+                controller: w.idCtrl,
+                focusNode: _idFocusNode,
                 cursorColor: theme.colorScheme.onSurface,
-                style: inputStyle(context),
-                decoration: inputDeco(context, hint: _K.idHint).copyWith(
-                  prefixIcon: Icon(
-                    Icons.alternate_email_rounded,
-                    size: 20,
-                    color: theme.colorScheme.onSurfaceVariant.withOpacity(0.5),
-                  ),
-                ),
-                onChanged: (_) => onFieldsChanged(),
+                style: w.inputStyle(context),
+                decoration: w
+                    .inputDeco(context, hint: _K.idHint)
+                    .copyWith(
+                      prefixIcon: Icon(
+                        Icons.alternate_email_rounded,
+                        size: 20,
+                        color: theme.colorScheme.onSurfaceVariant.withOpacity(
+                          0.5,
+                        ),
+                      ),
+                    ),
+                onChanged: (_) => w.onFieldsChanged(),
                 onSubmitted: (_) {
-                  if (canLogin && !loading) onLogin();
+                  if (canLogin && !w.loading) w.onLogin();
                 },
               ),
               const SizedBox(height: 12),
               TextField(
-                controller: pwCtrl,
-                obscureText: obscurePw,
+                controller: w.pwCtrl,
+                obscureText: w.obscurePw,
                 cursorColor: theme.colorScheme.onSurface,
-                style: inputStyle(context),
-                decoration: inputDeco(context, hint: _K.pwHint).copyWith(
-                  errorText: loginErr,
-                  prefixIcon: Icon(
-                    Icons.lock_outline_rounded,
-                    size: 20,
-                    color:
-                        loginErr != null
-                            ? theme.colorScheme.error
-                            : theme.colorScheme.onSurfaceVariant.withOpacity(
-                              0.5,
-                            ),
-                  ),
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      obscurePw ? Icons.visibility_off : Icons.visibility,
-                      color: theme.colorScheme.onSurface.withOpacity(0.6),
-                      size: 18,
+                style: w.inputStyle(context),
+                decoration: w
+                    .inputDeco(context, hint: _K.pwHint)
+                    .copyWith(
+                      errorText: w.loginErr,
+                      prefixIcon: Icon(
+                        Icons.lock_outline_rounded,
+                        size: 20,
+                        color:
+                            w.loginErr != null
+                                ? theme.colorScheme.error
+                                : theme.colorScheme.onSurfaceVariant
+                                    .withOpacity(0.5),
+                      ),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          w.obscurePw ? Icons.visibility_off : Icons.visibility,
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                          size: 18,
+                        ),
+                        onPressed: w.onToggleObscure,
+                      ),
                     ),
-                    onPressed: onToggleObscure,
-                  ),
-                ),
-                onChanged: (_) => onFieldsChanged(),
+                onChanged: (_) => w.onFieldsChanged(),
                 onSubmitted: (_) {
-                  if (canLogin && !loading) onLogin();
+                  if (canLogin && !w.loading) w.onLogin();
                 },
               ),
               const SizedBox(height: 100),
@@ -1424,12 +1498,12 @@ class _LoginStep extends StatelessWidget {
             top: false,
             child: Column(
               children: [
-                if (canLogin || loading)
-                  primaryBtn(
+                if (canLogin || w.loading)
+                  w.primaryBtn(
                     context,
                     label: _K.loginBtn,
-                    onPressed: canLogin ? onLogin : null,
-                    loading: loading,
+                    onPressed: canLogin ? w.onLogin : null,
+                    loading: w.loading,
                   ),
               ],
             ),

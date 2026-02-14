@@ -1,82 +1,20 @@
 import 'package:doppy/graph/graph.dart';
 import 'package:doppy/main.dart';
 import 'package:doppy/onbording/join_flow.dart';
+import 'package:doppy/onbording/onboarding_graph_view.dart'
+    show createOnboardingGraphData, getOnboardingWNodeIds;
 import 'package:doppy/screens/%20setting_screen.dart';
-import 'package:doppy/utils/snackbar_util.dart';
 import 'package:doppy/utils/typograpy_util.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
 class LoginScreen extends StatefulWidget {
-  /// 회원 탈퇴 후 진입 시 결과에 따라 스낵바 표시
-  final bool? deletionResult;
-
-  const LoginScreen({super.key, this.deletionResult});
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
-
-/// 온보딩용 그래프 (30노드). 레이아웃은 NodeGraphView에서 ForceDirected 적용.
-/// - clusterId / anchorId / orderInCluster / intensity / isAnchor 로 메인 앱과 동일 스타일
-GraphData createOnboardingGraph() {
-  const zero = Offset.zero;
-  return GraphData(
-    nodes: [
-      // 상단 허브 0 (앵커) + 이웃 1~7
-      GraphNode(id: 0, label: '0', position: zero, isPublic: true, isAnchor: true, clusterId: 0, intensity: 3),
-      GraphNode(id: 1, label: '1', position: zero, isPublic: false, clusterId: 0, anchorId: 0, orderInCluster: 0, intensity: 2),
-      GraphNode(id: 2, label: '2', position: zero, isPublic: true, clusterId: 0, anchorId: 0, orderInCluster: 1, intensity: 3),
-      GraphNode(id: 3, label: '3', position: zero, isPublic: false, clusterId: 0, anchorId: 0, orderInCluster: 2, intensity: 2),
-      GraphNode(id: 4, label: '4', position: zero, isPublic: true, clusterId: 0, anchorId: 0, orderInCluster: 3, intensity: 2),
-      GraphNode(id: 5, label: '5', position: zero, isPublic: false, clusterId: 0, anchorId: 0, orderInCluster: 4, intensity: 3),
-      GraphNode(id: 6, label: '6', position: zero, isPublic: true, clusterId: 0, anchorId: 0, orderInCluster: 5, intensity: 2),
-      GraphNode(id: 7, label: '7', position: zero, isPublic: false, clusterId: 0, anchorId: 0, orderInCluster: 6, intensity: 2),
-      // 중앙 허브 8 (앵커) + 이웃 9~14
-      GraphNode(id: 8, label: '8', position: zero, isPublic: true, isAnchor: true, clusterId: 1, intensity: 3),
-      GraphNode(id: 9, label: '9', position: zero, isPublic: false, clusterId: 1, anchorId: 8, orderInCluster: 0, intensity: 2),
-      GraphNode(id: 10, label: '10', position: zero, isPublic: true, clusterId: 1, anchorId: 8, orderInCluster: 1, intensity: 3),
-      GraphNode(id: 11, label: '11', position: zero, isPublic: false, clusterId: 1, anchorId: 8, orderInCluster: 2, intensity: 2),
-      GraphNode(id: 12, label: '12', position: zero, isPublic: true, clusterId: 1, anchorId: 8, orderInCluster: 3, intensity: 2),
-      GraphNode(id: 13, label: '13', position: zero, isPublic: false, clusterId: 1, anchorId: 8, orderInCluster: 4, intensity: 2),
-      GraphNode(id: 14, label: '14', position: zero, isPublic: true, clusterId: 1, anchorId: 8, orderInCluster: 5, intensity: 2),
-      // 하단 허브 15 (앵커) + 이웃 16~21
-      GraphNode(id: 15, label: '15', position: zero, isPublic: true, isAnchor: true, clusterId: 2, intensity: 3),
-      GraphNode(id: 16, label: '16', position: zero, isPublic: false, clusterId: 2, anchorId: 15, orderInCluster: 0, intensity: 2),
-      GraphNode(id: 17, label: '17', position: zero, isPublic: true, clusterId: 2, anchorId: 15, orderInCluster: 1, intensity: 3),
-      GraphNode(id: 18, label: '18', position: zero, isPublic: false, clusterId: 2, anchorId: 15, orderInCluster: 2, intensity: 2),
-      GraphNode(id: 19, label: '19', position: zero, isPublic: true, clusterId: 2, anchorId: 15, orderInCluster: 3, intensity: 2),
-      GraphNode(id: 20, label: '20', position: zero, isPublic: false, clusterId: 2, anchorId: 15, orderInCluster: 4, intensity: 2),
-      GraphNode(id: 21, label: '21', position: zero, isPublic: true, clusterId: 2, anchorId: 15, orderInCluster: 5, intensity: 2),
-      // 독립 노드 22~29 (intensity 1 = 회색)
-      GraphNode(id: 22, label: '22', position: zero, isPublic: false, intensity: 1),
-      GraphNode(id: 23, label: '23', position: zero, isPublic: true, intensity: 1),
-      GraphNode(id: 24, label: '24', position: zero, isPublic: false, intensity: 1),
-      GraphNode(id: 25, label: '25', position: zero, isPublic: true, intensity: 1),
-      GraphNode(id: 26, label: '26', position: zero, isPublic: false, intensity: 1),
-      GraphNode(id: 27, label: '27', position: zero, isPublic: true, intensity: 1),
-      GraphNode(id: 28, label: '28', position: zero, isPublic: false, intensity: 1),
-      GraphNode(id: 29, label: '29', position: zero, isPublic: true, intensity: 1),
-    ],
-    edges: [
-      // 상단 허브: 0 → 3개만 (불규칙하게)
-      GraphEdge(fromNodeId: 0, toNodeId: 1, similarity: 0.88),
-      GraphEdge(fromNodeId: 0, toNodeId: 3, similarity: 0.85),
-      GraphEdge(fromNodeId: 0, toNodeId: 6, similarity: 0.82),
-      // 중앙 허브: 8 → 3개만
-      GraphEdge(fromNodeId: 8, toNodeId: 9, similarity: 0.85),
-      GraphEdge(fromNodeId: 8, toNodeId: 12, similarity: 0.82),
-      GraphEdge(fromNodeId: 8, toNodeId: 14, similarity: 0.8),
-      // 하단 허브: 15 → 3개만
-      GraphEdge(fromNodeId: 15, toNodeId: 17, similarity: 0.85),
-      GraphEdge(fromNodeId: 15, toNodeId: 19, similarity: 0.82),
-      GraphEdge(fromNodeId: 15, toNodeId: 21, similarity: 0.8),
-    ],
-  );
-}
-
-final _onboardingGraph = createOnboardingGraph();
 
 class _LoginScreenState extends State<LoginScreen>
     with TickerProviderStateMixin {
@@ -96,40 +34,31 @@ class _LoginScreenState extends State<LoginScreen>
   Timer? _resultExitTimer;
   Timer? _deleteStartTimer;
   int _searchResultCycle = 0;
+  late GraphData _onboardingGraph; // build마다 새로 만들지 말고, 스타일 바뀔 때만 교체
   late AnimationController _cursorController;
   late AnimationController _searchResultExitController;
   late Animation<double> _searchResultExitAnimation;
   NodeGraphMode _graphMode = NodeGraphMode.onboarding;
   Set<int> _searchResultNodeIds = {};
-  bool _exitAnimRebuildScheduled = false;
-
-  void _onSearchResultExitTick() {
-    if (!mounted || _exitAnimRebuildScheduled) return;
-    _exitAnimRebuildScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _exitAnimRebuildScheduled = false;
-      if (mounted) setState(() {});
-    });
-  }
 
   @override
   void initState() {
     super.initState();
+    _onboardingGraph = createOnboardingGraphData(math.Random());
     _cursorController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
     )..repeat(reverse: true);
     _searchResultExitController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 680),
+      duration: const Duration(milliseconds: 520),
     );
     _searchResultExitAnimation = CurvedAnimation(
       parent: _searchResultExitController,
-      curve: Curves.easeInOutCubic,
-    )..addListener(_onSearchResultExitTick);
+      curve: Curves.easeOutCubic,
+    );
     _searchResultExitController.addStatusListener((status) {
       if (status == AnimationStatus.completed && mounted) {
-        // setState during build 방지
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             setState(() {
@@ -142,25 +71,6 @@ class _LoginScreenState extends State<LoginScreen>
       }
     });
     _startTypingAnimation();
-    final result = widget.deletionResult;
-    if (result != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        if (result) {
-          SnackbarUtil.showInfo(
-            context,
-            '탈퇴 처리되었습니다. 이용해 주셔서 감사합니다.',
-            duration: const Duration(seconds: 3),
-          );
-        } else {
-          SnackbarUtil.showError(
-            context,
-            '탈퇴에 실패했어요. 다시 시도해 주세요.',
-            duration: const Duration(seconds: 3),
-          );
-        }
-      });
-    }
   }
 
   @override
@@ -185,9 +95,8 @@ class _LoginScreenState extends State<LoginScreen>
           if (_charIndex < currentWord.length) {
             _displayText = currentWord.substring(0, _charIndex + 1);
             _charIndex++;
-          } else {
-            // 한 번만 스케줄: 치고 지우기까지 시간을 좀 둠
-            if (!_deleteScheduled) {
+            // 글씨를 다 썼을 때만 한 번 검색완료 애니메이션 스케줄 (마지막 글자 입력 직후)
+            if (_charIndex == currentWord.length && !_deleteScheduled) {
               _deleteScheduled = true;
               _scheduleSearchResultBetweenTypingAndDeleting();
             }
@@ -215,7 +124,7 @@ class _LoginScreenState extends State<LoginScreen>
 
     const totalPauseMs = 3500; // 타이핑 끝나고 삭제 시작까지 여유
     const enterDelayMs = 350; // 타이핑 끝난 직후 약간 쉬었다가 결과 진입
-    const exitDurationMs = 680; // _searchResultExitController와 동일
+    const exitDurationMs = 520; // _searchResultExitController와 동일
     const exitBufferMs = 80; // 프레임 여유
     final exitStartMs = math.max(
       0,
@@ -228,15 +137,24 @@ class _LoginScreenState extends State<LoginScreen>
       if (_isDeleting) return;
       if (_graphMode != NodeGraphMode.onboarding) return;
 
-      _searchResultCycle++;
-      final phase = (_searchResultCycle * 0.173) % 1.0; // 매번 다르게(결정적)
+      final nextCycle = _searchResultCycle + 1;
+      // 짝수: 북두칠성, 홀수: W 형태
+      final wIds = getOnboardingWNodeIds(_onboardingGraph);
+      final constellationIds =
+          (nextCycle.isOdd && wIds.isNotEmpty)
+              ? wIds
+              : const <int>{0, 1, 2, 3, 4, 5, 6};
+      final phase = (nextCycle * 0.173) % 1.0;
       final ids = _pickDistributedSearchResultNodeIds(
-        desiredHubs: 3,
-        neighborsPerHub: 4,
-        minTotal: 12,
+        graph: _onboardingGraph,
+        constellationIds: constellationIds,
+        desiredHubs: constellationIds.length >= 7 ? 3 : 2,
+        neighborsPerHub: constellationIds.length >= 7 ? 2 : 1,
+        minTotal: constellationIds.length.clamp(4, 7),
         phase: phase,
       );
       setState(() {
+        _searchResultCycle = nextCycle;
         _searchResultNodeIds = ids;
         _graphMode = NodeGraphMode.searchResult;
       });
@@ -272,13 +190,26 @@ class _LoginScreenState extends State<LoginScreen>
   /// - 좌하/우하에 1개씩 추가로 허브를 고른 뒤,
   /// - 각 허브의 이웃 노드를 몇 개씩 포함해 결과를 구성한다.
   Set<int> _pickDistributedSearchResultNodeIds({
+    required GraphData graph,
+    Set<int>? constellationIds,
     required int desiredHubs,
     required int neighborsPerHub,
     required int minTotal,
     double phase = 0.0,
   }) {
-    final nodes = _onboardingGraph.nodes;
-    final edges = _onboardingGraph.edges;
+    var nodes = graph.nodes;
+    var edges = graph.edges;
+    if (constellationIds != null) {
+      nodes = nodes.where((n) => constellationIds.contains(n.id)).toList();
+      edges =
+          edges
+              .where(
+                (e) =>
+                    constellationIds.contains(e.fromNodeId) &&
+                    constellationIds.contains(e.toNodeId),
+              )
+              .toList();
+    }
     if (nodes.isEmpty) return {};
 
     // 중심점(각도 계산용)
@@ -477,37 +408,36 @@ class _LoginScreenState extends State<LoginScreen>
                   ),
                 ),
               ),
-              // NodeGraphView (하드코딩 데이터 모드)
-              // exit 애니메이션 중 매 프레임 리빌드로 색상/투명도 전환 부드럽게
+              // NodeGraphView — 메인 canvas/페인터와 똑같이 (canvas.dart)
               Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: AnimatedBuilder(
-                    animation: _searchResultExitController,
-                    builder:
-                        (context, _) => NodeGraphView(
-                          graph: _onboardingGraph,
-                          mode: _graphMode,
-                          resultNodeIds:
-                              _searchResultNodeIds.isEmpty
-                                  ? null
-                                  : _searchResultNodeIds,
-                          onboardingSearchResult: true,
-                          searchResultExitT:
-                              _graphMode == NodeGraphMode.searchResult &&
-                                      _searchResultExitController.value > 0
-                                  ? _searchResultExitAnimation.value
-                                  : null,
-                          enableNodeDrag: true,
-                          showLabels: false,
-                          onNodeTap: null,
-                          onNodeSelected: null,
-                          edgeRenderMode: EdgeRenderMode.all,
-                          useProvidedPositions: false,
-                          layoutIrregularity: 0.22,
-                          maxEdges: 50,
-                          minEdgeSimilarity: 0.0,
-                        ),
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8.0),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: AnimatedBuilder(
+                      animation: _searchResultExitAnimation,
+                      builder:
+                          (context, _) => NodeGraphView(
+                            graph: _onboardingGraph,
+                            mode:
+                                _searchResultNodeIds.isEmpty
+                                    ? NodeGraphMode.onboarding
+                                    : NodeGraphMode.searchResult,
+                            resultNodeIds:
+                                _searchResultNodeIds.isEmpty
+                                    ? null
+                                    : _searchResultNodeIds,
+                            onboardingSearchResult: true,
+                            searchResultExitT:
+                                _searchResultNodeIds.isEmpty
+                                    ? 1.0
+                                    : _searchResultExitAnimation.value,
+                            useProvidedPositions: true,
+                            layoutIrregularity: null,
+                            nodeRadius: 18,
+                            outerPadding: 12,
+                          ),
+                    ),
                   ),
                 ),
               ),

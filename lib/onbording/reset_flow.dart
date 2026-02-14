@@ -7,9 +7,9 @@ class _RK {
   static const emailTitle = '이메일 인증';
   static const emailSubtitle = '이메일을 입력하고 인증 코드를 받아주세요.';
   static const emailCodeSubtitle = '이메일에 전송된 6자리 코드를 입력해주세요.';
-  static const foundIdTitle = '등록된 ID입니다';
+  static const foundIdTitle = '가입한 아이디';
   static const foundIdSubtitle = '아래 ID로 로그인해주세요.';
-  static const changePwBtn = '비번 변경';
+  static const changePwBtn = '비밀번호 변경';
   static const completeBtn = '완료';
   static const resetCompleteTitle = '비밀번호가 변경되었습니다';
   static const resetCompleteSubtitle = '새 비밀번호로 로그인해주세요.';
@@ -91,41 +91,38 @@ class _ResetFlowState extends State<ResetFlow> {
     required String label,
     VoidCallback? onPressed,
     bool loading = false,
-  }) =>
-      SizedBox(
-        width: double.infinity,
-        height: 50,
-        child: ElevatedButton(
-          onPressed: loading ? null : onPressed,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Theme.of(c).colorScheme.onSurface,
-            foregroundColor: Theme.of(c).colorScheme.surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            elevation: 0,
-          ),
-          child:
-              loading
-                  ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(
-                        Theme.of(c).colorScheme.onSurface,
-                      ),
-                    ),
-                  )
-                  : Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+  }) => SizedBox(
+    width: double.infinity,
+    height: 50,
+    child: ElevatedButton(
+      onPressed: loading ? null : onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Theme.of(c).colorScheme.onSurface,
+        foregroundColor: Theme.of(c).colorScheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 0,
+      ),
+      child:
+          loading
+              ? SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(
+                    Theme.of(c).colorScheme.onSurface,
                   ),
-        ),
-      );
+                ),
+              )
+              : Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+    ),
+  );
 
   Future<void> _doResetPassword() async {
     final email = _resetEmail ?? '';
@@ -147,11 +144,15 @@ class _ResetFlowState extends State<ResetFlow> {
         newPassword: pw,
       );
       if (!mounted) return;
-      setState(() => _loading = false);
       if (res.success) {
         setState(() => _step = 4);
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted) setState(() => _loading = false);
       } else {
-        setState(() => _resetErr = res.message ?? _RK.resetFailed);
+        setState(() {
+          _loading = false;
+          _resetErr = res.message ?? _RK.resetFailed;
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -160,14 +161,6 @@ class _ResetFlowState extends State<ResetFlow> {
           _resetErr = _RK.resetError.replaceAll('{error}', '$e');
         });
       }
-    }
-  }
-
-  void _goBack() {
-    if (_step > 0) {
-      setState(() => _step--);
-    } else {
-      Navigator.pop(context);
     }
   }
 
@@ -182,18 +175,12 @@ class _ResetFlowState extends State<ResetFlow> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        leading: GestureDetector(
-          onTap: _goBack,
-          child: Padding(
-            padding: const EdgeInsets.only(left: 24, top: 22),
-            child: Text(
-              '이전',
-              style: TextStyle(
-                color: theme.colorScheme.onSurface.withOpacity(0.8),
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+        leading: IconButton(
+          onPressed: () => Navigator.pop(context),
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: theme.colorScheme.onSurface.withOpacity(0.8),
+            size: 24,
           ),
         ),
       ),
@@ -209,7 +196,7 @@ class _ResetFlowState extends State<ResetFlow> {
           subtitle: _RK.emailSubtitle,
           codeSubtitle: _RK.emailCodeSubtitle,
           enabledEdit: true,
-          mode: 'PASSWORD_RESET',
+          mode: 'FIND',
           inputDeco: _inputDeco,
           inputStyle: _inputStyle,
           primaryBtn: _primaryBtn,
@@ -234,16 +221,20 @@ class _ResetFlowState extends State<ResetFlow> {
         return JoinPasswordStep(
           ctrl: _pwCtrl,
           valid: _pwValid,
+          isResetMode: true,
           inputDeco: _inputDeco,
           inputStyle: _inputStyle,
           primaryBtn: _primaryBtn,
           obscure: _obscurePw,
           onToggleObscure: () => setState(() => _obscurePw = !_obscurePw),
           onValidate: (v) => setState(() => _pwValid = _validatePw(v)),
-          onNext: () => setState(() {
-            _pwMatch = _pwConfirmCtrl.text.isNotEmpty && _pwConfirmCtrl.text == _pwCtrl.text;
-            _step = 3;
-          }),
+          onNext:
+              () => setState(() {
+                _pwMatch =
+                    _pwConfirmCtrl.text.isNotEmpty &&
+                    _pwConfirmCtrl.text == _pwCtrl.text;
+                _step = 3;
+              }),
         );
       case 3:
         return JoinConfirmPwStep(
@@ -253,11 +244,13 @@ class _ResetFlowState extends State<ResetFlow> {
           loading: _loading,
           signupErr: _resetErr,
           obscure: _obscurePwConfirm,
-          onToggleObscure: () => setState(() => _obscurePwConfirm = !_obscurePwConfirm),
-          onMatch: (v) => setState(() {
-            _pwMatch = v == _pwCtrl.text;
-            _resetErr = null;
-          }),
+          onToggleObscure:
+              () => setState(() => _obscurePwConfirm = !_obscurePwConfirm),
+          onMatch:
+              (v) => setState(() {
+                _pwMatch = v == _pwCtrl.text;
+                _resetErr = null;
+              }),
           inputDeco: _inputDeco,
           inputStyle: _inputStyle,
           primaryBtn: _primaryBtn,
@@ -332,7 +325,7 @@ class _IdConfirmStep extends StatelessWidget {
                 child: Text(
                   username,
                   style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w600,
                     color: theme.colorScheme.onSurface,
                   ),
                 ),
@@ -414,11 +407,7 @@ class _ResultStep extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
           child: SafeArea(
             top: false,
-            child: primaryBtn(
-              context,
-              label: btnLabel,
-              onPressed: onComplete,
-            ),
+            child: primaryBtn(context, label: btnLabel, onPressed: onComplete),
           ),
         ),
       ],

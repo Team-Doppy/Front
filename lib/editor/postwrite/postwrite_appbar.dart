@@ -14,6 +14,7 @@ import 'undo_redo_buttons.dart';
 
 /// 발행 시 호출하는 콜백 - context는 Navigator 접근용(PostwriteAppBar의 context 전달)
 /// [isEditMode] true면 수정 모드에서 나온 페이로드 → 업데이트 API 호출, false면 생성 API 호출
+/// [currentDraftId] 발행 성공 시 해당 임시저장 삭제용 (있으면 전달)
 typedef OnPublishCallback =
     Future<void> Function(
       BuildContext context, {
@@ -23,6 +24,7 @@ typedef OnPublishCallback =
       required String exportedJson,
       bool isEditMode,
       String? existingPostId,
+      String? currentDraftId,
     });
 
 class PostwriteAppBar extends StatefulWidget implements PreferredSizeWidget {
@@ -35,6 +37,9 @@ class PostwriteAppBar extends StatefulWidget implements PreferredSizeWidget {
   final bool isEditMode;
   final String? existingPostId;
 
+  /// 발행 성공 시 이 드래프트를 임시저장 목록에서 삭제 (자동저장·수동 임시저장 모두)
+  final String? currentDraftId;
+
   const PostwriteAppBar({
     super.key,
     required this.editorService,
@@ -45,6 +50,7 @@ class PostwriteAppBar extends StatefulWidget implements PreferredSizeWidget {
     this.onPublish,
     this.isEditMode = false,
     this.existingPostId,
+    this.currentDraftId,
   });
 
   @override
@@ -104,12 +110,6 @@ class _PostwriteAppBarState extends State<PostwriteAppBar> {
       userEnteredTitle = entered.trim();
     }
 
-    String sessionKey;
-    if (widget.draftData != null && widget.draftData!.id.isNotEmpty) {
-      sessionKey = widget.draftData!.id;
-    } else {
-      sessionKey = 'draft_temp';
-    }
     muteAllVideos();
     NodeComponentService().selectNode(null);
 
@@ -189,24 +189,32 @@ class _PostwriteAppBarState extends State<PostwriteAppBar> {
       if (!mounted) return;
       setState(() => _isNextLoading = true);
 
-      await Future.delayed(const Duration(seconds: 1));
-
-      if (!mounted) return;
-      await widget.onPublish!(
-        context,
-        title: title,
-        thumbnailImageUrl: thumbnailImageUrl,
-        accessLevel: accessLevel.name,
-        exportedJson: json,
-        isEditMode: widget.isEditMode,
-        existingPostId: widget.existingPostId,
-      );
-      await Future.delayed(const Duration(seconds: 1));
-
-      if (mounted) {
-        setState(() {
-          _isNextLoading = false;
-        });
+      try {
+        if (!mounted) return;
+        await widget.onPublish!(
+          context,
+          title: title,
+          thumbnailImageUrl: thumbnailImageUrl,
+          accessLevel: accessLevel.name,
+          exportedJson: json,
+          isEditMode: widget.isEditMode,
+          existingPostId: widget.existingPostId,
+          currentDraftId: widget.currentDraftId,
+        );
+      } catch (e) {
+        if (!mounted) return;
+        await DialogUtils.showInfoDialog(
+          context,
+          title: context.tr('editor_error'),
+          message:
+              e is Exception
+                  ? e.toString().replaceFirst('Exception: ', '')
+                  : e.toString(),
+        );
+      } finally {
+        if (mounted) {
+          setState(() => _isNextLoading = false);
+        }
       }
     }
   }
@@ -273,12 +281,9 @@ class _PostwriteAppBarState extends State<PostwriteAppBar> {
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          color:
-                              Theme.of(context).brightness == Brightness.dark
-                                  ? Theme.of(context).colorScheme.background
-                                  : Theme.of(
-                                    context,
-                                  ).colorScheme.surfaceVariant.withOpacity(0.7),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceVariant.withOpacity(0.9),
                           offset: const Offset(45, 45),
                           onSelected: (value) {
                             if (value == 'load') {

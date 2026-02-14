@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:doppy/graph/camera/graph_camera_controller.dart';
 import 'package:doppy/graph/rendering/canvas.dart';
 import 'package:doppy/graph/utils/node_count_utils.dart';
 import 'package:doppy/graph/models/node.dart';
@@ -16,6 +17,9 @@ enum NodeGraphMode {
   onboarding,
   normal,
   searching,
+
+  /// 발행 후 웹소켓 응답 대기 중 (검색과 동일한 파도 효과)
+  publishing,
   searchResult,
 }
 
@@ -64,6 +68,9 @@ class NodeGraphView extends StatefulWidget {
   /// 최대 축소 모드 여부 변경 시 콜백 (zoom <= minScale * 1.1)
   final ValueChanged<bool>? onIsAtMinScale;
 
+  /// 노드 드래그 시작/종료 시 콜백 (드래그 중인 노드 ID, 종료 시 null)
+  final ValueChanged<int?>? onNodeDragChange;
+
   /// 뷰포트(변환) 변경 시 콜백 (미니맵 등에 사용)
   final void Function(Matrix4 matrix)? onViewportChanged;
 
@@ -75,6 +82,9 @@ class NodeGraphView extends StatefulWidget {
 
   /// 간선 색상 (null이면 Theme에 따라 자동 설정)
   final Color? lineColor;
+
+  /// 노드 색상 스킴 (null이면 primaryColor + 회색 fallback). 직접 색상 지정 시 사용
+  final GraphNodeColorScheme? nodeColorScheme;
 
   /// 최소 줌 스케일 (null이면 자동 계산)
   final double? minScale;
@@ -250,10 +260,12 @@ class NodeGraphView extends StatefulWidget {
     this.selectedNodeId,
     this.onNodeSelected,
     this.onIsAtMinScale,
+    this.onNodeDragChange,
     this.onViewportChanged,
     this.primaryColor,
     this.isDark,
     this.lineColor,
+    this.nodeColorScheme,
     this.minScale,
     this.maxScale = 5.0,
     this.nodeRadius,
@@ -305,7 +317,7 @@ class NodeGraphView extends StatefulWidget {
     this.preziPanSmoothing = 0.20,
     this.preziPanThresholdScale = 1.6,
     this.preziKeepOnScreenMarginPx = 28,
-    this.firstZoomStepPanSensitivity = 0.78,
+    this.firstZoomStepPanSensitivity = 1.2,
   });
 
   @override
@@ -314,8 +326,7 @@ class NodeGraphView extends StatefulWidget {
 
 class _NodeGraphViewState extends State<NodeGraphView>
     with TickerProviderStateMixin {
-  final TransformationController _transformationController =
-      TransformationController();
+  late final GraphCameraController _camera;
   bool _viewportCallbackScheduled = false;
   Matrix4? _pendingViewportMatrix;
   int? _internalSelectedNodeId;
@@ -334,11 +345,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
   double _displaySpread = 1.0;
   double _lastDisplaySpread = -1.0;
   int _lastDisplayRevision = -1;
-
-  // “최소 1개 노드가 화면에 보이도록” 강제하기 위한 (spread 반영) 노드 bounds 캐시
-  Rect? _cachedNodeBoundsScene;
-  double _lastBoundsSpread = -1.0;
-  int _lastBoundsRevision = -1;
+  double _lastZoom = -1.0;
 
   // “가드 노드(대표/선택)” 캐시: 화면에 최소 1개는 보이게 만드는 기준 노드 집합
   List<int>? _cachedGuardNodeIds;
@@ -349,20 +356,18 @@ class _NodeGraphViewState extends State<NodeGraphView>
 
   // (removed) onInteraction* 기반 보정은 “툭 튐”을 만들 수 있어 사용하지 않음
   bool _lastGestureWasPinch = false;
+  int _pinchDirection = 0; // -1: zoom out, +1: zoom in (핀치 중 마지막 방향)
   bool _isViewerInteracting = false; // InteractiveViewer 제스처 진행 중
   int _skipMinReturnUntilMs = 0; // 핀치 스냅 직후 onPointerUp "home 복귀" 충돌 방지
   double? _gestureStartZoom; // 핀치 방향 안정 판별용
+  int? _gestureStartZoomLevelIdx; // 핀치 시작 시 “양자화 단계” (min/m1/m2)
   Offset? _lastPinchFocalLocal; // 핀치 종료 시 스냅 기준점(로컬 좌표)
   bool _preziDragConsumed = false; // 프레지에서 “드래그=한단계 축소” 1회만 발동
   Matrix4? _preziReturnTransform; // 프레지(줌인) 진입 직전 카메라(복귀용)
   bool _preziPinchExitActive = false; // 프레지 핀치아웃 제스처 진행 중(pan 드리프트 억제용)
 
-  /// 핀치 역치: 이보다 작은 스케일 변화는 스냅 생략 (튐 방지)
-  static const double _pinchDetectThreshold = 0.12;
-  static const double _snapMinZoomDeltaRatio = 0.18;
-
-  late final AnimationController _cameraController;
-  Animation<Matrix4>? _cameraAnim;
+  /// 핀치(줌) 감지 역치: 낮을수록 민감. 값을 올려 “의도된 핀치”만 인정 → 2단계 한번에 넘어가는 현상 완화.
+  static const double _pinchDetectThreshold = 0.22;
 
   late final AnimationController _nodeReturnController;
   Animation<double>? _nodeReturnAnim;
@@ -385,6 +390,17 @@ class _NodeGraphViewState extends State<NodeGraphView>
 
   /// 2개 이상이면 핀치 모드 → pan/드래그 완전 차단
   final Set<int> _activePointers = {};
+  // === Pinch (trigger-only) ===
+  // 유저 핀치는 “트리거(방향/시점)만”으로 사용하고, 실제 줌은 자동 애니메이션으로만 처리
+  final Map<int, Offset> _pointerLocalPos = <int, Offset>{};
+  bool _pinchGestureActive = false;
+  double? _pinchStartDistance;
+  bool _pinchTriggered = false;
+  Offset? _pinchFocalLocal;
+  static const double _pinchTriggerRatioThreshold =
+      0.06; // 거리 6% 변화부터 트리거 (너무 크면 작은 축소가 감지 안 됨)
+  /// Listener(onPointerUp)에서 이미 양자화 스냅을 실행했으면 onInteractionEnd에서 중복 스냅 방지
+  bool _pinchSnapHandledInPointerUp = false;
   bool _primaryMoved = false;
   static const double _dragSlop = 8.0;
   bool _selectionClearedByDrag = false;
@@ -406,8 +422,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
 
   late final AnimationController _searchWaveController;
   late final AnimationController _searchResultIntroController;
-  bool _searchResultFitScheduled = false;
-  String? _lastSearchResultFitSig;
 
   late final AnimationController _compressionAnimController;
   double _displayedCompressionFactor = 1.0;
@@ -432,16 +446,8 @@ class _NodeGraphViewState extends State<NodeGraphView>
   @override
   void initState() {
     super.initState();
-
-    _cameraController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200), // 프레지 진입/복귀 기본 duration
-    )..addListener(() {
-      final anim = _cameraAnim;
-      if (anim != null) {
-        _transformationController.value = anim.value;
-      }
-    });
+    _camera = GraphCameraController(vsync: this);
+    _camera.addListener(_onCameraChanged);
 
     _nodeReturnController =
         AnimationController(
@@ -524,7 +530,8 @@ class _NodeGraphViewState extends State<NodeGraphView>
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     );
-    if (widget.mode == NodeGraphMode.searching) {
+    if (widget.mode == NodeGraphMode.searching ||
+        widget.mode == NodeGraphMode.publishing) {
       _searchWaveController.repeat();
     }
 
@@ -550,14 +557,12 @@ class _NodeGraphViewState extends State<NodeGraphView>
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     )..addListener(_scheduleRebuild);
-
-    _transformationController.addListener(_onTransformChanged);
   }
 
-  void _onTransformChanged() {
+  void _onCameraChanged() {
     final cb = widget.onViewportChanged;
     if (cb == null) return;
-    _pendingViewportMatrix = _transformationController.value.clone();
+    _pendingViewportMatrix = _camera.value.clone();
     if (_viewportCallbackScheduled) return;
     _viewportCallbackScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -611,7 +616,8 @@ class _NodeGraphViewState extends State<NodeGraphView>
       _internalSelectedNodeId = widget.selectedNodeId;
     }
     if (oldWidget.mode != widget.mode) {
-      if (widget.mode == NodeGraphMode.searching) {
+      if (widget.mode == NodeGraphMode.searching ||
+          widget.mode == NodeGraphMode.publishing) {
         _searchWaveController.repeat();
       } else {
         _searchWaveController.stop();
@@ -646,9 +652,9 @@ class _NodeGraphViewState extends State<NodeGraphView>
 
   @override
   void dispose() {
-    _transformationController.removeListener(_onTransformChanged);
+    _camera.removeListener(_onCameraChanged);
+    _camera.disposeAnim();
     _nodeDragTimer?.cancel();
-    _cameraController.dispose();
     _nodeReturnController.dispose();
     _dragFadeController.dispose();
     _searchWaveController.dispose();
@@ -656,7 +662,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
     _compressionAnimController.dispose();
     _minPanWarpReturnController.dispose();
     _layoutIntroController.dispose();
-    _transformationController.dispose();
+    _camera.dispose();
     super.dispose();
   }
 
@@ -785,62 +791,31 @@ class _NodeGraphViewState extends State<NodeGraphView>
     return base;
   }
 
+  /// 라벨을 그릴 노드 목록 (LOD 시 허용 노드만 → 300개 전체 순회 방지)
+  List<GraphNode> _labelsNodeList(double zoom) {
+    final allowed = _allowedNodeIdsForZoom(zoom);
+    final list =
+        allowed != null
+            ? allowed
+                .map((id) => widget.graph.getNodeById(id))
+                .whereType<GraphNode>()
+                .toList()
+            : widget.graph.nodes;
+    if (widget.mode == NodeGraphMode.searchResult &&
+        widget.resultNodeIds != null &&
+        widget.resultNodeIds!.isNotEmpty) {
+      return list.where((n) => widget.resultNodeIds!.contains(n.id)).toList();
+    }
+    return list;
+  }
+
   void _maybeFitToSearchResults(Size screenSize) {
     if (widget.mode != NodeGraphMode.searchResult) return;
-    final ids = widget.resultNodeIds;
-    if (ids == null || ids.isEmpty) return;
-    if (!_layoutInitialized) return;
-    if (_isNodeDragging || _isViewerInteracting) return;
-    if (_cameraController.isAnimating) return;
-
-    final sorted = ids.toList()..sort();
-    final sig = sorted.join(',');
-    // 동일 검색 결과에 대해 한 번만 처리 (빌드/애니메이션마다 반복 방지)
-    if (sig == _lastSearchResultFitSig) return;
-    if (_searchResultFitScheduled) return;
-
-    final graphNodeIds = widget.graph.nodes.map((n) => n.id).toSet();
-    final idsInGraph = ids.where((id) => graphNodeIds.contains(id)).toSet();
-    if (kDebugMode) {
-      debugPrint(
-        '[NodeGraphView] searchResult: resultNodeIds=${ids.length}개, 그래프에존재=${idsInGraph.length}개, 미존재=${ids.difference(idsInGraph).toList()}',
-      );
-    }
-
-    // 그래프에 결과 노드가 하나도 없으면 fit 생략 (빈 화면 방지)
-    if (idsInGraph.isEmpty) {
-      _lastSearchResultFitSig = sig;
-      return;
-    }
-    _searchResultFitScheduled = true;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _searchResultFitScheduled = false;
-      if (!mounted) return;
-      if (widget.mode != NodeGraphMode.searchResult) return;
-      final idsNow = widget.resultNodeIds;
-      if (idsNow == null || idsNow.isEmpty) return;
-      final sortedNow = idsNow.toList()..sort();
-      final sigNow = sortedNow.join(',');
-      if (sigNow != sig) return; // 결과가 바뀌면 최신만 적용
-
-      final bounds = _boundsForNodeIds(idsNow, padding: widget.outerPadding);
-      final target = _fitTransform(
-        screenSize: screenSize,
-        sceneBounds: bounds,
-        nodeCount: math.max(1, idsNow.length),
-      );
-      _lastSearchResultFitSig = sigNow;
-      _animateCameraTo(
-        target,
-        curve: Curves.easeInOutCubicEmphasized,
-        duration: const Duration(milliseconds: 650),
-      );
-    });
+    // 검색 결과 시 카메라 확대/이동 없이 노드 강조만 (온보딩·일반 공통)
   }
 
   Offset _toScene(Offset localPosition) {
-    return _transformationController.toScene(localPosition);
+    return _camera.toScene(localPosition);
   }
 
   double _spreadForZoom(double zoom) {
@@ -849,6 +824,85 @@ class _NodeGraphViewState extends State<NodeGraphView>
     final ratio = (zoom / minS).clamp(0.1, 10.0);
     final spread = math.pow(ratio, widget.zoomSpacingExponent).toDouble();
     return spread.clamp(1.0, widget.zoomSpacingMax);
+  }
+
+  List<double> _quantizedZoomLevels() {
+    final minS = _minScale ?? 0.1;
+    final n = widget.graph.nodes.length;
+    final z0 = minS;
+    final z1 = minS * NodeCountUtils.zoom1Multiplier(n);
+    final z2 = _maxPinchScale ?? (minS * NodeCountUtils.zoom2Multiplier(n));
+    final useZoom1 = NodeCountUtils.hasZoom1Step(n);
+    final levels = useZoom1 ? <double>[z0, z1, z2] : <double>[z0, z2];
+    final sorted = List<double>.from(levels)..sort();
+    final out = <double>[];
+    for (final z in sorted) {
+      if (out.isEmpty || (z - out.last).abs() > 1e-6) out.add(z);
+    }
+    return out;
+  }
+
+  int _nearestQuantizedZoomLevelIndex(double zoom) {
+    final levels = _quantizedZoomLevels();
+    if (levels.isEmpty) return 0;
+    // “비율” 기준으로 가까운 단계 선택 (절대값보다 안정적)
+    double best = double.infinity;
+    var bestIdx = 0;
+    for (var i = 0; i < levels.length; i++) {
+      final z = levels[i];
+      if (z <= 1e-6 || zoom <= 1e-6) continue;
+      final d = (math.log(zoom / z)).abs();
+      if (d < best) {
+        best = d;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }
+
+  void _triggerQuantizedZoomStep({
+    required int dir,
+    required Offset focalLocal,
+    required Size screenSize,
+  }) {
+    if (_camera.isAnimating) return;
+    final minS = _minScale ?? 0.1;
+    final startZoom =
+        _gestureStartZoom ??
+        _camera.value.getMaxScaleOnAxis();
+    final levels = _quantizedZoomLevels();
+    final maxIdx = levels.isEmpty ? 0 : (levels.length - 1);
+    final startIdx =
+        _gestureStartZoomLevelIdx ?? _nearestQuantizedZoomLevelIndex(startZoom);
+    final targetIdx = (startIdx + dir).clamp(0, maxIdx).toInt();
+    final targetScale = levels.isEmpty ? minS : levels[targetIdx];
+
+    // min 단계는 home 복귀
+    if ((targetScale - minS).abs() < 0.0001) {
+      final home =
+          _homeTransform ??
+          _homeTransformAtMinScale(
+            screenSize: screenSize,
+            sceneBounds: _graphBoundsInScene(padding: widget.outerPadding),
+            minScale: minS,
+          );
+      _animateCameraTo(
+        home,
+        curve: Curves.easeInOutCubic,
+        duration: const Duration(milliseconds: 560),
+      );
+    } else {
+      _snapToScaleKeepingFocalPoint(
+        targetScale: targetScale,
+        screenSize: screenSize,
+        focalLocal: focalLocal,
+        enforceGraphBounds: false,
+        curve: Curves.easeInOutCubic,
+        duration: const Duration(milliseconds: 500),
+      );
+    }
+
+    _skipMinReturnUntilMs = DateTime.now().millisecondsSinceEpoch + 650;
   }
 
   double _clampDoubleSafe(double v, double min, double max) {
@@ -860,48 +914,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
     return v.clamp(min, max).toDouble();
   }
 
-  Rect _nodeBoundsInSceneForSpread(double spread) {
-    final tol = 0.002;
-    if (_cachedNodeBoundsScene != null &&
-        (spread - _lastBoundsSpread).abs() <= tol &&
-        _lastBoundsRevision == _graphRevision) {
-      return _cachedNodeBoundsScene!;
-    }
-
-    final nodes = widget.graph.nodes;
-    if (nodes.isEmpty) {
-      final empty = Rect.fromLTWH(0, 0, 0, 0);
-      _cachedNodeBoundsScene = empty;
-      _lastBoundsSpread = spread;
-      _lastBoundsRevision = _graphRevision;
-      return empty;
-    }
-
-    final center = _structureCenter ?? _graphBoundsInScene().center;
-    double minX = double.infinity;
-    double minY = double.infinity;
-    double maxX = double.negativeInfinity;
-    double maxY = double.negativeInfinity;
-    for (final n in nodes) {
-      final p = center + (n.position - center) * spread;
-      if (p.dx < minX) minX = p.dx;
-      if (p.dy < minY) minY = p.dy;
-      if (p.dx > maxX) maxX = p.dx;
-      if (p.dy > maxY) maxY = p.dy;
-    }
-
-    final r = _getNodeRadius(
-      NodeCountUtils.effectiveCountForRendering(nodes.length),
-    );
-    // radius + 약간의 여유(간선/라벨/스트로크)
-    final pad = r * 2.0 + 8.0;
-    final rect = Rect.fromLTRB(minX - pad, minY - pad, maxX + pad, maxY + pad);
-    _cachedNodeBoundsScene = rect;
-    _lastBoundsSpread = spread;
-    _lastBoundsRevision = _graphRevision;
-    return rect;
-  }
-
   /// 어떤 줌에서도 “화면에 노드가 하나도 안 보이게” 바깥으로 빼는 것을 방지하는 클램프.
   /// - “사각형(bounds) 교차”는 노드가 모서리에만 있을 때 허점이 있어,
   ///   클러스터 대표/선택 노드(guard) 중 최소 1개가 화면 안에 들어오도록 보정한다.
@@ -911,7 +923,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
     required Size screenSize,
   }) {
     final s = scale <= 0 ? 1.0 : scale;
-    final spread = _spreadForZoom(s);
+    // 카메라 계산은 layout 전용. spread 사용 금지.
     final m = widget.keepVisibleMargin.clamp(0.0, 2000.0);
     final usable = Rect.fromLTWH(
       m,
@@ -921,14 +933,13 @@ class _NodeGraphViewState extends State<NodeGraphView>
     );
     if (usable.isEmpty) return translation;
 
-    // 1) guard 노드들 중 하나라도 화면에 보이면 OK
+    // 1) guard 노드들 중 하나라도 화면에 보이면 OK (layout 좌표 기준)
     final guardIds = _guardNodeIds();
     if (guardIds.isNotEmpty) {
-      final center = _structureCenter ?? _graphBoundsInScene().center;
       for (final id in guardIds) {
         final node = widget.graph.getNodeById(id);
         if (node == null) continue;
-        final p = center + (node.position - center) * spread;
+        final p = node.position;
         final screen = Offset(
           p.dx * s + translation.dx,
           p.dy * s + translation.dy,
@@ -944,7 +955,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
       for (final id in guardIds) {
         final node = widget.graph.getNodeById(id);
         if (node == null) continue;
-        final p = center + (node.position - center) * spread;
+        final p = node.position;
         final screen = Offset(
           p.dx * s + translation.dx,
           p.dy * s + translation.dy,
@@ -971,8 +982,8 @@ class _NodeGraphViewState extends State<NodeGraphView>
       }
     }
 
-    // 3) fallback: bounds 교차 클램프 (guard를 구할 수 없을 때)
-    final bounds = _nodeBoundsInSceneForSpread(spread);
+    // 3) fallback: bounds 교차 클램프 (layout bounds)
+    final bounds = _graphBoundsInScene(padding: widget.outerPadding);
     if (bounds.isEmpty) return translation;
 
     // screen = scene * s + translation
@@ -1088,12 +1099,13 @@ class _NodeGraphViewState extends State<NodeGraphView>
     _isNodeDragging = true;
     _dragFadeController.forward();
     _dragRootNodeId = rootNodeId;
+    widget.onNodeDragChange?.call(rootNodeId);
     _dragStartScene = startScene;
     _dragStartPositions.clear();
     _dragWeights.clear();
-    _dragStartCamera = _transformationController.value.clone();
+    _dragStartCamera = _camera.value.clone();
 
-    final zoom = _transformationController.value.getMaxScaleOnAxis();
+    final zoom = _camera.value.getMaxScaleOnAxis();
     final edges = _edgesForDragGroup(zoom);
     final hop1 = _onlyInGraph(_directNeighborsFromEdges(rootNodeId, edges));
     final hop2 = <int>{};
@@ -1178,7 +1190,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
       final nodeScenePos = center + (rootNode.position - center) * spread;
 
       // scene 좌표를 화면 좌표로 변환
-      final matrix = _transformationController.value;
+      final matrix = _camera.value;
       final nodeScreenPos = MatrixUtils.transformPoint(matrix, nodeScenePos);
 
       // 화면 중앙에서의 거리
@@ -1210,10 +1222,10 @@ class _NodeGraphViewState extends State<NodeGraphView>
           screenSize: screenSize,
         );
 
-        _transformationController.value =
+        _camera.setTransform(
             Matrix4.identity()
               ..translate(clamped.dx, clamped.dy)
-              ..scale(zoom);
+              ..scale(zoom));
       }
     }
   }
@@ -1223,6 +1235,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
     final cameraHome = _dragStartCamera?.clone();
 
     _lastDragGroupForFade = _dragStartPositions.keys.toSet();
+    widget.onNodeDragChange?.call(null);
     _isNodeDragging = false;
     _dragRootNodeId = null;
     _dragWeights.clear();
@@ -1302,32 +1315,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
   }
 
   void _stopCameraAnimation() {
-    if (_cameraController.isAnimating) {
-      _cameraController.stop();
-    }
-    _cameraAnim = null;
-  }
-
-  void _zoomOutOneStepFromPrezi({
-    required Size screenSize,
-    required Offset focalLocal,
-  }) {
-    // 프레지 모드에서 나오면 곧바로 테두리(선택) 해제
-    setState(_clearSelection);
-
-    // 프레지 축소는 “캡처된 직전 뷰”가 아니라, 우리가 정의한 확대 단계에 따라 내려가야 함:
-    // prezi -> 2단계(maxPinch)
-    _preziReturnTransform = null;
-    final minS = _minScale ?? 0.1;
-    final maxPinch = _maxPinchScale ?? minS * _middle2Multiplier;
-    _snapToScaleKeepingFocalPoint(
-      targetScale: maxPinch,
-      screenSize: screenSize,
-      focalLocal: focalLocal,
-      enforceGraphBounds: true,
-      curve: Curves.easeInOutCubicEmphasized,
-      duration: const Duration(milliseconds: 820),
-    );
+    _camera.stopAnimation();
   }
 
   Offset _clampTranslationToKeepGraphBoundsWithinScreen({
@@ -1337,8 +1325,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
     required double marginPx,
   }) {
     final s = scale <= 0 ? 1.0 : scale;
-    final spread = _spreadForZoom(s);
-    final bounds = _nodeBoundsInSceneForSpread(spread);
+    final bounds = _graphBoundsInScene(padding: widget.outerPadding);
     if (bounds.isEmpty) return translation;
 
     final m = marginPx.clamp(0.0, 2000.0);
@@ -1368,8 +1355,8 @@ class _NodeGraphViewState extends State<NodeGraphView>
     Curve? curve,
     Duration? duration,
   }) {
-    if (_cameraController.isAnimating) return;
-    final m = _transformationController.value;
+    if (_camera.isAnimating) return;
+    final m = _camera.value;
     final zoom = m.getMaxScaleOnAxis();
     final tx = m.storage[12];
     final ty = m.storage[13];
@@ -1405,20 +1392,11 @@ class _NodeGraphViewState extends State<NodeGraphView>
   }
 
   void _animateCameraTo(Matrix4 target, {Curve? curve, Duration? duration}) {
-    if (duration != null) {
-      _cameraController.duration = duration;
-    }
-    final begin = _transformationController.value.clone();
-    _cameraAnim = Matrix4Tween(begin: begin, end: target).animate(
-      CurvedAnimation(
-        parent: _cameraController,
-        curve: curve ?? Curves.easeOutCubic,
-      ),
+    _camera.animateTo(
+      target,
+      curve: curve ?? Curves.easeOutCubic,
+      duration: duration,
     );
-    _cameraController
-      ..stop()
-      ..reset()
-      ..forward();
   }
 
   Matrix4 _homeTransformAtMinScale({
@@ -1502,27 +1480,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
       if (_primaryMoved) return;
       if (_primaryDownLocal == null) return;
 
-      // 프레지(최대 확대) 상태에서는 노드 드래그를 금지.
-      // 만약 드래그 시도가 감지되면 “이전 확대 단계(maxPinch)”로 축소.
-      final zoom = _transformationController.value.getMaxScaleOnAxis();
-      final minS = _minScale ?? 0.1;
-      final maxPinch = _maxPinchScale ?? minS * _middle2Multiplier;
-      final inPreziZone =
-          zoom > maxPinch * 1.05 ||
-          (_effectiveSelectedNodeId != null &&
-              zoom >= widget.preziPanThresholdScale);
-      if (inPreziZone) {
-        // 프레지에서 “나가기(한 단계 축소)”가 트리거된 같은 제스처 동안
-        // panEnabled가 켜지면 줌아웃 + 드래그가 겹쳐 뷰가 튈 수 있으므로,
-        // 손을 뗄 때까지 pan을 강제로 차단한다.
-        setState(() {
-          _preziDragConsumed = true;
-        });
-        _zoomOutOneStepFromPrezi(screenSize: screenSize, focalLocal: localDown);
-        _skipMinReturnUntilMs = DateTime.now().millisecondsSinceEpoch + 450;
-        return;
-      }
-
       final scene = _toScene(localDown);
       final tapped = _getNodeAtPosition(scene);
       if (tapped == null) return;
@@ -1572,6 +1529,9 @@ class _NodeGraphViewState extends State<NodeGraphView>
     );
   }
 
+  /// 노드 0~1개일 때 fit이 과하게 줌인되지 않도록 최소 씬 크기 (줌아웃으로 시작, 동일 확대 정책)
+  static const double _minSceneSizeForSingleNode = 280.0;
+
   Matrix4 _fitTransform({
     required Size screenSize,
     required Rect sceneBounds,
@@ -1583,8 +1543,12 @@ class _NodeGraphViewState extends State<NodeGraphView>
       50.0,
       double.infinity,
     );
-    final bw = sceneBounds.width.clamp(1.0, double.infinity);
-    final bh = sceneBounds.height.clamp(1.0, double.infinity);
+    var bw = sceneBounds.width.clamp(1.0, double.infinity);
+    var bh = sceneBounds.height.clamp(1.0, double.infinity);
+    if (nodeCount <= 1) {
+      bw = math.max(bw, _minSceneSizeForSingleNode);
+      bh = math.max(bh, _minSceneSizeForSingleNode);
+    }
     final scale = math.min(availW / bw, availH / bh).clamp(0.1, 5.0);
 
     final tx = (screenSize.width - bw * scale) / 2 - sceneBounds.left * scale;
@@ -1603,21 +1567,23 @@ class _NodeGraphViewState extends State<NodeGraphView>
     _layoutInitialized = true;
     _lastWorldSize = worldSize;
 
+    final n = widget.graph.nodes.length;
     if (!widget.useProvidedPositions) {
       ForceDirectedLayout.initialize(widget.graph, worldSize: worldSize);
       ForceDirectedLayout.relax(
         widget.graph,
         worldSize: worldSize,
         zoom: 1.0,
-        iterations: 100,
+        iterations: n >= 150 ? null : 100, // 150개 이상이면 _getIterations(n)으로 감소
+      );
+      ForceDirectedLayout.applyAestheticDistribution(
+        widget.graph,
+        worldSize: worldSize,
       );
     }
-    // 서버/초기 position은 참고용; 항상 심미 보정으로 월드 채우기·황금비 적용
-    ForceDirectedLayout.applyAestheticDistribution(
-      widget.graph,
-      worldSize: worldSize,
-    );
-    if (widget.layoutIrregularity != null && widget.layoutIrregularity! > 0) {
+    if (n < 200 &&
+        widget.layoutIrregularity != null &&
+        widget.layoutIrregularity! > 0) {
       ForceDirectedLayout.addPositionJitter(
         widget.graph,
         worldSize,
@@ -1627,7 +1593,6 @@ class _NodeGraphViewState extends State<NodeGraphView>
     _graphRevision++;
     _structureCenter = _computeStructureCenter();
 
-    final n = widget.graph.nodes.length;
     final useLod = n >= NodeCountUtils.lodThreshold;
     final bounds =
         useLod
@@ -1646,43 +1611,36 @@ class _NodeGraphViewState extends State<NodeGraphView>
       sceneBounds: bounds,
       nodeCount: n,
     );
-    _transformationController.value = fit;
+    _camera.setTransform(fit);
     _minScale = widget.minScale ?? _getScaleFromMatrix(fit);
     _maxPinchScale = _computeMaxPinchScale(n);
     _homeTransform = fit.clone();
     _lastScreenSizeForFit = screenSize;
 
-    // 처음 등장 시 노드들이 중앙에서 제자리로 흩어지는 인트로 애니메이션 시작
-    _layoutIntroController.forward(from: 0);
+    // 노드 많을 때는 인트로 스킵 (1초 동안 매 프레임 재계산 방지)
+    if (n <= 120) {
+      _layoutIntroController.forward(from: 0);
+    } else {
+      _layoutIntroController.value = 1.0;
+    }
   }
 
-  /// 항상 중간1·중간2 두 단계 유지
-  static const double _middle1Multiplier = 1.8;
-  static const double _middle2Multiplier = 4.2; // 2단계 확대 적당히
-
-  /// 확대 1단계(middle1) 근처인지
+  /// 확대 1단계(middle1) 근처인지. 노드 수에 따른 배율 사용.
   bool _isInFirstZoomStep() {
-    final z = _transformationController.value.getMaxScaleOnAxis();
+    final z = _camera.value.getMaxScaleOnAxis();
     final m = _minScale ?? 0.1;
-    final m1 = m * _middle1Multiplier;
+    final n = widget.graph.nodes.length;
+    final m1 = m * NodeCountUtils.zoom1Multiplier(n);
     return z >= m1 * 0.9 && z <= m1 * 1.15;
   }
 
   double _computeMaxPinchScale(int nodeCount) {
     final minS = _minScale ?? 0.1;
-    return minS * _middle2Multiplier; // 중간2
+    return minS * NodeCountUtils.zoom2Multiplier(nodeCount);
   }
 
   /// 확대 핀치 시 스냅: 한 단계씩만 진행 (건너뛰지 않음)
-  double _snapTargetForPinchIn(double currentZoom, double startZoom) {
-    final minS = _minScale ?? 0.1;
-    final middle1 = minS * _middle1Multiplier;
-    final middle2 = minS * _middle2Multiplier;
-    // 시작 구간 기준으로 “다음” 단계만 타깃 (건너뛰기 방지)
-    if (startZoom < middle1 * 0.9) return middle1;
-    if (startZoom < middle2 * 0.9) return middle2;
-    return middle2;
-  }
+  // (removed) _snapTargetForPinchIn: 핀치 스냅은 _quantizedZoomLevels 기반으로 완전 양자화 처리
 
   /// 화면 크기만 바뀌었을 때(키보드 등): 노드 재배치 없이 fit만 다시 계산
   void _refitToViewport(Size screenSize) {
@@ -1707,7 +1665,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
       sceneBounds: bounds,
       nodeCount: n,
     );
-    _transformationController.value = fit;
+    _camera.setTransform(fit);
     _minScale = widget.minScale ?? _getScaleFromMatrix(fit);
     _maxPinchScale = _computeMaxPinchScale(n);
     // 화면 크기가 바뀌었는데 home(초기) 뷰가 옛 스크린 기준이면,
@@ -1733,38 +1691,18 @@ class _NodeGraphViewState extends State<NodeGraphView>
   }
 
   void _onNodeTap(int nodeId, {required Size screenSize}) {
-    final zoomNow = _transformationController.value.getMaxScaleOnAxis();
+    final n = widget.graph.nodes.length;
+    final zoomNow = _camera.value.getMaxScaleOnAxis();
     final minS = _minScale ?? 0.1;
-    final middle1 = minS * _middle1Multiplier;
-    final maxPinch = _maxPinchScale ?? minS * _middle2Multiplier;
+    final maxPinch = _maxPinchScale ?? minS * NodeCountUtils.zoom2Multiplier(n);
 
-    // 프레지 모드: 이미 줌인된 상태
-    final alreadyInPrezi =
-        zoomNow > maxPinch * 1.05 ||
-        (_effectiveSelectedNodeId != null &&
-            zoomNow >= widget.preziPanThresholdScale);
-
-    // 프레지 진입 가능: 최대 축소 또는 1단계 확대에서만
     final atMinScale = zoomNow <= minS * 1.15;
-    final atMiddle1 = zoomNow >= middle1 * 0.9 && zoomNow <= middle1 * 1.15;
-    final canEnterPrezi = atMinScale || atMiddle1;
+    final atZoom2OrMore = zoomNow >= maxPinch * 0.9;
 
-    // 프레지 모드에서 탭 → 글 보기 화면으로
-    if (alreadyInPrezi) {
-      if (widget.onNavigateToPost != null) {
-        widget.onNavigateToPost!(nodeId);
-      } else if (widget.onNodeTap != null) {
-        widget.onNodeTap!(nodeId);
-      }
-      return;
-    }
-
-    // 최대 축소/1단계가 아닌 줌에서 탭 → 글 보기 화면으로 (프레지 진입 안 함)
-    if (!canEnterPrezi) {
+    // 이미 확대 2 이상이면 탭 → 글 보기
+    if (atZoom2OrMore) {
       setState(() => _internalSelectedNodeId = nodeId);
-      if (widget.onNodeSelected != null) {
-        widget.onNodeSelected!(nodeId);
-      }
+      if (widget.onNodeSelected != null) widget.onNodeSelected!(nodeId);
       if (widget.onNavigateToPost != null) {
         widget.onNavigateToPost!(nodeId);
       } else if (widget.onNodeTap != null) {
@@ -1773,65 +1711,45 @@ class _NodeGraphViewState extends State<NodeGraphView>
       return;
     }
 
-    // 최대 축소 또는 1단계 확대: 프레지 진입
-    final newSelected = _effectiveSelectedNodeId == nodeId ? null : nodeId;
-    setState(() {
-      _internalSelectedNodeId = newSelected;
-    });
-    if (widget.onNodeSelected != null) {
-      widget.onNodeSelected!(newSelected);
-    }
-    if (widget.onNodeTap != null) {
-      widget.onNodeTap!(nodeId);
-    }
-
-    if (newSelected != null) {
-      // 프레지 복귀용:
-      // - “프레지 진입 1회”에만, 진입 직전 카메라를 저장한다.
-      _preziReturnTransform ??= _transformationController.value.clone();
-      // min 모드에서 “렌더링 워프”가 걸려 있으면, 즉시 리셋 시 노드가 툭 튈 수 있음.
-      // 프레지 진입과 함께 워프를 짧게 페이드아웃(0으로)시켜 자연스럽게 정리.
+    // 최대 축소에서만 노드 탭 → 확대 2로 진입 (해당 노드 중심)
+    if (atMinScale) {
+      setState(() => _internalSelectedNodeId = nodeId);
+      if (widget.onNodeSelected != null) widget.onNodeSelected!(nodeId);
+      if (widget.onNodeTap != null) widget.onNodeTap!(nodeId);
       if (widget.enableMinScalePanWarp) {
         _animateMinPanWarpToZero(duration: const Duration(milliseconds: 180));
       }
-      _animateToNode(nodeId, screenSize: screenSize);
-    } else {
-      // 선택 해제 시 복귀 타겟도 무효화
-      _preziReturnTransform = null;
+      _animateToZoom2(nodeId, screenSize: screenSize);
+      return;
+    }
+
+    // 그 외 줌 구간: 탭 → 선택 + 글 보기
+    setState(() => _internalSelectedNodeId = nodeId);
+    if (widget.onNodeSelected != null) widget.onNodeSelected!(nodeId);
+    if (widget.onNavigateToPost != null) {
+      widget.onNavigateToPost!(nodeId);
+    } else if (widget.onNodeTap != null) {
+      widget.onNodeTap!(nodeId);
     }
   }
 
-  /// 특정 노드로 카메라를 부드럽게 이동하고 줌인 (프레지 스타일 - 고급스러운 빨려들어가는 효과)
-  void _animateToNode(int nodeId, {required Size screenSize}) {
+  /// 최대 축소에서 노드 탭 시 확대 2(zoom2)로 부드럽게 이동
+  void _animateToZoom2(int nodeId, {required Size screenSize}) {
     final node = widget.graph.getNodeById(nodeId);
     if (node == null) return;
 
-    final currentScale = _transformationController.value.getMaxScaleOnAxis();
-
-    // 타겟 스케일: 더 강렬하고 부드러운 줌인 효과
-    // 현재 스케일에 따라 동적으로 줌인 배율 조정 (작을수록 더 많이 줌인)
-    // 너무 과한 확대는 드래그가 “예민”하게 느껴질 수 있어 기본 배율을 낮춤
-    final baseMultiplier = currentScale < 1.0 ? 2.7 : 2.35;
-    final targetScaleMultiplier = baseMultiplier;
+    final minS = _minScale ?? 0.1;
+    final n = widget.graph.nodes.length;
     final finalScale =
-        (currentScale * targetScaleMultiplier)
-            .clamp(
-              math.max((_minScale ?? 0.1) * 2.0, 1.8), // 최소 줌인 하한도 완화
-              widget.maxScale ?? 5.0,
-            )
-            .toDouble();
+        _maxPinchScale ?? minS * NodeCountUtils.zoom2Multiplier(n);
 
-    // IMPORTANT:
-    // “풍선(spread)” 효과 때문에 zoom이 바뀌면 노드의 렌더링 위치도 바뀜.
-    // 따라서 현재 zoom 기준의 위치가 아니라, **목표 zoom(finalScale)** 기준 위치로 카메라를 맞춰야
-    // “이상한 곳으로 줌”이 발생하지 않음.
-    final center = _structureCenter ?? _graphBoundsInScene().center;
-    final spreadAtTarget = _spreadForZoom(finalScale);
-    final nodeScenePos = center + (node.position - center) * spreadAtTarget;
+    // 카메라 계산은 layout 전용. spread는 렌더링 전용이므로 여기서 사용하지 않음.
+    // → scale + translate만으로 안정적으로 “노드(layout) 중심” 맞춤.
+    final nodeLayoutPos = node.position;
 
-    // 노드를 화면 중앙에 오도록 translation 계산
-    var targetTx = screenSize.width / 2 - nodeScenePos.dx * finalScale;
-    var targetTy = screenSize.height / 2 - nodeScenePos.dy * finalScale;
+    // 노드 layout 위치를 화면 중앙에 오도록 translation 계산
+    var targetTx = screenSize.width / 2 - nodeLayoutPos.dx * finalScale;
+    var targetTy = screenSize.height / 2 - nodeLayoutPos.dy * finalScale;
 
     // 끝쪽 노드를 프레지했을 때 화면 밖으로 “잘리는” 문제 방지:
     // - 무조건 중앙 정렬을 고집하지 않고, 노드 원이 화면 안에 들어오도록 screen-space로 보정
@@ -1840,8 +1758,8 @@ class _NodeGraphViewState extends State<NodeGraphView>
     );
     final keepMargin =
         widget.preziKeepOnScreenMarginPx + nodeRadius * 1.2; // 라벨/스트로크 여유
-    final nodeScreenX = nodeScenePos.dx * finalScale + targetTx;
-    final nodeScreenY = nodeScenePos.dy * finalScale + targetTy;
+    final nodeScreenX = nodeLayoutPos.dx * finalScale + targetTx;
+    final nodeScreenY = nodeLayoutPos.dy * finalScale + targetTy;
     if (nodeScreenX < keepMargin) {
       targetTx += (keepMargin - nodeScreenX);
     } else if (nodeScreenX > screenSize.width - keepMargin) {
@@ -1998,6 +1916,29 @@ class _NodeGraphViewState extends State<NodeGraphView>
             behavior: HitTestBehavior.translucent,
             onPointerDown: (e) {
               _activePointers.add(e.pointer);
+              _pointerLocalPos[e.pointer] = e.localPosition;
+
+              // 2손가락 핀치 시작: “트리거만” 감지 (실제 스케일링은 금지)
+              if (_activePointers.length == 2) {
+                _pinchSnapHandledInPointerUp = false;
+                final ids = _activePointers.toList();
+                final p0 = _pointerLocalPos[ids[0]];
+                final p1 = _pointerLocalPos[ids[1]];
+                if (p0 != null && p1 != null) {
+                  _pinchGestureActive = true;
+                  _pinchStartDistance = (p0 - p1).distance;
+                  _pinchTriggered = false;
+                  _pinchDirection = 0;
+                  _pinchFocalLocal = (p0 + p1) / 2;
+                  _lastGestureWasPinch = true; // 다른 release 로직과 충돌 방지
+                  _gestureStartZoom =
+                      _camera.value.getMaxScaleOnAxis();
+                  _gestureStartZoomLevelIdx = _nearestQuantizedZoomLevelIndex(
+                    _gestureStartZoom ?? (_minScale ?? 0.1),
+                  );
+                }
+              }
+
               if (_activePointers.length >= 2) {
                 _stopCameraAnimation();
                 _cancelNodeReturnAndSnapToEnd();
@@ -2007,10 +1948,17 @@ class _NodeGraphViewState extends State<NodeGraphView>
                 _primaryMoved = false;
                 _lastPanLocal = null;
                 _minPanTargetTranslation = null;
-                _minPanWarpCenterScene = null;
-                _minPanWarpOffsetScene = Offset.zero;
-                _lastGestureWasPinch = false;
-                _gestureStartZoom = null;
+                // 드래그 후 핀치 시 warp 즉시 리셋하면 노드가 튐 → 부드럽게 애니메이션으로 0으로
+                if (widget.enableMinScalePanWarp &&
+                    _minPanWarpOffsetScene.distanceSquared > 0.000001) {
+                  _animateMinPanWarpToZero(
+                    duration: const Duration(milliseconds: 200),
+                  );
+                } else {
+                  _minPanWarpCenterScene = null;
+                  _minPanWarpOffsetScene = Offset.zero;
+                }
+                // pinch trigger-only: 스케일링은 금지, 핀치 상태만 유지
                 setState(() {});
                 return;
               }
@@ -2020,12 +1968,12 @@ class _NodeGraphViewState extends State<NodeGraphView>
               _selectionClearedByDrag = false;
               _lastGestureWasPinch = false;
               _gestureStartZoom =
-                  _transformationController.value.getMaxScaleOnAxis();
+                  _camera.value.getMaxScaleOnAxis();
               _preziDragConsumed = false;
               if (!isOnboarding) {
                 _stopMinPanWarpReturn();
                 _lastPanLocal = e.localPosition;
-                final m = _transformationController.value;
+                final m = _camera.value;
                 _minPanTargetTranslation = Offset(m.storage[12], m.storage[13]);
                 _minPanWarpCenterScene = _toScene(e.localPosition);
               } else {
@@ -2046,48 +1994,32 @@ class _NodeGraphViewState extends State<NodeGraphView>
               );
             },
             onPointerMove: (e) {
-              if (_activePointers.length >= 2) return;
+              if (_activePointers.length >= 2) {
+                // pinch trigger-only: 두 손가락 거리 변화로 “줌인/줌아웃” 방향만 감지
+                _pointerLocalPos[e.pointer] = e.localPosition;
+                if (_pinchGestureActive && _activePointers.length == 2) {
+                  final ids = _activePointers.toList();
+                  final p0 = _pointerLocalPos[ids[0]];
+                  final p1 = _pointerLocalPos[ids[1]];
+                  final d0 = _pinchStartDistance;
+                  if (p0 != null && p1 != null && d0 != null && d0 > 0) {
+                    final d = (p0 - p1).distance;
+                    final ratio = d / d0;
+                    _pinchFocalLocal = (p0 + p1) / 2;
+                    if (!_pinchTriggered &&
+                        (ratio - 1.0).abs() >= _pinchTriggerRatioThreshold) {
+                      _pinchTriggered = true;
+                      _pinchDirection = ratio < 1.0 ? -1 : 1;
+                    }
+                  }
+                }
+                return;
+              }
               if (_primaryPointer != e.pointer) return;
               var down = _primaryDownLocal;
               if (down == null) {
                 _primaryDownLocal = e.localPosition;
                 return;
-              }
-
-              // 프레지에서 “드래그=한 단계 축소”가 발동된 이후에는,
-              // 같은 제스처로 계속 패닝/드래그가 되면 안 됨 → 손을 뗐다가 다시 시작해야 함.
-              if (_preziDragConsumed) {
-                return;
-              }
-
-              // 프레지(최대 확대) 상태에서는 “화면 드래그”를 허용하지 않고,
-              // 드래그가 감지되는 순간 이전 확대 단계(maxPinch)로 축소만 시킨다. (패닝 없음)
-              if (!isOnboarding && !_isNodeDragging) {
-                final zoom =
-                    _transformationController.value.getMaxScaleOnAxis();
-                final minS = _minScale ?? 0.1;
-                final maxPinch = _maxPinchScale ?? minS * _middle2Multiplier;
-                final inPreziZone =
-                    zoom > maxPinch * 1.05 ||
-                    (_effectiveSelectedNodeId != null &&
-                        zoom >= widget.preziPanThresholdScale);
-                final movedPx = (e.localPosition - down).distance;
-                if (inPreziZone) {
-                  // 천천히 움직일 때도 롱프레스가 발동하지 않게 취소
-                  _cancelPendingNodeDrag();
-                  if (!_preziDragConsumed && movedPx > 2.0) {
-                    setState(() {
-                      _preziDragConsumed = true;
-                    });
-                    _zoomOutOneStepFromPrezi(
-                      screenSize: screenSize,
-                      focalLocal: e.localPosition,
-                    );
-                    _skipMinReturnUntilMs =
-                        DateTime.now().millisecondsSinceEpoch + 450;
-                    return;
-                  }
-                }
               }
 
               if ((e.localPosition - down).distance > _dragSlop) {
@@ -2099,9 +2031,14 @@ class _NodeGraphViewState extends State<NodeGraphView>
                   // 프레지 영역에서는 selection을 지우면 panEnabled가 다시 켜져 화면이 움직일 수 있음.
                   // 프레지 드래그는 “축소만 하고 패닝 금지”가 목표라 여기서는 선택을 유지.
                   final zoom =
-                      _transformationController.value.getMaxScaleOnAxis();
+                      _camera.value.getMaxScaleOnAxis();
                   final minS = _minScale ?? 0.1;
-                  final maxPinch = _maxPinchScale ?? minS * _middle2Multiplier;
+                  final maxPinch =
+                      _maxPinchScale ??
+                      minS *
+                          NodeCountUtils.zoom2Multiplier(
+                            widget.graph.nodes.length,
+                          );
                   final inPreziZone =
                       zoom > maxPinch * 1.05 ||
                       (_effectiveSelectedNodeId != null &&
@@ -2122,9 +2059,11 @@ class _NodeGraphViewState extends State<NodeGraphView>
               if (!isOnboarding && !_isNodeDragging) {
                 final minS = _minScale ?? 0.1;
                 final zoom =
-                    _transformationController.value.getMaxScaleOnAxis();
+                    _camera.value.getMaxScaleOnAxis();
                 final isNearMin = zoom <= minS * 1.15;
-                final middle1 = minS * _middle1Multiplier;
+                final middle1 =
+                    minS *
+                    NodeCountUtils.zoom1Multiplier(widget.graph.nodes.length);
                 final isFirstZoomStep =
                     zoom >= middle1 * 0.9 && zoom <= middle1 * 1.15;
                 if (isNearMin) {
@@ -2136,7 +2075,7 @@ class _NodeGraphViewState extends State<NodeGraphView>
                       delta = delta / dist * widget.minScalePanMaxInputDeltaPx;
                     }
 
-                    final m = _transformationController.value;
+                    final m = _camera.value;
                     final trans = Offset(m.storage[12], m.storage[13]);
 
                     // 0) finger-centric “warp” (min 모드에서만)
@@ -2201,18 +2140,18 @@ class _NodeGraphViewState extends State<NodeGraphView>
                     // 끝쪽 제어는 soft wall(연속 보정)만 사용하고, 필요하면 release 시점에만 보정한다.
                     _minPanTargetTranslation = limited;
 
-                    _transformationController.value =
+                    _camera.setTransform(
                         Matrix4.identity()
                           ..translate(limited.dx, limited.dy)
-                          ..scale(zoom);
+                          ..scale(zoom));
                   }
                   _lastPanLocal = e.localPosition;
                 } else if (isFirstZoomStep) {
-                  // 확대 1단계: 드래그 감도 낮춤 (firstZoomStepPanSensitivity)
+                  // 확대 1단계: 파도 없이 드래그 감도만 (firstZoomStepPanSensitivity)
                   final last = _lastPanLocal;
                   if (last != null && _primaryMoved) {
                     final delta = e.localPosition - last;
-                    final m = _transformationController.value;
+                    final m = _camera.value;
                     final trans = Offset(m.storage[12], m.storage[13]);
                     final target =
                         (_minPanTargetTranslation ?? trans) +
@@ -2220,10 +2159,10 @@ class _NodeGraphViewState extends State<NodeGraphView>
                     _minPanTargetTranslation = target;
                     final smoothed =
                         Offset.lerp(trans, target, 0.28.clamp(0.0, 1.0))!;
-                    _transformationController.value =
+                    _camera.setTransform(
                         Matrix4.identity()
                           ..translate(smoothed.dx, smoothed.dy)
-                          ..scale(zoom);
+                          ..scale(zoom));
                   }
                   _lastPanLocal = e.localPosition;
                 } else {
@@ -2246,6 +2185,32 @@ class _NodeGraphViewState extends State<NodeGraphView>
             onPointerUp: (e) {
               final wasMulti = _activePointers.length >= 2;
               _activePointers.remove(e.pointer);
+              _pointerLocalPos.remove(e.pointer);
+
+              // pinch 종료: 트리거가 있었다면 여기서만 자동 줌 실행
+              if (wasMulti &&
+                  _pinchGestureActive &&
+                  _activePointers.length < 2) {
+                final dir = _pinchDirection;
+                final focal = _pinchFocalLocal ?? e.localPosition;
+                if (_pinchTriggered && dir != 0) {
+                  _triggerQuantizedZoomStep(
+                    dir: dir,
+                    focalLocal: focal,
+                    screenSize: screenSize,
+                  );
+                  _pinchSnapHandledInPointerUp = true;
+                }
+                _pinchGestureActive = false;
+                _pinchStartDistance = null;
+                _pinchTriggered = false;
+                _pinchDirection = 0;
+                _pinchFocalLocal = null;
+                _lastGestureWasPinch = false;
+                _gestureStartZoom = null;
+                _gestureStartZoomLevelIdx = null;
+              }
+
               if (wasMulti && _activePointers.length == 1) {
                 _primaryPointer = _activePointers.single;
                 _primaryDownLocal = null;
@@ -2262,7 +2227,11 @@ class _NodeGraphViewState extends State<NodeGraphView>
                 });
               } else {
                 final down = _primaryDownLocal;
-                if (!isOnboarding && down != null && !_primaryMoved) {
+                // 핀치(2손가락) 중이었으면 노드 클릭으로 처리하지 않음
+                if (!isOnboarding &&
+                    down != null &&
+                    !_primaryMoved &&
+                    !wasMulti) {
                   final scene = _toScene(down);
                   final tapped = _getNodeAtPosition(scene);
                   if (tapped != null) {
@@ -2280,12 +2249,12 @@ class _NodeGraphViewState extends State<NodeGraphView>
                 if (now < _skipMinReturnUntilMs || _lastGestureWasPinch) {
                   // 핀치 스냅/축소 직후 충돌 방지
                 } else {
-                  final m = _transformationController.value;
+                  final m = _camera.value;
                   final zoom = m.getMaxScaleOnAxis();
                   final minS = _minScale ?? 0.1;
                   final isNearMin = zoom <= minS * 1.15;
                   if (isNearMin && _primaryMoved) {
-                    // 초기 fit/pinch-out과 동일한 홈 사용 (LOD 보정 반영, 왼쪽 쏠림 방지)
+                    // 초기 fit과 동일한 기준으로 복귀 (_homeTransform 우선 → LOD 시 중앙 보정 일치)
                     final home =
                         _homeTransform ??
                         _homeTransformAtMinScale(
@@ -2304,16 +2273,13 @@ class _NodeGraphViewState extends State<NodeGraphView>
                 }
               }
 
-              // min 모드에서 pan-warp는 손을 떼면 자연스럽게 풀림
+              // min 모드에서 pan-warp는 손을 떼면 풀림 (즉시 리셋은 “덜컥” 유발 → 짧은 애니메이션)
               if (!isOnboarding &&
                   !_isNodeDragging &&
                   widget.enableMinScalePanWarp) {
-                // “자연스럽게 풀림” 애니메이션은 손을 뗀 뒤에도 노드가 계속 움직여
-                // 화면 드래그가 ‘툭툭 끊기고 불안정’하게 느껴질 수 있음.
-                // 안정성을 위해 release 시점에 즉시 리셋한다.
-                _stopMinPanWarpReturn();
-                _minPanWarpCenterScene = null;
-                _minPanWarpOffsetScene = Offset.zero;
+                _animateMinPanWarpToZero(
+                  duration: const Duration(milliseconds: 180),
+                );
               }
 
               _primaryPointer = null;
@@ -2327,6 +2293,32 @@ class _NodeGraphViewState extends State<NodeGraphView>
             onPointerCancel: (e) {
               final wasMulti = _activePointers.length >= 2;
               _activePointers.remove(e.pointer);
+              _pointerLocalPos.remove(e.pointer);
+
+              if (wasMulti &&
+                  _pinchGestureActive &&
+                  _activePointers.length < 2) {
+                // cancel도 pinch 종료로 취급 (트리거 시 자동 줌)
+                final dir = _pinchDirection;
+                final focal = _pinchFocalLocal ?? e.localPosition;
+                if (_pinchTriggered && dir != 0) {
+                  _triggerQuantizedZoomStep(
+                    dir: dir,
+                    focalLocal: focal,
+                    screenSize: screenSize,
+                  );
+                  _pinchSnapHandledInPointerUp = true;
+                }
+                _pinchGestureActive = false;
+                _pinchStartDistance = null;
+                _pinchTriggered = false;
+                _pinchDirection = 0;
+                _pinchFocalLocal = null;
+                _lastGestureWasPinch = false;
+                _gestureStartZoom = null;
+                _gestureStartZoomLevelIdx = null;
+              }
+
               if (wasMulti && _activePointers.length == 1) {
                 _primaryPointer = _activePointers.single;
                 _primaryDownLocal = null;
@@ -2342,9 +2334,9 @@ class _NodeGraphViewState extends State<NodeGraphView>
                 });
               }
               if (!isOnboarding && widget.enableMinScalePanWarp) {
-                _stopMinPanWarpReturn();
-                _minPanWarpCenterScene = null;
-                _minPanWarpOffsetScene = Offset.zero;
+                _animateMinPanWarpToZero(
+                  duration: const Duration(milliseconds: 180),
+                );
               }
               _primaryPointer = null;
               _primaryDownLocal = null;
@@ -2354,242 +2346,11 @@ class _NodeGraphViewState extends State<NodeGraphView>
               _gestureStartZoom = null;
               _preziDragConsumed = false;
             },
-            child: InteractiveViewer(
-              transformationController: _transformationController,
-              minScale: _minScale ?? 0.1,
-              maxScale: _maxPinchScale ?? widget.maxScale ?? 5.0,
-              boundaryMargin: effectiveBoundaryMargin,
-              constrained: false,
-              clipBehavior: Clip.none,
-              // min 모드에서는 커스텀 pan을 사용하므로 기본 pan 비활성화
-              // 프레지(선택+줌인) 상태에서도 커스텀 pan으로 감도를 낮춰 사용
-              panEnabled:
-                  !isOnboarding &&
-                  !_isNodeDragging &&
-                  _activePointers.length < 2 &&
-                  // 프레지에서 “드래그=한 단계 축소”를 트리거한 동일 제스처 동안
-                  // panEnabled가 켜지면(줌이 내려오면서 조건이 바뀜) 줌아웃 + 드래그가 겹쳐 뷰가 튐.
-                  // 손을 뗄 때까지 pan을 강제 차단.
-                  !_preziDragConsumed &&
-                  (_transformationController.value.getMaxScaleOnAxis() >
-                      (_minScale ?? 0.1) * 1.15) &&
-                  !(_effectiveSelectedNodeId != null &&
-                      _transformationController.value.getMaxScaleOnAxis() >=
-                          widget.preziPanThresholdScale) &&
-                  // 확대 1단계에서는 커스텀 pan으로 감도 낮춤
-                  !_isInFirstZoomStep(),
-              scaleEnabled:
-                  !isOnboarding && !_isNodeDragging && !_preziDragConsumed,
-              onInteractionStart: (_) {
-                _isViewerInteracting = true;
-                _gestureStartZoom =
-                    _transformationController.value.getMaxScaleOnAxis();
-                final minS = _minScale ?? 0.1;
-                final maxPinch = _maxPinchScale ?? minS * _middle2Multiplier;
-                final inPrezi =
-                    (_gestureStartZoom ?? 0) > maxPinch * 1.05 ||
-                    (_effectiveSelectedNodeId != null &&
-                        (_gestureStartZoom ?? 0) >=
-                            widget.preziPanThresholdScale);
-                _preziPinchExitActive =
-                    inPrezi && _preziReturnTransform != null;
-              },
-              onInteractionUpdate: (details) {
-                if (isOnboarding) return;
-                // 핀치(줌) 제스처 감지: 역치 이상일 때만 인정 (작은 터치는 스냅/튐 방지)
-                if ((details.scale - 1.0).abs() > _pinchDetectThreshold) {
-                  _lastGestureWasPinch = true;
-                  _lastPinchFocalLocal = details.localFocalPoint;
-                  if (_effectiveSelectedNodeId != null) {
-                    setState(_clearSelection);
-                  }
-                }
-                // 프레지 핀치아웃 중: InteractiveViewer가 scale+pan을 동시 적용해 뷰가 튐.
-                // translation을 “프레지 복귀 뷰 중심”에 고정하고 scale만 따라가게 함.
-                if (_preziPinchExitActive && _preziReturnTransform != null) {
-                  final back = _preziReturnTransform!;
-                  final sRet = back.getMaxScaleOnAxis();
-                  if (sRet > 0.01) {
-                    final m = _transformationController.value;
-                    final sCur = m.getMaxScaleOnAxis();
-                    final tRet = Offset(back.storage[12], back.storage[13]);
-                    final sc = Offset(
-                      screenSize.width / 2,
-                      screenSize.height / 2,
-                    );
-                    final tNew = Offset(
-                      sc.dx - (sc.dx - tRet.dx) / sRet * sCur,
-                      sc.dy - (sc.dy - tRet.dy) / sRet * sCur,
-                    );
-                    _transformationController.value =
-                        Matrix4.identity()
-                          ..translate(tNew.dx, tNew.dy)
-                          ..scale(sCur);
-                  }
-                }
-                // 확대 핀치: 한 단계를 넘지 않도록 실시간 클램프 (세게 핀치해도 1단계만)
-                if (_lastGestureWasPinch) {
-                  final startZ = _gestureStartZoom;
-                  if (startZ != null) {
-                    final m = _transformationController.value;
-                    final zoom = m.getMaxScaleOnAxis();
-                    final minS = _minScale ?? 0.1;
-                    final maxPinch =
-                        _maxPinchScale ?? minS * _middle2Multiplier;
-                    final inPreziZone =
-                        zoom > maxPinch * 1.05 ||
-                        (_effectiveSelectedNodeId != null &&
-                            zoom >= widget.preziPanThresholdScale);
-                    if (!inPreziZone && zoom > startZ * 1.02) {
-                      final maxAllowed = _snapTargetForPinchIn(zoom, startZ);
-                      if (zoom > maxAllowed * 1.02) {
-                        final focal =
-                            _lastPinchFocalLocal ??
-                            Offset(screenSize.width / 2, screenSize.height / 2);
-                        final tx = m.storage[12];
-                        final ty = m.storage[13];
-                        final safeZ = math.max(zoom, 0.05);
-                        final sceneX = (focal.dx - tx) / safeZ;
-                        final sceneY = (focal.dy - ty) / safeZ;
-                        final newTx = focal.dx - sceneX * maxAllowed;
-                        final newTy = focal.dy - sceneY * maxAllowed;
-                        _transformationController.value =
-                            Matrix4.identity()
-                              ..translate(newTx, newTy)
-                              ..scale(maxAllowed);
-                      }
-                    }
-                  }
-                }
-              },
-              onInteractionEnd: (_) {
-                if (isOnboarding || _isNodeDragging) return;
-                _isViewerInteracting = false;
-                if (!_lastGestureWasPinch) {
-                  _preziPinchExitActive = false;
-                  // “제스처 중 덮어쓰기(clamp)”는 jitter를 만들 수 있어,
-                  // pan은 손을 뗀 시점에만 가시성 보정을 가볍게 수행한다.
-                  // 단, 확대 상태에서의 pan은 사용자의 의도적 탐색이므로 보정을 걸면 “툭 스냅”으로 체감됨.
-                  // 따라서 가시성 보정은 **최대축소(min) 근처에서만** 수행한다.
-                  final m = _transformationController.value;
-                  final zoom = m.getMaxScaleOnAxis();
-                  final minS = _minScale ?? 0.1;
-                  final isNearMin = zoom <= minS * 1.15;
-                  if (isNearMin &&
-                      widget.keepGraphVisibleOnRelease &&
-                      !_cameraController.isAnimating) {
-                    final trans = Offset(m.storage[12], m.storage[13]);
-                    final clamped = _clampTranslationToKeepAnyNodeVisible(
-                      translation: trans,
-                      scale: zoom,
-                      screenSize: screenSize,
-                    );
-                    final deltaPx = (clamped - trans).distance;
-                    // 작은 보정은 오히려 ‘툭툭’ 튐처럼 느껴질 수 있어 무시하고,
-                    // 충분히 벗어난 경우만 부드럽게 보정한다.
-                    if (deltaPx > widget.panOutOfBoundsThreshold) {
-                      _animateCameraTo(
-                        Matrix4.identity()
-                          ..translate(clamped.dx, clamped.dy)
-                          ..scale(zoom),
-                        curve: Curves.easeOutCubic,
-                        duration: const Duration(milliseconds: 320),
-                      );
-                    }
-                  }
-                  return;
-                }
-
-                final minS = _minScale ?? 0.1;
-                final maxPinch = _maxPinchScale ?? minS * _middle2Multiplier;
-                final zoom =
-                    _transformationController.value.getMaxScaleOnAxis();
-                final startZoom = _gestureStartZoom ?? zoom;
-                final zoomDeltaRatio =
-                    (zoom - startZoom).abs() /
-                    (startZoom > 0 ? startZoom : 1.0);
-                // 역치 미만이면 스냅 생략 (작은 핀치/오탐 → 튐 방지)
-                if (zoomDeltaRatio < _snapMinZoomDeltaRatio) return;
-
-                final zoomOut = zoom < startZoom * 0.95;
-
-                // 규칙:
-                // - 확대 핀치: 무조건 “라벨 보이는 단계(maxPinch)”로
-                // - 축소 핀치: 기본은 “초기 로드 위치(home)”로
-                //   단, 프레지(최대 확대) 영역에서 축소 핀치면 한 단계만 내려서 maxPinch로
-                if (zoomOut) {
-                  final inPreziZone =
-                      zoom > maxPinch * 1.12 ||
-                      (_effectiveSelectedNodeId != null &&
-                          zoom >= widget.preziPanThresholdScale);
-                  final focal =
-                      _lastPinchFocalLocal ??
-                      Offset(screenSize.width / 2, screenSize.height / 2);
-                  final middle1 = minS * _middle1Multiplier;
-                  if (inPreziZone) {
-                    _zoomOutOneStepFromPrezi(
-                      screenSize: screenSize,
-                      focalLocal: focal,
-                    );
-                  } else {
-                    // 축소도 한 단계씩: middle2→middle1→home (건너뛰기 방지)
-                    final targetScale =
-                        startZoom > middle1 * 1.05 ? middle1 : (minS);
-                    if ((targetScale - minS).abs() < 0.02) {
-                      final home = _homeTransform;
-                      if (home != null) {
-                        _animateCameraTo(
-                          home,
-                          curve: Curves.easeOutCubic,
-                          duration: const Duration(milliseconds: 480),
-                        );
-                      } else {
-                        _snapToScaleKeepingFocalPoint(
-                          targetScale: minS,
-                          screenSize: screenSize,
-                          focalLocal: focal,
-                          enforceGraphBounds: false,
-                        );
-                      }
-                    } else {
-                      _snapToScaleKeepingFocalPoint(
-                        targetScale: targetScale,
-                        screenSize: screenSize,
-                        focalLocal: focal,
-                        enforceGraphBounds: true,
-                        duration: const Duration(milliseconds: 420),
-                      );
-                    }
-                  }
-                } else {
-                  final focal =
-                      _lastPinchFocalLocal ??
-                      Offset(screenSize.width / 2, screenSize.height / 2);
-                  final targetScale = _snapTargetForPinchIn(zoom, startZoom);
-                  _snapToScaleKeepingFocalPoint(
-                    targetScale: targetScale,
-                    screenSize: screenSize,
-                    focalLocal: focal,
-                    enforceGraphBounds: true,
-                    duration: const Duration(milliseconds: 420),
-                  );
-                }
-
-                // 핀치 스냅 직후 pointer-up의 "min에서 홈 복귀"가 겹치면 튐 → 잠깐 차단
-                _skipMinReturnUntilMs =
-                    DateTime.now().millisecondsSinceEpoch + 650;
-                _lastGestureWasPinch = false;
-                _gestureStartZoom = null;
-                _lastPinchFocalLocal = null;
-                _preziPinchExitActive = false;
-              },
-              child: SizedBox(
-                width: worldSize.width,
-                height: worldSize.height,
-                child: ValueListenableBuilder<Matrix4>(
-                  valueListenable: _transformationController,
-                  builder: (context, matrix, _) {
-                    final zoom = matrix.getMaxScaleOnAxis();
+            child: ListenableBuilder(
+              listenable: _camera,
+              builder: (context, _) {
+                final zoom = _camera.scale;
+                final matrix = _camera.value;
                     // 라벨: 초기 레이아웃 완료 후 + 임계값 넘으면 "켜짐" 판단 → AnimatedOpacity로 고정 시간 내 페이드 인 (확대 속도 무관)
                     // - labelZoomThreshold >= 1: minScale 대비 배율 (1.4 = 최소축소의 1.4배에서 라벨 표시)
                     // - labelZoomThreshold < 1: 절대 zoom 값 (하위 호환)
@@ -2601,12 +2362,15 @@ class _NodeGraphViewState extends State<NodeGraphView>
                               0.95,
                             )
                             : widget.labelZoomThreshold;
+                    // 노드 1개일 때는 라벨 항상 표시
                     final labelOn =
                         _layoutInitialized &&
                         widget.showLabels &&
-                        zoom > labelThreshold;
+                        (widget.graph.nodes.length == 1 ||
+                            zoom > labelThreshold);
 
                     // zoom에 따른 “풍선 팽창” 렌더링 좌표 계산 (레이아웃 자체는 변하지 않음)
+                    // spread는 항상 현재 zoom 기반. 고정 시 focal translation 보정과 이중 보정되어 튐 발생
                     final spread = _spreadForZoom(zoom);
                     final center =
                         _structureCenter ?? _graphBoundsInScene().center;
@@ -2630,36 +2394,48 @@ class _NodeGraphViewState extends State<NodeGraphView>
                     final layoutIntroActive =
                         _layoutIntroController.value < 1.0;
                     final shouldRecompute =
-                        _cameraController.isAnimating ||
+                        _camera.isAnimating ||
                         layoutIntroActive ||
                         (spread - _lastDisplaySpread).abs() > 0.002 ||
                         _lastDisplayRevision != _graphRevision ||
-                        warpActive;
+                        warpActive ||
+                        (_lastZoom - zoom).abs() > 0.001;
                     if (shouldRecompute) {
                       _lastDisplaySpread = spread;
                       _lastDisplayRevision = _graphRevision;
+                      _lastZoom = zoom;
                       final introT = _layoutIntroController.value.clamp(
                         0.0,
                         1.0,
                       );
+                      final nodes = widget.graph.nodes;
+                      // LOD: 노드 수 많을 때는 보이는 노드만 좌표 계산 (버벅임 방지)
+                      final allowedIds =
+                          nodes.length >= NodeCountUtils.lodThreshold
+                              ? _allowedNodeIdsForZoom(zoom)
+                              : null;
+                      final nodesToCompute =
+                          allowedIds != null
+                              ? nodes
+                                  .where((n) => allowedIds.contains(n.id))
+                                  .toList()
+                              : nodes;
                       final maxDist =
-                          widget.graph.nodes.isEmpty
+                          nodesToCompute.isEmpty
                               ? 1.0
-                              : widget.graph.nodes
+                              : nodesToCompute
                                   .map((n) => (n.position - center).distance)
                                   .reduce(math.max);
                       _displayPos
                         ..clear()
                         ..addEntries(
-                          widget.graph.nodes.map((n) {
+                          nodesToCompute.map((n) {
                             final toCenter = n.position - center;
                             final distNorm =
                                 maxDist > 1e-6
                                     ? toCenter.distance / maxDist
                                     : 0.0;
-                            // 파도: 중앙에서 바깥으로 전파 (멀리 있을수록 늦게 출발)
                             final waveDelay = 0.22 * distNorm;
-                            // 불규칙성: 노드마다 ±8% 정도의 phase 차이
                             final phaseOffset =
                                 0.08 * (2 * ((n.id * 0.618033) % 1) - 1);
                             final effectiveT = (introT -
@@ -2698,7 +2474,11 @@ class _NodeGraphViewState extends State<NodeGraphView>
                     // inner 밖에서는 edge 쪽으로 갈수록 부드럽게 페이드 아웃.
                     // 확대1(middle1)에서는 진짜 가운데 몇 개만 (0.38), 확대될수록 넓게 (0.35)
                     final minSForCenter = _minScale ?? 0.1;
-                    final middle1 = minSForCenter * _middle1Multiplier;
+                    final middle1 =
+                        minSForCenter *
+                        NodeCountUtils.zoom1Multiplier(
+                          widget.graph.nodes.length,
+                        );
                     final centerInnerFrac =
                         zoom < middle1 * 1.1
                             ? 0.38
@@ -2735,13 +2515,20 @@ class _NodeGraphViewState extends State<NodeGraphView>
                       return (1.0 - (d / fadeBand)).clamp(0.0, 1.0);
                     }
 
-                    return ColoredBox(
-                      color: Colors.transparent,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          CustomPaint(
-                            painter: GraphPainter(
+                    return Transform(
+                      transform: _camera.value,
+                      alignment: Alignment.topLeft,
+                      child: SizedBox(
+                        width: worldSize.width,
+                        height: worldSize.height,
+                        child: ColoredBox(
+                          color: Colors.transparent,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                          RepaintBoundary(
+                            child: CustomPaint(
+                              painter: GraphPainter(
                               graph: widget.graph,
                               revision: _graphRevision,
                               overridePositions: _displayPos,
@@ -2755,7 +2542,9 @@ class _NodeGraphViewState extends State<NodeGraphView>
                                   widget.onboardingSearchResult,
                               searchResultExitT: widget.searchResultExitT,
                               searchWaveAnimation:
-                                  widget.mode == NodeGraphMode.searching
+                                  (widget.mode == NodeGraphMode.searching ||
+                                          widget.mode ==
+                                              NodeGraphMode.publishing)
                                       ? _searchWaveController
                                       : null,
                               searchResultIntroAnimation:
@@ -2769,8 +2558,11 @@ class _NodeGraphViewState extends State<NodeGraphView>
                                   widget.graph.nodes.length,
                                 ),
                               ),
+                              minNodeRadiusPx:
+                                  widget.nodeRadius != null ? 8.0 : null,
                               lineColor: lineColor,
                               primaryColor: primaryColor,
+                              nodeColors: widget.nodeColorScheme,
                               selectedNodeId: _effectiveSelectedNodeId,
                               draggingNodeId:
                                   _isNodeDragging ? _dragRootNodeId : null,
@@ -2794,26 +2586,42 @@ class _NodeGraphViewState extends State<NodeGraphView>
                               representativeMaxEdgesPerCluster:
                                   widget.representativeMaxEdgesPerCluster,
                               keyboardCompressionFactor: keyboardCompression,
+                              cameraRepaint: _camera,
+                              ),
+                              size: worldSize,
                             ),
-                            size: worldSize,
                           ),
                           if (widget.showLabels)
-                            ...widget.graph.nodes
-                                .where((node) {
-                                  final allowed = _allowedNodeIdsForZoom(zoom);
-                                  final allowedByZoom =
-                                      allowed == null ||
-                                      allowed.contains(node.id);
-                                  if (widget.mode ==
-                                          NodeGraphMode.searchResult &&
-                                      widget.resultNodeIds != null &&
-                                      widget.resultNodeIds!.isNotEmpty) {
-                                    return allowedByZoom &&
-                                        widget.resultNodeIds!.contains(node.id);
-                                  }
-                                  return allowedByZoom;
-                                })
-                                .map((node) {
+                            ...(widget.graph.nodes.isEmpty
+                                ? [
+                                  Positioned(
+                                    left: worldSize.width / 2 - 30,
+                                    top:
+                                        worldSize.height / 2 +
+                                        _getNodeRadius(
+                                          NodeCountUtils.effectiveCountForRendering(
+                                            0,
+                                          ),
+                                        ) +
+                                        5,
+                                    child: IgnorePointer(
+                                      ignoring: true,
+                                      child: Text(
+                                        '기록하기',
+                                        style: TypographyUtil.style(
+                                          context: context,
+                                          fontSize:
+                                              NodeCountUtils.labelFontSize(0),
+                                          color:
+                                              isDark
+                                                  ? AppColors.darkTextPrimary
+                                                  : AppColors.lightTextPrimary,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ]
+                                : _labelsNodeList(zoom).map((node) {
                                   // 드래그 중: 연결된 노드만 라벨 표시, 나머지는 위젯 생략(뮤트)
                                   final dragGroupIds =
                                       _isNodeDragging
@@ -2859,7 +2667,10 @@ class _NodeGraphViewState extends State<NodeGraphView>
                                           node.label,
                                           style: TypographyUtil.style(
                                             context: context,
-                                            fontSize: 28,
+                                            fontSize:
+                                                NodeCountUtils.labelFontSize(
+                                                  widget.graph.nodes.length,
+                                                ),
                                             color:
                                                 isDark
                                                     ? AppColors.darkTextPrimary
@@ -2870,17 +2681,17 @@ class _NodeGraphViewState extends State<NodeGraphView>
                                       ),
                                     ),
                                   );
-                                }),
-                        ],
+                                }).toList()),
+                            ],
+                          ),
+                        ),
                       ),
-                    );
-                  },
-                ),
+                  );
+                },
               ),
-            ),
-          );
-        },
-      ),
-    );
+        );
+      },
+    ),
+  );
   }
 }

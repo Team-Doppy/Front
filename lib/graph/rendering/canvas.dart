@@ -4,6 +4,29 @@ import 'package:doppy/graph/utils/node_count_utils.dart';
 import 'package:doppy/graph/models/node.dart';
 import 'package:flutter/material.dart';
 
+/// 노드 색상 스킴. 직접 색상 지정용.
+/// - baseColor: 페이드/검색 중 등 기본 무채색
+/// - mutedColor: 비공개 노드 등 더 연한 무채색
+/// - intensity1~3: 노드 intensity 1(연함), 2(중간), 3(진함)
+/// - primary: 검색 결과 노드 등 강조용
+class GraphNodeColorScheme {
+  const GraphNodeColorScheme({
+    required this.baseColor,
+    required this.mutedColor,
+    required this.intensity1,
+    required this.intensity2,
+    required this.intensity3,
+    required this.primary,
+  });
+
+  final Color baseColor;
+  final Color mutedColor;
+  final Color intensity1;
+  final Color intensity2;
+  final Color intensity3;
+  final Color primary;
+}
+
 enum EdgeRenderMode { all, representativeStar }
 
 class _EdgeDrawItem {
@@ -25,7 +48,9 @@ class GraphPainter extends CustomPainter {
   final GraphData graph;
   final double nodeRadius;
   final Color lineColor;
-  final Color primaryColor; // Theme의 primary 색상
+  final Color primaryColor; // Theme의 primary 색상 (nodeColors 미사용 시 fallback)
+  /// 테마·intensity별 노드 색상. null이면 primaryColor + 회색 사용
+  final GraphNodeColorScheme? nodeColors;
   final int? selectedNodeId;
   final int? draggingNodeId;
   final Animation<double>? dragFadeAnimation;
@@ -63,11 +88,26 @@ class GraphPainter extends CustomPainter {
   /// 키보드 등으로 화면 축소 시 0~1 (1=정상). 노드 변형·축소에 사용
   final double keyboardCompressionFactor;
 
+  /// true면 intensity 1 노드는 반지름 0.55배, 2는 0.85배 (온보딩 북두칠성 들러리 작게)
+  final bool scaleNodeRadiusByIntensity;
+
+  /// 화면 픽셀 최소 반지름. null이면 14. 온보딩 등 작은 노드용으로 낮춤.
+  final double? minNodeRadiusPx;
+
+  /// 줌 스페이싱(풍선) 시 렌더링 전용 spread. null이면 overridePositions 또는 node.position 사용.
+  final double? spread;
+  /// spread 적용 시 기준 중심 (layout 좌표).
+  final Offset? structureCenter;
+
+  /// 카메라 변경 시 repaint 트리거 (노드 300+ 시 전체 리빌드 대신 페인트만 갱신)
+  final Listenable? cameraRepaint;
+
   GraphPainter({
     required this.graph,
     this.nodeRadius = 8.0, // 이미지처럼 작게
     this.lineColor = Colors.grey,
     required this.primaryColor,
+    this.nodeColors,
     this.selectedNodeId,
     this.draggingNodeId,
     this.dragFadeAnimation,
@@ -89,12 +129,18 @@ class GraphPainter extends CustomPainter {
     this.searchResultIntroAnimation,
     this.dragGroupNodeIds,
     this.keyboardCompressionFactor = 1.0,
+    this.scaleNodeRadiusByIntensity = false,
+    this.minNodeRadiusPx,
+    this.spread,
+    this.structureCenter,
+    this.cameraRepaint,
   }) : super(
          repaint: Listenable.merge(
            <Listenable?>[
              dragFadeAnimation,
              searchWaveAnimation,
              searchResultIntroAnimation,
+             cameraRepaint,
            ].whereType<Listenable>(),
          ),
        );
@@ -104,8 +150,14 @@ class GraphPainter extends CustomPainter {
   final Paint _nodePaint = Paint()..style = PaintingStyle.fill;
   final Paint _borderPaint = Paint()..style = PaintingStyle.stroke;
 
-  Offset _posForNode(GraphNode node) =>
-      overridePositions?[node.id] ?? node.position;
+  Offset _posForNode(GraphNode node) {
+    if (spread != null && structureCenter != null) {
+      final c = structureCenter!;
+      final s = spread!.clamp(0.01, 10.0);
+      return c + (node.position - c) * s;
+    }
+    return overridePositions?[node.id] ?? node.position;
+  }
 
   /// 키보드로 화면 축소 시 노드가 중심 쪽으로 살짝 압축
   Offset _keyboardCompressionOffset(Offset basePos) {
@@ -133,7 +185,7 @@ class GraphPainter extends CustomPainter {
     // "위로 밀렸다가 제자리로" (y가 down이므로 음수로 위로)
     // half-sine: 0→1→0
     final wave = math.sin(t * math.pi);
-    final amp = (nodeRadius * 1.6).clamp(6.0, 14.0);
+    final amp = (nodeRadius * 2.8).clamp(18.0, 38.0);
     return Offset(0, -amp * wave);
   }
 
@@ -161,15 +213,20 @@ class GraphPainter extends CustomPainter {
     return Offset(dir.dx * out, dir.dy * out + rise);
   }
 
+  /// LOD 시 그릴 엣지 상한 (노드 수 많을 때 버벅임 방지)
+  static const int _maxEdgesWhenLod = 350;
+
   @override
   void paint(Canvas canvas, Size size) {
-    // 뷰포트가 있으면 보이는 영역만 렌더링
-    final visibleNodesRaw =
-        viewport != null ? _getVisibleNodes(viewport!) : graph.nodes;
-    final visibleNodes =
+    // LOD 시: 허용 노드 먼저 필터 후 뷰포트 컬링 (반복 횟수 감소)
+    final nodePool =
         allowedNodeIds == null
-            ? visibleNodesRaw
-            : visibleNodesRaw.where((n) => allowedNodeIds!.contains(n.id));
+            ? graph.nodes
+            : graph.nodes.where((n) => allowedNodeIds!.contains(n.id)).toList();
+    final visibleNodes =
+        viewport != null
+            ? _filterNodesInViewport(nodePool, viewport!)
+            : nodePool;
 
     // 1. 연결선 그리기 (유사도 기반 스타일, zoom에 따른 상위 k개 제한)
     final edgesToDraw = _pickEdgesToDraw();
@@ -211,6 +268,8 @@ class GraphPainter extends CustomPainter {
       if (allowedNodeIds != null &&
           (!allowedNodeIds!.contains(edge.fromNodeId) ||
               !allowedNodeIds!.contains(edge.toNodeId)))
+        continue;
+      if (allowedNodeIds != null && drawList.length >= _maxEdgesWhenLod)
         continue;
       final fromNode = graph.getNodeById(edge.fromNodeId);
       final toNode = graph.getNodeById(edge.toNodeId);
@@ -294,8 +353,17 @@ class GraphPainter extends CustomPainter {
             resultNodeIds != null &&
             resultNodeIds!.contains(edge.fromNodeId) &&
             resultNodeIds!.contains(edge.toNodeId);
-        final edgeOpacity =
-            (inSearchResultMode && !isResultEdge && exitT > 0) ? exitT : 1.0;
+        double edgeOpacity;
+        if (inSearchResultMode && isResultEdge) {
+          // 검색결과 별자리 엣지: 인트로 페이드인 + exit 페이드아웃
+          final introT =
+              searchResultIntroAnimation?.value.clamp(0.0, 1.0) ?? 1.0;
+          edgeOpacity = introT * (1.0 - exitT);
+        } else if (inSearchResultMode && !isResultEdge && exitT > 0) {
+          edgeOpacity = exitT;
+        } else {
+          edgeOpacity = 1.0;
+        }
         _drawConnection(
           canvas,
           fromRender,
@@ -343,19 +411,15 @@ class GraphPainter extends CustomPainter {
     }
   }
 
-  /// 뷰포트 내 보이는 노드만 반환
-  List<GraphNode> _getVisibleNodes(Rect viewport) {
-    // 여유 공간 추가 (엣지가 잘리지 않도록)
-    final expandedViewport = Rect.fromLTRB(
+  /// 노드 리스트를 뷰포트(확장) 기준으로 필터
+  List<GraphNode> _filterNodesInViewport(List<GraphNode> nodes, Rect viewport) {
+    final expanded = Rect.fromLTRB(
       viewport.left - 100,
       viewport.top - 100,
       viewport.right + 100,
       viewport.bottom + 100,
     );
-
-    return graph.nodes
-        .where((node) => expandedViewport.contains(_posForNode(node)))
-        .toList();
+    return nodes.where((n) => expanded.contains(_posForNode(n))).toList();
   }
 
   bool _isVisible(Offset position, Rect viewport) {
@@ -401,8 +465,10 @@ class GraphPainter extends CustomPainter {
     }
     final strokeWidth = baseStrokeWidth * 0.75;
 
-    var w = strokeWidth.clamp(0.3, 1.4) * (1.0 / zoom.clamp(0.6, 5.0));
-    // 최대 축소 모드(zoom 작을 때): 엣지 얇게 유지하되 최소 두께는 조금 더 두껍게
+    // 씬 기준 두께: 확대 시 화면에서 비례해서 두꺼워지도록 zoom을 곱함 (화면 두께 ∝ zoom)
+    final zoomFactor = zoom.clamp(0.4, 5.0);
+    var w = strokeWidth.clamp(0.3, 1.4) * zoomFactor;
+    // 최대 축소 모드(zoom 작을 때): 최소 두께 보장
     final minStrokeScene =
         zoom < 0.45
             ? (1.5 / zoom.clamp(0.05, 10.0))
@@ -469,11 +535,17 @@ class GraphPainter extends CustomPainter {
     return ids;
   }
 
-  /// intensity: 3=진한색, 2=약간 연함, 1/null=색없는버전(회색)
-  static Color _colorForIntensity(Color primary, int? intensity) {
+  /// intensity: 3=진한색, 2=약간 연함, 1/null=색없는버전(회색). nodeColors 있으면 스킴 사용
+  Color _colorForIntensity(Color primary, int? intensity) {
+    final scheme = nodeColors;
+    if (scheme != null) {
+      if (intensity == null || intensity == 1) return scheme.intensity1;
+      if (intensity == 2) return scheme.intensity2;
+      return scheme.intensity3;
+    }
     if (intensity == null || intensity == 1) return Colors.grey.shade400;
     if (intensity == 2) return Color.lerp(primary, Colors.grey.shade400, 0.5)!;
-    return primary; // 3
+    return primary;
   }
 
   /// 노드 그리기
@@ -498,7 +570,10 @@ class GraphPainter extends CustomPainter {
     final isAffected =
         fadeT > 0 && !isDragging && !isDragNeighbor && !isSearchResultMatch;
 
-    final baseColor = Colors.grey.shade400;
+    final scheme = nodeColors;
+    final baseColor = scheme?.baseColor ?? Colors.grey.shade400;
+    final mutedColor = scheme?.mutedColor ?? Colors.grey.shade300;
+    final primaryForDisplay = scheme?.primary ?? primaryColor;
     final inSearchingMode = searchWaveAnimation != null;
 
     // intensity: 3=진한색, 2=약간 연함, 1/null=색없는버전(회색)
@@ -512,8 +587,8 @@ class GraphPainter extends CustomPainter {
         inSearchingMode
             ? baseColor
             : (isSearchResultMatch
-                ? primaryColor
-                : (node.isPublic ? primaryForNode : Colors.grey.shade300));
+                ? primaryForDisplay
+                : (node.isPublic ? primaryForNode : mutedColor));
 
     // 색상은 “뚝” 바뀌지 않도록 fadeT에 따라 부드럽게 보간
     final normalTargetColor =
@@ -525,7 +600,8 @@ class GraphPainter extends CustomPainter {
       final exitT = searchResultExitT!.clamp(0.0, 1.0);
       if (isSearchResultMatch) {
         nodeColor =
-            Color.lerp(primaryColor, normalTargetColor, exitT) ?? primaryColor;
+            Color.lerp(primaryForDisplay, normalTargetColor, exitT) ??
+            primaryForDisplay;
       } else {
         nodeColor =
             Color.lerp(baseColor, normalTargetColor, exitT) ?? baseColor;
@@ -570,8 +646,14 @@ class GraphPainter extends CustomPainter {
       final t = Curves.easeOutCubic.transform(tRaw);
       opacity *= t;
     }
-
     double finalRadius = nodeRadius;
+    if (scaleNodeRadiusByIntensity) {
+      final i = node.intensity;
+      if (i == 1)
+        finalRadius *= 0.55;
+      else if (i == 2)
+        finalRadius *= 0.85;
+    }
     if (inSearchResultMode && isSearchResultMatch) {
       // 검색결과 노드: 기본 1.3배 크기
       const double searchResultScale = 1.3;
@@ -593,8 +675,9 @@ class GraphPainter extends CustomPainter {
       finalRadius *= (0.88 + 0.12 * keyboardCompressionFactor);
     }
     // 심미 보정: 화면에서 너무 작지 않게 하되, 줌 아웃 시 씬에서 과하게 커져 겹치지 않게 상한
-    const double minRadiusPx = 14.0;
-    const double maxRadiusScene = 25.0;
+    final minRadiusPx = minNodeRadiusPx ?? 14.0;
+    // 노드 수가 적을 때 nodeRadius가 34~38까지 올라가므로 상한을 넉넉히 (노드 적을 때 크게 보이게)
+    const double maxRadiusScene = 45.0;
     final minRadiusScene = math.min(
       minRadiusPx / zoom.clamp(0.05, 10.0),
       maxRadiusScene,
@@ -631,12 +714,18 @@ class GraphPainter extends CustomPainter {
         oldDelegate.searchResultIntroAnimation != searchResultIntroAnimation ||
         oldDelegate.dragGroupNodeIds != dragGroupNodeIds ||
         oldDelegate.keyboardCompressionFactor != keyboardCompressionFactor ||
+        oldDelegate.scaleNodeRadiusByIntensity != scaleNodeRadiusByIntensity ||
+        oldDelegate.minNodeRadiusPx != minNodeRadiusPx ||
         oldDelegate.zoom != zoom ||
         oldDelegate.primaryColor != primaryColor ||
+        oldDelegate.nodeColors != nodeColors ||
         oldDelegate.screenSize != screenSize ||
         oldDelegate.maxEdges != maxEdges ||
         oldDelegate.minEdgeSimilarity != minEdgeSimilarity ||
         oldDelegate.nodeCount != nodeCount ||
-        oldDelegate.overridePositions != overridePositions;
+        oldDelegate.nodeRadius != nodeRadius ||
+        oldDelegate.overridePositions != overridePositions ||
+        oldDelegate.spread != spread ||
+        oldDelegate.structureCenter != structureCenter;
   }
 }

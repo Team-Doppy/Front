@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import '../../utils/snackbar_util.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../upload/service/upload_service.dart';
@@ -33,7 +34,6 @@ import '../../editor/postwrite/postwrite_appbar.dart';
 import '../../editor/postwrite/postwrite_bottombar.dart';
 import '../../editor/widgets/draft_list_widget.dart';
 import '../../editor/widgets/resume_writing_bottom_sheet.dart';
-import '../../editor/utils/snackbar_util.dart';
 import '../../editor/utils/scrollbar_util.dart';
 import '../../editor/utils/backspace_empty_list_keyboard_action.dart';
 import 'package:super_editor/super_editor.dart';
@@ -367,6 +367,7 @@ class _PostwriteScreenState extends State<PostwriteScreen>
                 onPublish: widget.onPublish,
                 isEditMode: widget.isEditMode,
                 existingPostId: widget.isEditMode ? widget.draftData?.id : null,
+                currentDraftId: currentDraftId,
               ),
               body: Stack(
                 key: _editorBodyStackKey,
@@ -385,102 +386,105 @@ class _PostwriteScreenState extends State<PostwriteScreen>
                           final isDarkMode =
                               Theme.of(context).brightness == Brightness.dark;
                           final screenWidth = MediaQuery.sizeOf(context).width;
-                          final handleColor = Theme.of(
-                            context,
-                          ).colorScheme.primary;
+                          final handleColor =
+                              Theme.of(context).colorScheme.primary;
                           return RepaintBoundary(
                             child: ValueListenableBuilder<int>(
                               valueListenable:
                                   editorService.historyRestoreVersion,
-                              builder: (_, version, __) => _EditorWithHandleColor(
-                                handleColor: handleColor,
-                                child: KeyedSubtree(
-                                  key: ValueKey('editor_$version'),
-                                  child: SuperEditor(
-                                    gestureMode: Platform.isIOS
-                                        ? DocumentGestureMode.iOS
-                                        : DocumentGestureMode.android,
-                                    editor: editor,
-                                    focusNode: _editorFocusNode,
-                                    keyboardActions: [
-                                      backspaceClearEmptyListParagraphWhenFirstNode,
-                                      ...defaultKeyboardActions,
-                                    ],
-                                    stylesheet: _buildStylesheet(context),
-                                    selectionStyle: SelectionStyles(
-                                      selectionColor: Theme.of(context)
-                                          .colorScheme
-                                          .primary
-                                          .withValues(alpha: 0.3),
-                                      highlightEmptyTextBlocks: false,
-                                    ),
-                                    documentLayoutKey: _documentLayoutKey,
-                                    scrollController: scrollController,
-                                    documentOverlayBuilders: [
-                                      const SuperEditorIosToolbarFocalPointDocumentLayerBuilder(),
-                                      SuperEditorIosHandlesDocumentLayerBuilder(
-                                        handleColor: handleColor,
-                                        caretWidth: 0,
-                                      ),
-                                      const SuperEditorAndroidToolbarFocalPointDocumentLayerBuilder(),
-                                      SuperEditorAndroidHandlesDocumentLayerBuilder(
-                                        caretColor: handleColor,
-                                        caretWidth: 0,
-                                      ),
-                                      SelectionBoxCaretOverlayBuilder(
-                                        caretStyle: CaretStyle(
-                                          width: 2,
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.primary,
-                                        ),
-                                        displayOnAllPlatforms: true,
-                                      ),
-                                    ],
-                                    componentBuilders: [
-                                      SingleImageComponentBuilder(
-                                        screenWidth: screenWidth,
-                                        dragService: dragService,
-                                        isDarkMode: isDarkMode,
-                                      ),
-                                      RowImageComponentBuilder(
-                                        screenWidth: screenWidth,
-                                        dragService: dragService,
-                                        isDarkMode: isDarkMode,
-                                      ),
-                                      PageViewImageComponentBuilder(
-                                        screenWidth: screenWidth,
-                                        dragService: dragService,
-                                        isDarkMode: isDarkMode,
-                                      ),
-                                      CustomParagraphComponentBuilder(
-                                        dragService: dragService,
-                                        editorService: editorService,
-                                      ),
-                                      DividerComponentBuilder(
-                                        dragService: dragService,
+                              builder:
+                                  (_, version, __) => _EditorWithHandleColor(
+                                    handleColor: handleColor,
+                                    child: KeyedSubtree(
+                                      key: ValueKey('editor_$version'),
+                                      child: SuperEditor(
+                                        gestureMode:
+                                            Platform.isIOS
+                                                ? DocumentGestureMode.iOS
+                                                : DocumentGestureMode.android,
                                         editor: editor,
                                         focusNode: _editorFocusNode,
+                                        keyboardActions: [
+                                          backspaceClearEmptyListParagraphWhenFirstNode,
+                                          ...defaultKeyboardActions,
+                                        ],
+                                        stylesheet: _buildStylesheet(context),
+                                        selectionStyle: SelectionStyles(
+                                          selectionColor: Theme.of(context)
+                                              .colorScheme
+                                              .primary
+                                              .withValues(alpha: 0.3),
+                                          highlightEmptyTextBlocks: false,
+                                        ),
+                                        documentLayoutKey: _documentLayoutKey,
+                                        scrollController: scrollController,
+                                        documentOverlayBuilders: [
+                                          const SuperEditorIosToolbarFocalPointDocumentLayerBuilder(),
+                                          SuperEditorIosHandlesDocumentLayerBuilder(
+                                            handleColor: handleColor,
+                                            caretWidth: 0,
+                                          ),
+                                          const SuperEditorAndroidToolbarFocalPointDocumentLayerBuilder(),
+                                          SuperEditorAndroidHandlesDocumentLayerBuilder(
+                                            caretColor: handleColor,
+                                            caretWidth: 0,
+                                          ),
+                                          SelectionBoxCaretOverlayBuilder(
+                                            caretStyle: CaretStyle(
+                                              width: 2,
+                                              color:
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary,
+                                            ),
+                                            displayOnAllPlatforms: true,
+                                          ),
+                                        ],
+                                        componentBuilders: [
+                                          SingleImageComponentBuilder(
+                                            screenWidth: screenWidth,
+                                            dragService: dragService,
+                                            isDarkMode: isDarkMode,
+                                          ),
+                                          RowImageComponentBuilder(
+                                            screenWidth: screenWidth,
+                                            dragService: dragService,
+                                            isDarkMode: isDarkMode,
+                                          ),
+                                          PageViewImageComponentBuilder(
+                                            screenWidth: screenWidth,
+                                            dragService: dragService,
+                                            isDarkMode: isDarkMode,
+                                          ),
+                                          CustomParagraphComponentBuilder(
+                                            dragService: dragService,
+                                            editorService: editorService,
+                                          ),
+                                          DividerComponentBuilder(
+                                            dragService: dragService,
+                                            editor: editor,
+                                            focusNode: _editorFocusNode,
+                                          ),
+                                          LinkComponentBuilder(
+                                            dragService: dragService,
+                                            isDarkMode: isDarkMode,
+                                          ),
+                                          ClipComponentBuilder(
+                                            screenWidth: screenWidth,
+                                            dragService: dragService,
+                                            isEditing: true,
+                                            isDarkMode: isDarkMode,
+                                          ),
+                                          ...defaultComponentBuilders.where(
+                                            (builder) =>
+                                                builder.runtimeType
+                                                    .toString() !=
+                                                'ParagraphComponentBuilder',
+                                          ),
+                                        ],
                                       ),
-                                      LinkComponentBuilder(
-                                        dragService: dragService,
-                                        isDarkMode: isDarkMode,
-                                      ),
-                                      ClipComponentBuilder(
-                                        screenWidth: screenWidth,
-                                        dragService: dragService,
-                                        isEditing: true,
-                                        isDarkMode: isDarkMode,
-                                      ),
-                                      ...defaultComponentBuilders.where(
-                                        (builder) =>
-                                            builder.runtimeType.toString() !=
-                                            'ParagraphComponentBuilder',
-                                      ),
-                                    ],
+                                    ),
                                   ),
-                                ),
-                              ),
                             ),
                           );
                         },
@@ -505,9 +509,11 @@ class _PostwriteScreenState extends State<PostwriteScreen>
                           },
                           child:
                               (dragService.draggingNodeId != null &&
-                                  !_keyboardVisibleNotifier.value)
-                              ? Stack(children: [buildDragOverlay()])
-                              : const SizedBox.shrink(key: ValueKey('empty')),
+                                      !_keyboardVisibleNotifier.value)
+                                  ? Stack(children: [buildDragOverlay()])
+                                  : const SizedBox.shrink(
+                                    key: ValueKey('empty'),
+                                  ),
                         );
                       },
                     ),
@@ -611,27 +617,28 @@ class _PostwriteScreenState extends State<PostwriteScreen>
         PageRouteBuilder(
           opaque: false,
           barrierDismissible: true,
-          pageBuilder: (_, __, ___) => DraftListWidget(
-            currentDraftId: currentDraftId,
-            onLoadDraft: (draftId) async {
-              await handleDraftLoaded(
-                draftId: draftId,
-                onDraftIdChanged: (id) {
-                  if (mounted) {
-                    setState(() {
-                      currentDraftId = id;
-                    });
-                  }
-                },
-                onError: () {
-                  SnackbarUtil.showError(
-                    context,
-                    context.tr('editor_draft_load_failed'),
+          pageBuilder:
+              (_, __, ___) => DraftListWidget(
+                currentDraftId: currentDraftId,
+                onLoadDraft: (draftId) async {
+                  await handleDraftLoaded(
+                    draftId: draftId,
+                    onDraftIdChanged: (id) {
+                      if (mounted) {
+                        setState(() {
+                          currentDraftId = id;
+                        });
+                      }
+                    },
+                    onError: () {
+                      SnackbarUtil.showError(
+                        context,
+                        context.tr('editor_draft_load_failed'),
+                      );
+                    },
                   );
                 },
-              );
-            },
-          ),
+              ),
           transitionDuration: const Duration(milliseconds: 220),
           reverseTransitionDuration: const Duration(milliseconds: 220),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {

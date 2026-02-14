@@ -11,7 +11,7 @@ import '../../editor/component/pageview_image_component.dart';
 import '../../editor/component/row_image_component.dart';
 import '../../editor/service/editor_service.dart';
 import '../../editor/utils/editor_localization.dart';
-import '../../editor/utils/snackbar_util.dart';
+import '../../utils/snackbar_util.dart';
 import '../../media/screens/group_image_layout_screen.dart';
 import '../../media/screens/image_editor_screen.dart';
 import '../../media/utils/image_bytes_resolver.dart';
@@ -509,33 +509,35 @@ class _DelayedImageLoaderState extends State<_DelayedImageLoader> {
           final imageBytesList = snapshot.data!;
           return imageBytesList.length <= 1
               ? SimpleImageEditorScreen(
-                  imageBytes: imageBytesList.first,
-                  isExistingNodeEdit: true,
-                  enableLayoutSelectionForMultiImage: false,
-                  onDone: widget.onDone != null
-                      ? (editorContext, result) async {
+                imageBytes: imageBytesList.first,
+                isExistingNodeEdit: true,
+                enableLayoutSelectionForMultiImage: false,
+                onDone:
+                    widget.onDone != null
+                        ? (editorContext, result) async {
                           await widget.onDone!(
                             editorContext,
                             result,
                             imageBytesList,
                           );
                         }
-                      : null,
-                )
+                        : null,
+              )
               : SimpleImageEditorScreen(
-                  imageBytesList: imageBytesList,
-                  isExistingNodeEdit: true,
-                  enableLayoutSelectionForMultiImage: false,
-                  onDone: widget.onDone != null
-                      ? (editorContext, result) async {
+                imageBytesList: imageBytesList,
+                isExistingNodeEdit: true,
+                enableLayoutSelectionForMultiImage: false,
+                onDone:
+                    widget.onDone != null
+                        ? (editorContext, result) async {
                           await widget.onDone!(
                             editorContext,
                             result,
                             imageBytesList,
                           );
                         }
-                      : null,
-                );
+                        : null,
+              );
         } else {
           return const SizedBox.shrink();
         }
@@ -660,11 +662,12 @@ extension NodeComponentServiceExtension on NodeComponentService {
       }
 
       // ✅ URL 추출 및 검증
-      urls = tasks
-          .map((t) => t.url)
-          .whereType<String>()
-          .where((u) => u.isNotEmpty)
-          .toList();
+      urls =
+          tasks
+              .map((t) => t.url)
+              .whereType<String>()
+              .where((u) => u.isNotEmpty)
+              .toList();
       if (urls.length != editedImages.length) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -720,8 +723,8 @@ extension NodeComponentServiceExtension on NodeComponentService {
         (node is PageViewImageNode
             ? GroupImageLayout.pageview
             : (node is ImageRowNode
-                  ? GroupImageLayout.grid2
-                  : GroupImageLayout.individual));
+                ? GroupImageLayout.grid2
+                : GroupImageLayout.individual));
 
     if (node is ImageNode) {
       final newNode = AppImageNode(

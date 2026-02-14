@@ -22,14 +22,16 @@ class ForceDirectedLayout {
   }
 
   /// 노드 수에 따라 동적으로 노드 간격 계산 (겹치지 않게 여유 있는 배치)
+  /// 30개 이상부터는 간격·체감 크기 축소
   static double _getNodePadding(int nodeCount) {
     if (nodeCount <= 10) return 44.0;
-    if (nodeCount <= 30) return 38.0;
-    if (nodeCount <= 50) return 34.0;
-    if (nodeCount <= 80) return 32.0;
-    if (nodeCount <= 120) return 32.0;
-    if (nodeCount <= 200) return 29.0;
-    return 27.0; // 200개 이상
+    if (nodeCount <= 20) return 40.0;
+    if (nodeCount <= 30) return 36.0;
+    if (nodeCount <= 50) return 32.0;
+    if (nodeCount <= 80) return 29.0;
+    if (nodeCount <= 120) return 28.0;
+    if (nodeCount <= 200) return 26.0;
+    return 20.0; // 200개 이상
   }
 
   static double minNodeDistance(int nodeCount) =>
@@ -141,13 +143,16 @@ class ForceDirectedLayout {
     resolveCollisions(graph, worldSize: worldSize);
   }
 
-  /// 노드 수에 따른 반복 횟수 (겹침 해소를 위해 충분히)
+  /// 노드 수에 따른 반복 횟수. 대량일수록 줄여서 버벅임 방지.
   static int _getIterations(int nodeCount) {
     if (nodeCount < 20) return 80;
-    if (nodeCount < 50) return 110;
-    if (nodeCount < 100) return 140;
-    if (nodeCount < 200) return 170;
-    return 200;
+    if (nodeCount < 50) return 100;
+    if (nodeCount < 100) return 90;
+    if (nodeCount < 200) return 75;
+    if (nodeCount < 350) return 55;
+    if (nodeCount < 600) return 40;
+    if (nodeCount < 1000) return 30;
+    return 22;
   }
 
   /// 초기 배치: layoutHint → 시드, 없으면 앵커는 원형·나머지는 앵커 주변/클러스터별 그리드
@@ -162,6 +167,14 @@ class ForceDirectedLayout {
     final nodePadding = _getNodePadding(nodeCount);
     final clusterWidth = worldSize.width * 0.78;
     final clusterHeight = worldSize.height * 0.78;
+
+    // 0~1개: 단일 노드를 월드 중앙에 배치 (Infinity/NaN 방지, 가운데 50px급 UX)
+    if (nodeCount <= 1) {
+      if (nodeCount == 1) {
+        graph.nodes.single.position = Offset(centerX, centerY);
+      }
+      return;
+    }
 
     // 1) layoutHint 있는 노드: 기존처럼 정규화 후 배치
     double minDx = double.infinity, maxDx = -double.infinity;
@@ -242,10 +255,10 @@ class ForceDirectedLayout {
     // 엣지 연결 노드: anchorId 있으면 앵커 주변 링, 없으면 클러스터순 그리드
     var gridIndex = 0;
     final countWithEdge = withEdge.length;
-    final cols = math.sqrt(countWithEdge).ceil();
-    final rows = (countWithEdge / cols).ceil();
-    final cellWidth = clusterWidth / cols;
-    final cellHeight = clusterHeight / rows;
+    final cols = countWithEdge > 0 ? math.sqrt(countWithEdge).ceil() : 1;
+    final rows = countWithEdge > 0 ? (countWithEdge / cols).ceil() : 1;
+    final cellWidth = cols > 0 ? clusterWidth / cols : clusterWidth;
+    final cellHeight = rows > 0 ? clusterHeight / rows : clusterHeight;
 
     for (final node in withEdge) {
       final anchor =
@@ -273,15 +286,14 @@ class ForceDirectedLayout {
       _keepInWorld(node, worldSize, nodeCount);
     }
 
-    // 독립 노드: 원/밴드 없이 화면 전역에 불규칙 분포 (규칙적 링 완전 제거)
-    final spreadW = worldSize.width * 0.88;
-    final spreadH = worldSize.height * 0.88;
+    // 독립 노드: 연결 클러스터 주변에 모이도록 중앙부만 사용 (동떨어진 배치 방지)
+    final spreadW = worldSize.width * 0.48;
+    final spreadH = worldSize.height * 0.48;
     for (var i = 0; i < independent.length; i++) {
-      // 노드마다 완전히 다른 위치: id로 시드한 의사난수 + 랜덤으로 전역 분산
       final sx =
-          ((independent[i].id * 0.317) % 1.0) + random.nextDouble() * 0.4;
+          ((independent[i].id * 0.317) % 1.0) + random.nextDouble() * 0.3;
       final sy =
-          ((independent[i].id * 0.619) % 1.0) + random.nextDouble() * 0.4;
+          ((independent[i].id * 0.619) % 1.0) + random.nextDouble() * 0.3;
       independent[i].position = Offset(
         centerX + (sx - 0.5) * spreadW,
         centerY + (sy - 0.5) * spreadH,
@@ -511,55 +523,17 @@ class ForceDirectedLayout {
         }
       }
 
-      // 2.5 gravity: 연결 노드는 중앙으로 약하게, 독립 노드는 연결 영역 밖으로 밀어냄
-      double sumCx = 0, sumCy = 0;
-      var connectedCount = 0;
+      // 2.5 gravity: 연결·독립 모두 중앙으로 약하게 당김 (동공·동떨어진 노드 방지)
       for (int i = 0; i < n; i++) {
-        if (edgeConnectedIds.contains(nodes[i].id)) {
-          sumCx += nodes[i].position.dx;
-          sumCy += nodes[i].position.dy;
-          connectedCount++;
-        }
-      }
-      final connectedCentroid =
-          connectedCount > 0
-              ? Offset(sumCx / connectedCount, sumCy / connectedCount)
-              : center;
-      for (int i = 0; i < n; i++) {
-        if (edgeConnectedIds.contains(nodes[i].id)) {
-          // 중앙으로 당겨서 동공(가운데 빈 공간) 생기지 않게
-          final toCenter = center - nodes[i].position;
-          forces[i] = forces[i] + toCenter * 0.013;
-        } else {
-          // 독립 노드: 연결 영역에서 밀어내되, 노드마다 “밀리는 방향”을 다르게 해서 규칙적 링 방지
-          final fromCentroid = nodes[i].position - connectedCentroid;
-          final dist = fromCentroid.distance;
-          if (dist > 1.0) {
-            final radialDir = fromCentroid / dist;
-            final tangent = Offset(-radialDir.dy, radialDir.dx);
-            // 노드별 고유 각도(라디안) → 방사+접선을 섞어 “나가는 방향”을 제각각으로
-            final nodeAngle = (nodes[i].id * 2.1) % (2 * math.pi);
-            final mixRadial = math.cos(nodeAngle).clamp(0.2, 1.0);
-            final mixTangent = math.sin(nodeAngle) * 0.7;
-            final pushDir = (radialDir * mixRadial + tangent * mixTangent);
-            final pushLen = pushDir.dx * pushDir.dx + pushDir.dy * pushDir.dy;
-            if (pushLen > 0.01) {
-              final norm = pushDir / math.sqrt(pushLen);
-              final strength =
-                  (0.008 + 0.022 * ((nodes[i].id * 0.382) % 1.0)) / dist;
-              forces[i] = forces[i] + norm * strength;
-            }
-            // 추가: 노드별 고정 “드리프트” 방향 → 한쪽으로만 몰리지 않게
-            final driftAngle = (nodes[i].id * 1.7 + 1.3) % (2 * math.pi);
-            forces[i] =
-                forces[i] +
-                Offset(math.cos(driftAngle), math.sin(driftAngle)) * 0.006;
-          }
-        }
+        final toCenter = center - nodes[i].position;
+        final strength = edgeConnectedIds.contains(nodes[i].id) ? 0.013 : 0.005;
+        forces[i] = forces[i] + toCenter * strength;
       }
 
-      // 3. 위치 업데이트 (온도 기반 제한)
+      // 3. 위치 업데이트 (온도 기반 제한). layoutHint 있는 노드는 고정(북두칠성 등)
       for (int i = 0; i < n; i++) {
+        if (nodes[i].layoutHint != null) continue;
+
         var force = forces[i];
         final forceMagnitude = force.distance;
 
@@ -641,6 +615,7 @@ class ForceDirectedLayout {
               final dist2 = dc.dx * dc.dx + dc.dy * dc.dy;
               if (dist2 >= minOffEdge2) continue;
 
+              if (nodes[idx].layoutHint != null) continue;
               moved = true;
               if (dist2 <= 1e-6) {
                 final invL = 1.0 / math.sqrt(L2);
@@ -686,8 +661,15 @@ class ForceDirectedLayout {
       if (dist <= 0) continue;
       final dir = delta / dist;
       final targetLen = dist > minLen ? minLen : dist;
-      to.position = from.position + dir * targetLen;
-      _keepInWorld(to, worldSize, n);
+      // layoutHint 노드는 고정: 움직일 수 있는 쪽만 이동
+      if (to.layoutHint != null && from.layoutHint != null) continue;
+      if (to.layoutHint != null) {
+        from.position = to.position - dir * targetLen;
+        _keepInWorld(from, worldSize, n);
+      } else {
+        to.position = from.position + dir * targetLen;
+        _keepInWorld(to, worldSize, n);
+      }
     }
   }
 
@@ -778,13 +760,20 @@ class ForceDirectedLayout {
               final dist = delta.distance;
               if (dist <= 0 || dist >= minDist) continue;
 
+              final pinnedI = nodes[i].layoutHint != null;
+              final pinnedJ = nodes[j].layoutHint != null;
+              if (pinnedI && pinnedJ) continue;
               moved = true;
               final normalized = delta / dist;
               final separation = (minDist - dist) / 2;
-              nodes[i].position = nodes[i].position - normalized * separation;
-              nodes[j].position = nodes[j].position + normalized * separation;
-              _keepInWorld(nodes[i], worldSize, n);
-              _keepInWorld(nodes[j], worldSize, n);
+              if (!pinnedI) {
+                nodes[i].position = nodes[i].position - normalized * separation;
+                _keepInWorld(nodes[i], worldSize, n);
+              }
+              if (!pinnedJ) {
+                nodes[j].position = nodes[j].position + normalized * separation;
+                _keepInWorld(nodes[j], worldSize, n);
+              }
             }
           }
         }
@@ -807,6 +796,7 @@ class ForceDirectedLayout {
     final random = math.Random(42);
     final jitter = minNodeDistance(n) * amount;
     for (final node in nodes) {
+      if (node.layoutHint != null) continue; // 북두칠성 등 고정형은 그대로
       final dx = (random.nextDouble() * 2 - 1) * jitter;
       final dy = (random.nextDouble() * 2 - 1) * jitter;
       node.position = node.position + Offset(dx, dy);

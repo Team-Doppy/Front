@@ -140,7 +140,6 @@ Future<void> pauseAllVideoPlayers({
 /// 모든 비디오 플레이어 정리 (파괴적: 프록시 맵 clear)
 /// - 화면 종료/세션 종료 등 "복구가 필요 없는" 시점에만 사용 권장
 Future<void> cleanupAllVideoPlayers() async {
-  debugPrint('[ClipComponent] cleanupAllVideoPlayers 시작');
 
   // 1) 모든 비디오 일시정지 및 초기화
   await pauseAllVideoPlayers(seekToStart: true, mute: true);
@@ -189,7 +188,6 @@ Future<void> cleanupAllVideoPlayers() async {
   }
   _externalVideoControllers.clear();
 
-  debugPrint('[ClipComponent] cleanupAllVideoPlayers 완료');
 }
 
 /// 주어진 key를 제외한 모든 비디오를 일시정지한다

@@ -5,7 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/editor_localization.dart';
-import '../.../../utils/snackbar_util.dart';
+import '../../utils/snackbar_util.dart';
 
 class LinkOverlay extends StatefulWidget {
   const LinkOverlay({
@@ -237,26 +237,27 @@ class _LinkOverlayState extends State<LinkOverlay>
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
                 ),
-                suffixIcon: _url.text.isNotEmpty
-                    ? TextButton(
-                        onPressed: () {
-                          _focusNode.unfocus();
-                          _enqueueUrl(_url.text.trim());
-                        },
-                        child: Text(
-                          // 🎯 수정 모드일 때 "수정 완료", 추가 모드일 때 "추가"
-                          (widget.initialUrl != null &&
-                                  widget.initialUrl!.isNotEmpty)
-                              ? context.tr('modify_complete')
-                              : context.tr('editor_add'),
-                          style: TextStyle(
-                            color: theme.onSurface.withOpacity(0.8),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
+                suffixIcon:
+                    _url.text.isNotEmpty
+                        ? TextButton(
+                          onPressed: () {
+                            _focusNode.unfocus();
+                            _enqueueUrl(_url.text.trim());
+                          },
+                          child: Text(
+                            // 🎯 수정 모드일 때 "수정 완료", 추가 모드일 때 "추가"
+                            (widget.initialUrl != null &&
+                                    widget.initialUrl!.isNotEmpty)
+                                ? context.tr('modify_complete')
+                                : context.tr('editor_add'),
+                            style: TextStyle(
+                              color: theme.onSurface.withOpacity(0.8),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
-                      )
-                    : SizedBox.shrink(),
+                        )
+                        : SizedBox.shrink(),
                 contentPadding: const EdgeInsets.symmetric(
                   vertical: 8,
                   horizontal: 16,
@@ -383,21 +384,21 @@ class _LinkOverlayState extends State<LinkOverlay>
                         child:
                             // 🎯 autoSubmit일 때 미리보기 표시 (URL이 있고 정규화 가능할 때)
                             (widget.autoSubmit &&
-                                _url.text.trim().isNotEmpty &&
-                                _normalizeUrl(_url.text.trim()) != null)
-                            ? _buildPreviewCard()
-                            : _focusNode.hasFocus
-                            ? _buildSuggestions()
-                            : _items.isNotEmpty
-                            ? _buildItemsList()
-                            : Text(
-                                '',
-                                style: TextStyle(
-                                  color: theme.onSurface,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w500,
+                                    _url.text.trim().isNotEmpty &&
+                                    _normalizeUrl(_url.text.trim()) != null)
+                                ? _buildPreviewCard()
+                                : _focusNode.hasFocus
+                                ? _buildSuggestions()
+                                : _items.isNotEmpty
+                                ? _buildItemsList()
+                                : Text(
+                                  '',
+                                  style: TextStyle(
+                                    color: theme.onSurface,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                 ),
-                              ),
                       ),
                     ),
                   ],
@@ -433,8 +434,8 @@ class _LinkOverlayState extends State<LinkOverlay>
 
                     final finalTitle =
                         _customTitleController.text.trim().isNotEmpty
-                        ? _customTitleController.text.trim()
-                        : (_pTitle?.isNotEmpty == true ? _pTitle : null);
+                            ? _customTitleController.text.trim()
+                            : (_pTitle?.isNotEmpty == true ? _pTitle : null);
                     final thumb = _effectiveThumbnailUrl(
                       normalizedUrl ?? url,
                       metaThumb: _pThumb,
@@ -475,35 +476,36 @@ class _LinkOverlayState extends State<LinkOverlay>
                       borderRadius: BorderRadius.circular(20),
                     ),
                   ),
-                  onPressed: _items.isEmpty
-                      ? null
-                      : () async {
-                          _focusNode.unfocus();
-                          for (final it in _items) {
-                            // 🎯 URL 정규화하여 기록에 저장
-                            final normalizedUrl = _normalizeUrl(it.url);
-                            if (normalizedUrl != null) {
-                              await _saveLinkHistory(normalizedUrl);
-                            }
+                  onPressed:
+                      _items.isEmpty
+                          ? null
+                          : () async {
+                            _focusNode.unfocus();
+                            for (final it in _items) {
+                              // 🎯 URL 정규화하여 기록에 저장
+                              final normalizedUrl = _normalizeUrl(it.url);
+                              if (normalizedUrl != null) {
+                                await _saveLinkHistory(normalizedUrl);
+                              }
 
-                            widget.onSubmit(
-                              url: normalizedUrl ?? it.url,
-                              title: it.title,
-                              description: it.description,
-                              thumbnailUrl: _effectiveThumbnailUrl(
-                                normalizedUrl ?? it.url,
-                                metaThumb: it.thumbnailUrl,
-                              ),
-                            );
-                          }
-                          _closeOverlay();
-                        },
+                              widget.onSubmit(
+                                url: normalizedUrl ?? it.url,
+                                title: it.title,
+                                description: it.description,
+                                thumbnailUrl: _effectiveThumbnailUrl(
+                                  normalizedUrl ?? it.url,
+                                  metaThumb: it.thumbnailUrl,
+                                ),
+                              );
+                            }
+                            _closeOverlay();
+                          },
                   child: Text(
                     _items.isEmpty
                         ? ''
                         : context
-                              .tr('add_with_count')
-                              .replaceAll('{count}', '${_items.length}'),
+                            .tr('add_with_count')
+                            .replaceAll('{count}', '${_items.length}'),
                     style: const TextStyle(
                       fontWeight: FontWeight.w700,
                       fontSize: 16,
@@ -800,10 +802,11 @@ class _LinkOverlayState extends State<LinkOverlay>
       child: ListView.separated(
         shrinkWrap: false,
         itemCount: _suggestions.length.clamp(0, 7),
-        separatorBuilder: (_, __) => Divider(
-          height: 1,
-          color: const ui.Color.fromARGB(255, 0, 0, 0).withOpacity(0.0),
-        ),
+        separatorBuilder:
+            (_, __) => Divider(
+              height: 1,
+              color: const ui.Color.fromARGB(255, 0, 0, 0).withOpacity(0.0),
+            ),
         itemBuilder: (context, index) {
           final suggestion = _suggestions[index];
           // 유명 사이트인지 확인하여 이름 표시
@@ -811,9 +814,10 @@ class _LinkOverlayState extends State<LinkOverlay>
             (site) => site['url']!.toLowerCase() == suggestion.toLowerCase(),
             orElse: () => {'name': '', 'url': suggestion},
           );
-          final displayName = siteInfo['name']?.isNotEmpty == true
-              ? '${siteInfo['name']} - $suggestion'
-              : suggestion;
+          final displayName =
+              siteInfo['name']?.isNotEmpty == true
+                  ? '${siteInfo['name']} - $suggestion'
+                  : suggestion;
 
           final theme = Theme.of(context).colorScheme;
           return InkWell(
@@ -1137,31 +1141,31 @@ class _LinkOverlayState extends State<LinkOverlay>
 
                     return thumbnailUrl != null
                         ? Image.network(
-                            thumbnailUrl,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return const Icon(
-                                Icons.link,
-                                color: Colors.white54,
-                                size: 28,
-                              );
-                            },
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) {
-                                return child;
-                              }
-                              return const Icon(
-                                Icons.link,
-                                color: Colors.white54,
-                                size: 28,
-                              );
-                            },
-                          )
+                          thumbnailUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const Icon(
+                              Icons.link,
+                              color: Colors.white54,
+                              size: 28,
+                            );
+                          },
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) {
+                              return child;
+                            }
+                            return const Icon(
+                              Icons.link,
+                              color: Colors.white54,
+                              size: 28,
+                            );
+                          },
+                        )
                         : const Icon(
-                            Icons.link,
-                            color: Colors.white54,
-                            size: 28,
-                          );
+                          Icons.link,
+                          color: Colors.white54,
+                          size: 28,
+                        );
                   },
                 ),
               ),
@@ -1243,14 +1247,16 @@ class _LinkOverlayState extends State<LinkOverlay>
                   borderRadius: BorderRadius.circular(8),
                 ),
                 clipBehavior: Clip.antiAlias,
-                child: it.thumbnailUrl.isNotEmpty
-                    ? Image.network(
-                        it.thumbnailUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            const Icon(Icons.link, color: Colors.white54),
-                      )
-                    : const Icon(Icons.link, color: Colors.white54),
+                child:
+                    it.thumbnailUrl.isNotEmpty
+                        ? Image.network(
+                          it.thumbnailUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder:
+                              (_, __, ___) =>
+                                  const Icon(Icons.link, color: Colors.white54),
+                        )
+                        : const Icon(Icons.link, color: Colors.white54),
               ),
               const SizedBox(width: 10),
               Expanded(
